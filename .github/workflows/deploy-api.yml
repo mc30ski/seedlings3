@@ -1,27 +1,25 @@
-
 name: deploy-api
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - "apps/api/**"
       - "packages/**"
       - ".github/workflows/deploy-api.yml"
+  workflow_dispatch: {}
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # not strictly required when using JSON key auth, but harmless
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install root deps
-        run: npm install
-
+      # Authenticate to Google Cloud using your JSON key secret
       - name: Auth to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -30,16 +28,54 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build & Push Image
+      - name: Set project
+        run: gcloud config set project ${{ secrets.GCP_PROJECT }}
+
+      # Optional: ensure the Artifact Registry repo exists (best effort).
+      # If your SA can't create repos, create it once in the UI:
+      # Artifact Registry -> Repositories -> Create (name: hello-api, format: Docker, region = GCP_REGION)
+      - name: Ensure Artifact Registry repo exists
         run: |
-          IMAGE=gcr.io/${{ secrets.GCP_PROJECT }}/hello-api:${{ github.sha }}
-          gcloud builds submit apps/api --tag $IMAGE
+          gcloud artifacts repositories describe hello-api --location=${{ secrets.GCP_REGION }} \
+          || gcloud artifacts repositories create hello-api \
+               --repository-format=docker \
+               --location=${{ secrets.GCP_REGION }} \
+               --description="Images for hello-api"
+
+      # Configure Docker to push to Artifact Registry in your region
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      # Build & push the container image from apps/api/Dockerfile
+      - name: Build & Push Image (local build)
+        run: |
+          IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/hello-api/hello-api:${{ github.sha }}
+          docker build -t "$IMAGE" apps/api
+          docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
+      # Deploy the pushed image to Cloud Run
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy hello-api             --image $IMAGE             --platform managed             --region ${{ secrets.GCP_REGION }}             --allow-unauthenticated             --port 8080             --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }},CLERK_JWT_VERIFICATION_KEY=${{ secrets.CLERK_JWT_VERIFICATION_KEY }}"
+          gcloud run deploy hello-api \
+            --image $IMAGE \
+            --platform managed \
+            --region ${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated \
+            --port 8080 \
+            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }},CLERK_JWT_VERIFICATION_KEY=${{ secrets.CLERK_JWT_VERIFICATION_KEY }}"
 
+      # Print the public URL clearly in the logs
+      - name: Show Cloud Run URL
+        run: |
+          URL=$(gcloud run services describe hello-api --region ${{ secrets.GCP_REGION }} --format='value(status.url)')
+          echo "CLOUD_RUN_URL=$URL"
+          echo "CLOUD_RUN_URL=$URL" >> $GITHUB_ENV
+
+      # Run Prisma migrations using the same image
       - name: Run DB migrations
         run: |
-          docker run --rm             -e DATABASE_URL=${{ secrets.DATABASE_URL }}             $IMAGE npm run migrate:deploy
+          docker pull "$IMAGE"
+          docker run --rm \
+            -e DATABASE_URL=${{ secrets.DATABASE_URL }} \
+            "$IMAGE" npm run migrate:deploy
