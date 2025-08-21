@@ -65,8 +65,10 @@ jobs:
           node-version: 20
 
       - name: Run DB migrations (on runner)
+        working-directory: apps/api
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          npm install --workspace @repo/api
-          npx --prefix apps/api prisma migrate deploy
+          npm install
+          npx prisma generate
+          npx prisma migrate deploy --schema prisma/schema.prisma
