@@ -1,4 +1,3 @@
-
 import fastify from "fastify";
 import cors from "@fastify/cors";
 
@@ -8,7 +7,7 @@ await app.register(cors, {
   origin: (origin, cb) => {
     // Allow local dev and any origin if not set
     cb(null, true);
-  }
+  },
 });
 
 // Optional Clerk JWT verification (no-op if key not set)
@@ -36,7 +35,7 @@ app.addHook("preHandler", async (req, reply) => {
 });
 
 app.get("/healthz", async () => ({ ok: true }));
-app.get("/hello", async () => ({ message: "Hello World from API" }));
+app.get("/hello", async () => ({ message: "Hello World from API." }));
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ host: "0.0.0.0", port }).catch((err) => {
