@@ -1,6 +1,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Alpine Linux uses musl and typically ships OpenSSL 3.x (libssl.so.3)
+  // Tell Prisma to download the correct engine for this runtime.
+  binaryTargets = ["linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
