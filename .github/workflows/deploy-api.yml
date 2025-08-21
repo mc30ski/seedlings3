@@ -2,7 +2,7 @@ name: deploy-api
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - "apps/api/**"
       - "packages/**"
@@ -37,14 +37,14 @@ jobs:
       # Build & push container directly from the runner (no Cloud Build, no _cloudbuild bucket)
       - name: Build & Push Image (local build)
         run: |
-          IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/hello-api/hello-api:${{ github.sha }}
+          IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/seedlings3-api/seedlings3-api:${{ github.sha }}
           docker build -t "$IMAGE" apps/api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy hello-api \
+          gcloud run deploy seedlings3 \
             --image $IMAGE \
             --platform managed \
             --region ${{ secrets.GCP_REGION }} \
@@ -54,7 +54,7 @@ jobs:
 
       - name: Show Cloud Run URL
         run: |
-          URL=$(gcloud run services describe hello-api --region ${{ secrets.GCP_REGION }} --format='value(status.url)')
+          URL=$(gcloud run services describe seedlings3 --region ${{ secrets.GCP_REGION }} --format='value(status.url)')
           echo "CLOUD_RUN_URL=$URL"
           echo "CLOUD_RUN_URL=$URL" >> $GITHUB_ENV
 
