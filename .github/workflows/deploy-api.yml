@@ -59,6 +59,10 @@ jobs:
           echo "CLOUD_RUN_URL=$URL" >> $GITHUB_ENV
 
       - name: Run DB migrations
+        env:
+          IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/seedlings3-api/seedlings3-api:${{ github.sha }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          echo "Using IMAGE=$IMAGE"
           docker pull "$IMAGE"
-          docker run --rm -e DATABASE_URL=${{ secrets.DATABASE_URL }} "$IMAGE" npm run migrate:deploy
+          docker run --rm -e DATABASE_URL="$DATABASE_URL" "$IMAGE" npm run migrate:deploy
