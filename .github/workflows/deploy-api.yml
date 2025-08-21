@@ -58,11 +58,15 @@ jobs:
           echo "CLOUD_RUN_URL=$URL"
           echo "CLOUD_RUN_URL=$URL" >> $GITHUB_ENV
 
-      - name: Run DB migrations
+      # Use the runner's Node/OS to run Prisma, not the container
+      - name: Set up Node for migrations
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run DB migrations (on runner)
         env:
-          IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/seedlings3-api/seedlings3-api:${{ github.sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          echo "Using IMAGE=$IMAGE"
-          docker pull "$IMAGE"
-          docker run --rm -e DATABASE_URL="$DATABASE_URL" "$IMAGE" npm run migrate:deploy
+          npm install --workspace @repo/api
+          npx --prefix apps/api prisma migrate deploy
