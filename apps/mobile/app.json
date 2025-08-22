@@ -1,15 +1,12 @@
 {
   "expo": {
-    "name": "HelloWorldMobile",
-    "slug": "hello-world-mobile",
-    "scheme": "helloworld",
+    "name": "seedlings3-mobile",
+    "slug": "seedlings3-mobile",
+    "scheme": "seedlings3",
     "version": "1.0.0",
     "orientation": "portrait",
     "sdkVersion": "51.0.0",
-    "platforms": [
-      "ios",
-      "android"
-    ],
+    "platforms": ["ios", "android"],
     "updates": {
       "enabled": false
     },
