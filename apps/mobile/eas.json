@@ -1,5 +1,5 @@
 {
-  "cli": { "version": ">= 3.17.1" },
+  "cli": { "version": ">= 3.17.1", "appVersionSource": "local" },
   "build": {
     "development": {
       "distribution": "internal",
