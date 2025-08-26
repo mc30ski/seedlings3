@@ -19,5 +19,3 @@ config.resolver.nodeModulesPaths = [
 config.resolver.disableHierarchicalLookup = true;
 
 module.exports = config;
-
-const path = require("path");
