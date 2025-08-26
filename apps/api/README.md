@@ -19,10 +19,3 @@ npm run dev
   1. Build and push an image
   2. Deploy Cloud Run service `api`
   3. Run `prisma migrate deploy` in the container
-- URL:
-  - https://seedlings3-1000564298660.us-east1.run.app/hello
-
-## Deploy to Vercel
-
-- URL:
-  - https://seedlings3-web.vercel.app
