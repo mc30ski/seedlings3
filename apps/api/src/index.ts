@@ -1,44 +1,41 @@
-import fastify from "fastify";
-import cors from "@fastify/cors";
+import Fastify, { type FastifyInstance } from "fastify";
+import cors, { type FastifyCorsOptions } from "@fastify/cors";
 
-const app = fastify({ logger: true });
+const app: FastifyInstance = Fastify({ logger: true });
 
-await app.register(cors, {
-  origin: (origin, cb) => {
-    // Allow local dev and any origin if not set
-    cb(null, true);
+const corsOptions: FastifyCorsOptions = {
+  // Allow curl/server-to-server (no origin) and any origins listed in WEB_ORIGIN
+  // e.g. WEB_ORIGIN="https://your-web.vercel.app,https://your-preview.vercel.app"
+  origin: (
+    origin: string | undefined,
+    cb: (err: Error | null, allow: boolean) => void
+  ) => {
+    const allowed = (process.env.WEB_ORIGIN ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!origin || allowed.includes(origin)) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
   },
-});
+};
 
-// Optional Clerk JWT verification (no-op if key not set)
-import { verifyToken } from "@clerk/clerk-sdk-node";
-
-app.addHook("preHandler", async (req, reply) => {
-  // Skip auth for health and hello routes in this starter
-  const openRoutes = ["/healthz", "/hello"];
-  if (openRoutes.includes(req.routerPath ?? "")) return;
-
-  const key = process.env.CLERK_JWT_VERIFICATION_KEY;
-  if (!key) return; // allow through if not configured yet
-
-  const authHeader = req.headers["authorization"];
-  const token = authHeader?.replace("Bearer ", "");
-  if (!token) {
-    reply.code(401).send({ error: "Missing token" });
-    return;
-  }
-  try {
-    await verifyToken(token, { jwtKey: key });
-  } catch (e) {
-    reply.code(401).send({ error: "Unauthorized" });
-  }
-});
+await app.register(cors, corsOptions);
 
 app.get("/healthz", async () => ({ ok: true }));
-app.get("/hello", async () => ({ message: "Hello World from API........." }));
 
-const port = Number(process.env.PORT || 8080);
-app.listen({ host: "0.0.0.0", port }).catch((err) => {
+app.get("/hello", async () => ({ message: "Hello World from API" }));
+
+const port = Number(process.env.PORT ?? 8080);
+const host = "0.0.0.0";
+
+try {
+  await app.listen({ port, host });
+  app.log.info(`listening on http://localhost:${port}`);
+} catch (err) {
   app.log.error(err);
   process.exit(1);
-});
+}

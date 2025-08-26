@@ -1,27 +1,21 @@
-/**
- * Metro configuration for Expo in a monorepo.
- * Minimizes watched files to avoid EMFILE on macOS.
- * Docs: https://docs.expo.dev/guides/monorepos/
- */
-const path = require('path');
-const { getDefaultConfig } = require('expo/metro-config');
+const path = require("path");
+const { getDefaultConfig } = require("expo/metro-config");
 
 const projectRoot = __dirname;
-const monorepoRoot = path.resolve(projectRoot, '../..');
+const workspaceRoot = path.resolve(projectRoot, "../..");
 
 const config = getDefaultConfig(projectRoot);
 
-// Only watch shared packages that the mobile app imports.
-const sharedPackages = [
-  'packages/utils',
-];
+// Watch the monorepo root so imports from packages work
+config.watchFolders = [workspaceRoot];
 
-config.watchFolders = sharedPackages.map((p) => path.resolve(monorepoRoot, p));
-
-// Resolve node_modules from the app and the monorepo root
+// Resolve modules from app and workspace root
 config.resolver.nodeModulesPaths = [
-  path.resolve(projectRoot, 'node_modules'),
-  path.resolve(monorepoRoot, 'node_modules'),
+  path.resolve(projectRoot, "node_modules"),
+  path.resolve(workspaceRoot, "node_modules"),
 ];
+
+// 🔒 Prevent Metro from walking up and using parent configs
+config.resolver.disableHierarchicalLookup = true;
 
 module.exports = config;

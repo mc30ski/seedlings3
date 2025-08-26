@@ -14,12 +14,17 @@
     "start:localhost": "expo start --localhost -c"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.0",
+    "@repo/tokens": "0.1.0",
     "dotenv": "^17.2.1",
     "expo": "51.0.14",
     "expo-status-bar": "~1.12.1",
     "expo-updates": "~0.25.28",
     "react": "18.2.0",
-    "react-native": "0.74.3"
+    "react-native": "0.74.3",
+    "react-native-paper": "^5.14.5",
+    "react-native-safe-area-context": "^5.6.1",
+    "react-native-gesture-handler": "~2.16.1"
   },
   "devDependencies": {
     "@types/react": "~18.2.79",
