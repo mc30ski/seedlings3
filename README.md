@@ -1,11 +1,10 @@
-
 # Hello World Monorepo
 
 A minimal monorepo starter with:
 
-- **Web**: Next.js + Tailwind (deploy on Vercel)
+- **Web**: Next.js + Chakra UI (deployed on Vercel)
 - **API**: Fastify (TypeScript) + Prisma + Neon (deploy on Google Cloud Run)
-- **Mobile**: Expo (React Native)
+- **Mobile**: Expo (React Native) + React Native Paper
 
 ## Quickstart
 
