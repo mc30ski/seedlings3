@@ -1,22 +1,16 @@
-import { buildApp } from "./app";
+// apps/api/src/start.ts
+import { buildApp } from "./app.js";
 
-async function main() {
-  const app = buildApp();
-  try {
-    await app.ready();
-    if (process.env.ROUTE_DUMP === "1") {
-      // This will include: GET   /api/v1/version
-      console.log(app.printRoutes());
-    }
-    await app.listen({
-      port: Number(process.env.PORT) || 8080,
-      host: "0.0.0.0",
-    });
-    console.log("API listening");
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
+const app = await buildApp();
+await app.ready();
+
+// Optional: ad-hoc route dump for debugging
+if (process.env.ROUTE_DUMP === "1") {
+  app.get("/__routes", (_req, reply) =>
+    reply.type("text/plain").send(app.printRoutes())
+  );
 }
 
-main();
+const port = Number(process.env.PORT ?? 8080);
+await app.listen({ port, host: "0.0.0.0" });
+app.log.info(`listening on http://localhost:${port}`);
