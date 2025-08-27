@@ -9,6 +9,7 @@ import adminRoutes from "./routes/admin";
 import userRoutes from "./routes/users";
 import auditRoutes from "./routes/audit";
 import systemRoutes from "./routes/system";
+import versionRoutes from "./routes/version";
 import errorMapper from "./plugins/errorMapper";
 
 export function buildApp() {
@@ -16,14 +17,15 @@ export function buildApp() {
   app.register(cors, { origin: true, credentials: true });
 
   // Public system endpoints
-  app.register(systemRoutes); // <-- no prefix so /hello and /healthz are at the root
+  app.register(systemRoutes); // No prefix so /hello and /healthz are at the root
 
-  app.register(sensible); // ← register BEFORE rbac
+  app.register(sensible); // Register BEFORE rbac
   app.register(errorMapper);
   app.register(devAuth);
   app.register(rbac);
 
   app.register(async (r) => {
+    await r.register(versionRoutes, { prefix: "/api/v1" });
     await r.register(meRoutes, { prefix: "/api/v1" });
     await r.register(workerRoutes, { prefix: "/api/v1" });
     await r.register(adminRoutes, { prefix: "/api/v1" });
