@@ -18,6 +18,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set build metadata
+        run: |
+          echo "BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          echo "COMMIT_SHA=${{ github.sha }}" >> $GITHUB_ENV
 
       - name: Auth to Google Cloud
         uses: google-github-actions/auth@v2
@@ -34,11 +38,14 @@ jobs:
       - name: Configure Docker auth for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
-      # Build & push container directly from the runner (no Cloud Build, no _cloudbuild bucket)
+      # Build & push container directly from the runner (no Cloud Build)
       - name: Build & Push Image (local build)
         run: |
           IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/seedlings3-api/seedlings3-api:${{ github.sha }}
-          docker build -t "$IMAGE" apps/api
+          docker build \
+            --build-arg BUILD_TIME="${{ env.BUILD_TIME }}" \
+            --build-arg GIT_COMMIT="${{ env.COMMIT_SHA }}" \
+            -t "$IMAGE" apps/api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
@@ -50,7 +57,7 @@ jobs:
             --region ${{ secrets.GCP_REGION }} \
             --allow-unauthenticated \
             --port 8080 \
-            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }},CLERK_JWT_VERIFICATION_KEY=${{ secrets.CLERK_JWT_VERIFICATION_KEY }},WEB_ORIGIN=${{ secrets.WEB_ORIGIN }}"
+            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }},CLERK_JWT_VERIFICATION_KEY=${{ secrets.CLERK_JWT_VERIFICATION_KEY }},WEB_ORIGIN=${{ secrets.WEB_ORIGIN }},BUILD_TIME=${{ env.BUILD_TIME }},GIT_COMMIT=${{ env.COMMIT_SHA }},COMMIT_SHA=${{ env.COMMIT_SHA }}"
 
       - name: Show Cloud Run URL
         run: |
