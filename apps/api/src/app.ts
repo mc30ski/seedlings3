@@ -23,9 +23,9 @@ export function buildApp() {
   app.register(errorMapper);
   app.register(devAuth);
   app.register(rbac);
+  app.register(versionRoutes);
 
   app.register(async (r) => {
-    await r.register(versionRoutes, { prefix: "/api/v1" });
     await r.register(meRoutes, { prefix: "/api/v1" });
     await r.register(workerRoutes, { prefix: "/api/v1" });
     await r.register(adminRoutes, { prefix: "/api/v1" });
