@@ -25,10 +25,6 @@ const corsOptions: FastifyCorsOptions = {
 
 await app.register(cors, corsOptions);
 
-app.get("/healthz", async () => ({ ok: true }));
-
-app.get("/hello", async () => ({ message: "Hello World from API." }));
-
 const port = Number(process.env.PORT ?? 8080);
 const host = "0.0.0.0";
 

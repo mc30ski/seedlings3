@@ -1,17 +1,109 @@
-
 generator client {
-  provider = "prisma-client-js"
-  // Alpine Linux uses musl and typically ships OpenSSL 3.x (libssl.so.3)
-  // Tell Prisma to download the correct engine for this runtime.
-  binaryTargets = ["linux-musl-openssl-3.0.x"]
+  provider      = "prisma-client-js"
+  // Local Mac + your Linux container target:
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  // If your container is Alpine/musl, use this instead:
+  // binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
-model Example {
-  id        Int      @id @default(autoincrement())
-  createdAt DateTime @default(now())
+enum Role {
+  WORKER
+  ADMIN
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  CHECKED_OUT
+  MAINTENANCE
+  RETIRED
+}
+
+enum AuditAction {
+  USER_APPROVED
+  ROLE_ASSIGNED
+  EQUIPMENT_CREATED
+  EQUIPMENT_UPDATED
+  EQUIPMENT_RETIRED
+  EQUIPMENT_DELETED
+  EQUIPMENT_CHECKED_OUT
+  EQUIPMENT_RELEASED
+  MAINTENANCE_START
+  MAINTENANCE_END
+}
+
+model User {
+  id           String      @id @default(cuid())
+  clerkUserId  String      @unique
+  email        String?
+  displayName  String?
+  isApproved   Boolean     @default(false)
+
+  roles        UserRole[]
+  checkouts    Checkout[]
+  auditEvents  AuditEvent[] @relation("AuditActor")
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model UserRole {
+  id      String @id @default(cuid())
+  userId  String
+  role    Role
+
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+}
+
+model Equipment {
+  id         String           @id @default(uuid()) // stable external ID for labels/QR
+  shortDesc  String
+  longDesc   String
+  status     EquipmentStatus  @default(AVAILABLE)
+  qrSlug     String?          @unique
+  retiredAt  DateTime?
+
+  checkouts    Checkout[]
+  auditEvents  AuditEvent[]     @relation("AuditEquipment")
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Checkout {
+  id           String   @id @default(cuid())
+  equipmentId  String
+  userId       String
+  checkedOutAt DateTime @default(now())
+  releasedAt   DateTime?
+
+  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Helpful indexes; the “one active checkout” guarantee is added via a partial unique index in SQL
+  @@index([equipmentId, releasedAt])
+  @@index([userId, checkedOutAt])
+}
+
+model AuditEvent {
+  id           String      @id @default(cuid())
+  action       AuditAction
+  actorUserId  String?
+  equipmentId  String?
+  metadata     Json?
+
+  actor        User?       @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  equipment    Equipment?  @relation("AuditEquipment", fields: [equipmentId], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime    @default(now())
+
+  @@index([equipmentId, createdAt])
+  @@index([actorUserId, createdAt])
 }

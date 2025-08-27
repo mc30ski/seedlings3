@@ -19,3 +19,15 @@ npm run dev
   1. Build and push an image
   2. Deploy Cloud Run service `api`
   3. Run `prisma migrate deploy` in the container
+
+## DB (Neaon postgresql)
+
+- Dev
+  npm run prisma:generate
+  npm run prisma:migrate:dev
+  npm run db:seed
+
+- Production/CI:
+  npm run prisma:generate
+  npm run prisma:migrate:deploy
+  npm run db:seed
