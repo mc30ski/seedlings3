@@ -12,7 +12,6 @@ import systemRoutes from "./routes/system";
 import versionRoutes from "./routes/version";
 import errorMapper from "./plugins/errorMapper";
 import routeList from "./routes/routeList";
-import fastifyRoutes from "@fastify/routes";
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
@@ -32,7 +31,6 @@ export async function buildApp() {
   await app.register(cors, corsOptions);
 
   await app.register(sensible); // Register BEFORE rbac
-  await app.register(fastifyRoutes);
   await app.register(errorMapper);
   await app.register(devAuth);
   await app.register(rbac);
