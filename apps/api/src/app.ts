@@ -65,14 +65,14 @@ export async function buildApp() {
   };
 
   await app.register(cors, corsOptions);
-
   await app.register(sensible); // Register BEFORE rbac
   await app.register(errorMapper);
-  await app.register(devAuth);
-  await app.register(rbac);
 
   await app.register(systemRoutes);
   await app.register(versionRoutes);
+
+  await app.register(devAuth);
+  await app.register(rbac);
 
   app.register(async (r) => {
     await r.register(meRoutes, { prefix: "/api/v1" });
