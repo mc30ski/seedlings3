@@ -1,28 +1,25 @@
 # -------- deps (workspace: apps/api) --------
-FROM node:20-alpine AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app/apps/api
-RUN apk add --no-cache libc6-compat openssl
-# install only API workspace deps here (dev deps included for build)
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 COPY apps/api/package.json apps/api/package-lock.json* ./
 RUN npm ci || npm install
 
 # -------- build (bundle with tsup) --------
-FROM node:20-alpine AS builder
-# Build inside the API workspace directory
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app/apps/api
-RUN apk add --no-cache libc6-compat openssl
-# bring API node_modules
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/apps/api/node_modules ./node_modules
-# bring the whole repo so tsup can see packages/**
+# Bring whole repo so tsup can see packages/**
 COPY . /app
-# build the API (tsup bundles to dist/start.js) and generate prisma client
+# Build (bundles to dist/start.js) and generate Prisma client
 RUN npm run build
 
 # -------- run --------
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app/apps/api
 ENV NODE_ENV=production
-# optional metadata (your CI can pass build args)
+# Optional metadata for /version
 ARG BUILD_TIME
 ARG GIT_COMMIT
 ENV BUILD_TIME=${BUILD_TIME}
@@ -30,7 +27,7 @@ ENV GIT_COMMIT=${GIT_COMMIT}
 ENV COMMIT_SHA=${GIT_COMMIT}
 ENV NODE_OPTIONS=--enable-source-maps
 
-# copy minimal runtime
+# Minimal runtime payload
 COPY --from=builder /app/apps/api/package.json ./package.json
 COPY --from=builder /app/apps/api/node_modules ./node_modules
 COPY --from=builder /app/apps/api/dist ./dist

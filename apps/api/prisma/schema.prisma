@@ -1,9 +1,6 @@
 generator client {
   provider      = "prisma-client-js"
-  // Local Mac + your Linux container target:
   binaryTargets = ["native", "debian-openssl-3.0.x"]
-  // If your container is Alpine/musl, use this instead:
-  // binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
