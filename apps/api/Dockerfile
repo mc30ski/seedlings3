@@ -1,39 +1,40 @@
-# -------- deps --------
+# -------- deps (workspace: apps/api) --------
 FROM node:20-alpine AS deps
-WORKDIR /app
+WORKDIR /app/apps/api
 RUN apk add --no-cache libc6-compat openssl
-COPY package.json package-lock.json* ./
+# install only API workspace deps here (dev deps included for build)
+COPY apps/api/package.json apps/api/package-lock.json* ./
 RUN npm ci || npm install
 
-# -------- build --------
+# -------- build (bundle with tsup) --------
 FROM node:20-alpine AS builder
-WORKDIR /app
+# Build inside the API workspace directory
+WORKDIR /app/apps/api
 RUN apk add --no-cache libc6-compat openssl
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+# bring API node_modules
+COPY --from=deps /app/apps/api/node_modules ./node_modules
+# bring the whole repo so tsup can see packages/**
+COPY . /app
+# build the API (tsup bundles to dist/start.js) and generate prisma client
 RUN npm run build
 
 # -------- run --------
 FROM node:20-alpine AS runner
-WORKDIR /app
+WORKDIR /app/apps/api
 ENV NODE_ENV=production
-# Accept build-time metadata (optionally passed via --build-arg)
+# optional metadata (your CI can pass build args)
 ARG BUILD_TIME
 ARG GIT_COMMIT
-# Expose as runtime env vars for the /version endpoint
 ENV BUILD_TIME=${BUILD_TIME}
 ENV GIT_COMMIT=${GIT_COMMIT}
 ENV COMMIT_SHA=${GIT_COMMIT}
-
-# (Optional) nicer stack traces in prod
 ENV NODE_OPTIONS=--enable-source-maps
 
-# App files
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/package-lock.json* ./
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/prisma ./prisma
+# copy minimal runtime
+COPY --from=builder /app/apps/api/package.json ./package.json
+COPY --from=builder /app/apps/api/node_modules ./node_modules
+COPY --from=builder /app/apps/api/dist ./dist
+COPY --from=builder /app/apps/api/prisma ./prisma
 
 EXPOSE 8080
 CMD ["node", "dist/start.js"]

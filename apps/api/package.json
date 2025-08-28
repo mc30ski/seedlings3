@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/start.ts",
+    "build": "tsup --config tsup.config.ts && prisma generate",
     "start": "node --enable-source-maps dist/start.js",
-    "build": "tsc -p tsconfig.json && node ./scripts/fix-esm-extensions.mjs && prisma generate",
+    "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
