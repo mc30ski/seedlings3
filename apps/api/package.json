@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/start.ts",
-    "start": "node --enable-source-maps ./dist/start.js",
-    "build": "tsc -p tsconfig.json",
+    "start": "node --enable-source-maps dist/start.js",
+    "build": "tsup --config tsup.config.ts && prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
@@ -28,6 +28,7 @@
     "@types/node": "^20.19.11",
     "prisma": "5.16.2",
     "ts-node": "^10.9.2",
+    "tsup": "^8.5.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^1.5.0"
