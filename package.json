@@ -1,5 +1,5 @@
 {
-  "name": "hello-world-monorepo",
+  "name": "seedlings3-monorepo",
   "private": true,
   "packageManager": "npm@10.8.2",
   "workspaces": [
