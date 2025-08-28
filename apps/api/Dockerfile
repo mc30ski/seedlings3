@@ -19,7 +19,13 @@ RUN npm run build
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app/apps/api
 ENV NODE_ENV=production
-# Optional metadata for /version
+
+# ✅ Add the OpenSSL runtime lib so Prisma can load its engine
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates openssl libssl3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Optional metadata
 ARG BUILD_TIME
 ARG GIT_COMMIT
 ENV BUILD_TIME=${BUILD_TIME}
@@ -27,7 +33,6 @@ ENV GIT_COMMIT=${GIT_COMMIT}
 ENV COMMIT_SHA=${GIT_COMMIT}
 ENV NODE_OPTIONS=--enable-source-maps
 
-# Minimal runtime payload
 COPY --from=builder /app/apps/api/package.json ./package.json
 COPY --from=builder /app/apps/api/node_modules ./node_modules
 COPY --from=builder /app/apps/api/dist ./dist
