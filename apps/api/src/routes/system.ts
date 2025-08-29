@@ -5,6 +5,8 @@ export default async function systemRoutes(app: FastifyInstance) {
   // Simple hello
   app.get("/hello", async () => ({ message: "Hello from API" }));
 
+  app.get("/hello2", async () => ({ message: "Hello from API2" }));
+
   // K8s/Cloud Run-friendly healthz (200 if app is up; 503 if DB is down)
   app.get("/healthz", async (req, reply) => {
     try {
