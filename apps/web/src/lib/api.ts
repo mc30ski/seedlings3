@@ -1,10 +1,28 @@
+// apps/web/src/lib/api.ts
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
+const IS_PROD = process.env.NODE_ENV === "production";
+
+// Attach any dev/mock auth headers here
 function authHeaders(h: Headers) {
+  // Existing dev Authorization (kept as-is)
   if (typeof window !== "undefined") {
     const id = localStorage.getItem("dev_clerkUserId");
     if (id) h.set("Authorization", `Bearer dev-mock:${id}`);
+  }
+
+  // NEW: dev-only role override header for API bypass
+  if (!IS_PROD && typeof window !== "undefined") {
+    try {
+      const role = localStorage.getItem("seedlings3.devRole");
+      if (role === "ADMIN" || role === "WORKER") {
+        h.set("X-Dev-Role", role);
+      }
+    } catch {
+      // ignore storage errors
+    }
   }
 }
 
@@ -20,6 +38,7 @@ async function request<T>(
     method,
     headers,
     credentials: "include",
+    cache: "no-store",
   };
 
   if (body !== undefined) {

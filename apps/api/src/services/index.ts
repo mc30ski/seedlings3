@@ -167,26 +167,42 @@ export const services: Services = {
       });
     },
 
-    async retire(id) {
+    async retire(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
+
         const eq = await tx.equipment.findUnique({ where: { id } });
-        if (!eq)
+        if (!eq) {
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+        }
+
+        // No-op if already retired
         if (eq.status === "RETIRED") return eq;
 
+        // 1) Explicit guard: cannot retire while currently checked out
+        if (eq.status === "CHECKED_OUT") {
+          throw new ServiceError(
+            "CANNOT_RETIRE_WHILE_CHECKED_OUT",
+            "Cannot retire equipment while it is checked out",
+            409
+          );
+        }
+
+        // 2) Backstop: if any active checkout rows exist, also block (race safety)
         const active = await hasActiveCheckout(tx, id);
-        if (active)
+        if (active) {
           throw new ServiceError(
             "ACTIVE_CHECKOUT_EXISTS",
             "Equipment has an active checkout",
             409
           );
+        }
 
         const updated = await tx.equipment.update({
           where: { id },
           data: { status: "RETIRED", retiredAt: now() },
         });
+
         await writeAudit(tx, "EQUIPMENT_RETIRED", undefined, id, {});
         return updated;
       });

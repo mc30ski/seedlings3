@@ -3,8 +3,9 @@ import { Container, Heading, Box, Text, Tabs } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
-import DevRoleSwitch from "../src/components/DevRoleSwitch"; // remove if you don't use this
+import DevRoleSwitch from "../src/components/DevRoleSwitch";
 import { apiGet } from "../src/lib/api";
+import { effectiveRoleGuards } from "../src/lib/devRole";
 
 type Me = {
   id: string;
@@ -23,9 +24,21 @@ export default function HomePage() {
       .catch(() => setMe(null));
   }, []);
 
-  const isWorker = !!me?.roles?.includes("WORKER");
-  const isAdmin = !!me?.roles?.includes("ADMIN");
+  const [, force] = useState(0);
+  useEffect(() => {
+    const onChange = () => force((n) => n + 1);
+    window.addEventListener("seedlings3:dev-role-changed", onChange);
+    return () =>
+      window.removeEventListener("seedlings3:dev-role-changed", onChange);
+  }, []);
+
+  const { isAdmin, isWorker } = effectiveRoleGuards(me?.roles);
   const defaultTopTab = isWorker ? "worker" : isAdmin ? "admin" : "worker";
+
+  // at top of the page component
+  const [topTab, setTopTab] = useState<"worker" | "admin">(
+    (defaultTopTab as "worker" | "admin") ?? "worker"
+  );
 
   return (
     <Container maxW="5xl" py={8}>
@@ -36,11 +49,6 @@ export default function HomePage() {
         <DevRoleSwitch />
       </Box>
 
-      {!me && (
-        <Text color="orange.500" mb={3}>
-          Not signed in (DEV mock). Pick a DEV user above.
-        </Text>
-      )}
       {me && !me.isApproved && (
         <Text color="red.500" mb={3}>
           Awaiting admin approval…
@@ -48,7 +56,12 @@ export default function HomePage() {
       )}
 
       {(isWorker || isAdmin) && me?.isApproved && (
-        <Tabs.Root defaultValue={defaultTopTab}>
+        <Tabs.Root
+          value={topTab}
+          onValueChange={(d) => setTopTab(d.value as "worker" | "admin")}
+          lazyMount
+          unmountOnExit
+        >
           <Tabs.List mb={4}>
             {isWorker && <Tabs.Trigger value="worker">Worker</Tabs.Trigger>}
             {isAdmin && <Tabs.Trigger value="admin">Admin</Tabs.Trigger>}
@@ -56,21 +69,30 @@ export default function HomePage() {
 
           {isWorker && (
             <Tabs.Content value="worker">
-              <WorkerEquipment />
+              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
+                <Tabs.List mb={4}>
+                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
+                  {/* Future: add more Worker tabs here */}
+                </Tabs.List>
+
+                <Tabs.Content value="equipment">
+                  <WorkerEquipment />
+                </Tabs.Content>
+              </Tabs.Root>
             </Tabs.Content>
           )}
 
           {isAdmin && (
             <Tabs.Content value="admin">
-              {/* Nested tabs for Admin sections */}
-              <Tabs.Root defaultValue="equipment">
+              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
-                  <AdminEquipment />
+                  {/* force a fresh mount whenever you switch into admin */}
+                  <AdminEquipment key={`admin-${topTab}`} />
                 </Tabs.Content>
 
                 <Tabs.Content value="audit">

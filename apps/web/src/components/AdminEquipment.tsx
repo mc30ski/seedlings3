@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Box,
   Button,
@@ -20,6 +20,12 @@ type Equipment = {
   status: EquipmentStatus;
 };
 
+const notifyEquipmentUpdated = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
+  }
+};
+
 export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [shortDesc, setShort] = useState("");
@@ -27,6 +33,21 @@ export default function AdminEquipment() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    // your existing fetch and setState
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const onUpd = () => load();
+    window.addEventListener("seedlings3:equipment-updated", onUpd);
+    return () =>
+      window.removeEventListener("seedlings3:equipment-updated", onUpd);
+  }, [load]);
 
   async function refresh() {
     setLoading(true);
@@ -58,6 +79,7 @@ export default function AdminEquipment() {
       setShort("");
       setLong("");
       toaster.success({ title: "Created" });
+      notifyEquipmentUpdated();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -74,6 +96,8 @@ export default function AdminEquipment() {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/retire`);
       toaster.info({ title: "Retired" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -90,6 +114,8 @@ export default function AdminEquipment() {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/unretire`);
       toaster.success({ title: "Unretired" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -106,6 +132,8 @@ export default function AdminEquipment() {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/release`);
       toaster.success({ title: "Released" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -122,6 +150,8 @@ export default function AdminEquipment() {
     try {
       await apiDelete(`/api/v1/admin/equipment/${id}`);
       toaster.warning({ title: "Deleted" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -138,6 +168,8 @@ export default function AdminEquipment() {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/maintenance/start`);
       toaster.info({ title: "Maintenance started" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -154,6 +186,8 @@ export default function AdminEquipment() {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/maintenance/end`);
       toaster.success({ title: "Maintenance ended" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -241,7 +275,6 @@ export default function AdminEquipment() {
                   </Button>
                 )}
 
-                {/* Retire ↔ Unretire */}
                 {item.status === "RETIRED" ? (
                   <Button
                     size="sm"
@@ -256,9 +289,14 @@ export default function AdminEquipment() {
                   <Button
                     size="sm"
                     onClick={() => retire(item.id)}
-                    disabled={!!busyId}
+                    disabled={!!busyId || item.status === "CHECKED_OUT"}
                     loading={busyId === item.id}
                     variant="outline"
+                    title={
+                      item.status === "CHECKED_OUT"
+                        ? "Cannot retire while checked out"
+                        : undefined
+                    }
                   >
                     Retire
                   </Button>

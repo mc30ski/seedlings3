@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Box, Button, Heading, Stack, Text, Badge } from "@chakra-ui/react";
 import { apiGet, apiPost } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -12,6 +12,12 @@ type Equipment = {
   status: EquipmentStatus;
 };
 
+const notifyEquipmentUpdated = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
+  }
+};
+
 export default function WorkerEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [mine, setMine] = useState<Equipment[]>([]);
@@ -19,6 +25,21 @@ export default function WorkerEquipment() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const myIds = useMemo(() => new Set(mine.map((m) => m.id)), [mine]);
+
+  const load = useCallback(async () => {
+    // your existing fetch and setState
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const onUpd = () => load();
+    window.addEventListener("seedlings3:equipment-updated", onUpd);
+    return () =>
+      window.removeEventListener("seedlings3:equipment-updated", onUpd);
+  }, [load]);
 
   async function refresh() {
     setLoading(true);
@@ -48,6 +69,8 @@ export default function WorkerEquipment() {
     try {
       await apiPost(`/api/v1/equipment/${id}/claim`);
       toaster.success({ title: "Claimed" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({
@@ -64,6 +87,8 @@ export default function WorkerEquipment() {
     try {
       await apiPost(`/api/v1/equipment/${id}/release`);
       toaster.success({ title: "Released" });
+      notifyEquipmentUpdated();
+      load();
       await refresh();
     } catch (err) {
       toaster.error({

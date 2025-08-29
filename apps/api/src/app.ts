@@ -62,6 +62,8 @@ export async function buildApp() {
       else cb(null, false);
     },
     credentials: true,
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Dev-Role"],
   };
 
   await app.register(cors, corsOptions);
@@ -73,6 +75,37 @@ export async function buildApp() {
 
   await app.register(
     async (api) => {
+      const bypassEnabled =
+        (process.env.DEV_ROLE_OVERRIDE ??
+          (process.env.NODE_ENV !== "production" ? "1" : "0")) === "1";
+
+      if (bypassEnabled) {
+        api.addHook("onRequest", async (req) => {
+          const hdr = (
+            req.headers["x-dev-role"] as string | undefined
+          )?.toUpperCase();
+          const envRole = (process.env.DEV_ROLE ?? "").toUpperCase();
+          const role =
+            hdr === "ADMIN" || hdr === "WORKER"
+              ? hdr
+              : envRole === "ADMIN" || envRole === "WORKER"
+                ? envRole
+                : "WORKER";
+
+          // attach synthetic, approved identity for dev
+          (req as any).user = {
+            id: "dev-bypass", // fake id; not used against DB
+            clerkUserId: "dev-bypass", // present so code that reads it won’t crash
+            isApproved: true,
+            roles: role === "ADMIN" ? ["ADMIN", "WORKER"] : ["WORKER"],
+            email:
+              role === "ADMIN" ? "admin@example.com" : "worker@example.com",
+            displayName: role === "ADMIN" ? "Admin (DEV)" : "Worker (DEV)",
+          };
+          (req as any).__devBypassAuthz = true; // <- flag RBAC to skip DB checks
+        });
+      }
+
       // auth + rbac only apply inside this /api/v1 scope
       await api.register(devAuth);
       await api.register(rbac);
