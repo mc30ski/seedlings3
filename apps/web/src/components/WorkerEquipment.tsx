@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { Box, Button, Heading, Stack, Text, Badge } from "@chakra-ui/react";
+import {
+  Box,
+  Button,
+  Heading,
+  Stack,
+  Text,
+  Badge,
+  Spinner,
+} from "@chakra-ui/react";
 import { apiGet, apiPost } from "../lib/api";
 import { toaster } from "./ui/toaster";
 import { getErrorMessage } from "../lib/errors";
@@ -18,6 +26,12 @@ const notifyEquipmentUpdated = () => {
   }
 };
 
+const LoadingCenter = () => (
+  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
+    <Spinner size="lg" />
+  </Box>
+);
+
 export default function WorkerEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [mine, setMine] = useState<Equipment[]>([]);
@@ -27,21 +41,6 @@ export default function WorkerEquipment() {
   const myIds = useMemo(() => new Set(mine.map((m) => m.id)), [mine]);
 
   const load = useCallback(async () => {
-    // your existing fetch and setState
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    const onUpd = () => load();
-    window.addEventListener("seedlings3:equipment-updated", onUpd);
-    return () =>
-      window.removeEventListener("seedlings3:equipment-updated", onUpd);
-  }, [load]);
-
-  async function refresh() {
     setLoading(true);
     try {
       const [all, mineList] = await Promise.all([
@@ -58,23 +57,29 @@ export default function WorkerEquipment() {
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    void refresh();
   }, []);
 
-  async function claim(id: string) {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onUpd = () => void load();
+    window.addEventListener("seedlings3:equipment-updated", onUpd);
+    return () =>
+      window.removeEventListener("seedlings3:equipment-updated", onUpd);
+  }, [load]);
+
+  async function checkout(id: string) {
     setBusyId(id);
     try {
       await apiPost(`/api/v1/equipment/${id}/claim`);
-      toaster.success({ title: "Claimed" });
+      toaster.success({ title: "Checked out" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
-        title: "Could not claim",
+        title: "Could not check out",
         description: getErrorMessage(err),
       });
     } finally {
@@ -82,17 +87,16 @@ export default function WorkerEquipment() {
     }
   }
 
-  async function release(id: string) {
+  async function returnItem(id: string) {
     setBusyId(id);
     try {
       await apiPost(`/api/v1/equipment/${id}/release`);
-      toaster.success({ title: "Released" });
+      toaster.success({ title: "Returned" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
-        title: "Could not release",
+        title: "Could not return",
         description: getErrorMessage(err),
       });
     } finally {
@@ -105,30 +109,32 @@ export default function WorkerEquipment() {
       <Heading size="md" mb={4}>
         Equipment
       </Heading>
+
       <Stack gap="3">
-        {loading && <Text>Loading…</Text>}
+        {loading && <LoadingCenter />}
+
         {!loading && items.length === 0 && <Text>No equipment.</Text>}
+
         {!loading &&
           items.map((item) => {
             const isMine = myIds.has(item.id);
-            const canReleaseMine = item.status === "CHECKED_OUT" && isMine;
-            const canClaim = item.status === "AVAILABLE";
+            const canReturnMine = item.status === "CHECKED_OUT" && isMine;
+            const canCheckout = item.status === "AVAILABLE";
 
-            // Single button that swaps Claim <-> Release
-            let label = "Claim";
+            let label = "Checkout";
             let onClick: (() => void) | undefined;
             let enabled = false;
 
-            if (canReleaseMine) {
-              label = "Release";
-              onClick = () => void release(item.id);
+            if (canReturnMine) {
+              label = "Return";
+              onClick = () => void returnItem(item.id);
               enabled = true;
-            } else if (canClaim) {
-              label = "Claim";
-              onClick = () => void claim(item.id);
+            } else if (canCheckout) {
+              label = "Checkout";
+              onClick = () => void checkout(item.id);
               enabled = true;
             } else {
-              label = "Claim"; // disabled for MAINTENANCE or checked out by someone else
+              label = "Checkout"; // disabled for maintenance or someone else's checkout
               enabled = false;
             }
 

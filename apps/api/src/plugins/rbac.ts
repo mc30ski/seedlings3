@@ -1,8 +1,8 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { services } from "../services";
-import { prisma } from "../db/prisma"; // <-- add this
-import "@fastify/sensible"; // brings in app.httpErrors typing
+import { prisma } from "../db/prisma";
+import "@fastify/sensible"; // for app.httpErrors typing
 
 type Role = "ADMIN" | "WORKER";
 
@@ -22,8 +22,12 @@ const devBypassEnabled =
 
 export default fp(async (app: FastifyInstance) => {
   app.decorate("requireApproved", async (req: any, _reply: any) => {
+    // Allow per-request "prod simulation" to *disable* the bypass
+    const simulateProd =
+      (req.headers["x-simulate-prod"] as string | undefined) === "1";
+
     // ---- DEV BYPASS (with DB upsert so FKs work) ----
-    if (devBypassEnabled) {
+    if (devBypassEnabled && !simulateProd) {
       const devRole = devRoleFromReq(req as FastifyRequest);
       if (devRole) {
         const clerkUserId = devRole === "ADMIN" ? "dev-admin" : "dev-worker";
@@ -32,14 +36,14 @@ export default fp(async (app: FastifyInstance) => {
         const displayName =
           devRole === "ADMIN" ? "Admin (DEV)" : "Worker (DEV)";
 
-        // Ensure the dev user exists (your schema requires clerkUserId)
+        // Ensure the dev user exists (schema requires clerkUserId)
         const user = await prisma.user.upsert({
           where: { clerkUserId },
           update: { isApproved: true, email, displayName },
           create: { clerkUserId, isApproved: true, email, displayName },
         });
 
-        // Ensure roles (idempotent composite key userId+role)
+        // Ensure roles (idempotent on composite key userId+role)
         if (devRole === "ADMIN") {
           await prisma.userRole.upsert({
             where: { userId_role: { userId: user.id, role: "ADMIN" } },
@@ -59,7 +63,7 @@ export default fp(async (app: FastifyInstance) => {
           });
         }
 
-        // Attach a real, approved user with roles — services can now use req.user.id safely
+        // Attach a real, approved user with roles — downstream handlers can trust req.user.id
         req.user = {
           id: user.id,
           clerkUserId,
@@ -68,12 +72,12 @@ export default fp(async (app: FastifyInstance) => {
           email: user.email,
           displayName: user.displayName,
         };
-        return; // bypass DB approval/role checks for dev
+        return; // bypass real auth/approval checks for dev
       }
     }
     // ---- /DEV BYPASS ----
 
-    // Production / no dev override: real auth + approval
+    // Production / no dev override / simulated prod: real auth + approval
     if (!req.auth?.clerkUserId)
       throw app.httpErrors.unauthorized("Missing auth");
     const me = await services.users.me(req.auth.clerkUserId);
@@ -89,9 +93,21 @@ export default fp(async (app: FastifyInstance) => {
   });
 });
 
+// ---- Type augmentation (so req.user is typed) ----
 declare module "fastify" {
   interface FastifyInstance {
     requireApproved(req: any, reply: any): Promise<void>;
     requireRole(req: any, reply: any, role: "ADMIN" | "WORKER"): Promise<void>;
+  }
+
+  interface FastifyRequest {
+    user?: {
+      id: string;
+      clerkUserId?: string | null;
+      isApproved: boolean;
+      roles: ("ADMIN" | "WORKER")[];
+      email?: string | null;
+      displayName?: string | null;
+    };
   }
 }

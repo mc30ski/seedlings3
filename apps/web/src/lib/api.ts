@@ -1,19 +1,25 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-// Treat Vercel/Next production builds as prod
-const IS_PROD = process.env.NODE_ENV === "production";
+// 'Prod mode' toggle stored by DevRoleSwitch
+function isSimulateProd(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem("seedlings3.simulateProd") === "1";
+}
 
-// Attach dev/mock headers ONLY in development
-function authHeaders(h: Headers) {
-  if (IS_PROD) return; // ⬅️ hard stop in prod
+// Attach headers based on the toggle only
+function attachAuthHeaders(h: Headers) {
+  if (isSimulateProd()) {
+    // Tell API to disable the dev bypass for this request
+    h.set("X-Simulate-Prod", "1");
+    return;
+  }
 
+  // Dev-only mock headers (role + mock user id)
   if (typeof window !== "undefined") {
-    // (optional) dev mock auth id
     const id = localStorage.getItem("dev_clerkUserId");
     if (id) h.set("Authorization", `Bearer dev-mock:${id}`);
 
-    // dev-only role override
     const role = localStorage.getItem("seedlings3.devRole");
     if (role === "ADMIN" || role === "WORKER") {
       h.set("X-Dev-Role", role);
@@ -27,7 +33,7 @@ async function request<T>(
   body?: unknown
 ): Promise<T> {
   const headers = new Headers();
-  authHeaders(headers);
+  attachAuthHeaders(headers);
 
   const init: RequestInit = {
     method,

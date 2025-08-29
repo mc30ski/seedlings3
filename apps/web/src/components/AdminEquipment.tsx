@@ -7,6 +7,7 @@ import {
   Text,
   Input,
   Badge,
+  Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -26,6 +27,12 @@ const notifyEquipmentUpdated = () => {
   }
 };
 
+const LoadingCenter = () => (
+  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
+    <Spinner size="lg" />
+  </Box>
+);
+
 export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [shortDesc, setShort] = useState("");
@@ -35,21 +42,6 @@ export default function AdminEquipment() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    // your existing fetch and setState
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    const onUpd = () => load();
-    window.addEventListener("seedlings3:equipment-updated", onUpd);
-    return () =>
-      window.removeEventListener("seedlings3:equipment-updated", onUpd);
-  }, [load]);
-
-  async function refresh() {
     setLoading(true);
     try {
       const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
@@ -62,11 +54,18 @@ export default function AdminEquipment() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    refresh();
-  }, []);
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const onUpd = () => void load();
+    window.addEventListener("seedlings3:equipment-updated", onUpd);
+    return () =>
+      window.removeEventListener("seedlings3:equipment-updated", onUpd);
+  }, [load]);
 
   async function create() {
     if (!shortDesc.trim()) {
@@ -80,7 +79,7 @@ export default function AdminEquipment() {
       setLong("");
       toaster.success({ title: "Created" });
       notifyEquipmentUpdated();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Create failed",
@@ -97,8 +96,7 @@ export default function AdminEquipment() {
       await apiPost(`/api/v1/admin/equipment/${id}/retire`);
       toaster.info({ title: "Retired" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Retire failed",
@@ -115,8 +113,7 @@ export default function AdminEquipment() {
       await apiPost(`/api/v1/admin/equipment/${id}/unretire`);
       toaster.success({ title: "Unretired" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Unretire failed",
@@ -133,8 +130,7 @@ export default function AdminEquipment() {
       await apiPost(`/api/v1/admin/equipment/${id}/release`);
       toaster.success({ title: "Released" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Release failed",
@@ -151,8 +147,7 @@ export default function AdminEquipment() {
       await apiDelete(`/api/v1/admin/equipment/${id}`);
       toaster.warning({ title: "Deleted" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Delete failed",
@@ -169,8 +164,7 @@ export default function AdminEquipment() {
       await apiPost(`/api/v1/admin/equipment/${id}/maintenance/start`);
       toaster.info({ title: "Maintenance started" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "Start maintenance failed",
@@ -187,8 +181,7 @@ export default function AdminEquipment() {
       await apiPost(`/api/v1/admin/equipment/${id}/maintenance/end`);
       toaster.success({ title: "Maintenance ended" });
       notifyEquipmentUpdated();
-      load();
-      await refresh();
+      await load();
     } catch (err) {
       toaster.error({
         title: "End maintenance failed",
@@ -224,7 +217,8 @@ export default function AdminEquipment() {
 
       {/* List */}
       <Stack gap="3">
-        {loading && <Text>Loading…</Text>}
+        {loading && <LoadingCenter />}
+
         {!loading &&
           items.map((item) => (
             <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
@@ -275,6 +269,7 @@ export default function AdminEquipment() {
                   </Button>
                 )}
 
+                {/* Retire ↔ Unretire */}
                 {item.status === "RETIRED" ? (
                   <Button
                     size="sm"
@@ -292,11 +287,6 @@ export default function AdminEquipment() {
                     disabled={!!busyId || item.status === "CHECKED_OUT"}
                     loading={busyId === item.id}
                     variant="outline"
-                    title={
-                      item.status === "CHECKED_OUT"
-                        ? "Cannot retire while checked out"
-                        : undefined
-                    }
                   >
                     Retire
                   </Button>
@@ -315,6 +305,7 @@ export default function AdminEquipment() {
               </Stack>
             </Box>
           ))}
+
         {!loading && items.length === 0 && <Text>No equipment yet.</Text>}
       </Stack>
     </Box>

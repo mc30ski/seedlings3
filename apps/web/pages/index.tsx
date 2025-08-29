@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Container, Heading, Box, Text, Tabs } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
+import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
 import DevRoleSwitch from "../src/components/DevRoleSwitch";
@@ -17,45 +18,65 @@ type Me = {
 
 export default function HomePage() {
   const [me, setMe] = useState<Me | null>(null);
+  const [meLoading, setMeLoading] = useState(true);
 
-  useEffect(() => {
-    apiGet<Me>("/api/v1/me")
-      .then((res) => setMe(res))
-      .catch(() => setMe(null));
+  // Fetch /me (used on mount and when dev-role/prod toggle changes)
+  const loadMe = useCallback(async () => {
+    setMeLoading(true);
+    try {
+      const data = await apiGet<Me>("/api/v1/me");
+      setMe(data);
+    } catch {
+      setMe(null);
+    } finally {
+      setMeLoading(false);
+    }
   }, []);
 
-  const [, force] = useState(0);
   useEffect(() => {
-    const onChange = () => force((n) => n + 1);
+    void loadMe();
+  }, [loadMe]);
+
+  // Re-fetch /me when the dev role or prod-mode toggle changes
+  useEffect(() => {
+    const onChange = () => void loadMe();
     window.addEventListener("seedlings3:dev-role-changed", onChange);
     return () =>
       window.removeEventListener("seedlings3:dev-role-changed", onChange);
-  }, []);
+  }, [loadMe]);
 
   const { isAdmin, isWorker } = effectiveRoleGuards(me?.roles);
-  const defaultTopTab = isWorker ? "worker" : isAdmin ? "admin" : "worker";
 
-  // at top of the page component
-  const [topTab, setTopTab] = useState<"worker" | "admin">(
-    (defaultTopTab as "worker" | "admin") ?? "worker"
-  );
+  // Top-level tab (worker/admin). Start on worker; keep it valid as roles change.
+  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
+  useEffect(() => {
+    // If current tab is no longer allowed, switch to the allowed one.
+    if (topTab === "admin" && !isAdmin)
+      setTopTab(isWorker ? "worker" : "worker");
+    if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
+  }, [isAdmin, isWorker, topTab]);
 
   return (
     <Container maxW="5xl" py={8}>
       <Heading mb={4}>Seedlings Lawn Care</Heading>
 
-      {/* Dev-only: mock user switcher (remove if not needed) */}
+      {/* Dev tools (role switch + prod-mode toggle) */}
       <Box mb={4}>
         <DevRoleSwitch />
       </Box>
 
-      {me && !me.isApproved && (
+      {/* Lightweight loading indicator while /me resolves */}
+      {meLoading && <Text mb={3}>Loading…</Text>}
+
+      {/* Real user state (optional) */}
+      {!meLoading && me && !me.isApproved && (
         <Text color="red.500" mb={3}>
           Awaiting admin approval…
         </Text>
       )}
 
-      {(isWorker || isAdmin) && me?.isApproved && (
+      {/* Main tabs only when we know roles and user is approved */}
+      {!meLoading && (isWorker || isAdmin) && me?.isApproved && (
         <Tabs.Root
           value={topTab}
           onValueChange={(d) => setTopTab(d.value as "worker" | "admin")}
@@ -67,21 +88,28 @@ export default function HomePage() {
             {isAdmin && <Tabs.Trigger value="admin">Admin</Tabs.Trigger>}
           </Tabs.List>
 
+          {/* Worker area (nested tabs, ready for future sections) */}
           {isWorker && (
             <Tabs.Content value="worker">
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  {/* Future: add more Worker tabs here */}
+                  <Tabs.Trigger value="mine">My Equipment</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
+
+                <Tabs.Content value="mine">
+                  {/* NEW: only items the current user has checked out */}
+                  <WorkerMyEquipment />
+                </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
           )}
 
+          {/* Admin area (nested tabs) */}
           {isAdmin && (
             <Tabs.Content value="admin">
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
@@ -91,7 +119,7 @@ export default function HomePage() {
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
-                  {/* force a fresh mount whenever you switch into admin */}
+                  {/* Fresh mount when switching into Admin tab */}
                   <AdminEquipment key={`admin-${topTab}`} />
                 </Tabs.Content>
 
