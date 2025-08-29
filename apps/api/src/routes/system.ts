@@ -15,6 +15,15 @@ export default async function systemRoutes(app: FastifyInstance) {
   });
   */
 
+  app.get("/hello3", async (req, reply) => {
+    try {
+      return { ok: true, db: "up" };
+    } catch (err) {
+      req.log.error({ err }, "db health check failed");
+      return reply.code(503).send({ ok: false, db: "down" });
+    }
+  });
+
   // K8s/Cloud Run-friendly healthz (200 if app is up; 503 if DB is down)
   app.get("/healthz", async (req, reply) => {
     try {
