@@ -169,7 +169,7 @@ export const services: Services = {
     /** Non-retired; includes RESERVED/CHECKED_OUT/MAINTENANCE */
     async listForWorkers() {
       return prisma.equipment.findMany({
-        where: { status: { not: EquipmentStatus.RETIRED } },
+        where: { status: { in: [EquipmentStatus.AVAILABLE] } },
         orderBy: { createdAt: "desc" },
       });
     },

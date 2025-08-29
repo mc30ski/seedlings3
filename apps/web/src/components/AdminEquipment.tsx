@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Box,
   Button,
@@ -8,6 +8,7 @@ import {
   Input,
   Badge,
   Spinner,
+  HStack,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -20,12 +21,10 @@ type EquipmentStatus =
   | "MAINTENANCE"
   | "RETIRED";
 
-type Holder = {
+type HolderInfo = {
   userId: string;
   displayName?: string | null;
   email?: string | null;
-  reservedAt: string | Date;
-  checkedOutAt?: string | Date | null;
   state: "RESERVED" | "CHECKED_OUT";
 };
 
@@ -34,8 +33,17 @@ type Equipment = {
   shortDesc: string;
   longDesc: string;
   status: EquipmentStatus;
-  holder?: Holder | null;
+  holder?: HolderInfo | null;
 };
+
+const STATUS_OPTIONS: ("ALL" | EquipmentStatus)[] = [
+  "ALL",
+  "AVAILABLE",
+  "RESERVED",
+  "CHECKED_OUT",
+  "MAINTENANCE",
+  "RETIRED",
+];
 
 const notifyEquipmentUpdated = () => {
   if (typeof window !== "undefined") {
@@ -56,6 +64,11 @@ export default function AdminEquipment() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Status filter (button chips)
+  const [statusFilter, setStatusFilter] = useState<EquipmentStatus | "ALL">(
+    "ALL"
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,6 +95,11 @@ export default function AdminEquipment() {
     return () =>
       window.removeEventListener("seedlings3:equipment-updated", onUpd);
   }, [load]);
+
+  const visibleItems = useMemo(() => {
+    if (statusFilter === "ALL") return items;
+    return items.filter((i) => i.status === statusFilter);
+  }, [items, statusFilter]);
 
   async function create() {
     if (!shortDesc.trim()) {
@@ -210,9 +228,27 @@ export default function AdminEquipment() {
 
   return (
     <Box>
-      <Heading size="md" mb={4}>
+      <Heading size="md" mb={3}>
         Equipment
       </Heading>
+
+      {/* Filter chips */}
+      <HStack mb={4} gap="2" wrap="wrap">
+        {STATUS_OPTIONS.map((opt) => (
+          <Button
+            key={opt}
+            size="sm"
+            variant={statusFilter === opt ? "solid" : "outline"}
+            onClick={() => setStatusFilter(opt)}
+          >
+            {opt === "ALL"
+              ? "All"
+              : opt === "CHECKED_OUT"
+                ? "Checked out"
+                : opt.charAt(0) + opt.slice(1).toLowerCase().replace("_", " ")}
+          </Button>
+        ))}
+      </HStack>
 
       {/* Create form */}
       <Stack direction="row" gap="3" mb={4}>
@@ -236,11 +272,12 @@ export default function AdminEquipment() {
         {loading && <LoadingCenter />}
 
         {!loading &&
-          items.map((item) => (
+          visibleItems.map((item) => (
             <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
               <Heading size="sm">
                 {item.shortDesc} <Badge ml={2}>{item.status}</Badge>
               </Heading>
+
               {item.holder && (
                 <Text fontSize="xs" color="gray.600" mt={1}>
                   {item.holder.state === "CHECKED_OUT"
@@ -251,13 +288,14 @@ export default function AdminEquipment() {
                     item.holder.userId.slice(0, 8)}
                 </Text>
               )}
+
               <Text fontSize="sm" color="gray.500">
                 {item.longDesc}
               </Text>
 
               {/* Actions — order: Force Release, Start/End Maintenance, Retire/Unretire, Delete */}
               <Stack mt={2} direction="row" gap="2">
-                {/* Force Release (only when CHECKED_OUT) */}
+                {/* Force Release (RESERVED or CHECKED_OUT) */}
                 <Button
                   size="sm"
                   onClick={() => release(item.id)}
@@ -292,8 +330,8 @@ export default function AdminEquipment() {
                     disabled={
                       !!busyId ||
                       item.status === "CHECKED_OUT" ||
-                      item.status === "RETIRED" ||
-                      item.status === "RESERVED"
+                      item.status === "RESERVED" ||
+                      item.status === "RETIRED"
                     }
                     loading={busyId === item.id}
                     variant="subtle"
@@ -343,7 +381,9 @@ export default function AdminEquipment() {
             </Box>
           ))}
 
-        {!loading && items.length === 0 && <Text>No equipment yet.</Text>}
+        {!loading && visibleItems.length === 0 && (
+          <Text>No equipment matching this filter.</Text>
+        )}
       </Stack>
     </Box>
   );
