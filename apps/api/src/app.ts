@@ -1,7 +1,6 @@
 import Fastify from "fastify";
 import cors, { type FastifyCorsOptions } from "@fastify/cors";
 import sensible from "@fastify/sensible";
-
 import devAuth from "./plugins/devAuth";
 import rbac from "./plugins/rbac";
 import meRoutes from "./routes/me";
@@ -12,11 +11,12 @@ import auditRoutes from "./routes/audit";
 import systemRoutes from "./routes/system";
 import versionRoutes from "./routes/version";
 import errorMapper from "./plugins/errorMapper";
+import routeList from "./routes/routeList";
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
 
-  // ---- simple global route capture + endpoint (for /__routes) ----
+  // ---- simple global route capture + endpoint ----
   type RouteRow = { method: string; path: string };
   const __routes: RouteRow[] = [];
 
@@ -34,6 +34,7 @@ export async function buildApp() {
       String(req.headers.accept ?? "").includes("application/json") ||
       (req.query as any)?.format === "json";
 
+    // de-dupe HEAD when GET exists (Fastify auto-adds HEAD)
     const hasGET = new Set(
       __routes.filter((r) => r.method === "GET").map((r) => r.path)
     );
@@ -49,7 +50,7 @@ export async function buildApp() {
     const lines = rows.map((r) => `${r.method.padEnd(6)} ${r.path}`);
     return reply.type("text/plain; charset=utf-8").send(lines.join("\n"));
   });
-  // -----------------------------------------------------------------
+  // -----------------------------------------------
 
   const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => {
@@ -64,27 +65,19 @@ export async function buildApp() {
   };
 
   await app.register(cors, corsOptions);
-  await app.register(sensible);
+  await app.register(sensible); // Register BEFORE rbac
   await app.register(errorMapper);
 
-  // Public (unguarded) routes at root
-  await app.register(systemRoutes); // /hello, /healthz  (root only)
-  await app.register(versionRoutes); // /version and /api/v1/version (public)
+  await app.register(systemRoutes);
+  await app.register(versionRoutes);
 
-  // Guarded API under /api/v1
   await app.register(
     async (api) => {
-      await api.register(devAuth); // must attach request.user
-      await api.register(rbac, {
-        defaultPolicy: {
-          public: false,
-          requireAuth: true,
-          approved: true,
-          // roles undefined by default; plugin applies safe path fallbacks
-        },
-      });
+      // auth + rbac only apply inside this /api/v1 scope
+      await api.register(devAuth);
+      await api.register(rbac);
 
-      // Register feature routes WITHOUT per-route prefixes here
+      // Register your feature routes here WITHOUT per-route prefixes
       await api.register(meRoutes);
       await api.register(workerRoutes);
       await api.register(adminRoutes);
