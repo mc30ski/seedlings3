@@ -1,7 +1,12 @@
 // apps/api/src/services/index.ts
 import { prisma } from "../db/prisma";
-import { Prisma, PrismaClient } from "@prisma/client";
-import type { Services } from "../types/services";
+import {
+  Prisma,
+  PrismaClient,
+  AuditAction,
+  EquipmentStatus,
+} from "@prisma/client";
+import type { Services, EquipmentWithHolder } from "../types/services";
 import { ServiceError } from "../lib/errors";
 
 type Tx = Prisma.TransactionClient;
@@ -9,6 +14,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 const now = () => new Date();
 
+/** Row-level lock helper */
 async function lockEquipment(tx: Tx, id: string) {
   await tx.$queryRawUnsafe(
     `SELECT id FROM "Equipment" WHERE id = $1 FOR UPDATE`,
@@ -16,6 +22,16 @@ async function lockEquipment(tx: Tx, id: string) {
   );
 }
 
+/** Return the single active reservation/checkout row (releasedAt is NULL) */
+async function getActiveCheckout(tx: Tx, equipmentId: string) {
+  return tx.checkout.findFirst({
+    where: { equipmentId, releasedAt: null },
+    // If you end up allowing >1 active row (you shouldn't), you could:
+    // orderBy: { checkedOutAt: "desc" },
+  });
+}
+
+/** True if any active reservation/checkout exists */
 async function hasActiveCheckout(tx: Tx, equipmentId: string) {
   const c = await tx.checkout.count({
     where: { equipmentId, releasedAt: null },
@@ -23,47 +39,48 @@ async function hasActiveCheckout(tx: Tx, equipmentId: string) {
   return c > 0;
 }
 
-// Recompute derived status, but keep RETIRED and MAINTENANCE sticky
+/**
+ * Recompute derived status:
+ * - RETIRED / MAINTENANCE are sticky
+ * - If active row exists:
+ *    - checkedOutAt != null  => CHECKED_OUT
+ *    - checkedOutAt == null  => RESERVED
+ * - Else AVAILABLE
+ */
 async function recomputeStatus(tx: Tx, equipmentId: string) {
   const eq = await tx.equipment.findUnique({ where: { id: equipmentId } });
   if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
 
-  if (eq.status === "RETIRED" || eq.retiredAt) return eq;
-  if (eq.status === "MAINTENANCE") return eq; // sticky until admin ends
+  if (eq.status === EquipmentStatus.RETIRED || eq.retiredAt) return eq;
+  if (eq.status === EquipmentStatus.MAINTENANCE) return eq;
 
-  const activeCheckout = await hasActiveCheckout(tx, equipmentId);
-  if (activeCheckout) {
-    if (eq.status !== "CHECKED_OUT") {
+  const active = await getActiveCheckout(tx, equipmentId);
+  if (active) {
+    const target = active.checkedOutAt
+      ? EquipmentStatus.CHECKED_OUT
+      : EquipmentStatus.RESERVED;
+    if (eq.status !== target) {
       return tx.equipment.update({
         where: { id: equipmentId },
-        data: { status: "CHECKED_OUT" },
+        data: { status: target },
       });
     }
     return eq;
   }
 
-  if (eq.status !== "AVAILABLE") {
+  if (eq.status !== EquipmentStatus.AVAILABLE) {
     return tx.equipment.update({
       where: { id: equipmentId },
-      data: { status: "AVAILABLE" },
+      data: { status: EquipmentStatus.AVAILABLE },
     });
   }
   return eq;
 }
 
+/** Write audit with FK-safe fallback */
 async function writeAudit(
   db: Db,
-  action:
-    | "USER_APPROVED"
-    | "ROLE_ASSIGNED"
-    | "EQUIPMENT_CREATED"
-    | "EQUIPMENT_UPDATED"
-    | "EQUIPMENT_RETIRED"
-    | "EQUIPMENT_DELETED"
-    | "EQUIPMENT_CHECKED_OUT"
-    | "EQUIPMENT_RELEASED"
-    | "MAINTENANCE_START"
-    | "MAINTENANCE_END",
+  action: AuditAction,
   actorUserId?: string,
   equipmentId?: string,
   metadata?: unknown
@@ -73,7 +90,6 @@ async function writeAudit(
       data: { action, actorUserId, equipmentId, metadata: metadata as any },
     });
   } catch (e) {
-    // If equipmentId no longer exists, retry with NULL and stash the id in metadata
     if (
       e instanceof Prisma.PrismaClientKnownRequestError &&
       e.code === "P2003"
@@ -98,36 +114,73 @@ async function writeAudit(
 
 export const services: Services = {
   equipment: {
-    // Available = AVAILABLE and no active checkout (explicit check is defensive)
+    /** AVAILABLE & no active rows */
     async listAvailable() {
       return prisma.equipment.findMany({
         where: {
-          status: "AVAILABLE",
+          status: EquipmentStatus.AVAILABLE,
           checkouts: { none: { releasedAt: null } },
         },
         orderBy: { createdAt: "desc" },
       });
     },
 
+    /** Plain list for general use */
     async listAll() {
       return prisma.equipment.findMany({ orderBy: { createdAt: "desc" } });
     },
 
-    async listMine(userId: string) {
-      // All equipment (non-retired) that has an active checkout by this user
-      return prisma.equipment.findMany({
-        where: {
-          status: { not: "RETIRED" },
-          checkouts: { some: { userId, releasedAt: null } },
+    /** Admin list with current holder information (if any) */
+    async listAllAdmin() {
+      const rows = await prisma.equipment.findMany({
+        orderBy: { createdAt: "desc" },
+        include: {
+          checkouts: {
+            where: { releasedAt: null },
+            include: { user: true },
+            take: 1, // there should be at most one active row
+          },
         },
+      });
+
+      const mapped: EquipmentWithHolder[] = rows.map((e) => {
+        const active = e.checkouts[0];
+        const holder = active
+          ? {
+              userId: active.userId,
+              displayName: active.user?.displayName ?? null,
+              email: active.user?.email ?? null,
+              // reservedAt always exists (createdAt of the row)
+              reservedAt: active.reservedAt,
+              checkedOutAt: active.checkedOutAt ?? null,
+              state: active.checkedOutAt ? "CHECKED_OUT" : "RESERVED",
+            }
+          : null;
+
+        // strip relation arrays to satisfy Equipment shape
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { checkouts, auditEvents, ...equip } = e as any;
+        return { ...(equip as any), holder };
+      });
+
+      return mapped;
+    },
+
+    /** Non-retired; includes RESERVED/CHECKED_OUT/MAINTENANCE */
+    async listForWorkers() {
+      return prisma.equipment.findMany({
+        where: { status: { not: EquipmentStatus.RETIRED } },
         orderBy: { createdAt: "desc" },
       });
     },
 
-    // For worker list: all non-retired (so they see maintenance items too)
-    async listForWorkers() {
+    /** My active reservations/checkouts */
+    async listMine(userId: string) {
       return prisma.equipment.findMany({
-        where: { status: { not: "RETIRED" } },
+        where: {
+          status: { not: EquipmentStatus.RETIRED },
+          checkouts: { some: { userId, releasedAt: null } },
+        },
         orderBy: { createdAt: "desc" },
       });
     },
@@ -140,9 +193,13 @@ export const services: Services = {
           ...(input.qrSlug !== undefined ? { qrSlug: input.qrSlug } : {}),
         };
         const created = await tx.equipment.create({ data });
-        await writeAudit(tx, "EQUIPMENT_CREATED", undefined, created.id, {
-          input,
-        });
+        await writeAudit(
+          tx,
+          AuditAction.EQUIPMENT_CREATED,
+          undefined,
+          created.id,
+          { input }
+        );
         return created;
       });
     },
@@ -159,7 +216,7 @@ export const services: Services = {
         if (patch.qrSlug !== undefined) data.qrSlug = patch.qrSlug;
 
         const updated = await tx.equipment.update({ where: { id }, data });
-        await writeAudit(tx, "EQUIPMENT_UPDATED", undefined, id, {
+        await writeAudit(tx, AuditAction.EQUIPMENT_UPDATED, undefined, id, {
           before,
           patch,
         });
@@ -167,118 +224,103 @@ export const services: Services = {
       });
     },
 
+    /** Retire (blocked if RESERVED or CHECKED_OUT or any active row) */
     async retire(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
-
         const eq = await tx.equipment.findUnique({ where: { id } });
-        if (!eq) {
+        if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        }
+        if (eq.status === EquipmentStatus.RETIRED) return eq;
 
-        // No-op if already retired
-        if (eq.status === "RETIRED") return eq;
-
-        // 1) Explicit guard: cannot retire while currently checked out
-        if (eq.status === "CHECKED_OUT") {
+        if (
+          eq.status === EquipmentStatus.CHECKED_OUT ||
+          eq.status === EquipmentStatus.RESERVED
+        ) {
           throw new ServiceError(
-            "CANNOT_RETIRE_WHILE_CHECKED_OUT",
-            "Cannot retire equipment while it is checked out",
+            "CANNOT_RETIRE_WHILE_IN_USE",
+            "Cannot retire equipment while reserved/checked out",
             409
           );
         }
-
-        // 2) Backstop: if any active checkout rows exist, also block (race safety)
-        const active = await hasActiveCheckout(tx, id);
-        if (active) {
+        if (await hasActiveCheckout(tx, id)) {
           throw new ServiceError(
             "ACTIVE_CHECKOUT_EXISTS",
-            "Equipment has an active checkout",
+            "Equipment has an active reservation/checkout",
             409
           );
         }
 
         const updated = await tx.equipment.update({
           where: { id },
-          data: { status: "RETIRED", retiredAt: now() },
+          data: { status: EquipmentStatus.RETIRED, retiredAt: now() },
         });
-
-        await writeAudit(tx, "EQUIPMENT_RETIRED", undefined, id, {});
+        await writeAudit(tx, AuditAction.EQUIPMENT_RETIRED, undefined, id, {});
         return updated;
       });
     },
 
-    async unretire(id) {
+    async unretire(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
-
         const eq = await tx.equipment.findUnique({ where: { id } });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
 
-        // Idempotent: if it's not retired, just recompute/return current
-        if (eq.status !== "RETIRED") {
+        if (eq.status !== EquipmentStatus.RETIRED) {
           return recomputeStatus(tx, id);
         }
 
-        // Clear retired flag and set to AVAILABLE, then recompute
         await tx.equipment.update({
           where: { id },
-          data: { status: "AVAILABLE", retiredAt: null },
+          data: { status: EquipmentStatus.AVAILABLE, retiredAt: null },
         });
 
-        await writeAudit(tx, "EQUIPMENT_UPDATED", undefined, id, {
+        await writeAudit(tx, AuditAction.EQUIPMENT_UPDATED, undefined, id, {
           unretired: true,
         });
-
         return recomputeStatus(tx, id);
       });
     },
 
-    async hardDelete(id) {
+    async hardDelete(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
-
         const eq = await tx.equipment.findUnique({ where: { id } });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status !== "RETIRED")
+        if (eq.status !== EquipmentStatus.RETIRED)
           throw new ServiceError(
             "NOT_RETIRED",
             "Only retired equipment can be deleted",
             409
           );
 
-        const active = await hasActiveCheckout(tx, id);
-        if (active)
+        if (await hasActiveCheckout(tx, id))
           throw new ServiceError(
             "ACTIVE_CHECKOUT_EXISTS",
-            "Equipment has an active checkout",
+            "Equipment has an active reservation/checkout",
             409
           );
 
-        // Remove dependents that might block the delete
         await tx.checkout.deleteMany({ where: { equipmentId: id } });
-
-        // Write the audit BEFORE deleting the equipment
-        await writeAudit(tx, "EQUIPMENT_DELETED", undefined, id, {});
-
-        // Now delete the equipment (DB will SetNull any FK rows that still point to it)
+        await writeAudit(tx, AuditAction.EQUIPMENT_DELETED, undefined, id, {});
         await tx.equipment.delete({ where: { id } });
-
         return { deleted: true };
       });
     },
 
-    async assign(id, userId) {
+    /** Admin assign => directly CHECKED_OUT to that user */
+    async assign(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
+
         const eq = await tx.equipment.findUnique({ where: { id } });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status === "RETIRED")
+        if (eq.status === EquipmentStatus.RETIRED)
           throw new ServiceError("RETIRED", "Equipment retired", 409);
-        if (eq.status === "MAINTENANCE")
+        if (eq.status === EquipmentStatus.MAINTENANCE)
           throw new ServiceError(
             "IN_MAINTENANCE",
             "Equipment in maintenance",
@@ -291,103 +333,240 @@ export const services: Services = {
 
         if (await hasActiveCheckout(tx, id))
           throw new ServiceError(
-            "ALREADY_CHECKED_OUT",
-            "Equipment already checked out",
+            "ALREADY_IN_USE",
+            "Equipment already reserved/checked out",
             409
           );
 
-        const checkout = await tx.checkout.create({
-          data: { equipmentId: id, userId },
+        await tx.checkout.create({
+          data: {
+            equipmentId: id,
+            userId,
+            checkedOutAt: now(),
+          },
         });
-        await writeAudit(tx, "EQUIPMENT_CHECKED_OUT", userId, id, {
-          via: "assign",
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.CHECKED_OUT },
         });
 
-        await recomputeStatus(tx, id);
-        return checkout;
+        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {
+          via: "assign",
+        });
+        return { id, userId };
       });
     },
 
-    async release(id) {
+    /** Admin force release from RESERVED or CHECKED_OUT */
+    async release(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
-        const active = await tx.checkout.findFirst({
-          where: { equipmentId: id, releasedAt: null },
-          orderBy: { checkedOutAt: "desc" },
-        });
+        const active = await getActiveCheckout(tx, id);
         if (active) {
           await tx.checkout.update({
             where: { id: active.id },
             data: { releasedAt: now() },
           });
-          await writeAudit(tx, "EQUIPMENT_RELEASED", active.userId, id, {
-            via: "admin",
+          await tx.equipment.update({
+            where: { id },
+            data: { status: EquipmentStatus.AVAILABLE },
           });
+          await writeAudit(
+            tx,
+            AuditAction.FORCE_RELEASED,
+            active.userId,
+            id,
+            {}
+          );
         }
-        await recomputeStatus(tx, id);
         return { released: true };
       });
     },
 
-    async claim(id, userId) {
+    // ---------- Worker lifecycle (RESERVE → CHECKOUT → RETURN) ----------
+
+    /** Reserve AVAILABLE equipment */
+    async reserve(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({ where: { id } });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status === "RETIRED")
+        if (eq.retiredAt)
           throw new ServiceError("RETIRED", "Equipment retired", 409);
-        if (eq.status === "MAINTENANCE")
+        if (eq.status !== EquipmentStatus.AVAILABLE)
           throw new ServiceError(
-            "IN_MAINTENANCE",
-            "Equipment in maintenance",
+            "NOT_AVAILABLE",
+            "Equipment not available",
             409
           );
 
         if (await hasActiveCheckout(tx, id))
           throw new ServiceError(
-            "ALREADY_CHECKED_OUT",
-            "Equipment already checked out",
+            "ALREADY_IN_USE",
+            "Equipment already reserved/checked out",
             409
           );
 
-        const checkout = await tx.checkout.create({
+        // Create active row with no checkedOutAt -> RESERVED
+        await tx.checkout.create({
           data: { equipmentId: id, userId },
         });
-        await writeAudit(tx, "EQUIPMENT_CHECKED_OUT", userId, id, {
-          via: "worker",
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.RESERVED },
         });
 
-        await recomputeStatus(tx, id);
-        return checkout;
+        await writeAudit(tx, AuditAction.EQUIPMENT_RESERVED, userId, id, {});
+        return { id, userId };
       });
     },
 
-    async releaseByUser(id, userId) {
+    /** Cancel reservation (only if it's yours and not yet checked out) */
+    async cancelReservation(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
-        const active = await tx.checkout.findFirst({
-          where: { equipmentId: id, userId, releasedAt: null },
-          orderBy: { checkedOutAt: "desc" },
+        const active = await getActiveCheckout(tx, id);
+        if (!active || active.checkedOutAt)
+          throw new ServiceError(
+            "NO_ACTIVE_RESERVATION",
+            "No active reservation to cancel",
+            409
+          );
+        if (active.userId !== userId)
+          throw new ServiceError("NOT_OWNER", "Not your reservation", 403);
+
+        await tx.checkout.update({
+          where: { id: active.id },
+          data: { releasedAt: now() },
         });
-        if (active) {
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.AVAILABLE },
+        });
+
+        await writeAudit(tx, AuditAction.RESERVATION_CANCELLED, userId, id, {});
+        return { cancelled: true };
+      });
+    },
+
+    /** Checkout must follow reservation by same user */
+    async checkout(id: string, userId: string) {
+      return prisma.$transaction(async (tx) => {
+        await lockEquipment(tx, id);
+        const eq = await tx.equipment.findUnique({ where: { id } });
+        if (!eq)
+          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+        if (eq.status !== EquipmentStatus.RESERVED)
+          throw new ServiceError(
+            "NOT_RESERVED",
+            "Must reserve before checkout",
+            409
+          );
+
+        const active = await getActiveCheckout(tx, id);
+        if (!active || active.userId !== userId || active.checkedOutAt)
+          throw new ServiceError(
+            "NOT_ALLOWED",
+            "Reservation not owned or already checked out",
+            403
+          );
+
+        await tx.checkout.update({
+          where: { id: active.id },
+          data: { checkedOutAt: now() },
+        });
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.CHECKED_OUT },
+        });
+
+        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {});
+        return { id, userId };
+      });
+    },
+
+    /** Return by the same user who checked out */
+    async returnByUser(id: string, userId: string) {
+      return prisma.$transaction(async (tx) => {
+        await lockEquipment(tx, id);
+        const active = await getActiveCheckout(tx, id);
+        if (!active || !active.checkedOutAt)
+          throw new ServiceError(
+            "NO_ACTIVE_CHECKOUT",
+            "No active checkout to return",
+            409
+          );
+        if (active.userId !== userId)
+          throw new ServiceError(
+            "NOT_OWNER",
+            "You did not check this out",
+            403
+          );
+
+        await tx.checkout.update({
+          where: { id: active.id },
+          data: { releasedAt: now() },
+        });
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.AVAILABLE },
+        });
+
+        await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {});
+        return { released: true };
+      });
+    },
+
+    // ---------- Back-compat shims ----------
+
+    /** Old "claim" => reserve (first step of the new flow) */
+    async claim(id: string, userId: string) {
+      return this.reserve(id, userId);
+    },
+
+    /** Old "release" by worker => cancel reservation OR return if checked out */
+    async releaseByUser(id: string, userId: string) {
+      return prisma.$transaction(async (tx) => {
+        await lockEquipment(tx, id);
+        const active = await getActiveCheckout(tx, id);
+        if (!active) return { released: true };
+
+        if (active.userId !== userId)
+          throw new ServiceError("NOT_OWNER", "Not yours", 403);
+
+        if (active.checkedOutAt) {
           await tx.checkout.update({
             where: { id: active.id },
             data: { releasedAt: now() },
           });
-          await writeAudit(tx, "EQUIPMENT_RELEASED", userId, id, {
-            via: "worker",
+          await tx.equipment.update({
+            where: { id },
+            data: { status: EquipmentStatus.AVAILABLE },
+          });
+          await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {
+            via: "legacy_release",
+          });
+        } else {
+          await tx.checkout.update({
+            where: { id: active.id },
+            data: { releasedAt: now() },
+          });
+          await tx.equipment.update({
+            where: { id },
+            data: { status: EquipmentStatus.AVAILABLE },
+          });
+          await writeAudit(tx, AuditAction.RESERVATION_CANCELLED, userId, id, {
+            via: "legacy_release",
           });
         }
-        await recomputeStatus(tx, id);
         return { released: true };
       });
     },
   },
 
   maintenance: {
-    // Start maintenance mode (no time range)
-    async start(equipmentId) {
+    async start(equipmentId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, equipmentId);
         const eq = await tx.equipment.findUnique({
@@ -395,44 +574,46 @@ export const services: Services = {
         });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status === "RETIRED")
+        if (eq.status === EquipmentStatus.RETIRED)
           throw new ServiceError("RETIRED", "Equipment retired", 409);
 
-        const active = await hasActiveCheckout(tx, equipmentId);
-        if (active)
+        if (await hasActiveCheckout(tx, equipmentId))
           throw new ServiceError(
             "ACTIVE_CHECKOUT_EXISTS",
-            "Equipment has an active checkout",
+            "Equipment has an active reservation/checkout",
             409
           );
 
         const updated = await tx.equipment.update({
           where: { id: equipmentId },
-          data: { status: "MAINTENANCE" },
+          data: { status: EquipmentStatus.MAINTENANCE },
         });
-        await writeAudit(tx, "MAINTENANCE_START", undefined, equipmentId, {});
+        await writeAudit(
+          tx,
+          AuditAction.MAINTENANCE_START,
+          undefined,
+          equipmentId,
+          {}
+        );
         return updated;
       });
     },
 
-    // End maintenance mode → recompute (AVAILABLE unless a checkout exists somehow)
-    async end(equipmentId) {
+    async end(equipmentId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, equipmentId);
-        const eq = await tx.equipment.findUnique({
-          where: { id: equipmentId },
-        });
-        if (!eq)
-          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-
-        // Clear to AVAILABLE first; recompute will flip to CHECKED_OUT if needed
         await tx.equipment.update({
           where: { id: equipmentId },
-          data: { status: "AVAILABLE" },
+          data: { status: EquipmentStatus.AVAILABLE },
         });
-        await writeAudit(tx, "MAINTENANCE_END", undefined, equipmentId, {});
-        const after = await recomputeStatus(tx, equipmentId);
-        return after;
+        await writeAudit(
+          tx,
+          AuditAction.MAINTENANCE_END,
+          undefined,
+          equipmentId,
+          {}
+        );
+        return recomputeStatus(tx, equipmentId);
       });
     },
   },
@@ -445,24 +626,32 @@ export const services: Services = {
       return prisma.user.findMany({ where, include: { roles: true } });
     },
 
-    async approve(userId) {
+    async approve(userId: string) {
       const updated = await prisma.user.update({
         where: { id: userId },
         data: { isApproved: true },
       });
-      await writeAudit(prisma, "USER_APPROVED", userId, undefined, {});
+      await writeAudit(
+        prisma,
+        AuditAction.USER_APPROVED,
+        userId,
+        undefined,
+        {}
+      );
       return updated;
     },
 
-    async addRole(userId, role) {
+    async addRole(userId: string, role: "ADMIN" | "WORKER") {
       const roleRow = await prisma.userRole.create({
         data: { userId, role: role as any },
       });
-      await writeAudit(prisma, "ROLE_ASSIGNED", userId, undefined, { role });
+      await writeAudit(prisma, AuditAction.ROLE_ASSIGNED, userId, undefined, {
+        role,
+      });
       return roleRow;
     },
 
-    async removeRole(userId, role) {
+    async removeRole(userId: string, role: "ADMIN" | "WORKER") {
       const toDelete = await prisma.userRole.findFirst({
         where: { userId, role: role as any },
       });
@@ -471,7 +660,7 @@ export const services: Services = {
       return { deleted: true };
     },
 
-    async me(clerkUserId) {
+    async me(clerkUserId: string) {
       const user = await prisma.user.findUnique({
         where: { clerkUserId },
         include: { roles: true },

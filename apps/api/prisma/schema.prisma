@@ -16,6 +16,7 @@ enum Role {
 
 enum EquipmentStatus {
   AVAILABLE
+  RESERVED
   CHECKED_OUT
   MAINTENANCE
   RETIRED
@@ -32,6 +33,10 @@ enum AuditAction {
   EQUIPMENT_RELEASED
   MAINTENANCE_START
   MAINTENANCE_END
+  EQUIPMENT_RESERVED
+  RESERVATION_CANCELLED
+  EQUIPMENT_RETURNED
+  FORCE_RELEASED
 }
 
 model User {
@@ -78,7 +83,8 @@ model Checkout {
   id           String   @id @default(cuid())
   equipmentId  String
   userId       String
-  checkedOutAt DateTime @default(now())
+  reservedAt   DateTime @default(now())
+  checkedOutAt DateTime?
   releasedAt   DateTime?
 
   equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)

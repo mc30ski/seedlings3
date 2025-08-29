@@ -7,35 +7,46 @@ export default async function adminRoutes(app: FastifyInstance) {
   };
 
   app.get("/admin/equipment", adminGuard, async () =>
-    services.equipment.listAll()
+    services.equipment.listAllAdmin()
   );
+
   app.post("/admin/equipment", adminGuard, async (req: any) =>
     services.equipment.create(req.body)
   );
+
   app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
     services.equipment.update(req.params.id, req.body)
   );
+
   app.post("/admin/equipment/:id/retire", adminGuard, async (req: any) =>
     services.equipment.retire(req.params.id)
   );
+
   app.post("/admin/equipment/:id/unretire", adminGuard, async (req: any) =>
     services.equipment.unretire(req.params.id)
   );
+
   app.delete("/admin/equipment/:id", adminGuard, async (req: any) =>
     services.equipment.hardDelete(req.params.id)
   );
+
   app.post("/admin/equipment/:id/assign", adminGuard, async (req: any) =>
     services.equipment.assign(req.params.id, req.body.userId)
   );
-  app.post("/admin/equipment/:id/release", adminGuard, async (req: any) =>
-    services.equipment.release(req.params.id)
-  );
+
+  // Admin force release (works for RESERVED or CHECKED_OUT)
+  app.post("/admin/equipment/:id/release", adminGuard, async (req: any) => {
+    // If you want to capture the admin actor in audit metadata later,
+    // you can update services.equipment.release to accept an optional actorUserId.
+    return services.equipment.release(req.params.id);
+  });
 
   app.post(
     "/admin/equipment/:id/maintenance/start",
     adminGuard,
     async (req: any) => services.maintenance.start(req.params.id)
   );
+
   app.post(
     "/admin/equipment/:id/maintenance/end",
     adminGuard,

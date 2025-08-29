@@ -12,7 +12,12 @@ import { apiGet, apiPost } from "../lib/api";
 import { toaster } from "./ui/toaster";
 import { getErrorMessage } from "../lib/errors";
 
-type EquipmentStatus = "AVAILABLE" | "CHECKED_OUT" | "MAINTENANCE" | "RETIRED";
+type EquipmentStatus =
+  | "AVAILABLE"
+  | "RESERVED"
+  | "CHECKED_OUT"
+  | "MAINTENANCE"
+  | "RETIRED";
 type Equipment = {
   id: string;
   shortDesc: string;
@@ -38,6 +43,7 @@ export default function WorkerEquipment() {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // myIds includes RESERVED or CHECKED_OUT that belong to me
   const myIds = useMemo(() => new Set(mine.map((m) => m.id)), [mine]);
 
   const load = useCallback(async () => {
@@ -62,7 +68,6 @@ export default function WorkerEquipment() {
   useEffect(() => {
     void load();
   }, [load]);
-
   useEffect(() => {
     const onUpd = () => void load();
     window.addEventListener("seedlings3:equipment-updated", onUpd);
@@ -70,10 +75,44 @@ export default function WorkerEquipment() {
       window.removeEventListener("seedlings3:equipment-updated", onUpd);
   }, [load]);
 
+  async function reserve(id: string) {
+    setBusyId(id);
+    try {
+      await apiPost(`/api/v1/equipment/${id}/reserve`);
+      toaster.success({ title: "Reserved" });
+      notifyEquipmentUpdated();
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Could not reserve",
+        description: getErrorMessage(err),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function cancelReserve(id: string) {
+    setBusyId(id);
+    try {
+      await apiPost(`/api/v1/equipment/${id}/reserve/cancel`);
+      toaster.info({ title: "Reservation canceled" });
+      notifyEquipmentUpdated();
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Could not cancel reservation",
+        description: getErrorMessage(err),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function checkout(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/claim`);
+      await apiPost(`/api/v1/equipment/${id}/checkout`);
       toaster.success({ title: "Checked out" });
       notifyEquipmentUpdated();
       await load();
@@ -90,7 +129,7 @@ export default function WorkerEquipment() {
   async function returnItem(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/release`);
+      await apiPost(`/api/v1/equipment/${id}/return`);
       toaster.success({ title: "Returned" });
       notifyEquipmentUpdated();
       await load();
@@ -118,24 +157,78 @@ export default function WorkerEquipment() {
         {!loading &&
           items.map((item) => {
             const isMine = myIds.has(item.id);
-            const canReturnMine = item.status === "CHECKED_OUT" && isMine;
-            const canCheckout = item.status === "AVAILABLE";
 
-            let label = "Checkout";
-            let onClick: (() => void) | undefined;
-            let enabled = false;
+            // Button set based on state
+            const actions: JSX.Element[] = [];
 
-            if (canReturnMine) {
-              label = "Return";
-              onClick = () => void returnItem(item.id);
-              enabled = true;
-            } else if (canCheckout) {
-              label = "Checkout";
-              onClick = () => void checkout(item.id);
-              enabled = true;
+            if (item.status === "AVAILABLE") {
+              actions.push(
+                <Button
+                  key="reserve"
+                  onClick={() => void reserve(item.id)}
+                  disabled={!!busyId}
+                  loading={busyId === item.id}
+                >
+                  Reserve
+                </Button>
+              );
+            } else if (item.status === "RESERVED") {
+              if (isMine) {
+                actions.push(
+                  <Button
+                    key="checkout"
+                    onClick={() => void checkout(item.id)}
+                    disabled={!!busyId}
+                    loading={busyId === item.id}
+                  >
+                    Checkout
+                  </Button>
+                );
+                actions.push(
+                  <Button
+                    key="cancel"
+                    onClick={() => void cancelReserve(item.id)}
+                    disabled={!!busyId}
+                    loading={busyId === item.id}
+                    variant="outline"
+                  >
+                    Cancel Reservation
+                  </Button>
+                );
+              } else {
+                // Reserved by someone else — no action
+                actions.push(
+                  <Button key="reserved" disabled>
+                    Reserved
+                  </Button>
+                );
+              }
+            } else if (item.status === "CHECKED_OUT") {
+              if (isMine) {
+                actions.push(
+                  <Button
+                    key="return"
+                    onClick={() => void returnItem(item.id)}
+                    disabled={!!busyId}
+                    loading={busyId === item.id}
+                  >
+                    Return
+                  </Button>
+                );
+              } else {
+                actions.push(
+                  <Button key="checked" disabled>
+                    Checked out
+                  </Button>
+                );
+              }
             } else {
-              label = "Checkout"; // disabled for maintenance or someone else's checkout
-              enabled = false;
+              // MAINTENANCE / RETIRED
+              actions.push(
+                <Button key="na" disabled>
+                  {item.status === "MAINTENANCE" ? "Maintenance" : "Retired"}
+                </Button>
+              );
             }
 
             return (
@@ -145,13 +238,17 @@ export default function WorkerEquipment() {
                   <Badge ml={2}>
                     {item.status === "AVAILABLE"
                       ? "Available"
-                      : item.status === "CHECKED_OUT"
+                      : item.status === "RESERVED"
                         ? isMine
-                          ? "Checked out (You)"
-                          : "Checked out"
-                        : item.status === "MAINTENANCE"
-                          ? "Maintenance"
-                          : "Retired"}
+                          ? "Reserved (You)"
+                          : "Reserved"
+                        : item.status === "CHECKED_OUT"
+                          ? isMine
+                            ? "Checked out (You)"
+                            : "Checked out"
+                          : item.status === "MAINTENANCE"
+                            ? "Maintenance"
+                            : "Retired"}
                   </Badge>
                 </Heading>
                 <Text fontSize="sm" color="gray.500">
@@ -159,13 +256,7 @@ export default function WorkerEquipment() {
                 </Text>
 
                 <Stack direction="row" gap="2" mt={2}>
-                  <Button
-                    onClick={onClick}
-                    disabled={!!busyId || !enabled}
-                    loading={busyId === item.id}
-                  >
-                    {label}
-                  </Button>
+                  {actions}
                 </Stack>
               </Box>
             );

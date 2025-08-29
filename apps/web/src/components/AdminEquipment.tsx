@@ -13,12 +13,28 @@ import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
 import { getErrorMessage } from "../lib/errors";
 
-type EquipmentStatus = "AVAILABLE" | "CHECKED_OUT" | "MAINTENANCE" | "RETIRED";
+type EquipmentStatus =
+  | "AVAILABLE"
+  | "RESERVED"
+  | "CHECKED_OUT"
+  | "MAINTENANCE"
+  | "RETIRED";
+
+type Holder = {
+  userId: string;
+  displayName?: string | null;
+  email?: string | null;
+  reservedAt: string | Date;
+  checkedOutAt?: string | Date | null;
+  state: "RESERVED" | "CHECKED_OUT";
+};
+
 type Equipment = {
   id: string;
   shortDesc: string;
   longDesc: string;
   status: EquipmentStatus;
+  holder?: Holder | null;
 };
 
 const notifyEquipmentUpdated = () => {
@@ -225,6 +241,16 @@ export default function AdminEquipment() {
               <Heading size="sm">
                 {item.shortDesc} <Badge ml={2}>{item.status}</Badge>
               </Heading>
+              {item.holder && (
+                <Text fontSize="xs" color="gray.600" mt={1}>
+                  {item.holder.state === "CHECKED_OUT"
+                    ? "Checked out by "
+                    : "Reserved by "}
+                  {item.holder.displayName ||
+                    item.holder.email ||
+                    item.holder.userId.slice(0, 8)}
+                </Text>
+              )}
               <Text fontSize="sm" color="gray.500">
                 {item.longDesc}
               </Text>
@@ -235,7 +261,13 @@ export default function AdminEquipment() {
                 <Button
                   size="sm"
                   onClick={() => release(item.id)}
-                  disabled={!!busyId || item.status !== "CHECKED_OUT"}
+                  disabled={
+                    !!busyId ||
+                    !(
+                      item.status === "CHECKED_OUT" ||
+                      item.status === "RESERVED"
+                    )
+                  }
                   loading={busyId === item.id}
                 >
                   Force Release
@@ -260,7 +292,8 @@ export default function AdminEquipment() {
                     disabled={
                       !!busyId ||
                       item.status === "CHECKED_OUT" ||
-                      item.status === "RETIRED"
+                      item.status === "RETIRED" ||
+                      item.status === "RESERVED"
                     }
                     loading={busyId === item.id}
                     variant="subtle"
@@ -284,7 +317,11 @@ export default function AdminEquipment() {
                   <Button
                     size="sm"
                     onClick={() => retire(item.id)}
-                    disabled={!!busyId || item.status === "CHECKED_OUT"}
+                    disabled={
+                      !!busyId ||
+                      item.status === "CHECKED_OUT" ||
+                      item.status === "RESERVED"
+                    }
                     loading={busyId === item.id}
                     variant="outline"
                   >

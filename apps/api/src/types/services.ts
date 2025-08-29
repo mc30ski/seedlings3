@@ -1,17 +1,43 @@
+// apps/api/src/types/services.ts
 import type {
   Equipment,
-  EquipmentStatus,
+  EquipmentStatus, // includes 'RESERVED'
   AuditEvent,
   User,
   UserRole,
 } from "@prisma/client";
 
+// --- result helpers ---
+type ReserveResult = { id: string; userId: string };
+type CheckoutResult = { id: string; userId: string };
+type ReleaseResult = { released: true };
+type CancelResult = { cancelled: true };
+
+// --- admin holder shape for listAllAdmin() ---
+export type AdminHolder = {
+  userId: string;
+  displayName?: string | null;
+  email?: string | null;
+  reservedAt: Date;
+  checkedOutAt?: Date | null;
+  state: "RESERVED" | "CHECKED_OUT";
+};
+
+export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
+
 export type Services = {
   equipment: {
+    // Lists
     listAvailable(): Promise<Equipment[]>;
     listAll(): Promise<Equipment[]>;
+    /** Admin view with current holder (if any) */
+    listAllAdmin(): Promise<EquipmentWithHolder[]>;
+    /** Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT */
     listForWorkers(): Promise<Equipment[]>;
+    /** Items I currently hold (reserved or checked out) */
     listMine(userId: string): Promise<Equipment[]>;
+
+    // CRUD
     create(input: {
       shortDesc: string;
       longDesc?: string;
@@ -21,37 +47,34 @@ export type Services = {
       id: string,
       patch: Partial<Pick<Equipment, "shortDesc" | "longDesc" | "qrSlug">>
     ): Promise<Equipment>;
+    /** Blocked if status is RESERVED or CHECKED_OUT (or any active row exists) */
     retire(id: string): Promise<Equipment>;
     unretire(id: string): Promise<Equipment>;
     hardDelete(id: string): Promise<{ deleted: true }>;
-    assign(
-      id: string,
-      userId: string
-    ): Promise<{
-      id: string;
-      equipmentId: string;
-      userId: string;
-      checkedOutAt: Date;
-      releasedAt: Date | null;
-    }>;
-    release(id: string): Promise<{ released: true }>;
-    claim(
-      id: string,
-      userId: string
-    ): Promise<{
-      id: string;
-      equipmentId: string;
-      userId: string;
-      checkedOutAt: Date;
-      releasedAt: Date | null;
-    }>;
-    releaseByUser(id: string, userId: string): Promise<{ released: true }>;
+
+    // Admin actions
+    /** Direct checkout to user (bypasses reserve step) */
+    assign(id: string, userId: string): Promise<{ id: string; userId: string }>;
+    /** Force release (from RESERVED or CHECKED_OUT) */
+    release(id: string): Promise<ReleaseResult>;
+
+    // Worker lifecycle (RESERVE → CHECKOUT → RETURN)
+    reserve(id: string, userId: string): Promise<ReserveResult>;
+    cancelReservation(id: string, userId: string): Promise<CancelResult>;
+    checkout(id: string, userId: string): Promise<CheckoutResult>;
+    returnByUser(id: string, userId: string): Promise<ReleaseResult>;
+
+    // Back-compat shims (legacy endpoints)
+    /** Legacy "claim" maps to reserve() */
+    claim(id: string, userId: string): Promise<ReserveResult>;
+    /** Legacy "release" decides cancel vs return */
+    releaseByUser(id: string, userId: string): Promise<ReleaseResult>;
   };
 
-  // UPDATED: toggle-only maintenance API
+  // Maintenance toggle (sticky)
   maintenance: {
-    start(equipmentId: string): Promise<Equipment>; // sets status: 'MAINTENANCE'
-    end(equipmentId: string): Promise<Equipment>; // clears to AVAILABLE (then recompute)
+    start(equipmentId: string): Promise<Equipment>; // -> MAINTENANCE
+    end(equipmentId: string): Promise<Equipment>; // -> recompute (AVAILABLE/RESERVED/CHECKED_OUT)
   };
 
   users: {

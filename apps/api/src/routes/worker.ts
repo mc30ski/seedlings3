@@ -16,10 +16,30 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.equipment.listMine(req.user.id);
   });
 
+  app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    return services.equipment.reserve(id, req.user.id);
+  });
+
+  app.post("/equipment/:id/reserve/cancel", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    return services.equipment.cancelReservation(id, req.user.id);
+  });
+
+  app.post("/equipment/:id/checkout", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    return services.equipment.checkout(id, req.user.id);
+  });
+
+  app.post("/equipment/:id/return", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    return services.equipment.returnByUser(id, req.user.id);
+  });
+
   // Claim (only if AVAILABLE and not in maintenance/retired)
   app.post("/equipment/:id/claim", workerGuard, async (req: any) => {
     const id = req.params.id as string;
-    return services.equipment.claim(id, req.user.id);
+    return services.equipment.reserve(id, req.user.id);
   });
 
   // Release (only works if THIS user has the active checkout)
