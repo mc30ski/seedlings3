@@ -35,7 +35,7 @@ export default async function systemRoutes(app: FastifyInstance) {
   });
 
   // K8s/Cloud Run-friendly healthz (200 if app is up; 503 if DB is down)
-  app.get("/healthz", async (req, reply) => {
+  app.get("/healthz2", async (req, reply) => {
     try {
       await prisma.$queryRaw`SELECT 1`;
       return { ok: true, db: "up" };
