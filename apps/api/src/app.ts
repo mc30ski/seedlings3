@@ -71,16 +71,21 @@ export async function buildApp() {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  await app.register(devAuth);
-  await app.register(rbac);
+  await app.register(
+    async (api) => {
+      // auth + rbac only apply inside this /api/v1 scope
+      await api.register(devAuth);
+      await api.register(rbac);
 
-  app.register(async (r) => {
-    await r.register(meRoutes, { prefix: "/api/v1" });
-    await r.register(workerRoutes, { prefix: "/api/v1" });
-    await r.register(adminRoutes, { prefix: "/api/v1" });
-    await r.register(userRoutes, { prefix: "/api/v1" });
-    await r.register(auditRoutes, { prefix: "/api/v1" });
-  });
+      // Register your feature routes here WITHOUT per-route prefixes
+      await api.register(meRoutes);
+      await api.register(workerRoutes);
+      await api.register(adminRoutes);
+      await api.register(userRoutes);
+      await api.register(auditRoutes);
+    },
+    { prefix: "/api/v1" }
+  );
 
   return app;
 }

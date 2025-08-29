@@ -15,15 +15,4 @@ export default async function systemRoutes(app: FastifyInstance) {
       return reply.code(503).send({ ok: false, db: "down" });
     }
   });
-
-  // (Optional) also expose them under /api/v1 if you want:
-  app.get("/api/v1/hello", async () => ({ message: "Hello from API" }));
-  app.get("/api/v1/healthz", async (req, reply) => {
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      return { ok: true, db: "up" };
-    } catch {
-      return reply.code(503).send({ ok: false, db: "down" });
-    }
-  });
 }
