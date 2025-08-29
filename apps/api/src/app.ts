@@ -74,8 +74,8 @@ export async function buildApp() {
   await app.register(
     async (api) => {
       // auth + rbac only apply inside this /api/v1 scope
-      await api.register(devAuth);
-      await api.register(rbac);
+      //await api.register(devAuth);
+      //await api.register(rbac);
 
       // Register your feature routes here WITHOUT per-route prefixes
       await api.register(meRoutes);
