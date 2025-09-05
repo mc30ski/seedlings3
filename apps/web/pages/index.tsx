@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
-import { Container, Heading, Box, Text, Tabs } from "@chakra-ui/react";
+import { Container, Heading, Text, Tabs } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
+import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
 
 type Me = {
@@ -34,8 +35,9 @@ export default function HomePage() {
     void loadMe();
   }, [loadMe]);
 
-  const isAdmin = !!me?.roles?.includes("ADMIN");
-  const isWorker = !!me?.roles?.includes("WORKER");
+  const roles = me?.roles ?? [];
+  const isAdmin = roles.includes("ADMIN");
+  const isWorker = roles.includes("WORKER");
 
   const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
   useEffect(() => {
@@ -79,6 +81,7 @@ export default function HomePage() {
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="mine">
                   <WorkerMyEquipment />
                 </Tabs.Content>
@@ -91,12 +94,19 @@ export default function HomePage() {
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
+                  {/* Users now comes before Audit Log */}
+                  <Tabs.Trigger value="users">Users</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
                   <AdminEquipment key={`admin-${topTab}`} />
                 </Tabs.Content>
+
+                <Tabs.Content value="users">
+                  <AdminUsers />
+                </Tabs.Content>
+
                 <Tabs.Content value="audit">
                   <AdminAuditLog />
                 </Tabs.Content>

@@ -95,6 +95,10 @@ export type Services = {
       email?: string | null;
       displayName?: string | null;
     }>;
+    remove(
+      userId: string,
+      actorUserId: string
+    ): Promise<{ deleted: true; clerkDeleted: boolean }>;
   };
 
   audit: {

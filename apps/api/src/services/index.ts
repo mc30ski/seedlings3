@@ -741,6 +741,67 @@ export const services: Services = {
         displayName: user!.displayName ?? undefined,
       };
     },
+
+    /**
+     * Hard delete a user from the system:
+     * - Prevent deleting yourself.
+     * - Prevent deleting the last remaining ADMIN.
+     * - Delete Clerk user (best-effort).
+     * - Delete DB user (cascades roles & checkouts; audit actor FK is set null).
+     */
+    async remove(userId: string, actorUserId: string) {
+      if (!actorUserId) {
+        throw new ServiceError("UNAUTHORIZED", "Missing actor", 401);
+      }
+      if (actorUserId === userId) {
+        throw new ServiceError(
+          "CANNOT_DELETE_SELF",
+          "You cannot delete your own account",
+          400
+        );
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { roles: true },
+      });
+      if (!user) {
+        throw new ServiceError("NOT_FOUND", "User not found", 404);
+      }
+
+      // Block deleting the last admin
+      const isAdmin = user.roles.some((r) => r.role === "ADMIN");
+      if (isAdmin) {
+        const otherAdmins = await prisma.userRole.count({
+          where: { role: "ADMIN", userId: { not: userId } },
+        });
+        if (otherAdmins === 0) {
+          throw new ServiceError(
+            "LAST_ADMIN",
+            "Cannot delete the last remaining admin",
+            409
+          );
+        }
+      }
+
+      // Best-effort Clerk deletion first (so they can't sign in again)
+      let clerkDeleted = false;
+      if (user.clerkUserId) {
+        try {
+          await clerk.users.deleteUser(user.clerkUserId);
+          clerkDeleted = true;
+        } catch (e: any) {
+          // If Clerk says 404, consider it gone; otherwise continue but report false
+          clerkDeleted =
+            typeof e?.status === "number" ? e.status === 404 : false;
+        }
+      }
+
+      // DB delete (roles & checkouts cascade; audit actor is set null)
+      await prisma.user.delete({ where: { id: userId } });
+
+      return { deleted: true as const, clerkDeleted };
+    },
   },
 
   audit: {
