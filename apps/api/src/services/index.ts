@@ -8,6 +8,12 @@ import {
 } from "@prisma/client";
 import type { Services, EquipmentWithHolder } from "../types/services";
 import { ServiceError } from "../lib/errors";
+import { createClerkClient } from "@clerk/backend";
+
+if (!process.env.CLERK_SECRET_KEY) {
+  throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
+}
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -26,8 +32,6 @@ async function lockEquipment(tx: Tx, id: string) {
 async function getActiveCheckout(tx: Tx, equipmentId: string) {
   return tx.checkout.findFirst({
     where: { equipmentId, releasedAt: null },
-    // If you end up allowing >1 active row (you shouldn't), you could:
-    // orderBy: { checkedOutAt: "desc" },
   });
 }
 
@@ -150,7 +154,6 @@ export const services: Services = {
               userId: active.userId,
               displayName: active.user?.displayName ?? null,
               email: active.user?.email ?? null,
-              // reservedAt always exists (createdAt of the row)
               reservedAt: active.reservedAt,
               checkedOutAt: active.checkedOutAt ?? null,
               state: active.checkedOutAt ? "CHECKED_OUT" : "RESERVED",
@@ -166,7 +169,7 @@ export const services: Services = {
       return mapped;
     },
 
-    /** Non-retired; includes RESERVED/CHECKED_OUT/MAINTENANCE */
+    /** Worker “Available” view only shows AVAILABLE items */
     async listForWorkers() {
       return prisma.equipment.findMany({
         where: { status: { in: [EquipmentStatus.AVAILABLE] } },
@@ -176,13 +179,29 @@ export const services: Services = {
 
     /** My active reservations/checkouts */
     async listMine(userId: string) {
-      return prisma.equipment.findMany({
-        where: {
-          status: { not: EquipmentStatus.RETIRED },
-          checkouts: { some: { userId, releasedAt: null } },
-        },
-        orderBy: { createdAt: "desc" },
-      });
+      return prisma.equipment
+        .findMany({
+          where: {
+            status: { not: EquipmentStatus.RETIRED },
+          },
+          orderBy: { createdAt: "desc" },
+          include: {
+            checkouts: {
+              where: { userId, releasedAt: null },
+              take: 1,
+            },
+          },
+        })
+        .then((rows) =>
+          rows
+            .filter((r) => r.checkouts.length > 0)
+            .map((r) => {
+              // drop the relation to match Equipment[]
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { checkouts, ...rest } = r as any;
+              return rest as typeof r;
+            })
+        );
     },
 
     async create(input) {
@@ -661,16 +680,65 @@ export const services: Services = {
     },
 
     async me(clerkUserId: string) {
-      const user = await prisma.user.findUnique({
+      if (!clerkUserId) {
+        return {
+          id: "",
+          isApproved: false,
+          roles: [] as ("ADMIN" | "WORKER")[],
+          email: undefined,
+          displayName: undefined,
+        };
+      }
+
+      // Try to find the user in your DB
+      let user = await prisma.user.findUnique({
         where: { clerkUserId },
         include: { roles: true },
       });
+
+      // If missing, create it using Clerk profile as seed data
+      if (!user) {
+        let email: string | null = null;
+        let displayName: string | null = null;
+
+        try {
+          const u = await clerk.users.getUser(clerkUserId);
+          email =
+            u.primaryEmailAddress?.emailAddress ??
+            u.emailAddresses?.[0]?.emailAddress ??
+            null;
+
+          const name = [u.firstName, u.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          displayName = name || u.username || null;
+        } catch {
+          // If Clerk fetch fails, proceed with minimal row
+        }
+
+        await prisma.user.create({
+          data: {
+            clerkUserId,
+            email: email ?? undefined,
+            displayName: displayName ?? undefined,
+            isApproved: false, // new users need approval
+          },
+        });
+
+        // re-read including roles
+        user = await prisma.user.findUnique({
+          where: { clerkUserId },
+          include: { roles: true },
+        });
+      }
+
       return {
-        id: user?.id ?? "",
-        isApproved: !!user?.isApproved,
-        roles: (user?.roles ?? []).map((r) => r.role),
-        email: user?.email ?? undefined,
-        displayName: user?.displayName ?? undefined,
+        id: user!.id,
+        isApproved: !!user!.isApproved,
+        roles: (user!.roles ?? []).map((r) => r.role) as ("ADMIN" | "WORKER")[],
+        email: user!.email ?? undefined,
+        displayName: user!.displayName ?? undefined,
       };
     },
   },

@@ -1,28 +1,23 @@
+// apps/web/src/lib/api.ts
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-// 'Prod mode' toggle stored by DevRoleSwitch
-function isSimulateProd(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("seedlings3.simulateProd") === "1";
+/** We let _app.tsx inject a function that returns a fresh Clerk token */
+let fetchAuthToken: null | (() => Promise<string | null | undefined>) = null;
+export function setAuthTokenFetcher(
+  fn: () => Promise<string | null | undefined>
+) {
+  fetchAuthToken = fn;
 }
 
-// Attach headers based on the toggle only
-function attachAuthHeaders(h: Headers) {
-  if (isSimulateProd()) {
-    // Tell API to disable the dev bypass for this request
-    h.set("X-Simulate-Prod", "1");
-    return;
-  }
-
-  // Dev-only mock headers (role + mock user id)
-  if (typeof window !== "undefined") {
-    const id = localStorage.getItem("dev_clerkUserId");
-    if (id) h.set("Authorization", `Bearer dev-mock:${id}`);
-
-    const role = localStorage.getItem("seedlings3.devRole");
-    if (role === "ADMIN" || role === "WORKER") {
-      h.set("X-Dev-Role", role);
+/** Attach Authorization header if we have a token */
+async function authHeaders(h: Headers) {
+  if (fetchAuthToken) {
+    try {
+      const token = await fetchAuthToken();
+      if (token) h.set("Authorization", `Bearer ${token}`);
+    } catch {
+      // ignore; we'll just call without auth
     }
   }
 }
@@ -33,12 +28,13 @@ async function request<T>(
   body?: unknown
 ): Promise<T> {
   const headers = new Headers();
-  attachAuthHeaders(headers);
+  await authHeaders(headers);
 
   const init: RequestInit = {
     method,
     headers,
-    credentials: "include",
+    // we use header auth; no cookies needed
+    credentials: "omit",
     cache: "no-store",
   };
 
@@ -70,7 +66,9 @@ async function request<T>(
     throw err;
   }
 
-  return res.json() as Promise<T>;
+  // some endpoints may 204/no-content; guard that
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 export const apiGet = <T>(p: string) => request<T>("GET", p);

@@ -3,7 +3,9 @@ import { services } from "../services";
 
 export default async function workerRoutes(app: FastifyInstance) {
   const workerGuard = {
-    preHandler: (req: any, reply: any) => app.requireRole(req, reply, "WORKER"),
+    preHandler: (req: any, reply: any) => {
+      return app.requireRole(req, reply, "WORKER");
+    },
   };
 
   // Workers can see all non-retired (includes MAINTENANCE / CHECKED_OUT)
