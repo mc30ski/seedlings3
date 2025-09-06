@@ -43,13 +43,14 @@ export default function AdminUsers() {
 
   // who am I? (used to hide actions for self)
   const [me, setMe] = useState<Me | null>(null);
+  const [meReady, setMeReady] = useState(false); // <- NEW: prevents button flash
 
   // simple filters
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<"all" | "pending" | "approved">("all");
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
 
-  // inline error by user id (shown under their action buttons)
+  // inline warning by user id (shown under their info)
   const [inlineErr, setInlineErr] = useState<Record<string, string>>({});
 
   // react to request to open "pending" (from the header bell)
@@ -71,11 +72,22 @@ export default function AdminUsers() {
       );
   }, []);
 
+  // Load "me" and set meReady when done (success or fail)
   useEffect(() => {
-    // load "me"
-    apiGet<Me>("/api/v1/me")
-      .then(setMe)
-      .catch(() => setMe(null));
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await apiGet<Me>("/api/v1/me");
+        if (!cancelled) setMe(m);
+      } catch {
+        if (!cancelled) setMe(null);
+      } finally {
+        if (!cancelled) setMeReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const rolesSet = (u: ApiUser) => new Set(u.roles.map((r) => r.role));
@@ -93,7 +105,7 @@ export default function AdminUsers() {
         `/api/v1/admin/users${params.toString() ? `?${params}` : ""}`
       );
       setItems(data);
-      // clear any stale inline errors after refresh
+      // clear any stale inline warnings after refresh
       setInlineErr({});
     } catch (err) {
       toaster.error({
@@ -146,6 +158,7 @@ export default function AdminUsers() {
         } catch {}
       }
       toaster.success({ title: `Added ${role}` });
+      // clear any warning for this user (role changed)
       setInlineErr((m) => {
         const n = { ...m };
         delete n[userId];
@@ -164,6 +177,7 @@ export default function AdminUsers() {
     try {
       await apiDelete(`/api/v1/admin/users/${userId}/roles/${role}`);
       toaster.success({ title: `Removed ${role}` });
+      // clear any warning for this user on success
       setInlineErr((m) => {
         const n = { ...m };
         delete n[userId];
@@ -171,7 +185,7 @@ export default function AdminUsers() {
       });
       await load();
     } catch (err: any) {
-      // Robustly detect a 409 (varies by your api lib)
+      // Detect a 409 regardless of fetch wrapper
       const status =
         err?.status ??
         err?.httpStatus ??
@@ -184,10 +198,17 @@ export default function AdminUsers() {
           : getErrorMessage(err);
 
       setInlineErr((prev) => ({ ...prev, [userId]: msg }));
-      // also use a toaster so it’s visible if list is long
+      // also toast (useful if the row is out of view)
       toaster.error({ title: "Remove role failed", description: msg });
     }
   }
+
+  const dismissInline = (userId: string) =>
+    setInlineErr((m) => {
+      const n = { ...m };
+      delete n[userId];
+      return n;
+    });
 
   return (
     <Box>
@@ -297,72 +318,93 @@ export default function AdminUsers() {
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                   </HStack>
 
-                  {/* Inline error (if any) */}
+                  {/* Dismissible warning banner */}
                   {inlineErr[u.id] && (
-                    <Text mt={2} fontSize="sm" color="red.600">
-                      {inlineErr[u.id]}
-                    </Text>
+                    <HStack
+                      mt={3}
+                      align="start"
+                      p={3}
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="orange.300"
+                      bg="orange.50"
+                    >
+                      <Box flex="1">
+                        <Text fontSize="sm" color="orange.900">
+                          {inlineErr[u.id]}
+                        </Text>
+                      </Box>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => dismissInline(u.id)}
+                      >
+                        Dismiss
+                      </Button>
+                    </HStack>
                   )}
                 </Box>
 
-                {/* Actions */}
-                <Stack direction="row" gap="2">
-                  {/* No actions for yourself */}
-                  {isMe ? null : (
-                    <>
-                      {/* If pending: only Approve button, nothing else */}
-                      {!u.isApproved ? (
-                        <Button size="sm" onClick={() => approve(u.id)}>
-                          Approve
-                        </Button>
-                      ) : (
-                        <>
-                          {/* Admin toggle */}
-                          {isAdmin ? (
-                            <Button
-                              size="sm"
-                              onClick={() => removeRole(u.id, "ADMIN")}
-                              variant="subtle"
-                            >
-                              Remove Admin
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => addRole(u.id, "ADMIN")}
-                              variant="subtle"
-                            >
-                              Make Admin
-                            </Button>
-                          )}
+                {/* Actions — hidden until we know who "me" is to avoid button flash */}
+                {meReady && (
+                  <Stack direction="row" gap="2">
+                    {/* No actions for yourself */}
+                    {isMe ? null : (
+                      <>
+                        {/* If pending: only Approve button, nothing else */}
+                        {!u.isApproved ? (
+                          <Button size="sm" onClick={() => approve(u.id)}>
+                            Approve
+                          </Button>
+                        ) : (
+                          <>
+                            {/* Admin toggle */}
+                            {isAdmin ? (
+                              <Button
+                                size="sm"
+                                onClick={() => removeRole(u.id, "ADMIN")}
+                                variant="subtle"
+                              >
+                                Remove Admin
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => addRole(u.id, "ADMIN")}
+                                variant="subtle"
+                              >
+                                Make Admin
+                              </Button>
+                            )}
 
-                          {/* Worker toggle (cannot remove WORKER if still ADMIN) */}
-                          {isWorker ? (
-                            <Button
-                              size="sm"
-                              onClick={() => removeRole(u.id, "WORKER")}
-                              variant="outline"
-                              disabled={isAdmin}
-                              title={
-                                isAdmin ? "Admins must keep Worker role" : ""
-                              }
-                            >
-                              Remove Worker
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => addRole(u.id, "WORKER")}
-                              variant="outline"
-                            >
-                              Add Worker
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
-                </Stack>
+                            {/* Worker toggle (cannot remove WORKER if still ADMIN) */}
+                            {isWorker ? (
+                              <Button
+                                size="sm"
+                                onClick={() => removeRole(u.id, "WORKER")}
+                                variant="outline"
+                                disabled={isAdmin}
+                                title={
+                                  isAdmin ? "Admins must keep Worker role" : ""
+                                }
+                              >
+                                Remove Worker
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => addRole(u.id, "WORKER")}
+                                variant="outline"
+                              >
+                                Add Worker
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </Stack>
+                )}
               </HStack>
             </Box>
           );
