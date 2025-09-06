@@ -49,6 +49,9 @@ export default function AdminUsers() {
   const [status, setStatus] = useState<"all" | "pending" | "approved">("all");
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
 
+  // inline error by user id (shown under their action buttons)
+  const [inlineErr, setInlineErr] = useState<Record<string, string>>({});
+
   // react to request to open "pending" (from the header bell)
   useEffect(() => {
     const onOpenUsers = (ev: Event) => {
@@ -90,6 +93,8 @@ export default function AdminUsers() {
         `/api/v1/admin/users${params.toString() ? `?${params}` : ""}`
       );
       setItems(data);
+      // clear any stale inline errors after refresh
+      setInlineErr({});
     } catch (err) {
       toaster.error({
         title: "Failed to load users",
@@ -118,7 +123,6 @@ export default function AdminUsers() {
     try {
       await apiPost(`/api/v1/admin/users/${userId}/approve`);
       toaster.success({ title: "User approved" });
-      // notify header counter to refresh
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
@@ -134,7 +138,6 @@ export default function AdminUsers() {
   async function addRole(userId: string, role: Role) {
     try {
       await apiPost(`/api/v1/admin/users/${userId}/roles`, { role });
-      // Policy: Admins should also be Workers — ensure Worker exists when adding Admin
       if (role === "ADMIN") {
         try {
           await apiPost(`/api/v1/admin/users/${userId}/roles`, {
@@ -143,6 +146,11 @@ export default function AdminUsers() {
         } catch {}
       }
       toaster.success({ title: `Added ${role}` });
+      setInlineErr((m) => {
+        const n = { ...m };
+        delete n[userId];
+        return n;
+      });
       await load();
     } catch (err) {
       toaster.error({
@@ -156,12 +164,28 @@ export default function AdminUsers() {
     try {
       await apiDelete(`/api/v1/admin/users/${userId}/roles/${role}`);
       toaster.success({ title: `Removed ${role}` });
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Remove role failed",
-        description: getErrorMessage(err),
+      setInlineErr((m) => {
+        const n = { ...m };
+        delete n[userId];
+        return n;
       });
+      await load();
+    } catch (err: any) {
+      // Robustly detect a 409 (varies by your api lib)
+      const status =
+        err?.status ??
+        err?.httpStatus ??
+        err?.response?.status ??
+        (/\b409\b/.test(String(err)) ? 409 : undefined);
+
+      const msg =
+        status === 409
+          ? "This user currently has reserved/checked-out equipment. Release all items before removing the Worker role."
+          : getErrorMessage(err);
+
+      setInlineErr((prev) => ({ ...prev, [userId]: msg }));
+      // also use a toaster so it’s visible if list is long
+      toaster.error({ title: "Remove role failed", description: msg });
     }
   }
 
@@ -272,6 +296,13 @@ export default function AdminUsers() {
                     {isWorker && <Badge colorPalette="blue">Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                   </HStack>
+
+                  {/* Inline error (if any) */}
+                  {inlineErr[u.id] && (
+                    <Text mt={2} fontSize="sm" color="red.600">
+                      {inlineErr[u.id]}
+                    </Text>
+                  )}
                 </Box>
 
                 {/* Actions */}

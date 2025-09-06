@@ -671,10 +671,26 @@ export const services: Services = {
     },
 
     async removeRole(userId: string, role: "ADMIN" | "WORKER") {
+      // If removing WORKER, block when user still holds equipment (reserved or checked out)
+      if (role === "WORKER") {
+        const active = await prisma.checkout.count({
+          where: { userId, releasedAt: null },
+        });
+        if (active > 0) {
+          // 409 so the UI can distinguish and show inline guidance
+          throw new ServiceError(
+            "USER_HAS_ACTIVE_EQUIPMENT",
+            "Cannot remove Worker role while the user has reserved/checked-out equipment.",
+            409
+          );
+        }
+      }
+
       const toDelete = await prisma.userRole.findFirst({
         where: { userId, role: role as any },
       });
       if (!toDelete) return { deleted: false };
+
       await prisma.userRole.delete({ where: { id: toDelete.id } });
       return { deleted: true };
     },
