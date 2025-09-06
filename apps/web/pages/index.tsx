@@ -4,8 +4,9 @@ import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
-import AdminUsers from "../src/components/AdminUsers"; // ← restore
+import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
+import WorkerUnavailableEquipment from "../src/components/WorkerUnavailableEquipment";
 
 type Me = {
   id: string;
@@ -91,6 +92,7 @@ export default function HomePage() {
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="mine">My Equipment</Tabs.Trigger>
+                  <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
@@ -99,6 +101,10 @@ export default function HomePage() {
 
                 <Tabs.Content value="mine">
                   <WorkerMyEquipment />
+                </Tabs.Content>
+
+                <Tabs.Content value="unavailable">
+                  <WorkerUnavailableEquipment />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>

@@ -551,6 +551,23 @@ export const services: Services = {
         return { released: true };
       });
     },
+
+    /** Items workers cannot reserve (RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED) */
+    async listUnavailableForWorkers() {
+      return prisma.equipment.findMany({
+        where: {
+          status: {
+            in: [
+              EquipmentStatus.RESERVED,
+              EquipmentStatus.CHECKED_OUT,
+              EquipmentStatus.MAINTENANCE,
+              EquipmentStatus.RETIRED,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    },
   },
 
   maintenance: {

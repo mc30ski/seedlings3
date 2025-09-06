@@ -54,4 +54,8 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/equipment/available", workerGuard, async () => {
     return services.equipment.listAvailable();
   });
+
+  app.get("/equipment/unavailable", workerGuard, async () => {
+    return services.equipment.listUnavailableForWorkers();
+  });
 }

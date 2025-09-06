@@ -1,74 +1,41 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Heading,
+  HStack,
   Stack,
   Text,
-  Input,
   Badge,
+  Input,
   Spinner,
-  HStack,
 } from "@chakra-ui/react";
-import { apiGet, apiPost, apiDelete } from "../lib/api";
-import { toaster } from "./ui/toaster";
-import { getErrorMessage } from "../lib/errors";
+import { apiGet } from "../lib/api";
 
-type EquipmentStatus =
+type Status =
   | "AVAILABLE"
   | "RESERVED"
   | "CHECKED_OUT"
   | "MAINTENANCE"
   | "RETIRED";
 
-type HolderInfo = {
-  userId: string;
-  displayName?: string | null;
-  email?: string | null;
-  state: "RESERVED" | "CHECKED_OUT";
-};
-
-type Equipment = {
-  id: string;
-  shortDesc: string;
-  longDesc: string;
-  status: EquipmentStatus;
-  holder?: HolderInfo | null;
-};
-
-const STATUS_OPTIONS: ("ALL" | EquipmentStatus)[] = [
-  "ALL",
-  "AVAILABLE",
-  "RESERVED",
-  "CHECKED_OUT",
-  "MAINTENANCE",
-  "RETIRED",
-];
-
 type Holder = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  reservedAt: string; // ISO strings from API
+  reservedAt: string; // ISO from API
   checkedOutAt: string | null;
   state: "RESERVED" | "CHECKED_OUT";
 };
 
-type AdminEquipRow = {
+type EquipmentRow = {
   id: string;
   shortDesc: string;
-  longDesc: string;
-  status: string;
+  longDesc?: string | null;
   qrSlug?: string | null;
-  createdAt: string;
-  updatedAt: string;
+  status: Status;
+  createdAt?: string;
+  updatedAt?: string;
   holder: Holder | null;
-};
-
-const notifyEquipmentUpdated = () => {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
-  }
 };
 
 const LoadingCenter = () => (
@@ -77,31 +44,45 @@ const LoadingCenter = () => (
   </Box>
 );
 
-export default function AdminEquipment() {
-  const [items, setItems] = useState<AdminEquipRow[]>([]);
-  const [shortDesc, setShort] = useState("");
-  const [longDesc, setLong] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+function fmtWhen(holder: Holder) {
+  if (holder.state === "CHECKED_OUT" && holder.checkedOutAt) {
+    return new Date(holder.checkedOutAt).toLocaleString();
+  }
+  return new Date(holder.reservedAt).toLocaleString();
+}
 
-  // Status filter (button chips)
-  const [statusFilter, setStatusFilter] = useState<EquipmentStatus | "ALL">(
-    "ALL"
-  );
+function statusBadgeProps(
+  status: Status
+): { colorPalette?: string } | Record<string, never> {
+  switch (status) {
+    case "AVAILABLE":
+      return { colorPalette: "green" };
+    case "RESERVED":
+      return { colorPalette: "orange" };
+    case "CHECKED_OUT":
+      return { colorPalette: "purple" };
+    case "MAINTENANCE":
+      return { colorPalette: "yellow" };
+    case "RETIRED":
+      return { colorPalette: "gray" };
+    default:
+      return {};
+  }
+}
+
+export default function AdminEquipment() {
+  const [items, setItems] = useState<EquipmentRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<AdminEquipRow[]>(
+      // richer shape including "holder"
+      const data = await apiGet<EquipmentRow[]>(
         "/api/v1/admin/equipment/with-holders"
       );
       setItems(data);
-    } catch (err) {
-      toaster.error({
-        title: "Failed to load equipment",
-        description: getErrorMessage(err),
-      });
     } finally {
       setLoading(false);
     }
@@ -111,302 +92,115 @@ export default function AdminEquipment() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    const onUpd = () => void load();
-    window.addEventListener("seedlings3:equipment-updated", onUpd);
-    return () =>
-      window.removeEventListener("seedlings3:equipment-updated", onUpd);
-  }, [load]);
-
-  const visibleItems = useMemo(() => {
-    if (statusFilter === "ALL") return items;
-    return items.filter((i) => i.status === statusFilter);
-  }, [items, statusFilter]);
-
-  async function create() {
-    if (!shortDesc.trim()) {
-      toaster.error({ title: "Short description is required" });
-      return;
-    }
-    setCreating(true);
-    try {
-      await apiPost("/api/v1/admin/equipment", { shortDesc, longDesc });
-      setShort("");
-      setLong("");
-      toaster.success({ title: "Created" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Create failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function retire(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/v1/admin/equipment/${id}/retire`);
-      toaster.info({ title: "Retired" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Retire failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function unretire(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/v1/admin/equipment/${id}/unretire`);
-      toaster.success({ title: "Unretired" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Unretire failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function release(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/v1/admin/equipment/${id}/release`);
-      toaster.success({ title: "Released" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Release failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function del(id: string) {
-    setBusyId(id);
-    try {
-      await apiDelete(`/api/v1/admin/equipment/${id}`);
-      toaster.warning({ title: "Deleted" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Delete failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function startMaint(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/start`);
-      toaster.info({ title: "Maintenance started" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "Start maintenance failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function endMaint(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/end`);
-      toaster.success({ title: "Maintenance ended" });
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err) {
-      toaster.error({
-        title: "End maintenance failed",
-        description: getErrorMessage(err),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const filtered = useMemo(() => {
+    const qlc = q.trim().toLowerCase();
+    if (!qlc) return items;
+    return items.filter((e) => {
+      const s =
+        `${e.shortDesc} ${e.longDesc ?? ""} ${e.qrSlug ?? ""}`.toLowerCase();
+      return s.includes(qlc);
+    });
+  }, [items, q]);
 
   return (
     <Box>
-      <Heading size="md" mb={3}>
+      <Heading size="md" mb={4}>
         Equipment
       </Heading>
 
-      {/* Filter chips */}
-      <HStack mb={4} gap="2" wrap="wrap">
-        {STATUS_OPTIONS.map((opt) => (
-          <Button
-            key={opt}
-            size="sm"
-            variant={statusFilter === opt ? "solid" : "outline"}
-            onClick={() => setStatusFilter(opt)}
-          >
-            {opt === "ALL"
-              ? "All"
-              : opt === "CHECKED_OUT"
-                ? "Checked out"
-                : opt.charAt(0) + opt.slice(1).toLowerCase().replace("_", " ")}
-          </Button>
-        ))}
+      {/* Search */}
+      <HStack mb={3}>
+        <Input
+          placeholder="Search equipment…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          maxW="360px"
+        />
       </HStack>
 
-      {/* Create form */}
-      <Stack direction="row" gap="3" mb={4}>
-        <Input
-          placeholder="Short description"
-          value={shortDesc}
-          onChange={(ev) => setShort(ev.target.value)}
-        />
-        <Input
-          placeholder="Long description"
-          value={longDesc}
-          onChange={(ev) => setLong(ev.target.value)}
-        />
-        <Button onClick={create} loading={creating}>
-          Add
-        </Button>
-      </Stack>
+      {loading && <LoadingCenter />}
 
-      {/* List */}
-      <Stack gap="3">
-        {loading && <LoadingCenter />}
+      {!loading && filtered.length === 0 && <Text>No equipment found.</Text>}
 
-        {!loading &&
-          visibleItems.map((item) => (
-            <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
-              <Heading size="sm">
-                {item.shortDesc} <Badge ml={2}>{item.status}</Badge>
-              </Heading>
+      {!loading &&
+        filtered.map((e) => {
+          const holder = e.holder;
 
-              {item.holder && (
-                <Text fontSize="xs" color="gray.600" mt={1}>
-                  {item.holder.state === "CHECKED_OUT"
-                    ? "Checked out by "
-                    : "Reserved by "}
-                  {item.holder.displayName ||
-                    item.holder.email ||
-                    item.holder.userId.slice(0, 8)}
-                </Text>
-              )}
+          return (
+            <Box
+              key={e.id}
+              p={3}
+              borderWidth="1px"
+              borderRadius="lg"
+              mb={2}
+              bg="white"
+            >
+              <HStack justify="space-between" align="start">
+                <Box>
+                  <HStack gap="2" wrap="wrap">
+                    <Heading size="sm">{e.shortDesc}</Heading>
+                    <Badge {...statusBadgeProps(e.status)}>{e.status}</Badge>
+                    {e.qrSlug ? (
+                      <Badge colorPalette="blue">QR: {e.qrSlug}</Badge>
+                    ) : null}
+                  </HStack>
 
-              <Text fontSize="sm" color="gray.500">
-                {item.longDesc}
-              </Text>
+                  {e.longDesc ? (
+                    <Text mt={1} fontSize="sm" color="gray.700">
+                      {e.longDesc}
+                    </Text>
+                  ) : null}
 
-              {/* Actions — order: Force Release, Start/End Maintenance, Retire/Unretire, Delete */}
-              <Stack mt={2} direction="row" gap="2">
-                {/* Force Release (RESERVED or CHECKED_OUT) */}
-                <Button
-                  size="sm"
-                  onClick={() => release(item.id)}
-                  disabled={
-                    !!busyId ||
-                    !(
-                      item.status === "CHECKED_OUT" ||
-                      item.status === "RESERVED"
-                    )
-                  }
-                  loading={busyId === item.id}
-                >
-                  Force Release
-                </Button>
+                  {/* Holder chip — mirrors Admin Users “holdings” look/feel */}
+                  {holder && (
+                    <HStack
+                      mt={2}
+                      gap="2"
+                      wrap="wrap"
+                      // chip/Pill look
+                    >
+                      <HStack
+                        px={2}
+                        py={1}
+                        borderRadius="md"
+                        borderWidth="1px"
+                        borderColor="gray.200"
+                        bg="gray.50"
+                        gap="2"
+                      >
+                        <Badge
+                          size="sm"
+                          colorPalette={
+                            holder.state === "CHECKED_OUT" ? "purple" : "orange"
+                          }
+                        >
+                          {holder.state === "CHECKED_OUT"
+                            ? "Checked out"
+                            : "Reserved"}
+                        </Badge>
+                        <Text fontSize="sm">
+                          {holder.displayName ||
+                            holder.email ||
+                            `User ${holder.userId.slice(0, 8)}…`}
+                        </Text>
+                        <Text fontSize="xs" color="gray.600">
+                          since {fmtWhen(holder)}
+                        </Text>
+                      </HStack>
+                    </HStack>
+                  )}
+                </Box>
 
-                {/* Maintenance toggle */}
-                {item.status === "MAINTENANCE" ? (
-                  <Button
-                    size="sm"
-                    onClick={() => endMaint(item.id)}
-                    disabled={!!busyId}
-                    loading={busyId === item.id}
-                    variant="subtle"
-                    colorPalette="green"
-                  >
-                    End Maintenance
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={() => startMaint(item.id)}
-                    disabled={
-                      !!busyId ||
-                      item.status === "CHECKED_OUT" ||
-                      item.status === "RESERVED" ||
-                      item.status === "RETIRED"
-                    }
-                    loading={busyId === item.id}
-                    variant="subtle"
-                  >
-                    Start Maintenance
-                  </Button>
-                )}
-
-                {/* Retire ↔ Unretire */}
-                {item.status === "RETIRED" ? (
-                  <Button
-                    size="sm"
-                    onClick={() => unretire(item.id)}
-                    disabled={!!busyId}
-                    loading={busyId === item.id}
-                    variant="outline"
-                  >
-                    Unretire
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={() => retire(item.id)}
-                    disabled={
-                      !!busyId ||
-                      item.status === "CHECKED_OUT" ||
-                      item.status === "RESERVED"
-                    }
-                    loading={busyId === item.id}
-                    variant="outline"
-                  >
-                    Retire
-                  </Button>
-                )}
-
-                {/* Delete (only when RETIRED) */}
-                <Button
-                  size="sm"
-                  onClick={() => del(item.id)}
-                  disabled={!!busyId || item.status !== "RETIRED"}
-                  loading={busyId === item.id}
-                  colorPalette="red"
-                >
-                  Delete
-                </Button>
-              </Stack>
+                {/* Right side: small meta */}
+                <Stack align="end" gap="1">
+                  <Text fontSize="xs" color="gray.600">
+                    id: {e.id.slice(0, 8)}…
+                  </Text>
+                </Stack>
+              </HStack>
             </Box>
-          ))}
-
-        {!loading && visibleItems.length === 0 && (
-          <Text>No equipment matching this filter.</Text>
-        )}
-      </Stack>
+          );
+        })}
     </Box>
   );
 }

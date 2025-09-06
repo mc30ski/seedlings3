@@ -44,6 +44,8 @@ export type Services = {
     listAllAdmin(): Promise<EquipmentWithHolder[]>;
     /** Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT */
     listForWorkers(): Promise<Equipment[]>;
+    /** items workers cannot reserve (RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED) */
+    listUnavailableForWorkers(): Promise<Equipment[]>;
     /** Items I currently hold (reserved or checked out) */
     listMine(userId: string): Promise<Equipment[]>;
 
