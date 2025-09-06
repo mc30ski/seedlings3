@@ -9,6 +9,8 @@ import {
   Badge,
   Input,
   Spinner,
+  Wrap,
+  WrapItem,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -31,11 +33,31 @@ type Me = {
   displayName?: string | null;
 };
 
+type HoldingState = "RESERVED" | "CHECKED_OUT";
+type Holding = {
+  userId: string;
+  equipmentId: string;
+  shortDesc: string;
+  state: HoldingState;
+  reservedAt: string | Date;
+  checkedOutAt: string | Date | null;
+};
+
 const LoadingCenter = () => (
-  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
-    <Spinner size="lg" />
+  <Box minH="140px" display="flex" alignItems="center" justifyContent="center">
+    <Spinner size="md" />
   </Box>
 );
+
+function fmtWhen(d: string | Date | null | undefined) {
+  if (!d) return "";
+  try {
+    const dt = typeof d === "string" ? new Date(d) : d;
+    return dt.toLocaleString();
+  } catch {
+    return String(d);
+  }
+}
 
 export default function AdminUsers() {
   const [items, setItems] = useState<ApiUser[]>([]);
@@ -43,15 +65,20 @@ export default function AdminUsers() {
 
   // who am I? (used to hide actions for self)
   const [me, setMe] = useState<Me | null>(null);
-  const [meReady, setMeReady] = useState(false); // <- NEW: prevents button flash
+  const [meReady, setMeReady] = useState(false); // prevents button flash
 
-  // simple filters
+  // filters
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<"all" | "pending" | "approved">("all");
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
 
-  // inline warning by user id (shown under their info)
+  // inline warning by user id
   const [inlineErr, setInlineErr] = useState<Record<string, string>>({});
+
+  // holdings mapped by userId
+  const [holdingsByUser, setHoldingsByUser] = useState<
+    Record<string, Holding[]>
+  >({});
 
   // react to request to open "pending" (from the header bell)
   useEffect(() => {
@@ -92,20 +119,33 @@ export default function AdminUsers() {
 
   const rolesSet = (u: ApiUser) => new Set(u.roles.map((r) => r.role));
 
+  const groupHoldings = (rows: Holding[]) => {
+    const map: Record<string, Holding[]> = {};
+    for (const r of rows) {
+      (map[r.userId] ??= []).push(r);
+    }
+    return map;
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // users (with filters)
       const params = new URLSearchParams();
       if (status === "pending") params.set("approved", "false");
       if (status === "approved") params.set("approved", "true");
       if (role === "worker") params.set("role", "WORKER");
       if (role === "admin") params.set("role", "ADMIN");
 
-      const data = await apiGet<ApiUser[]>(
-        `/api/v1/admin/users${params.toString() ? `?${params}` : ""}`
-      );
-      setItems(data);
-      // clear any stale inline warnings after refresh
+      const [users, holdings] = await Promise.all([
+        apiGet<ApiUser[]>(
+          `/api/v1/admin/users${params.toString() ? `?${params}` : ""}`
+        ),
+        apiGet<Holding[]>("/api/v1/admin/holdings").catch(() => []),
+      ]);
+
+      setItems(users);
+      setHoldingsByUser(groupHoldings(holdings));
       setInlineErr({});
     } catch (err) {
       toaster.error({
@@ -158,7 +198,6 @@ export default function AdminUsers() {
         } catch {}
       }
       toaster.success({ title: `Added ${role}` });
-      // clear any warning for this user (role changed)
       setInlineErr((m) => {
         const n = { ...m };
         delete n[userId];
@@ -177,7 +216,6 @@ export default function AdminUsers() {
     try {
       await apiDelete(`/api/v1/admin/users/${userId}/roles/${role}`);
       toaster.success({ title: `Removed ${role}` });
-      // clear any warning for this user on success
       setInlineErr((m) => {
         const n = { ...m };
         delete n[userId];
@@ -185,7 +223,6 @@ export default function AdminUsers() {
       });
       await load();
     } catch (err: any) {
-      // Detect a 409 regardless of fetch wrapper
       const status =
         err?.status ??
         err?.httpStatus ??
@@ -198,7 +235,6 @@ export default function AdminUsers() {
           : getErrorMessage(err);
 
       setInlineErr((prev) => ({ ...prev, [userId]: msg }));
-      // also toast (useful if the row is out of view)
       toaster.error({ title: "Remove role failed", description: msg });
     }
   }
@@ -212,34 +248,34 @@ export default function AdminUsers() {
 
   return (
     <Box>
-      <Heading size="md" mb={4}>
+      <Heading size="md" mb={3}>
         Users & Access
       </Heading>
 
-      {/* Filters */}
-      <Stack gap="3" mb={4}>
-        <HStack gap="3" wrap="wrap">
-          <HStack gap="2">
+      {/* Filters (more compact) */}
+      <Stack gap="2" mb={3}>
+        <HStack gap="2" wrap="wrap">
+          <HStack gap="1.5">
             <Text fontSize="sm" color="gray.600">
               Status:
             </Text>
             <HStack gap="1">
               <Button
-                size="sm"
+                size="xs"
                 variant={status === "all" ? "solid" : "outline"}
                 onClick={() => setStatus("all")}
               >
                 All
               </Button>
               <Button
-                size="sm"
+                size="xs"
                 variant={status === "pending" ? "solid" : "outline"}
                 onClick={() => setStatus("pending")}
               >
                 Pending
               </Button>
               <Button
-                size="sm"
+                size="xs"
                 variant={status === "approved" ? "solid" : "outline"}
                 onClick={() => setStatus("approved")}
               >
@@ -248,27 +284,27 @@ export default function AdminUsers() {
             </HStack>
           </HStack>
 
-          <HStack gap="2">
+          <HStack gap="1.5">
             <Text fontSize="sm" color="gray.600">
               Role:
             </Text>
             <HStack gap="1">
               <Button
-                size="sm"
+                size="xs"
                 variant={role === "all" ? "solid" : "outline"}
                 onClick={() => setRole("all")}
               >
                 All
               </Button>
               <Button
-                size="sm"
+                size="xs"
                 variant={role === "worker" ? "solid" : "outline"}
                 onClick={() => setRole("worker")}
               >
                 Worker
               </Button>
               <Button
-                size="sm"
+                size="xs"
                 variant={role === "admin" ? "solid" : "outline"}
                 onClick={() => setRole("admin")}
               >
@@ -278,10 +314,11 @@ export default function AdminUsers() {
           </HStack>
 
           <Input
+            size="sm"
             placeholder="Search name/email/user id…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            maxW="320px"
+            maxW="280px"
             ml="auto"
           />
         </HStack>
@@ -291,7 +328,7 @@ export default function AdminUsers() {
       {loading && <LoadingCenter />}
 
       {!loading && filtered.length === 0 && (
-        <Text>No users match the current filters.</Text>
+        <Text fontSize="sm">No users match the current filters.</Text>
       )}
 
       {!loading &&
@@ -300,30 +337,83 @@ export default function AdminUsers() {
           const isAdmin = s.has("ADMIN");
           const isWorker = s.has("WORKER");
           const isMe = me?.id && u.id === me.id;
+          const holdings = holdingsByUser[u.id] ?? [];
 
           return (
-            <Box key={u.id} p={4} borderWidth="1px" borderRadius="lg" mb={3}>
-              <HStack justify="space-between" align="start">
-                <Box>
+            <Box
+              key={u.id}
+              p={3}
+              borderWidth="1px"
+              borderRadius="md"
+              mb={2}
+              bg="white"
+            >
+              <HStack justify="space-between" align="start" gap="3">
+                <Box flex="1">
                   <Heading size="sm">
                     {u.displayName || u.email || "(no name)"}{" "}
                     {isMe && <Badge ml="2">You</Badge>}
                   </Heading>
-                  <Text fontSize="xs" color="gray.600">
+                  <Text fontSize="xs" color="gray.600" mt="0.5">
                     {u.email || "—"} · id: {u.id.slice(0, 8)}…
                   </Text>
-                  <HStack gap="2" mt={2}>
+                  <HStack gap="1.5" mt="1">
                     <Badge>{u.isApproved ? "Approved" : "Pending"}</Badge>
                     {isWorker && <Badge colorPalette="blue">Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                   </HStack>
 
-                  {/* Dismissible warning banner */}
+                  {/* Holdings as separate small chips (no combined bubble) */}
+                  {holdings.length > 0 && (
+                    <Box mt="2">
+                      <Wrap gap="1.5">
+                        {holdings.map((h) => {
+                          const tone =
+                            h.state === "CHECKED_OUT" ? "purple" : "orange";
+                          const label =
+                            h.state === "CHECKED_OUT" ? "Out" : "Res";
+                          const when =
+                            h.state === "CHECKED_OUT"
+                              ? fmtWhen(h.checkedOutAt)
+                              : fmtWhen(h.reservedAt);
+                          return (
+                            <WrapItem key={`${h.userId}-${h.equipmentId}`}>
+                              <HStack
+                                px="2"
+                                py="1"
+                                borderWidth="1px"
+                                borderRadius="full"
+                                bg="gray.50"
+                                borderColor={`${tone}.200`}
+                                gap="1.5"
+                              >
+                                <Badge
+                                  variant="outline"
+                                  colorPalette={tone}
+                                  style={{ fontWeight: 600 }}
+                                >
+                                  {label}
+                                </Badge>
+                                <Text fontSize="xs">{h.shortDesc}</Text>
+                                {when && (
+                                  <Text fontSize="xs" color="gray.600">
+                                    · {when}
+                                  </Text>
+                                )}
+                              </HStack>
+                            </WrapItem>
+                          );
+                        })}
+                      </Wrap>
+                    </Box>
+                  )}
+
+                  {/* Dismissible warning banner (still compact) */}
                   {inlineErr[u.id] && (
                     <HStack
-                      mt={3}
+                      mt={2}
                       align="start"
-                      p={3}
+                      p={2.5}
                       borderRadius="md"
                       borderWidth="1px"
                       borderColor="orange.300"
@@ -335,7 +425,7 @@ export default function AdminUsers() {
                         </Text>
                       </Box>
                       <Button
-                        size="xs"
+                        size="2xs"
                         variant="ghost"
                         onClick={() => dismissInline(u.id)}
                       >
@@ -347,21 +437,18 @@ export default function AdminUsers() {
 
                 {/* Actions — hidden until we know who "me" is to avoid button flash */}
                 {meReady && (
-                  <Stack direction="row" gap="2">
-                    {/* No actions for yourself */}
+                  <Stack direction="row" gap="1.5" minW="fit-content">
                     {isMe ? null : (
                       <>
-                        {/* If pending: only Approve button, nothing else */}
                         {!u.isApproved ? (
-                          <Button size="sm" onClick={() => approve(u.id)}>
+                          <Button size="xs" onClick={() => approve(u.id)}>
                             Approve
                           </Button>
                         ) : (
                           <>
-                            {/* Admin toggle */}
                             {isAdmin ? (
                               <Button
-                                size="sm"
+                                size="xs"
                                 onClick={() => removeRole(u.id, "ADMIN")}
                                 variant="subtle"
                               >
@@ -369,7 +456,7 @@ export default function AdminUsers() {
                               </Button>
                             ) : (
                               <Button
-                                size="sm"
+                                size="xs"
                                 onClick={() => addRole(u.id, "ADMIN")}
                                 variant="subtle"
                               >
@@ -377,10 +464,9 @@ export default function AdminUsers() {
                               </Button>
                             )}
 
-                            {/* Worker toggle (cannot remove WORKER if still ADMIN) */}
                             {isWorker ? (
                               <Button
-                                size="sm"
+                                size="xs"
                                 onClick={() => removeRole(u.id, "WORKER")}
                                 variant="outline"
                                 disabled={isAdmin}
@@ -392,7 +478,7 @@ export default function AdminUsers() {
                               </Button>
                             ) : (
                               <Button
-                                size="sm"
+                                size="xs"
                                 onClick={() => addRole(u.id, "WORKER")}
                                 variant="outline"
                               >

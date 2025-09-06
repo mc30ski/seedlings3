@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { services } from "../services";
+import { prisma } from "../db/prisma";
 
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
@@ -43,6 +44,25 @@ export default async function adminRoutes(app: FastifyInstance) {
     adminGuard,
     async (req: any) => services.maintenance.end(req.params.id)
   );
+
+  app.get("/admin/holdings", adminGuard, async () => {
+    const rows = await prisma.checkout.findMany({
+      where: { releasedAt: null },
+      include: {
+        equipment: { select: { id: true, shortDesc: true } },
+      },
+      orderBy: { reservedAt: "desc" },
+    });
+
+    return rows.map((r) => ({
+      userId: r.userId,
+      equipmentId: r.equipmentId,
+      shortDesc: r.equipment?.shortDesc ?? "",
+      state: r.checkedOutAt ? ("CHECKED_OUT" as const) : ("RESERVED" as const),
+      reservedAt: r.reservedAt,
+      checkedOutAt: r.checkedOutAt,
+    }));
+  });
 
   // Audit
   app.get("/admin/audit", adminGuard, async (req: any) => {
