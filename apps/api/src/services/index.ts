@@ -44,12 +44,7 @@ async function hasActiveCheckout(tx: Tx, equipmentId: string) {
 }
 
 /**
- * Recompute derived status:
- * - RETIRED / MAINTENANCE are sticky
- * - If active row exists:
- *    - checkedOutAt != null  => CHECKED_OUT
- *    - checkedOutAt == null  => RESERVED
- * - Else AVAILABLE
+ * Recompute derived status...
  */
 async function recomputeStatus(tx: Tx, equipmentId: string) {
   const eq = await tx.equipment.findUnique({ where: { id: equipmentId } });
@@ -118,7 +113,7 @@ async function writeAudit(
 
 export const services: Services = {
   equipment: {
-    /** AVAILABLE & no active rows */
+    // ... (unchanged)
     async listAvailable() {
       return prisma.equipment.findMany({
         where: {
@@ -129,12 +124,10 @@ export const services: Services = {
       });
     },
 
-    /** Plain list for general use */
     async listAll() {
       return prisma.equipment.findMany({ orderBy: { createdAt: "desc" } });
     },
 
-    /** Admin list with current holder information (if any) */
     async listAllAdmin() {
       const rows = await prisma.equipment.findMany({
         orderBy: { createdAt: "desc" },
@@ -142,7 +135,7 @@ export const services: Services = {
           checkouts: {
             where: { releasedAt: null },
             include: { user: true },
-            take: 1, // there should be at most one active row
+            take: 1,
           },
         },
       });
@@ -160,8 +153,6 @@ export const services: Services = {
             }
           : null;
 
-        // strip relation arrays to satisfy Equipment shape
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { checkouts, auditEvents, ...equip } = e as any;
         return { ...(equip as any), holder };
       });
@@ -169,7 +160,6 @@ export const services: Services = {
       return mapped;
     },
 
-    /** Worker “Available” view only shows AVAILABLE items */
     async listForWorkers() {
       return prisma.equipment.findMany({
         where: { status: { in: [EquipmentStatus.AVAILABLE] } },
@@ -177,27 +167,19 @@ export const services: Services = {
       });
     },
 
-    /** My active reservations/checkouts */
     async listMine(userId: string) {
       return prisma.equipment
         .findMany({
-          where: {
-            status: { not: EquipmentStatus.RETIRED },
-          },
+          where: { status: { not: EquipmentStatus.RETIRED } },
           orderBy: { createdAt: "desc" },
           include: {
-            checkouts: {
-              where: { userId, releasedAt: null },
-              take: 1,
-            },
+            checkouts: { where: { userId, releasedAt: null }, take: 1 },
           },
         })
         .then((rows) =>
           rows
             .filter((r) => r.checkouts.length > 0)
             .map((r) => {
-              // drop the relation to match Equipment[]
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { checkouts, ...rest } = r as any;
               return rest as typeof r;
             })
@@ -243,7 +225,6 @@ export const services: Services = {
       });
     },
 
-    /** Retire (blocked if RESERVED or CHECKED_OUT or any active row) */
     async retire(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -329,7 +310,6 @@ export const services: Services = {
       });
     },
 
-    /** Admin assign => directly CHECKED_OUT to that user */
     async assign(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -376,7 +356,6 @@ export const services: Services = {
       });
     },
 
-    /** Admin force release from RESERVED or CHECKED_OUT */
     async release(id: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -402,9 +381,7 @@ export const services: Services = {
       });
     },
 
-    // ---------- Worker lifecycle (RESERVE → CHECKOUT → RETURN) ----------
-
-    /** Reserve AVAILABLE equipment */
+    // Worker lifecycle...
     async reserve(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -427,7 +404,6 @@ export const services: Services = {
             409
           );
 
-        // Create active row with no checkedOutAt -> RESERVED
         await tx.checkout.create({
           data: { equipmentId: id, userId },
         });
@@ -441,7 +417,6 @@ export const services: Services = {
       });
     },
 
-    /** Cancel reservation (only if it's yours and not yet checked out) */
     async cancelReservation(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -469,7 +444,6 @@ export const services: Services = {
       });
     },
 
-    /** Checkout must follow reservation by same user */
     async checkout(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -505,7 +479,6 @@ export const services: Services = {
       });
     },
 
-    /** Return by the same user who checked out */
     async returnByUser(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -537,14 +510,10 @@ export const services: Services = {
       });
     },
 
-    // ---------- Back-compat shims ----------
-
-    /** Old "claim" => reserve (first step of the new flow) */
     async claim(id: string, userId: string) {
       return this.reserve(id, userId);
     },
 
-    /** Old "release" by worker => cancel reservation OR return if checked out */
     async releaseByUser(id: string, userId: string) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
@@ -671,13 +640,11 @@ export const services: Services = {
     },
 
     async removeRole(userId: string, role: "ADMIN" | "WORKER") {
-      // If removing WORKER, block when user still holds equipment (reserved or checked out)
       if (role === "WORKER") {
         const active = await prisma.checkout.count({
           where: { userId, releasedAt: null },
         });
         if (active > 0) {
-          // 409 so the UI can distinguish and show inline guidance
           throw new ServiceError(
             "USER_HAS_ACTIVE_EQUIPMENT",
             "Cannot remove Worker role while the user has reserved/checked-out equipment.",
@@ -706,13 +673,11 @@ export const services: Services = {
         };
       }
 
-      // Try to find the user in your DB
       let user = await prisma.user.findUnique({
         where: { clerkUserId },
         include: { roles: true },
       });
 
-      // If missing, create it using Clerk profile as seed data
       if (!user) {
         let email: string | null = null;
         let displayName: string | null = null;
@@ -729,20 +694,17 @@ export const services: Services = {
             .join(" ")
             .trim();
           displayName = name || u.username || null;
-        } catch {
-          // If Clerk fetch fails, proceed with minimal row
-        }
+        } catch {}
 
         await prisma.user.create({
           data: {
             clerkUserId,
             email: email ?? undefined,
             displayName: displayName ?? undefined,
-            isApproved: false, // new users need approval
+            isApproved: false,
           },
         });
 
-        // re-read including roles
         user = await prisma.user.findUnique({
           where: { clerkUserId },
           include: { roles: true },
@@ -758,13 +720,28 @@ export const services: Services = {
       };
     },
 
-    /**
-     * Hard delete a user from the system:
-     * - Prevent deleting yourself.
-     * - Prevent deleting the last remaining ADMIN.
-     * - Delete Clerk user (best-effort).
-     * - Delete DB user (cascades roles & checkouts; audit actor FK is set null).
-     */
+    /** New: centralized holdings list (reserved + checked out) */
+    async listHoldings() {
+      const rows = await prisma.checkout.findMany({
+        where: { releasedAt: null },
+        include: {
+          equipment: { select: { id: true, shortDesc: true } },
+        },
+        orderBy: { reservedAt: "desc" },
+      });
+
+      return rows.map((r) => ({
+        userId: r.userId,
+        equipmentId: r.equipmentId,
+        shortDesc: r.equipment?.shortDesc ?? "",
+        state: r.checkedOutAt
+          ? ("CHECKED_OUT" as const)
+          : ("RESERVED" as const),
+        reservedAt: r.reservedAt,
+        checkedOutAt: r.checkedOutAt ?? null,
+      }));
+    },
+
     async remove(userId: string, actorUserId: string) {
       if (!actorUserId) {
         throw new ServiceError("UNAUTHORIZED", "Missing actor", 401);
@@ -785,7 +762,6 @@ export const services: Services = {
         throw new ServiceError("NOT_FOUND", "User not found", 404);
       }
 
-      // Block deleting the last admin
       const isAdmin = user.roles.some((r) => r.role === "ADMIN");
       if (isAdmin) {
         const otherAdmins = await prisma.userRole.count({
@@ -800,20 +776,17 @@ export const services: Services = {
         }
       }
 
-      // Best-effort Clerk deletion first (so they can't sign in again)
       let clerkDeleted = false;
       if (user.clerkUserId) {
         try {
           await clerk.users.deleteUser(user.clerkUserId);
           clerkDeleted = true;
         } catch (e: any) {
-          // If Clerk says 404, consider it gone; otherwise continue but report false
           clerkDeleted =
             typeof e?.status === "number" ? e.status === 404 : false;
         }
       }
 
-      // DB delete (roles & checkouts cascade; audit actor is set null)
       await prisma.user.delete({ where: { id: userId } });
 
       return { deleted: true as const, clerkDeleted };

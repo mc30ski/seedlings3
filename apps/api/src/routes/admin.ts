@@ -1,18 +1,19 @@
 import { FastifyInstance } from "fastify";
 import { services } from "../services";
-import { prisma } from "../db/prisma";
 
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
     preHandler: (req: any, reply: any) => app.requireRole(req, reply, "ADMIN"),
   };
 
+  // Equipment (basic + with holders)
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAll()
   );
   app.get("/admin/equipment/with-holders", adminGuard, async () =>
     services.equipment.listAllAdmin()
   );
+
   app.post("/admin/equipment", adminGuard, async (req: any) =>
     services.equipment.create(req.body)
   );
@@ -45,23 +46,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     async (req: any) => services.maintenance.end(req.params.id)
   );
 
+  // Holdings (reserved + checked out) — via services layer
   app.get("/admin/holdings", adminGuard, async () => {
-    const rows = await prisma.checkout.findMany({
-      where: { releasedAt: null },
-      include: {
-        equipment: { select: { id: true, shortDesc: true } },
-      },
-      orderBy: { reservedAt: "desc" },
-    });
-
-    return rows.map((r) => ({
-      userId: r.userId,
-      equipmentId: r.equipmentId,
-      shortDesc: r.equipment?.shortDesc ?? "",
-      state: r.checkedOutAt ? ("CHECKED_OUT" as const) : ("RESERVED" as const),
-      reservedAt: r.reservedAt,
-      checkedOutAt: r.checkedOutAt,
-    }));
+    return services.users.listHoldings();
   });
 
   // Audit

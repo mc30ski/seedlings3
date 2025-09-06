@@ -25,6 +25,16 @@ export type AdminHolder = {
 
 export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
 
+// --- holdings row for /admin/holdings ---
+export type AdminUserHolding = {
+  userId: string;
+  equipmentId: string;
+  shortDesc: string;
+  state: "RESERVED" | "CHECKED_OUT";
+  reservedAt: Date;
+  checkedOutAt: Date | null;
+};
+
 export type Services = {
   equipment: {
     // Lists
@@ -88,6 +98,8 @@ export type Services = {
       userId: string,
       role: "ADMIN" | "WORKER"
     ): Promise<{ deleted: boolean }>;
+
+    /** Current user snapshot for the web app */
     me(clerkUserId: string): Promise<{
       id: string;
       isApproved: boolean;
@@ -95,6 +107,11 @@ export type Services = {
       email?: string | null;
       displayName?: string | null;
     }>;
+
+    /** NEW: reserved + checked-out items (flat list used by AdminUsers UI) */
+    listHoldings(): Promise<AdminUserHolding[]>;
+
+    /** Hard-delete user (Clerk + DB) */
     remove(
       userId: string,
       actorUserId: string
