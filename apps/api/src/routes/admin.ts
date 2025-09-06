@@ -9,6 +9,9 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAll()
   );
+  app.get("/admin/equipment/with-holders", adminGuard, async () =>
+    services.equipment.listAllAdmin()
+  );
   app.post("/admin/equipment", adminGuard, async (req: any) =>
     services.equipment.create(req.body)
   );

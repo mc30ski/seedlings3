@@ -45,6 +45,26 @@ const STATUS_OPTIONS: ("ALL" | EquipmentStatus)[] = [
   "RETIRED",
 ];
 
+type Holder = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  reservedAt: string; // ISO strings from API
+  checkedOutAt: string | null;
+  state: "RESERVED" | "CHECKED_OUT";
+};
+
+type AdminEquipRow = {
+  id: string;
+  shortDesc: string;
+  longDesc: string;
+  status: string;
+  qrSlug?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  holder: Holder | null;
+};
+
 const notifyEquipmentUpdated = () => {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
@@ -58,7 +78,7 @@ const LoadingCenter = () => (
 );
 
 export default function AdminEquipment() {
-  const [items, setItems] = useState<Equipment[]>([]);
+  const [items, setItems] = useState<AdminEquipRow[]>([]);
   const [shortDesc, setShort] = useState("");
   const [longDesc, setLong] = useState("");
   const [loading, setLoading] = useState(false);
@@ -73,7 +93,9 @@ export default function AdminEquipment() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
+      const data = await apiGet<AdminEquipRow[]>(
+        "/api/v1/admin/equipment/with-holders"
+      );
       setItems(data);
     } catch (err) {
       toaster.error({
