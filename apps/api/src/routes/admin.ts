@@ -8,7 +8,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Equipment (basic + with holders)
   app.get("/admin/equipment", adminGuard, async () =>
-    services.equipment.listAll()
+    services.equipment.listAllAdmin()
   );
   app.get("/admin/equipment/with-holders", adminGuard, async () =>
     services.equipment.listAllAdmin()

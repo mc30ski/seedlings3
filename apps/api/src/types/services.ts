@@ -81,6 +81,8 @@ export type Services = {
     claim(id: string, userId: string): Promise<ReserveResult>;
     /** Legacy "release" decides cancel vs return */
     releaseByUser(id: string, userId: string): Promise<ReleaseResult>;
+
+    listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
   };
 
   // Maintenance toggle (sticky)

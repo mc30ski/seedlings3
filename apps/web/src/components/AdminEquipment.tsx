@@ -1,17 +1,21 @@
+// apps/web/src/components/AdminEquipment.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Heading,
+  Text,
   HStack,
   Stack,
-  Text,
   Badge,
+  Button,
   Input,
   Spinner,
 } from "@chakra-ui/react";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost, apiDelete } from "../lib/api";
+import { toaster } from "./ui/toaster";
+import { getErrorMessage } from "../lib/errors";
 
-type Status =
+type EquipmentStatus =
   | "AVAILABLE"
   | "RESERVED"
   | "CHECKED_OUT"
@@ -22,19 +26,20 @@ type Holder = {
   userId: string;
   displayName: string | null;
   email: string | null;
-  reservedAt: string; // ISO from API
+  reservedAt: string;
   checkedOutAt: string | null;
   state: "RESERVED" | "CHECKED_OUT";
 };
 
-type EquipmentRow = {
+type Equipment = {
   id: string;
   shortDesc: string;
-  longDesc?: string | null;
-  qrSlug?: string | null;
-  status: Status;
-  createdAt?: string;
-  updatedAt?: string;
+  longDesc: string | null;
+  qrSlug: string | null;
+  status: EquipmentStatus;
+  createdAt: string;
+  updatedAt: string;
+  retiredAt: string | null;
   holder: Holder | null;
 };
 
@@ -44,45 +49,25 @@ const LoadingCenter = () => (
   </Box>
 );
 
-function fmtWhen(holder: Holder) {
-  if (holder.state === "CHECKED_OUT" && holder.checkedOutAt) {
-    return new Date(holder.checkedOutAt).toLocaleString();
-  }
-  return new Date(holder.reservedAt).toLocaleString();
-}
-
-function statusBadgeProps(
-  status: Status
-): { colorPalette?: string } | Record<string, never> {
-  switch (status) {
-    case "AVAILABLE":
-      return { colorPalette: "green" };
-    case "RESERVED":
-      return { colorPalette: "orange" };
-    case "CHECKED_OUT":
-      return { colorPalette: "purple" };
-    case "MAINTENANCE":
-      return { colorPalette: "yellow" };
-    case "RETIRED":
-      return { colorPalette: "gray" };
-    default:
-      return {};
-  }
-}
-
 export default function AdminEquipment() {
-  const [items, setItems] = useState<EquipmentRow[]>([]);
+  const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
+
   const [q, setQ] = useState("");
+  const [status, setStatus] = useState<
+    "all" | "available" | "reserved" | "checked_out" | "maintenance" | "retired"
+  >("all");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // richer shape including "holder"
-      const data = await apiGet<EquipmentRow[]>(
-        "/api/v1/admin/equipment/with-holders"
-      );
+      const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
       setItems(data);
+    } catch (err) {
+      toaster.error({
+        title: "Failed to load equipment",
+        description: getErrorMessage(err),
+      });
     } finally {
       setLoading(false);
     }
@@ -93,109 +78,299 @@ export default function AdminEquipment() {
   }, [load]);
 
   const filtered = useMemo(() => {
+    let rows = items;
+
+    if (status !== "all") {
+      let want: EquipmentStatus[] | null = null;
+      switch (status) {
+        case "available":
+          want = ["AVAILABLE"];
+          break;
+        case "reserved":
+          want = ["RESERVED"];
+          break;
+        case "checked_out":
+          want = ["CHECKED_OUT"];
+          break;
+        case "maintenance":
+          want = ["MAINTENANCE"];
+          break;
+        case "retired":
+          want = ["RETIRED"];
+          break;
+      }
+      if (want) rows = rows.filter((r) => want!.includes(r.status));
+    }
+
     const qlc = q.trim().toLowerCase();
-    if (!qlc) return items;
-    return items.filter((e) => {
-      const s =
-        `${e.shortDesc} ${e.longDesc ?? ""} ${e.qrSlug ?? ""}`.toLowerCase();
-      return s.includes(qlc);
-    });
-  }, [items, q]);
+    if (qlc) {
+      rows = rows.filter((r) => {
+        const s = (r.shortDesc || "").toLowerCase();
+        const l = (r.longDesc || "").toLowerCase();
+        const who =
+          r.holder?.displayName?.toLowerCase() ||
+          r.holder?.email?.toLowerCase() ||
+          "";
+        return s.includes(qlc) || l.includes(qlc) || who.includes(qlc);
+      });
+    }
+    return rows;
+  }, [items, q, status]);
+
+  // ---- actions ----
+  async function forceRelease(id: string) {
+    try {
+      await apiPost(`/api/v1/admin/equipment/${id}/release`, {});
+      toaster.success({ title: "Released" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Release failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function startMaint(id: string) {
+    try {
+      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/start`, {});
+      toaster.success({ title: "Maintenance started" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Start maintenance failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function endMaint(id: string) {
+    try {
+      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/end`, {});
+      toaster.success({ title: "Maintenance ended" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "End maintenance failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function retire(id: string) {
+    try {
+      await apiPost(`/api/v1/admin/equipment/${id}/retire`, {});
+      toaster.success({ title: "Retired" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Retire failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function unretire(id: string) {
+    try {
+      await apiPost(`/api/v1/admin/equipment/${id}/unretire`, {});
+      toaster.success({ title: "Unretired" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Unretire failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  async function hardDelete(id: string) {
+    try {
+      await apiDelete(`/api/v1/admin/equipment/${id}`);
+      toaster.success({ title: "Deleted" });
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Delete failed",
+        description: getErrorMessage(err),
+      });
+    }
+  }
+
+  // ---- guards for showing buttons ----
+  const canForceRelease = (e: Equipment) => !!e.holder;
+  const canStartMaint = (e: Equipment) =>
+    e.status !== "RETIRED" && e.status !== "MAINTENANCE" && !e.holder;
+  const canEndMaint = (e: Equipment) => e.status === "MAINTENANCE";
+  const canRetire = (e: Equipment) =>
+    e.status !== "RETIRED" &&
+    !e.holder &&
+    e.status !== "RESERVED" &&
+    e.status !== "CHECKED_OUT";
+  const canUnretire = (e: Equipment) => e.status === "RETIRED";
+  const canDelete = (e: Equipment) => e.status === "RETIRED";
 
   return (
     <Box>
       <Heading size="md" mb={4}>
-        Equipment
+        Equipment (Admin)
       </Heading>
 
-      {/* Search */}
-      <HStack mb={3}>
+      {/* Filters */}
+      <HStack gap="2" wrap="wrap" mb={3}>
+        <HStack gap="1">
+          <Button
+            size="sm"
+            variant={status === "all" ? "solid" : "outline"}
+            onClick={() => setStatus("all")}
+          >
+            All
+          </Button>
+          <Button
+            size="sm"
+            variant={status === "available" ? "solid" : "outline"}
+            onClick={() => setStatus("available")}
+          >
+            Available
+          </Button>
+          <Button
+            size="sm"
+            variant={status === "reserved" ? "solid" : "outline"}
+            onClick={() => setStatus("reserved")}
+          >
+            Reserved
+          </Button>
+          <Button
+            size="sm"
+            variant={status === "checked_out" ? "solid" : "outline"}
+            onClick={() => setStatus("checked_out")}
+          >
+            Checked out
+          </Button>
+          <Button
+            size="sm"
+            variant={status === "maintenance" ? "solid" : "outline"}
+            onClick={() => setStatus("maintenance")}
+          >
+            Maintenance
+          </Button>
+          <Button
+            size="sm"
+            variant={status === "retired" ? "solid" : "outline"}
+            onClick={() => setStatus("retired")}
+          >
+            Retired
+          </Button>
+        </HStack>
+
         <Input
-          placeholder="Search equipment…"
+          placeholder="Search description / holder…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          maxW="360px"
+          maxW="320px"
+          ml="auto"
         />
       </HStack>
 
+      {/* Separator (Chakra v3 safe) */}
+      <Box h="1px" bg="gray.200" mb={3} />
+
       {loading && <LoadingCenter />}
 
-      {!loading && filtered.length === 0 && <Text>No equipment found.</Text>}
+      {!loading && filtered.length === 0 && (
+        <Text>No equipment matches the current filters.</Text>
+      )}
 
       {!loading &&
-        filtered.map((e) => {
-          const holder = e.holder;
+        filtered.map((item) => {
+          const statusColor: Record<EquipmentStatus, any> = {
+            AVAILABLE: { colorPalette: "green" },
+            RESERVED: { colorPalette: "orange" },
+            CHECKED_OUT: { colorPalette: "red" },
+            MAINTENANCE: { colorPalette: "yellow" },
+            RETIRED: { colorPalette: "gray" },
+          };
 
           return (
-            <Box
-              key={e.id}
-              p={3}
-              borderWidth="1px"
-              borderRadius="lg"
-              mb={2}
-              bg="white"
-            >
+            <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg" mb={3}>
               <HStack justify="space-between" align="start">
                 <Box>
-                  <HStack gap="2" wrap="wrap">
-                    <Heading size="sm">{e.shortDesc}</Heading>
-                    <Badge {...statusBadgeProps(e.status)}>{e.status}</Badge>
-                    {e.qrSlug ? (
-                      <Badge colorPalette="blue">QR: {e.qrSlug}</Badge>
-                    ) : null}
-                  </HStack>
+                  <Heading size="sm">
+                    {item.shortDesc}{" "}
+                    <Badge ml={2} {...statusColor[item.status]}>
+                      {item.status}
+                    </Badge>
+                  </Heading>
 
-                  {e.longDesc ? (
-                    <Text mt={1} fontSize="sm" color="gray.700">
-                      {e.longDesc}
+                  {item.holder && (
+                    <Text fontSize="xs" color="gray.700" mt={1}>
+                      {item.holder.state === "CHECKED_OUT"
+                        ? "Checked out by "
+                        : "Reserved by "}
+                      {item.holder.displayName ||
+                        item.holder.email ||
+                        item.holder.userId.slice(0, 8)}
                     </Text>
-                  ) : null}
+                  )}
 
-                  {/* Holder chip — mirrors Admin Users “holdings” look/feel */}
-                  {holder && (
-                    <HStack
-                      mt={2}
-                      gap="2"
-                      wrap="wrap"
-                      // chip/Pill look
-                    >
-                      <HStack
-                        px={2}
-                        py={1}
-                        borderRadius="md"
-                        borderWidth="1px"
-                        borderColor="gray.200"
-                        bg="gray.50"
-                        gap="2"
-                      >
-                        <Badge
-                          size="sm"
-                          colorPalette={
-                            holder.state === "CHECKED_OUT" ? "purple" : "orange"
-                          }
-                        >
-                          {holder.state === "CHECKED_OUT"
-                            ? "Checked out"
-                            : "Reserved"}
-                        </Badge>
-                        <Text fontSize="sm">
-                          {holder.displayName ||
-                            holder.email ||
-                            `User ${holder.userId.slice(0, 8)}…`}
-                        </Text>
-                        <Text fontSize="xs" color="gray.600">
-                          since {fmtWhen(holder)}
-                        </Text>
-                      </HStack>
-                    </HStack>
+                  {item.longDesc && (
+                    <Text fontSize="sm" color="gray.600" mt={1}>
+                      {item.longDesc}
+                    </Text>
                   )}
                 </Box>
 
-                {/* Right side: small meta */}
-                <Stack align="end" gap="1">
-                  <Text fontSize="xs" color="gray.600">
-                    id: {e.id.slice(0, 8)}…
-                  </Text>
+                {/* Admin actions */}
+                <Stack direction="row" gap="2" flexWrap="wrap" justify="end">
+                  {canForceRelease(item) && (
+                    <Button size="sm" onClick={() => forceRelease(item.id)}>
+                      Force release
+                    </Button>
+                  )}
+                  {canStartMaint(item) && (
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => startMaint(item.id)}
+                    >
+                      Start maintenance
+                    </Button>
+                  )}
+                  {canEndMaint(item) && (
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => endMaint(item.id)}
+                    >
+                      End maintenance
+                    </Button>
+                  )}
+                  {canRetire(item) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => retire(item.id)}
+                    >
+                      Retire
+                    </Button>
+                  )}
+                  {canUnretire(item) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => unretire(item.id)}
+                    >
+                      Unretire
+                    </Button>
+                  )}
+                  {canDelete(item) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => hardDelete(item.id)}
+                    >
+                      Delete
+                    </Button>
+                  )}
                 </Stack>
               </HStack>
             </Box>

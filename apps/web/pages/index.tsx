@@ -6,7 +6,7 @@ import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
 import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
-import WorkerUnavailableEquipment from "../src/components/WorkerUnavailableEquipment";
+import WorkerUnavailable from "../src/components/WorkerUnavailable";
 
 type Me = {
   id: string;
@@ -104,7 +104,7 @@ export default function HomePage() {
                 </Tabs.Content>
 
                 <Tabs.Content value="unavailable">
-                  <WorkerUnavailableEquipment />
+                  <WorkerUnavailable />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>

@@ -8,6 +8,7 @@ import {
   Text,
   Badge,
   Table,
+  Spinner,
 } from "@chakra-ui/react";
 import { apiGet } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -36,6 +37,12 @@ const ACTIONS = [
   "MAINTENANCE_START",
   "MAINTENANCE_END",
 ] as const;
+
+const LoadingCenter = () => (
+  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
+    <Spinner size="lg" />
+  </Box>
+);
 
 export default function AdminAuditLog() {
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -187,61 +194,69 @@ export default function AdminAuditLog() {
         </Button>
       </Stack>
 
-      {/* Table */}
-      <Table.Root size="sm" variant="outline">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeader>Time</Table.ColumnHeader>
-            <Table.ColumnHeader>Action</Table.ColumnHeader>
-            <Table.ColumnHeader>Equipment</Table.ColumnHeader>
-            <Table.ColumnHeader>Actor</Table.ColumnHeader>
-            <Table.ColumnHeader>Details</Table.ColumnHeader>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {items.map((row) => (
-            <Table.Row key={row.id}>
-              <Table.Cell>
-                {new Date(row.createdAt).toLocaleString()}
-              </Table.Cell>
-              <Table.Cell>
-                <Badge>{row.action}</Badge>
-              </Table.Cell>
-              <Table.Cell>
-                <Text fontFamily="mono">{row.equipmentId ?? "—"}</Text>
-              </Table.Cell>
-              <Table.Cell>
-                <Text fontFamily="mono">{row.actorUserId ?? "—"}</Text>
-              </Table.Cell>
-              <Table.Cell>
-                <Text fontSize="sm" lineClamp={2}>
-                  {formatMetadata(row.metadata)}
-                </Text>
-              </Table.Cell>
-            </Table.Row>
-          ))}
-          {items.length === 0 && !loading && (
-            <Table.Row>
-              <Table.Cell colSpan={5}>
-                <Text>No results.</Text>
-              </Table.Cell>
-            </Table.Row>
-          )}
-        </Table.Body>
-      </Table.Root>
+      {/* Initial-load spinner for consistency with other tabs */}
+      {loading && items.length === 0 ? (
+        <LoadingCenter />
+      ) : (
+        <>
+          {/* Table */}
+          <Table.Root size="sm" variant="outline">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Time</Table.ColumnHeader>
+                <Table.ColumnHeader>Action</Table.ColumnHeader>
+                <Table.ColumnHeader>Equipment</Table.ColumnHeader>
+                <Table.ColumnHeader>Actor</Table.ColumnHeader>
+                <Table.ColumnHeader>Details</Table.ColumnHeader>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {items.map((row) => (
+                <Table.Row key={row.id}>
+                  <Table.Cell>
+                    {new Date(row.createdAt).toLocaleString()}
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Badge>{row.action}</Badge>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Text fontFamily="mono">{row.equipmentId ?? "—"}</Text>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Text fontFamily="mono">{row.actorUserId ?? "—"}</Text>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Text fontSize="sm" lineClamp={2}>
+                      {formatMetadata(row.metadata)}
+                    </Text>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
 
-      <Stack direction="row" gap="3" mt={3} align="center">
-        <Text flex="1">
-          Showing {items.length} of {total}
-        </Text>
-        <Button
-          onClick={loadMore}
-          disabled={!hasMore || loading}
-          loading={loading}
-        >
-          {hasMore ? "Load more" : "No more"}
-        </Button>
-      </Stack>
+              {items.length === 0 && !loading && (
+                <Table.Row>
+                  <Table.Cell colSpan={5}>
+                    <Text>No results.</Text>
+                  </Table.Cell>
+                </Table.Row>
+              )}
+            </Table.Body>
+          </Table.Root>
+
+          <Stack direction="row" gap="3" mt={3} align="center">
+            <Text flex="1">
+              Showing {items.length} of {total}
+            </Text>
+            <Button
+              onClick={loadMore}
+              disabled={!hasMore || loading}
+              loading={loading}
+            >
+              {hasMore ? "Load more" : "No more"}
+            </Button>
+          </Stack>
+        </>
+      )}
     </Box>
   );
 }

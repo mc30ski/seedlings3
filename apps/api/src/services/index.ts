@@ -568,6 +568,50 @@ export const services: Services = {
         orderBy: { createdAt: "desc" },
       });
     },
+
+    // apps/api/src/services/index.ts  (inside `equipment: { ... }`)
+    async listUnavailableWithHolder() {
+      const rows = await prisma.equipment.findMany({
+        where: {
+          status: {
+            in: [
+              EquipmentStatus.MAINTENANCE,
+              EquipmentStatus.RESERVED,
+              EquipmentStatus.CHECKED_OUT,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        include: {
+          checkouts: {
+            where: { releasedAt: null },
+            include: { user: true },
+            take: 1,
+          },
+        },
+      });
+
+      const mapped: EquipmentWithHolder[] = rows.map((e) => {
+        const active = e.checkouts[0];
+        const holder = active
+          ? {
+              userId: active.userId,
+              displayName: active.user?.displayName ?? null,
+              email: active.user?.email ?? null,
+              reservedAt: active.reservedAt,
+              checkedOutAt: active.checkedOutAt ?? null,
+              state: active.checkedOutAt ? "CHECKED_OUT" : "RESERVED",
+            }
+          : null;
+
+        // strip relation arrays to satisfy Equipment shape
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { checkouts, auditEvents, ...equip } = e as any;
+        return { ...(equip as any), holder };
+      });
+
+      return mapped;
+    },
   },
 
   maintenance: {
