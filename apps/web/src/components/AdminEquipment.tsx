@@ -10,6 +10,7 @@ import {
   Button,
   Input,
   Spinner,
+  Textarea,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -40,7 +41,7 @@ type Equipment = {
   createdAt: string;
   updatedAt: string;
   retiredAt: string | null;
-  holder: Holder | null;
+  holder: Holder | null; // may be null/undefined depending on API variant
 };
 
 const LoadingCenter = () => (
@@ -53,6 +54,12 @@ export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // quick-add form
+  const [adding, setAdding] = useState(false);
+  const [newShort, setNewShort] = useState("");
+  const [newLong, setNewLong] = useState("");
+  const [newSlug, setNewSlug] = useState("");
+
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<
     "all" | "available" | "reserved" | "checked_out" | "maintenance" | "retired"
@@ -61,6 +68,7 @@ export default function AdminEquipment() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // This endpoint matches your current routes and keeps everything else unchanged.
       const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
       setItems(data);
     } catch (err) {
@@ -118,6 +126,39 @@ export default function AdminEquipment() {
   }, [items, q, status]);
 
   // ---- actions ----
+  async function createEquipment() {
+    const short = newShort.trim();
+    const long = newLong.trim();
+    const slug = newSlug.trim();
+
+    if (!short) {
+      toaster.error({ title: "Short description is required" });
+      return;
+    }
+
+    setAdding(true);
+    try {
+      await apiPost("/api/v1/admin/equipment", {
+        shortDesc: short,
+        ...(long ? { longDesc: long } : {}),
+        // Send null when user left it blank; services.create accepts undefined or null
+        ...(slug ? { qrSlug: slug } : { qrSlug: null }),
+      });
+      toaster.success({ title: "Equipment created" });
+      setNewShort("");
+      setNewLong("");
+      setNewSlug("");
+      await load();
+    } catch (err) {
+      toaster.error({
+        title: "Create failed",
+        description: getErrorMessage(err),
+      });
+    } finally {
+      setAdding(false);
+    }
+  }
+
   async function forceRelease(id: string) {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/release`, {});
@@ -214,6 +255,38 @@ export default function AdminEquipment() {
       <Heading size="md" mb={4}>
         Equipment (Admin)
       </Heading>
+
+      {/* Quick-add panel */}
+      <Box p={3} borderWidth="1px" borderRadius="lg" mb={4}>
+        <HStack gap="3" align="start" wrap="wrap">
+          <Input
+            placeholder="Short description *"
+            value={newShort}
+            onChange={(e) => setNewShort(e.target.value)}
+            maxW="320px"
+          />
+          <Input
+            placeholder="QR slug (optional)"
+            value={newSlug}
+            onChange={(e) => setNewSlug(e.target.value)}
+            maxW="200px"
+          />
+          <Button
+            onClick={createEquipment}
+            disabled={!newShort.trim() || adding}
+            loading={adding}
+          >
+            Add equipment
+          </Button>
+        </HStack>
+        <Textarea
+          placeholder="Details (optional)"
+          value={newLong}
+          onChange={(e) => setNewLong(e.target.value)}
+          mt={2}
+          rows={2}
+        />
+      </Box>
 
       {/* Filters */}
       <HStack gap="2" wrap="wrap" mb={3}>
