@@ -391,7 +391,15 @@ export default function AdminEquipment() {
                 <Heading size={{ base: "sm", md: "sm" }} wordBreak="break-word">
                   {item.shortDesc}{" "}
                   <Badge ml={2} {...statusColor[item.status]}>
-                    {item.status}
+                    {item.status === "AVAILABLE"
+                      ? "Available"
+                      : item.status === "RESERVED"
+                        ? "Reserved"
+                        : item.status === "CHECKED_OUT"
+                          ? "Checked out"
+                          : item.status === "MAINTENANCE"
+                            ? "Maintenance"
+                            : "Retired"}
                   </Badge>
                 </Heading>
 

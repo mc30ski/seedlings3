@@ -13,6 +13,13 @@ import { apiGet } from "../lib/api";
 import { toaster } from "./ui/toaster";
 import { getErrorMessage } from "../lib/errors";
 
+type EquipmentStatus =
+  | "AVAILABLE"
+  | "RESERVED"
+  | "CHECKED_OUT"
+  | "MAINTENANCE"
+  | "RETIRED";
+
 type Holder = {
   userId: string;
   displayName: string | null;
@@ -35,6 +42,14 @@ const LoadingCenter = () => (
     <Spinner size="lg" />
   </Box>
 );
+
+const statusColor: Record<EquipmentStatus, any> = {
+  AVAILABLE: { colorPalette: "green" },
+  RESERVED: { colorPalette: "orange" },
+  CHECKED_OUT: { colorPalette: "red" },
+  MAINTENANCE: { colorPalette: "yellow" },
+  RETIRED: { colorPalette: "gray" },
+};
 
 export default function WorkerUnavailable() {
   const [items, setItems] = useState<Item[]>([]);
@@ -72,7 +87,17 @@ export default function WorkerUnavailable() {
             <Box>
               <Heading size="sm">
                 {item.shortDesc}{" "}
-                <Badge ml={2}>{item.status.replace("_", " ")}</Badge>
+                <Badge ml={2} {...statusColor[item.status]}>
+                  {item.status === "AVAILABLE"
+                    ? "Available"
+                    : item.status === "RESERVED"
+                      ? "Reserved"
+                      : item.status === "CHECKED_OUT"
+                        ? "Checked out"
+                        : item.status === "MAINTENANCE"
+                          ? "Maintenance"
+                          : "Retired"}
+                </Badge>
               </Heading>
 
               {/* holder line when reserved/checked out */}

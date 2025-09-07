@@ -1,3 +1,4 @@
+// apps/web/src/components/AdminAuditLog.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -9,6 +10,7 @@ import {
   Badge,
   Table,
   Spinner,
+  HStack,
 } from "@chakra-ui/react";
 import { apiGet } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -25,6 +27,10 @@ type AuditItem = {
 
 type AuditResp = { items: AuditItem[]; total: number };
 
+// minimal shapes for lookups
+type EqRow = { id: string; shortDesc: string };
+type UserRow = { id: string; email: string | null; displayName: string | null };
+
 const ACTIONS = [
   "USER_APPROVED",
   "ROLE_ASSIGNED",
@@ -33,9 +39,10 @@ const ACTIONS = [
   "EQUIPMENT_RETIRED",
   "EQUIPMENT_DELETED",
   "EQUIPMENT_CHECKED_OUT",
-  "EQUIPMENT_RELEASED",
+  "EQUIPMENT_RELEASED", // keep if it appears in old data
   "MAINTENANCE_START",
   "MAINTENANCE_END",
+  // You may also see FORCE_RELEASED / RESERVATION_CANCELLED / EQUIPMENT_RETURNED depending on your backend
 ] as const;
 
 const LoadingCenter = () => (
@@ -58,6 +65,13 @@ export default function AdminAuditLog() {
   const [from, setFrom] = useState(""); // yyyy-mm-dd
   const [to, setTo] = useState("");
 
+  // lookups
+  const [eqMap, setEqMap] = useState<Record<string, string>>({});
+  const [userMap, setUserMap] = useState<Record<string, string>>({}); // id -> email
+
+  // open details per row id
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
   const hasMore = useMemo(() => items.length < total, [items.length, total]);
 
   function toIsoStart(d: string) {
@@ -65,6 +79,30 @@ export default function AdminAuditLog() {
   }
   function toIsoEnd(d: string) {
     return d ? new Date(`${d}T23:59:59.999`).toISOString() : undefined;
+  }
+
+  async function loadLookups() {
+    try {
+      // equipment names
+      const eq = await apiGet<EqRow[]>(`/api/v1/admin/equipment`);
+      const eqIndex: Record<string, string> = {};
+      for (const e of eq) eqIndex[e.id] = e.shortDesc || e.id;
+      setEqMap(eqIndex);
+    } catch (err) {
+      // non-fatal
+      setEqMap({});
+    }
+
+    try {
+      // user emails
+      const users = await apiGet<UserRow[]>(`/api/v1/admin/users`);
+      const uIndex: Record<string, string> = {};
+      for (const u of users) uIndex[u.id] = u.email ?? "";
+      setUserMap(uIndex);
+    } catch (err) {
+      // non-fatal
+      setUserMap({});
+    }
   }
 
   async function load(reset = false, pageOverride?: number) {
@@ -100,8 +138,11 @@ export default function AdminAuditLog() {
   }
 
   useEffect(() => {
+    // initial load: lookups + first page
+    void loadLookups();
     void load(true);
-  }, []); // initial
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function applyFilters() {
     void load(true);
@@ -120,6 +161,22 @@ export default function AdminAuditLog() {
     setTo("");
     void load(true);
   }
+
+  const toggleDetails = (id: string) =>
+    setOpen((m) => ({ ...m, [id]: !m[id] }));
+
+  const actionBadgePalette = (act: string) => {
+    if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
+    if (act.includes("CHECKED_OUT") || act.includes("MAINTENANCE_START"))
+      return "red";
+    if (act.includes("MAINTENANCE_END")) return "yellow";
+    if (act.includes("UPDATED") || act.includes("RESERVED")) return "orange";
+    if (act.includes("APPROVED") || act.includes("ROLE_ASSIGNED"))
+      return "purple";
+    if (act.includes("RELEASED") || act.includes("FORCE_RELEASED"))
+      return "blue";
+    return "teal";
+  };
 
   return (
     <Box>
@@ -194,78 +251,141 @@ export default function AdminAuditLog() {
         </Button>
       </Stack>
 
-      {/* Initial-load spinner for consistency with other tabs */}
-      {loading && items.length === 0 ? (
-        <LoadingCenter />
-      ) : (
-        <>
-          {/* Table */}
-          <Table.Root size="sm" variant="outline">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Time</Table.ColumnHeader>
-                <Table.ColumnHeader>Action</Table.ColumnHeader>
-                <Table.ColumnHeader>Equipment</Table.ColumnHeader>
-                <Table.ColumnHeader>Actor</Table.ColumnHeader>
-                <Table.ColumnHeader>Details</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {items.map((row) => (
+      {/* Loading */}
+      {loading && items.length === 0 && <LoadingCenter />}
+
+      {/* Table */}
+      <Table.Root size="sm" variant="outline">
+        <Table.Header>
+          <Table.Row>
+            <Table.ColumnHeader>Time</Table.ColumnHeader>
+            <Table.ColumnHeader>Action</Table.ColumnHeader>
+            <Table.ColumnHeader>Equipment</Table.ColumnHeader>
+            <Table.ColumnHeader>Actor</Table.ColumnHeader>
+            <Table.ColumnHeader>Details</Table.ColumnHeader>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {items.map((row) => {
+            const eqName = (row.equipmentId && eqMap[row.equipmentId]) || "—";
+            const actorEmail =
+              (row.actorUserId && userMap[row.actorUserId]) || "—";
+
+            return (
+              <>
                 <Table.Row key={row.id}>
                   <Table.Cell>
                     {new Date(row.createdAt).toLocaleString()}
                   </Table.Cell>
                   <Table.Cell>
-                    <Badge>{row.action}</Badge>
+                    <Badge colorPalette={actionBadgePalette(row.action)}>
+                      {row.action}
+                    </Badge>
                   </Table.Cell>
                   <Table.Cell>
-                    <Text fontFamily="mono">{row.equipmentId ?? "—"}</Text>
+                    <HStack gap="2" wrap="wrap">
+                      {row.equipmentId ? (
+                        <>
+                          <Text fontWeight="medium">{eqName}</Text>
+                          <Badge variant="subtle" colorPalette="gray">
+                            {row.equipmentId.slice(0, 8)}…
+                          </Badge>
+                        </>
+                      ) : (
+                        <Text>—</Text>
+                      )}
+                    </HStack>
                   </Table.Cell>
                   <Table.Cell>
-                    <Text fontFamily="mono">{row.actorUserId ?? "—"}</Text>
+                    <HStack gap="2" wrap="wrap">
+                      <Text>{actorEmail}</Text>
+                      {row.actorUserId && (
+                        <Badge variant="subtle" colorPalette="gray">
+                          {row.actorUserId.slice(0, 8)}…
+                        </Badge>
+                      )}
+                    </HStack>
                   </Table.Cell>
                   <Table.Cell>
-                    <Text fontSize="sm" lineClamp={2}>
-                      {formatMetadata(row.metadata)}
-                    </Text>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => toggleDetails(row.id)}
+                    >
+                      {open[row.id] ? "Hide details" : "Open details"}
+                    </Button>
                   </Table.Cell>
                 </Table.Row>
-              ))}
 
-              {items.length === 0 && !loading && (
-                <Table.Row>
-                  <Table.Cell colSpan={5}>
-                    <Text>No results.</Text>
-                  </Table.Cell>
-                </Table.Row>
-              )}
-            </Table.Body>
-          </Table.Root>
+                {open[row.id] && (
+                  <Table.Row key={`${row.id}-details`}>
+                    <Table.Cell colSpan={5}>
+                      <Box
+                        mt={2}
+                        p={3}
+                        borderWidth="1px"
+                        borderRadius="md"
+                        bg="gray.50"
+                      >
+                        <Text fontSize="sm" mb={1} color="gray.700">
+                          Raw event data
+                        </Text>
+                        <Box
+                          as="pre"
+                          fontSize="xs"
+                          whiteSpace="pre-wrap"
+                          wordBreak="break-word"
+                          m={0}
+                        >
+                          {formatMetadata(row)}
+                        </Box>
+                      </Box>
+                    </Table.Cell>
+                  </Table.Row>
+                )}
+              </>
+            );
+          })}
 
-          <Stack direction="row" gap="3" mt={3} align="center">
-            <Text flex="1">
-              Showing {items.length} of {total}
-            </Text>
-            <Button
-              onClick={loadMore}
-              disabled={!hasMore || loading}
-              loading={loading}
-            >
-              {hasMore ? "Load more" : "No more"}
-            </Button>
-          </Stack>
-        </>
-      )}
+          {items.length === 0 && !loading && (
+            <Table.Row>
+              <Table.Cell colSpan={5}>
+                <Text>No results.</Text>
+              </Table.Cell>
+            </Table.Row>
+          )}
+        </Table.Body>
+      </Table.Root>
+
+      <Stack direction="row" gap="3" mt={3} align="center">
+        <Text flex="1">
+          Showing {items.length} of {total}
+        </Text>
+        <Button
+          onClick={loadMore}
+          disabled={!hasMore || loading}
+          loading={loading}
+        >
+          {hasMore ? "Load more" : "No more"}
+        </Button>
+      </Stack>
     </Box>
   );
 }
 
-function formatMetadata(data: unknown): string {
+function formatMetadata(row: AuditItem): string {
+  // Show a helpful subset, then the full object
   try {
-    if (data == null) return "";
-    return JSON.stringify(data, null, 0);
+    const pretty = {
+      id: row.id,
+      action: row.action,
+      actorUserId: row.actorUserId ?? null,
+      equipmentId: row.equipmentId ?? null,
+      metadata: row.metadata ?? null,
+      createdAt: row.createdAt,
+    };
+    return JSON.stringify(pretty, null, 2);
   } catch {
-    return String(data);
+    return String(row.metadata ?? "");
   }
 }

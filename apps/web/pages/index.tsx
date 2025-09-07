@@ -90,9 +90,13 @@ export default function HomePage() {
             <Tabs.Content value="worker">
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
+                  <Tabs.Trigger value="equipment">
+                    Available Equipment
+                  </Tabs.Trigger>
                   <Tabs.Trigger value="mine">My Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
+                  <Tabs.Trigger value="unavailable">
+                    Unavailable Equipment
+                  </Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">

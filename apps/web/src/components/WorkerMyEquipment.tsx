@@ -25,6 +25,14 @@ type Equipment = {
   status: EquipmentStatus;
 };
 
+const statusColor: Record<EquipmentStatus, any> = {
+  AVAILABLE: { colorPalette: "green" },
+  RESERVED: { colorPalette: "orange" },
+  CHECKED_OUT: { colorPalette: "red" },
+  MAINTENANCE: { colorPalette: "yellow" },
+  RETIRED: { colorPalette: "gray" },
+};
+
 const notifyEquipmentUpdated = () => {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event("seedlings3:equipment-updated"));
@@ -143,7 +151,10 @@ export default function WorkerMyEquipment() {
             return (
               <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
                 <Heading size="sm">
-                  {item.shortDesc} <Badge ml={2}>{chips}</Badge>
+                  {item.shortDesc}{" "}
+                  <Badge ml={2} {...statusColor[item.status]}>
+                    {chips}
+                  </Badge>
                 </Heading>
                 <Text fontSize="sm" color="gray.500">
                   {item.longDesc}
