@@ -10,7 +10,6 @@ import {
   Button,
   Input,
   Spinner,
-  Textarea,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -41,7 +40,7 @@ type Equipment = {
   createdAt: string;
   updatedAt: string;
   retiredAt: string | null;
-  holder: Holder | null; // may be null/undefined depending on API variant
+  holder: Holder | null;
 };
 
 const LoadingCenter = () => (
@@ -54,11 +53,11 @@ export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // quick-add form
-  const [adding, setAdding] = useState(false);
+  // create form state
+  const [creating, setCreating] = useState(false);
   const [newShort, setNewShort] = useState("");
   const [newLong, setNewLong] = useState("");
-  const [newSlug, setNewSlug] = useState("");
+  const [newQr, setNewQr] = useState("");
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<
@@ -68,7 +67,6 @@ export default function AdminEquipment() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // This endpoint matches your current routes and keeps everything else unchanged.
       const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
       setItems(data);
     } catch (err) {
@@ -125,29 +123,26 @@ export default function AdminEquipment() {
     return rows;
   }, [items, q, status]);
 
-  // ---- actions ----
+  // ---- create ----
   async function createEquipment() {
-    const short = newShort.trim();
-    const long = newLong.trim();
-    const slug = newSlug.trim();
-
-    if (!short) {
+    const shortDesc = newShort.trim();
+    const longDesc = newLong.trim();
+    const qrSlug = newQr.trim();
+    if (!shortDesc) {
       toaster.error({ title: "Short description is required" });
       return;
     }
-
-    setAdding(true);
+    setCreating(true);
     try {
       await apiPost("/api/v1/admin/equipment", {
-        shortDesc: short,
-        ...(long ? { longDesc: long } : {}),
-        // Send null when user left it blank; services.create accepts undefined or null
-        ...(slug ? { qrSlug: slug } : { qrSlug: null }),
+        shortDesc,
+        longDesc: longDesc || undefined,
+        qrSlug: qrSlug || undefined,
       });
       toaster.success({ title: "Equipment created" });
       setNewShort("");
       setNewLong("");
-      setNewSlug("");
+      setNewQr("");
       await load();
     } catch (err) {
       toaster.error({
@@ -155,10 +150,11 @@ export default function AdminEquipment() {
         description: getErrorMessage(err),
       });
     } finally {
-      setAdding(false);
+      setCreating(false);
     }
   }
 
+  // ---- actions ----
   async function forceRelease(id: string) {
     try {
       await apiPost(`/api/v1/admin/equipment/${id}/release`, {});
@@ -250,84 +246,106 @@ export default function AdminEquipment() {
   const canUnretire = (e: Equipment) => e.status === "RETIRED";
   const canDelete = (e: Equipment) => e.status === "RETIRED";
 
+  const statusColor: Record<EquipmentStatus, any> = {
+    AVAILABLE: { colorPalette: "green" },
+    RESERVED: { colorPalette: "orange" },
+    CHECKED_OUT: { colorPalette: "red" },
+    MAINTENANCE: { colorPalette: "yellow" },
+    RETIRED: { colorPalette: "gray" },
+  };
+
   return (
-    <Box>
+    <Box w="full">
       <Heading size="md" mb={4}>
         Equipment (Admin)
       </Heading>
 
-      {/* Quick-add panel */}
-      <Box p={3} borderWidth="1px" borderRadius="lg" mb={4}>
-        <HStack gap="3" align="start" wrap="wrap">
+      {/* Create panel */}
+      <Box
+        w="full"
+        mb={4}
+        p={3}
+        borderWidth="1px"
+        borderRadius="lg"
+        bg="gray.50"
+      >
+        <Stack
+          direction={{ base: "column", md: "row" }}
+          gap="2"
+          align={{ base: "stretch", md: "end" }}
+        >
           <Input
             placeholder="Short description *"
             value={newShort}
             onChange={(e) => setNewShort(e.target.value)}
-            maxW="320px"
+          />
+          <Input
+            placeholder="Details (optional)"
+            value={newLong}
+            onChange={(e) => setNewLong(e.target.value)}
           />
           <Input
             placeholder="QR slug (optional)"
-            value={newSlug}
-            onChange={(e) => setNewSlug(e.target.value)}
-            maxW="200px"
+            value={newQr}
+            onChange={(e) => setNewQr(e.target.value)}
           />
           <Button
             onClick={createEquipment}
-            disabled={!newShort.trim() || adding}
-            loading={adding}
+            loading={creating}
+            disabled={creating || !newShort.trim()}
+            size={{ base: "sm", md: "sm" }}
           >
-            Add equipment
+            Create
           </Button>
-        </HStack>
-        <Textarea
-          placeholder="Details (optional)"
-          value={newLong}
-          onChange={(e) => setNewLong(e.target.value)}
-          mt={2}
-          rows={2}
-        />
+        </Stack>
       </Box>
 
       {/* Filters */}
-      <HStack gap="2" wrap="wrap" mb={3}>
-        <HStack gap="1">
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="2"
+        wrap="wrap"
+        mb={3}
+        w="full"
+      >
+        <HStack gap="1" flexWrap="wrap">
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "all" ? "solid" : "outline"}
             onClick={() => setStatus("all")}
           >
             All
           </Button>
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "available" ? "solid" : "outline"}
             onClick={() => setStatus("available")}
           >
             Available
           </Button>
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "reserved" ? "solid" : "outline"}
             onClick={() => setStatus("reserved")}
           >
             Reserved
           </Button>
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "checked_out" ? "solid" : "outline"}
             onClick={() => setStatus("checked_out")}
           >
             Checked out
           </Button>
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "maintenance" ? "solid" : "outline"}
             onClick={() => setStatus("maintenance")}
           >
             Maintenance
           </Button>
           <Button
-            size="sm"
+            size={{ base: "xs", md: "sm" }}
             variant={status === "retired" ? "solid" : "outline"}
             onClick={() => setStatus("retired")}
           >
@@ -339,12 +357,11 @@ export default function AdminEquipment() {
           placeholder="Search description / holder…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          maxW="320px"
-          ml="auto"
+          maxW={{ base: "full", md: "320px" }}
+          ml={{ base: 0, md: "auto" }}
         />
-      </HStack>
+      </Stack>
 
-      {/* Separator (Chakra v3 safe) */}
       <Box h="1px" bg="gray.200" mb={3} />
 
       {loading && <LoadingCenter />}
@@ -354,101 +371,111 @@ export default function AdminEquipment() {
       )}
 
       {!loading &&
-        filtered.map((item) => {
-          const statusColor: Record<EquipmentStatus, any> = {
-            AVAILABLE: { colorPalette: "green" },
-            RESERVED: { colorPalette: "orange" },
-            CHECKED_OUT: { colorPalette: "red" },
-            MAINTENANCE: { colorPalette: "yellow" },
-            RETIRED: { colorPalette: "gray" },
-          };
+        filtered.map((item) => (
+          <Box
+            key={item.id}
+            p={3}
+            borderWidth="1px"
+            borderRadius="lg"
+            mb={3}
+            w="full"
+          >
+            <Stack
+              direction={{ base: "column", md: "row" }}
+              align={{ base: "stretch", md: "start" }}
+              justify="space-between"
+              gap="3"
+              w="full"
+            >
+              <Box flex="1 1 0" minW={0}>
+                <Heading size={{ base: "sm", md: "sm" }} wordBreak="break-word">
+                  {item.shortDesc}{" "}
+                  <Badge ml={2} {...statusColor[item.status]}>
+                    {item.status}
+                  </Badge>
+                </Heading>
 
-          return (
-            <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg" mb={3}>
-              <HStack justify="space-between" align="start">
-                <Box>
-                  <Heading size="sm">
-                    {item.shortDesc}{" "}
-                    <Badge ml={2} {...statusColor[item.status]}>
-                      {item.status}
-                    </Badge>
-                  </Heading>
+                {item.holder && (
+                  <Text fontSize="xs" color="gray.700" mt={1}>
+                    {item.holder.state === "CHECKED_OUT"
+                      ? "Checked out by "
+                      : "Reserved by "}
+                    {item.holder.displayName ||
+                      item.holder.email ||
+                      item.holder.userId.slice(0, 8)}
+                  </Text>
+                )}
 
-                  {item.holder && (
-                    <Text fontSize="xs" color="gray.700" mt={1}>
-                      {item.holder.state === "CHECKED_OUT"
-                        ? "Checked out by "
-                        : "Reserved by "}
-                      {item.holder.displayName ||
-                        item.holder.email ||
-                        item.holder.userId.slice(0, 8)}
-                    </Text>
-                  )}
+                {item.longDesc && (
+                  <Text fontSize="sm" color="gray.600" mt={1}>
+                    {item.longDesc}
+                  </Text>
+                )}
+              </Box>
 
-                  {item.longDesc && (
-                    <Text fontSize="sm" color="gray.600" mt={1}>
-                      {item.longDesc}
-                    </Text>
-                  )}
-                </Box>
-
-                {/* Admin actions */}
-                <Stack direction="row" gap="2" flexWrap="wrap" justify="end">
-                  {canForceRelease(item) && (
-                    <Button size="sm" onClick={() => forceRelease(item.id)}>
-                      Force release
-                    </Button>
-                  )}
-                  {canStartMaint(item) && (
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      onClick={() => startMaint(item.id)}
-                    >
-                      Start maintenance
-                    </Button>
-                  )}
-                  {canEndMaint(item) && (
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      onClick={() => endMaint(item.id)}
-                    >
-                      End maintenance
-                    </Button>
-                  )}
-                  {canRetire(item) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => retire(item.id)}
-                    >
-                      Retire
-                    </Button>
-                  )}
-                  {canUnretire(item) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => unretire(item.id)}
-                    >
-                      Unretire
-                    </Button>
-                  )}
-                  {canDelete(item) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => hardDelete(item.id)}
-                    >
-                      Delete
-                    </Button>
-                  )}
-                </Stack>
-              </HStack>
-            </Box>
-          );
-        })}
+              <Stack
+                direction="row"
+                gap="2"
+                flexWrap="wrap"
+                justify={{ base: "flex-start", md: "flex-end" }}
+              >
+                {canForceRelease(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    onClick={() => forceRelease(item.id)}
+                  >
+                    Force release
+                  </Button>
+                )}
+                {canStartMaint(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    variant="subtle"
+                    onClick={() => startMaint(item.id)}
+                  >
+                    Start maintenance
+                  </Button>
+                )}
+                {canEndMaint(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    variant="subtle"
+                    onClick={() => endMaint(item.id)}
+                  >
+                    End maintenance
+                  </Button>
+                )}
+                {canRetire(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    variant="outline"
+                    onClick={() => retire(item.id)}
+                  >
+                    Retire
+                  </Button>
+                )}
+                {canUnretire(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    variant="outline"
+                    onClick={() => unretire(item.id)}
+                  >
+                    Unretire
+                  </Button>
+                )}
+                {canDelete(item) && (
+                  <Button
+                    size={{ base: "xs", md: "sm" }}
+                    variant="outline"
+                    onClick={() => hardDelete(item.id)}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </Stack>
+            </Stack>
+          </Box>
+        ))}
     </Box>
   );
 }
