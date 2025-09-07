@@ -47,6 +47,10 @@ const LoadingCenter = () => (
   </Box>
 );
 
+// Inline confirm state
+type ConfirmKind = "delete" | "decline";
+type ConfirmState = { userId: string; kind: ConfirmKind } | null;
+
 export default function AdminUsers() {
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,6 +71,9 @@ export default function AdminUsers() {
   const [holdingsByUser, setHoldingsByUser] = useState<
     Record<string, Holding[]>
   >({});
+
+  // NEW: confirm inline bar state (for Delete or Decline)
+  const [confirm, setConfirm] = useState<ConfirmState>(null);
 
   // react to request to open "pending" (from the header bell)
   useEffect(() => {
@@ -135,8 +142,9 @@ export default function AdminUsers() {
       }
       setHoldingsByUser(map);
 
-      // clear any stale inline warnings after refresh
+      // clear any stale inline warnings + confirm bar after refresh
       setInlineErr({});
+      setConfirm(null);
     } catch (err) {
       toaster.error({
         title: "Failed to load users",
@@ -230,6 +238,19 @@ export default function AdminUsers() {
       setInlineErr((prev) => ({ ...prev, [userId]: msg }));
       // also toast (useful if the row is out of view)
       toaster.error({ title: "Remove role failed", description: msg });
+    }
+  }
+
+  // Hard delete (DB + Clerk) — used for both Delete and Decline confirmations
+  async function deleteUser(userId: string) {
+    try {
+      await apiDelete(`/api/v1/admin/users/${userId}`);
+      toaster.success({ title: "User removed" });
+      await load();
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      setInlineErr((prev) => ({ ...prev, [userId]: msg }));
+      toaster.error({ title: "Remove failed", description: msg });
     }
   }
 
@@ -329,8 +350,24 @@ export default function AdminUsers() {
           const s = rolesSet(u);
           const isAdmin = s.has("ADMIN");
           const isWorker = s.has("WORKER");
+          const hasAnyRole = isAdmin || isWorker;
           const isMe = !!me?.id && u.id === me.id;
           const holdings = holdingsByUser[u.id] ?? [];
+
+          const showDelete = u.isApproved && !hasAnyRole && !isMe;
+          const showDecline = !u.isApproved && !isMe;
+
+          const isConfirming = confirm?.userId === u.id;
+          const confirmKind = confirm?.kind;
+
+          // Copy per confirm kind
+          const confirmCopy =
+            confirmKind === "decline"
+              ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
+              : "Delete this user? This removes their account and Clerk entry. This action cannot be undone.";
+
+          const confirmCTA =
+            confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
 
           return (
             <Box
@@ -364,7 +401,7 @@ export default function AdminUsers() {
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                   </HStack>
 
-                  {/* Dismissible warning banner (kept near identity) */}
+                  {/* Inline warnings (role removal, delete errors, etc.) */}
                   {inlineErr[u.id] && (
                     <HStack
                       mt={3}
@@ -402,14 +439,30 @@ export default function AdminUsers() {
                     {isMe ? null : (
                       <>
                         {!u.isApproved ? (
-                          <Button
-                            size={{ base: "xs", md: "sm" }}
-                            onClick={() => approve(u.id)}
-                          >
-                            Approve
-                          </Button>
+                          <>
+                            <Button
+                              size={{ base: "xs", md: "sm" }}
+                              onClick={() => approve(u.id)}
+                            >
+                              Approve
+                            </Button>
+                            {!isConfirming && (
+                              <Button
+                                size={{ base: "xs", md: "sm" }}
+                                variant="outline"
+                                colorPalette="red"
+                                onClick={() =>
+                                  setConfirm({ userId: u.id, kind: "decline" })
+                                }
+                                title="Decline and remove this user"
+                              >
+                                Decline
+                              </Button>
+                            )}
+                          </>
                         ) : (
                           <>
+                            {/* Role toggles */}
                             {isAdmin ? (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
@@ -449,6 +502,21 @@ export default function AdminUsers() {
                                 Add Worker
                               </Button>
                             )}
+
+                            {/* Delete (destructive) only when approved & no roles, never for self */}
+                            {showDelete && !isConfirming && (
+                              <Button
+                                size={{ base: "xs", md: "sm" }}
+                                variant="outline"
+                                colorPalette="red"
+                                onClick={() =>
+                                  setConfirm({ userId: u.id, kind: "delete" })
+                                }
+                                title="Remove this user completely"
+                              >
+                                Delete
+                              </Button>
+                            )}
                           </>
                         )}
                       </>
@@ -457,10 +525,51 @@ export default function AdminUsers() {
                 )}
               </Stack>
 
+              {/* Inline confirm bar (full width, below actions, mobile-friendly) */}
+              {isConfirming && (
+                <HStack
+                  mt={3}
+                  align="center"
+                  p={3}
+                  borderRadius="md"
+                  borderWidth="1px"
+                  borderColor="red.300"
+                  bg="red.50"
+                  justify="space-between"
+                  flexWrap="wrap"
+                  gap="2"
+                >
+                  <Text
+                    fontSize="sm"
+                    color="red.900"
+                    flex="1 1 auto"
+                    minW="220px"
+                  >
+                    {confirmCopy}
+                  </Text>
+                  <HStack gap="2">
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => setConfirm(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="xs"
+                      colorPalette="red"
+                      onClick={() => deleteUser(u.id)}
+                    >
+                      {confirmCTA}
+                    </Button>
+                  </HStack>
+                </HStack>
+              )}
+
               {/* FULL-WIDTH ROW: holdings chips (never squashed by actions) */}
-              {holdings.length > 0 && (
+              {(holdingsByUser[u.id]?.length ?? 0) > 0 && (
                 <Stack direction="row" gap="2" flexWrap="wrap" mt={2} w="full">
-                  {holdings.map((h) => (
+                  {holdingsByUser[u.id].map((h) => (
                     <Badge
                       key={h.equipmentId}
                       variant="subtle"

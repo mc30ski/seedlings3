@@ -80,48 +80,53 @@ export default function WorkerUnavailable() {
     return <Text>No unavailable equipment right now.</Text>;
 
   return (
-    <Stack gap="3">
-      {items.map((item) => (
-        <Box key={item.id} p={3} borderWidth="1px" borderRadius="md">
-          <HStack justify="space-between" align="start">
-            <Box>
-              <Heading size="sm">
-                {item.shortDesc}{" "}
-                <Badge ml={2} {...statusColor[item.status]}>
-                  {item.status === "AVAILABLE"
-                    ? "Available"
-                    : item.status === "RESERVED"
-                      ? "Reserved"
-                      : item.status === "CHECKED_OUT"
-                        ? "Checked out"
-                        : item.status === "MAINTENANCE"
-                          ? "Maintenance"
-                          : "Retired"}
-                </Badge>
-              </Heading>
+    <Box>
+      <Heading size="md" mb={4}>
+        Equipment Unavailable
+      </Heading>
+      <Stack gap="3">
+        {items.map((item) => (
+          <Box key={item.id} p={3} borderWidth="1px" borderRadius="md">
+            <HStack justify="space-between" align="start">
+              <Box>
+                <Heading size="sm">
+                  {item.shortDesc}{" "}
+                  <Badge ml={2} {...statusColor[item.status]}>
+                    {item.status === "AVAILABLE"
+                      ? "Available"
+                      : item.status === "RESERVED"
+                        ? "Reserved"
+                        : item.status === "CHECKED_OUT"
+                          ? "Checked out"
+                          : item.status === "MAINTENANCE"
+                            ? "Maintenance"
+                            : "Retired"}
+                  </Badge>
+                </Heading>
 
-              {/* holder line when reserved/checked out */}
-              {item.holder && (
-                <Text fontSize="xs" color="gray.600" mt={1}>
-                  {item.holder.state === "CHECKED_OUT"
-                    ? "Checked out by "
-                    : "Reserved by "}
-                  {item.holder.displayName ||
-                    item.holder.email ||
-                    item.holder.userId.slice(0, 8)}
-                </Text>
-              )}
+                {/* holder line when reserved/checked out */}
+                {item.holder && (
+                  <Text fontSize="xs" color="gray.600" mt={1}>
+                    {item.holder.state === "CHECKED_OUT"
+                      ? "Checked out by "
+                      : "Reserved by "}
+                    {item.holder.displayName ||
+                      item.holder.email ||
+                      item.holder.userId.slice(0, 8)}
+                  </Text>
+                )}
 
-              {/* long description (optional) */}
-              {item.longDesc ? (
-                <Text fontSize="sm" color="gray.500" mt={1}>
-                  {item.longDesc}
-                </Text>
-              ) : null}
-            </Box>
-          </HStack>
-        </Box>
-      ))}
-    </Stack>
+                {/* long description (optional) */}
+                {item.longDesc ? (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    {item.longDesc}
+                  </Text>
+                ) : null}
+              </Box>
+            </HStack>
+          </Box>
+        ))}
+      </Stack>
+    </Box>
   );
 }

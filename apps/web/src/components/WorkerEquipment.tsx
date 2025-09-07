@@ -154,7 +154,7 @@ export default function WorkerEquipment() {
   return (
     <Box>
       <Heading size="md" mb={4}>
-        Equipment
+        Equipment Available
       </Heading>
 
       <Stack gap="3">

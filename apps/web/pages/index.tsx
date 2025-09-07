@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Container, Heading, Box, Text, Tabs, Spinner } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
@@ -8,6 +8,8 @@ import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
+import AdminApprovalBell from "../src/components/AdminApprovalBell";
+import { useRouter } from "next/router";
 
 type Me = {
   id: string;
@@ -21,6 +23,8 @@ const hasRole = (roles: Me["roles"] | undefined, role: "ADMIN" | "WORKER") =>
   !!roles?.includes(role);
 
 export default function HomePage() {
+  const router = useRouter();
+
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
 
@@ -51,9 +55,56 @@ export default function HomePage() {
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
+  // Control inner Admin tab so we can deep-link to Users when needed
+  const [adminInnerTab, setAdminInnerTab] = useState<
+    "equipment" | "users" | "audit"
+  >("equipment");
+
+  // Apply deep-link (?adminTab=users&status=pending) once per distinct query
+  const appliedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!router.isReady || !isAdmin) return;
+
+    const qAdminTab = String(router.query.adminTab || "");
+    const qStatusRaw = String(router.query.status || "");
+    const key = `${qAdminTab}|${qStatusRaw}`;
+    if (appliedKeyRef.current === key) return;
+    appliedKeyRef.current = key;
+
+    if (qAdminTab.toLowerCase() === "users") {
+      setTopTab("admin");
+      setAdminInnerTab("users");
+
+      const status =
+        qStatusRaw === "pending" ||
+        qStatusRaw === "approved" ||
+        qStatusRaw === "all"
+          ? (qStatusRaw as "pending" | "approved" | "all")
+          : undefined;
+
+      // Let the Users tab know which filter to apply
+      requestAnimationFrame(() => {
+        try {
+          window.dispatchEvent(
+            new CustomEvent("seedlings3:open-users", {
+              detail: status ? { status } : undefined,
+            })
+          );
+        } catch {}
+      });
+    }
+  }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
+
   return (
     <Container maxW="5xl" py={8}>
-      <BrandLabel size={26} showText />
+      {/* Brand + Bell row (keeps your look; bell is top-right) */}
+      <Box position="relative">
+        <BrandLabel size={26} showText />
+        <Box position="absolute" top="0" right="0">
+          <AdminApprovalBell />
+        </Box>
+      </Box>
+
       <br />
 
       {meLoading && (
@@ -92,13 +143,9 @@ export default function HomePage() {
             <Tabs.Content value="worker">
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">
-                    Available Equipment
-                  </Tabs.Trigger>
-                  <Tabs.Trigger value="mine">My Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="unavailable">
-                    Unavailable Equipment
-                  </Tabs.Trigger>
+                  <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
+                  <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
+                  <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
@@ -118,11 +165,17 @@ export default function HomePage() {
 
           {isAdmin && (
             <Tabs.Content value="admin">
-              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
+              <Tabs.Root
+                value={adminInnerTab}
+                onValueChange={(d) =>
+                  setAdminInnerTab(d.value as "equipment" | "users" | "audit")
+                }
+                lazyMount
+                unmountOnExit
+              >
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="users">Users</Tabs.Trigger>{" "}
-                  {/* ← restored */}
+                  <Tabs.Trigger value="users">Users</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
                 </Tabs.List>
 

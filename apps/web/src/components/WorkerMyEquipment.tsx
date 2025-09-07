@@ -129,7 +129,7 @@ export default function WorkerMyEquipment() {
   return (
     <Box>
       <Heading size="md" mb={4}>
-        My Equipment
+        Equipment I've Claimed
       </Heading>
 
       <Stack gap="3">
