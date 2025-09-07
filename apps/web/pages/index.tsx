@@ -1,5 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Container, Heading, Box, Text, Tabs, Spinner } from "@chakra-ui/react";
+import {
+  Container,
+  Heading,
+  Box,
+  Text,
+  Tabs,
+  Spinner,
+  HStack,
+} from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
@@ -55,23 +63,25 @@ export default function HomePage() {
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
-  // Control inner Admin tab so we can deep-link to Users when needed
+  // Control inner Admin tab so we can deep-link to Users
   const [adminInnerTab, setAdminInnerTab] = useState<
     "equipment" | "users" | "audit"
   >("equipment");
 
-  // Apply deep-link (?adminTab=users&status=pending) once per distinct query
+  // Apply deep-link (?adminTab=users&status=pending) when ready
   const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!router.isReady || !isAdmin) return;
 
     const qAdminTab = String(router.query.adminTab || "");
     const qStatusRaw = String(router.query.status || "");
+    if (!qAdminTab) return;
+
     const key = `${qAdminTab}|${qStatusRaw}`;
     if (appliedKeyRef.current === key) return;
-    appliedKeyRef.current = key;
 
     if (qAdminTab.toLowerCase() === "users") {
+      appliedKeyRef.current = key;
       setTopTab("admin");
       setAdminInnerTab("users");
 
@@ -82,7 +92,7 @@ export default function HomePage() {
           ? (qStatusRaw as "pending" | "approved" | "all")
           : undefined;
 
-      // Let the Users tab know which filter to apply
+      // Tell AdminUsers to set its Status filter (uses your existing listener)
       requestAnimationFrame(() => {
         try {
           window.dispatchEvent(
@@ -97,15 +107,11 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      {/* Brand + Bell row (keeps your look; bell is top-right) */}
-      <Box position="relative">
+      {/* Header: brand on the left, approvals bell on the right */}
+      <HStack justify="space-between" align="center" mb={2}>
         <BrandLabel size={26} showText />
-        <Box position="absolute" top="0" right="0">
-          <AdminApprovalBell />
-        </Box>
-      </Box>
-
-      <br />
+        <AdminApprovalBell />
+      </HStack>
 
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">

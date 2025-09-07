@@ -51,6 +51,17 @@ const LoadingCenter = () => (
 type ConfirmKind = "delete" | "decline";
 type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 
+// --- helper to read initial status from URL (so deep links work on first paint)
+function initialStatusFromUrl(): "all" | "pending" | "approved" {
+  if (typeof window === "undefined") return "all";
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    const s = sp.get("status");
+    if (s === "pending" || s === "approved" || s === "all") return s;
+  } catch {}
+  return "all";
+}
+
 export default function AdminUsers() {
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,7 +72,9 @@ export default function AdminUsers() {
 
   // simple filters
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<"all" | "pending" | "approved">("all");
+  const [status, setStatus] = useState<"all" | "pending" | "approved">(
+    initialStatusFromUrl
+  ); // <- init from URL
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
 
   // inline warning by user id (shown under their info)
@@ -92,6 +105,21 @@ export default function AdminUsers() {
         "seedlings3:open-users",
         onOpenUsers as EventListener
       );
+  }, []);
+
+  // Also react to a status change in the URL after mount (e.g., client nav)
+  useEffect(() => {
+    const onPop = () => {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        const s = sp.get("status");
+        if (s === "pending" || s === "approved" || s === "all") {
+          setStatus(s);
+        }
+      } catch {}
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   // Load "me" and set meReady when done (success or fail)
@@ -446,7 +474,7 @@ export default function AdminUsers() {
                             >
                               Approve
                             </Button>
-                            {!isConfirming && (
+                            {!isConfirming && showDecline && (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 variant="outline"
@@ -504,19 +532,22 @@ export default function AdminUsers() {
                             )}
 
                             {/* Delete (destructive) only when approved & no roles, never for self */}
-                            {showDelete && !isConfirming && (
-                              <Button
-                                size={{ base: "xs", md: "sm" }}
-                                variant="outline"
-                                colorPalette="red"
-                                onClick={() =>
-                                  setConfirm({ userId: u.id, kind: "delete" })
-                                }
-                                title="Remove this user completely"
-                              >
-                                Delete
-                              </Button>
-                            )}
+                            {u.isApproved &&
+                              !(isAdmin || isWorker) &&
+                              !isMe &&
+                              !isConfirming && (
+                                <Button
+                                  size={{ base: "xs", md: "sm" }}
+                                  variant="outline"
+                                  colorPalette="red"
+                                  onClick={() =>
+                                    setConfirm({ userId: u.id, kind: "delete" })
+                                  }
+                                  title="Remove this user completely"
+                                >
+                                  Delete
+                                </Button>
+                              )}
                           </>
                         )}
                       </>
@@ -545,7 +576,9 @@ export default function AdminUsers() {
                     flex="1 1 auto"
                     minW="220px"
                   >
-                    {confirmCopy}
+                    {confirmKind === "decline"
+                      ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
+                      : "Delete this user? This removes their account and Clerk entry. This action cannot be undone."}
                   </Text>
                   <HStack gap="2">
                     <Button
@@ -560,7 +593,9 @@ export default function AdminUsers() {
                       colorPalette="red"
                       onClick={() => deleteUser(u.id)}
                     >
-                      {confirmCTA}
+                      {confirmKind === "decline"
+                        ? "Confirm decline"
+                        : "Confirm delete"}
                     </Button>
                   </HStack>
                 </HStack>
