@@ -39,10 +39,9 @@ const ACTIONS = [
   "EQUIPMENT_RETIRED",
   "EQUIPMENT_DELETED",
   "EQUIPMENT_CHECKED_OUT",
-  "EQUIPMENT_RELEASED", // keep if it appears in old data
+  "EQUIPMENT_RELEASED", // legacy-safe
   "MAINTENANCE_START",
   "MAINTENANCE_END",
-  // You may also see FORCE_RELEASED / RESERVATION_CANCELLED / EQUIPMENT_RETURNED depending on your backend
 ] as const;
 
 const LoadingCenter = () => (
@@ -50,6 +49,30 @@ const LoadingCenter = () => (
     <Spinner size="lg" />
   </Box>
 );
+
+/** Small helper to render one-line, ellipsized text with native hover tooltip */
+function Trunc({
+  text,
+  maxW = "220px",
+  as = "span",
+}: {
+  text: string;
+  maxW?: string | number;
+  as?: any;
+}) {
+  return (
+    <Text
+      as={as}
+      maxW={maxW}
+      lineClamp={1} // Chakra v3 (replaces noOfLines)
+      title={text} // native tooltip on hover
+      display="inline-block"
+      verticalAlign="middle"
+    >
+      {text}
+    </Text>
+  );
+}
 
 export default function AdminAuditLog() {
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -83,24 +106,20 @@ export default function AdminAuditLog() {
 
   async function loadLookups() {
     try {
-      // equipment names
       const eq = await apiGet<EqRow[]>(`/api/v1/admin/equipment`);
       const eqIndex: Record<string, string> = {};
       for (const e of eq) eqIndex[e.id] = e.shortDesc || e.id;
       setEqMap(eqIndex);
-    } catch (err) {
-      // non-fatal
+    } catch {
       setEqMap({});
     }
 
     try {
-      // user emails
       const users = await apiGet<UserRow[]>(`/api/v1/admin/users`);
       const uIndex: Record<string, string> = {};
       for (const u of users) uIndex[u.id] = u.email ?? "";
       setUserMap(uIndex);
-    } catch (err) {
-      // non-fatal
+    } catch {
       setUserMap({});
     }
   }
@@ -138,7 +157,6 @@ export default function AdminAuditLog() {
   }
 
   useEffect(() => {
-    // initial load: lookups + first page
     void loadLookups();
     void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,20 +292,28 @@ export default function AdminAuditLog() {
             return (
               <>
                 <Table.Row key={row.id}>
-                  <Table.Cell>
+                  <Table.Cell title={new Date(row.createdAt).toLocaleString()}>
                     {new Date(row.createdAt).toLocaleString()}
                   </Table.Cell>
+
                   <Table.Cell>
                     <Badge colorPalette={actionBadgePalette(row.action)}>
                       {row.action}
                     </Badge>
                   </Table.Cell>
+
                   <Table.Cell>
-                    <HStack gap="2" wrap="wrap">
+                    <HStack gap="2" wrap="wrap" maxW="360px">
                       {row.equipmentId ? (
                         <>
-                          <Text fontWeight="medium">{eqName}</Text>
-                          <Badge variant="subtle" colorPalette="gray">
+                          {/* Ellipsize long names, show full name on hover */}
+                          <Trunc text={eqName} />
+                          {/* Short id badge with full id on hover */}
+                          <Badge
+                            variant="subtle"
+                            colorPalette="gray"
+                            title={row.equipmentId}
+                          >
                             {row.equipmentId.slice(0, 8)}…
                           </Badge>
                         </>
@@ -296,16 +322,23 @@ export default function AdminAuditLog() {
                       )}
                     </HStack>
                   </Table.Cell>
+
                   <Table.Cell>
-                    <HStack gap="2" wrap="wrap">
-                      <Text>{actorEmail}</Text>
+                    <HStack gap="2" wrap="wrap" maxW="360px">
+                      {/* Ellipsize email; full on hover */}
+                      <Trunc text={actorEmail} />
                       {row.actorUserId && (
-                        <Badge variant="subtle" colorPalette="gray">
+                        <Badge
+                          variant="subtle"
+                          colorPalette="gray"
+                          title={row.actorUserId}
+                        >
                           {row.actorUserId.slice(0, 8)}…
                         </Badge>
                       )}
                     </HStack>
                   </Table.Cell>
+
                   <Table.Cell>
                     <Button
                       size="sm"
@@ -374,7 +407,6 @@ export default function AdminAuditLog() {
 }
 
 function formatMetadata(row: AuditItem): string {
-  // Show a helpful subset, then the full object
   try {
     const pretty = {
       id: row.id,

@@ -7,6 +7,7 @@ import AdminAuditLog from "../src/components/AdminAuditLog";
 import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
+import BrandLabel from "../src/components/BrandLabel";
 
 type Me = {
   id: string;
@@ -52,7 +53,8 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      <Heading mb={4}>Seedlings Lawn Care</Heading>
+      <BrandLabel size={26} showText />
+      <br />
 
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">

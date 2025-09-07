@@ -17,6 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { FiAlertCircle } from "react-icons/fi";
 import { setAuthTokenFetcher, apiGet } from "../src/lib/api";
+import Head from "next/head";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
@@ -137,8 +138,30 @@ function AppInner({ Component, pageProps }: AppProps) {
 
 export default function MyApp(props: AppProps) {
   return (
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-      <AppInner {...props} />
-    </ClerkProvider>
+    <>
+      <Head>
+        {/* Favicon / bookmark icons */}
+        <link rel="icon" href="/seedlings-icon.png" />
+        {/* Use crisp sizes if you added them */}
+        <link
+          rel="icon"
+          type="image/png"
+          sizes="32x32"
+          href="/seedlings-icon-32.png"
+        />
+        <link
+          rel="icon"
+          type="image/png"
+          sizes="16x16"
+          href="/seedlings-icon-16.png"
+        />
+        {/* iOS home screen icon */}
+        <link rel="apple-touch-icon" href="/seedlings-icon.png" />
+        {/* Title is optional here; keep your existing <title> if you have one elsewhere */}
+      </Head>
+      <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+        <AppInner {...props} />
+      </ClerkProvider>
+    </>
   );
 }
