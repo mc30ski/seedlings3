@@ -112,27 +112,24 @@ export default function HomePage() {
         <BrandLabel size={26} showText />
         <AdminApprovalBell />
       </HStack>
-
+      TEST
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">
           <Spinner size="sm" />
           <Text>Loading…</Text>
         </Box>
       )}
-
       {!meLoading && me && !me.isApproved && (
         <Text color="red.500" mb={3}>
           Awaiting admin approval…
         </Text>
       )}
-
       {!meLoading && me?.isApproved && !hasAnyRole && (
         <Text color="orange.500" mb={3}>
           You have been approved, but don&apos;t have a role yet. Please contact
           your Administrator.
         </Text>
       )}
-
       {!meLoading && me?.isApproved && hasAnyRole && (
         <Tabs.Root
           value={topTab}
