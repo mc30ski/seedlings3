@@ -112,7 +112,7 @@ export default function HomePage() {
         <BrandLabel size={26} showText />
         <AdminApprovalBell />
       </HStack>
-      TEST2
+      TEST3
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">
           <Spinner size="sm" />
