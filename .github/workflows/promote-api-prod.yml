@@ -1,0 +1,63 @@
+name: promote-api-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Commit SHA (image tag) to promote"
+        required: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Auth to Google Cloud (prod)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_JSON_PROD }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set project
+        run: gcloud config set project ${{ secrets.GCP_PROJECT_PROD }}
+
+      - name: Use Artifact Registry image
+        run: |
+          echo "IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_DEV }}/seedlings3-api/seedlings3-api:${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run (prod)
+        run: |
+          gcloud run deploy seedlings3 \
+            --image "$IMAGE" \
+            --platform managed \
+            --region ${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated \
+            --port 8080 \
+            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL_PROD }},CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY_PROD }},CLERK_JWT_VERIFICATION_KEY=${{ secrets.CLERK_JWT_VERIFICATION_KEY_PROD }},WEB_ORIGIN=${{ secrets.WEB_ORIGIN_PROD }}"
+
+      # Prisma migrations for PROD (optional but common)
+      - name: Set up Node for migrations
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run DB migrations (prod)
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+        run: |
+          npm install
+          npx prisma generate
+          npx prisma migrate deploy --schema prisma/schema.prisma
+
+      - name: Show Cloud Run URL (prod)
+        run: |
+          URL=$(gcloud run services describe seedlings3 --region ${{ secrets.GCP_REGION }} --format='value(status.url)')
+          echo "CLOUD_RUN_URL=$URL"
+          echo "## Promoted to prod" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`$IMAGE\`" >> $GITHUB_STEP_SUMMARY
+          echo "- URL: $URL" >> $GITHUB_STEP_SUMMARY
