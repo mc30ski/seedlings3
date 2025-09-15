@@ -40,7 +40,7 @@ jobs:
 
       - name: Build & Push Image (local build)
         run: |
-          IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_DEV }}/seedlings3-api/seedlings3-api:${GITHUB_SHA}
+          IMAGE=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_DEV }}/seedlings3-dev/seedlings3-dev:${GITHUB_SHA}
           docker build -f apps/api/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
