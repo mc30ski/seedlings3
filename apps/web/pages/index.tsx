@@ -1,13 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import {
-  Container,
-  Heading,
-  Box,
-  Text,
-  Tabs,
-  Spinner,
-  HStack,
-} from "@chakra-ui/react";
+import { Container, Box, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
 import AdminEquipment from "../src/components/AdminEquipment";
