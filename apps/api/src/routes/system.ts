@@ -1,6 +1,6 @@
 // apps/api/src/routes/system.ts
-import { prisma } from "../db/prisma";
 import { FastifyInstance } from "fastify";
+import { prisma } from "../db/prisma";
 
 // (add these small helpers near the top)
 function maskHost(host?: string) {
