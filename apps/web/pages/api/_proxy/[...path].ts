@@ -1,4 +1,3 @@
-// apps/web/pages/api/_proxy/[...path].ts
 import type { NextApiRequest, NextApiResponse } from "next";
 
 export const config = { api: { bodyParser: false } };
@@ -15,7 +14,7 @@ export default async function handler(
     return;
   }
 
-  // Build target URL: API_BASE_URL + /<joined path> + original ?query
+  // Build target URL: API_BASE_URL + /<joined path> + original search
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []
   );
@@ -23,20 +22,20 @@ export default async function handler(
   const qIdx = req.url?.indexOf("?") ?? -1;
   if (qIdx >= 0) target.search = req.url!.slice(qIdx);
 
-  // Hop-by-hop header filter
-  const fwdHeaders = new Headers();
+  // Copy headers (minus hop-by-hop)
+  const fwd = new Headers();
   const drop = new Set(["host", "connection", "content-length"]);
   for (const [k, v] of Object.entries(req.headers) as [
     string,
     string | string[] | undefined,
   ][]) {
     if (drop.has(k.toLowerCase()) || v == null) continue;
-    fwdHeaders.set(k, Array.isArray(v) ? v.join(",") : v);
+    fwd.set(k, Array.isArray(v) ? v.join(",") : v);
   }
 
   const init: RequestInit = {
     method: req.method,
-    headers: fwdHeaders,
+    headers: fwd,
     redirect: "manual",
     cache: "no-store",
   };
@@ -47,43 +46,47 @@ export default async function handler(
     (init as any).body = Buffer.concat(chunks);
   }
 
-  // 1) First request: add bypass as QUERY PARAMS (no header), ask Vercel to set cookie
-  const withBypass = new URL(target.toString());
-  withBypass.searchParams.set("x-vercel-protection-bypass", secret);
-  withBypass.searchParams.set("x-vercel-set-bypass-cookie", "true");
+  // --- Attempt 1: bypass via HEADER (works per your Step A) ---
+  const h1 = new Headers(fwd);
+  h1.set("x-vercel-protection-bypass", secret);
+  let r = await fetch(target.toString(), { ...init, headers: h1 });
+  let stage = "header";
 
-  let r = await fetch(withBypass.toString(), init);
+  // Detect Vercel protection page
+  const isBlocked = (resp: Response) =>
+    resp.status === 401 ||
+    (resp.headers.get("set-cookie")?.includes("_vercel_") ?? false) ||
+    (resp.headers.get("content-type") || "").includes("text/html");
 
-  // 2) If Vercel returns a redirect with Set-Cookie, follow-up with the cookie to the ORIGINAL target
-  const setCookie = r.headers.get("set-cookie");
-  const isRedirect = r.status >= 300 && r.status < 400;
-  const looksLikeVercelAuth =
-    r.status === 401 ||
-    (setCookie?.includes("_vercel_") ?? false) ||
-    (r.headers.get("content-type") || "").includes("text/html");
-
-  if ((isRedirect || looksLikeVercelAuth) && setCookie) {
-    // Extract cookie pair (up to first ';') and retry to the original target
-    const cookiePair = setCookie.split(";")[0];
-    const retryHeaders = new Headers(fwdHeaders);
-    retryHeaders.set("cookie", cookiePair);
-    const retryInit: RequestInit = {
-      ...init,
-      headers: retryHeaders,
-      redirect: "manual",
-    };
-    r = await fetch(target.toString(), retryInit);
-    res.setHeader("x-proxy-retried", "cookie");
+  // --- Attempt 2: bypass via QUERY PARAMS and ask Vercel to set cookie ---
+  if (isBlocked(r)) {
+    const qp = new URL(target.toString());
+    qp.searchParams.set("x-vercel-protection-bypass", secret);
+    qp.searchParams.set("x-vercel-set-bypass-cookie", "true");
+    r = await fetch(qp.toString(), init);
+    stage = "query";
   }
 
-  // 3) Pass status and headers through (avoid double compression)
+  // --- Attempt 3: if Set-Cookie came back, retry original with that cookie ---
+  if (isBlocked(r)) {
+    const setCookie = r.headers.get("set-cookie");
+    if (setCookie) {
+      const cookiePair = setCookie.split(";")[0];
+      const h3 = new Headers(fwd);
+      h3.set("cookie", cookiePair);
+      r = await fetch(target.toString(), { ...init, headers: h3 });
+      stage = "cookie";
+    }
+  }
+
+  // Pass status/headers through, plus debug of what we did
+  res.setHeader("x-proxy-target", target.toString());
+  res.setHeader("x-proxy-stage", stage);
   res.status(r.status);
-  r.headers.forEach((value: string, key: string): void => {
+  r.headers.forEach((value: string, key: string) => {
     if (key.toLowerCase() === "content-encoding") return;
     res.setHeader(key, value);
   });
-  res.setHeader("x-proxy-target", target.toString());
-
   const body = Buffer.from(await r.arrayBuffer());
   res.end(body);
 }
