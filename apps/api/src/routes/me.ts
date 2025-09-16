@@ -44,14 +44,15 @@ const clerk = CLERK_SECRET_KEY
 export default async function meRoutes(app: FastifyInstance) {
   app.get("/me", async (req, reply) => {
     // 0) Env sanity
+
+    app.log.warn("I AM HERE");
+
     if (!CLERK_SECRET_KEY) {
       app.log.error("[/me] CLERK_SECRET_KEY is not set");
-      return reply
-        .code(500)
-        .send({
-          code: "SERVER_MISCONFIGURED",
-          message: "Missing Clerk secret",
-        });
+      return reply.code(500).send({
+        code: "SERVER_MISCONFIGURED",
+        message: "Missing Clerk secret",
+      });
     }
 
     // 1) Acquire a token from header or cookie
@@ -69,12 +70,10 @@ export default async function meRoutes(app: FastifyInstance) {
     );
 
     if (!token) {
-      return reply
-        .code(401)
-        .send({
-          code: "UNAUTHORIZED",
-          message: "Missing token (header/cookie)",
-        });
+      return reply.code(401).send({
+        code: "UNAUTHORIZED",
+        message: "Missing token (header/cookie)",
+      });
     }
 
     // 2) Verify token with Clerk
