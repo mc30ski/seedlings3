@@ -17,7 +17,7 @@ import debugRoutes from "./routes/debug";
 export async function buildApp() {
   const app = Fastify({ logger: true });
 
-  // ---- simple global route capture + endpoint ----
+  // ---------- route capture (unchanged) ----------
   type RouteRow = { method: string; path: string };
   const __routes: RouteRow[] = [];
   app.addHook("onRoute", (opts) => {
@@ -43,50 +43,84 @@ export async function buildApp() {
     const lines = rows.map((r) => `${r.method.padEnd(6)} ${r.path}`);
     return reply.type("text/plain; charset=utf-8").send(lines.join("\n"));
   });
-  // -----------------------------------------------
+  // ----------------------------------------------
 
-  // --- CORS helpers (more debuggable, with regex/wildcard options) ---
+  // ---------- CORS helpers ----------
   function parseAllowedOrigins(): string[] {
     return (process.env.WEB_ORIGIN ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
   }
-  const WEB_ORIGIN_REGEX = process.env.WEB_ORIGIN_REGEX
+  const ORIGIN_REGEX = process.env.WEB_ORIGIN_REGEX
     ? new RegExp(process.env.WEB_ORIGIN_REGEX)
     : null;
 
   function isOriginAllowed(origin?: string): boolean {
-    // Dev: allow localhost (and no Origin like curl)
+    // dev: allow localhost & no-Origin (curl)
     if (process.env.NODE_ENV !== "production") {
       if (!origin) return true;
       if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return true;
     }
     if (!origin) return false;
 
-    // Wildcard: allow any
+    // wildcard escape hatch
     if ((process.env.WEB_ORIGIN ?? "").trim() === "*") return true;
 
-    // Regex for preview domains (optional)
-    if (WEB_ORIGIN_REGEX && WEB_ORIGIN_REGEX.test(origin)) return true;
+    // optional regex for preview branches
+    if (ORIGIN_REGEX && ORIGIN_REGEX.test(origin)) return true;
 
-    // Exact-match list (default prod behavior)
+    // exact list (default)
     return parseAllowedOrigins().includes(origin);
   }
 
+  // ---------- PRE-FLIGHT SHORT-CIRCUIT ----------
+  // Answer OPTIONS immediately with CORS headers *before* auth/RBAC.
+  app.addHook("onRequest", (req, reply, done) => {
+    if (req.method !== "OPTIONS") return done();
+
+    const origin = (req.headers.origin as string | undefined) ?? undefined;
+    const allowed = isOriginAllowed(origin);
+
+    if (process.env.DEBUG_CORS) {
+      app.log.info({ origin, allowed, path: req.url }, "CORS preflight");
+    }
+
+    if (!allowed) {
+      // No ACAO if not allowed (browser will block)
+      return reply.code(204).send();
+    }
+
+    // Reflect origin + requested headers/methods
+    reply.header("Access-Control-Allow-Origin", origin!);
+    reply.header("Vary", "Origin");
+    reply.header("Access-Control-Allow-Credentials", "true");
+    reply.header(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PATCH,DELETE,OPTIONS"
+    );
+    const reqHeaders =
+      (req.headers["access-control-request-headers"] as string | undefined) ??
+      "authorization,content-type";
+    reply.header("Access-Control-Allow-Headers", reqHeaders);
+
+    return reply.code(204).send();
+  });
+
+  // ---------- CORS plugin (kept, but simplified) ----------
   const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => cb(null, isOriginAllowed(origin ?? undefined)),
     credentials: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    // omit allowedHeaders => plugin reflects Access-Control-Request-Headers
+    // omit allowedHeaders so the plugin reflects what the browser asks for
   };
+  await app.register(cors, corsOptions);
 
-  await app.register(cors, corsOptions); // keep CORS early (as in your repo) :contentReference[oaicite:1]{index=1}
-  await app.register(sensible); // BEFORE auth/RBAC (unchanged)      :contentReference[oaicite:2]{index=2}
+  await app.register(sensible);
   await app.register(auth);
   await app.register(errorMapper);
 
-  // Ensure ACAO is present even on 401/403/etc for allowed origins
+  // Always attach ACAO on responses (including 401/403) for allowed origins.
   app.addHook("onSend", (req, reply, payload, done) => {
     const origin = req.headers.origin as string | undefined;
     if (origin && isOriginAllowed(origin)) {
@@ -99,23 +133,11 @@ export async function buildApp() {
     done();
   });
 
-  // Quick introspection endpoint (remove later if you want)
-  app.get("/debug/cors", async (req) => {
-    const origin = (req.headers.origin as string | undefined) ?? null;
-    return {
-      nodeEnv: process.env.NODE_ENV,
-      origin,
-      allowed: isOriginAllowed(origin ?? undefined),
-      WEB_ORIGIN: process.env.WEB_ORIGIN ?? null,
-      WEB_ORIGIN_REGEX: process.env.WEB_ORIGIN_REGEX ?? null,
-    };
-  });
-
-  // Public routes (unchanged)
+  // Public routes
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  // Guarded API under /api/v1 (unchanged shape/order) :contentReference[oaicite:3]{index=3}
+  // Guarded API
   await app.register(
     async (api) => {
       await api.register(rbac);
