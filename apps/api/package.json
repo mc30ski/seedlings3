@@ -14,7 +14,8 @@
     "db:seed": "prisma db seed"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "schema": "./prisma/schema.prisma"
   },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^5.1.6",
@@ -23,7 +24,7 @@
     "@fastify/sensible": "^5.6.0",
     "@neondatabase/serverless": "^1.0.1",
     "@prisma/adapter-neon": "^6.16.2",
-    "@prisma/client": "5.16.2",
+    "@prisma/client": "^6.16.2",
     "fastify": "4.28.1",
     "ws": "^8.18.3",
     "zod": "3.23.8"
@@ -31,7 +32,7 @@
   "devDependencies": {
     "@types/node": "^20.19.15",
     "@types/ws": "^8.18.1",
-    "prisma": "5.16.2",
+    "prisma": "^6.16.2",
     "ts-node": "^10.9.2",
     "tsup": "^8.5.0",
     "tsx": "^4.20.5",
