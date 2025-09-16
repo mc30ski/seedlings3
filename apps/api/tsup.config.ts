@@ -1,14 +1,15 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/start.ts"], // pulls in routes/plugins/services/etc.
+  entry: ["src/start.ts", "src/app.ts", "src/index.ts"],
   platform: "node",
   target: "node20",
   format: ["esm"],
   sourcemap: true,
   clean: true,
   bundle: true,
-  splitting: false, // single file output (simplest for Cloud Run)
+  splitting: false,
   shims: false,
-  skipNodeModulesBundle: true, // keep external deps in node_modules
+  skipNodeModulesBundle: true,
+  env: { NODE_ENV: "production" },
 });
