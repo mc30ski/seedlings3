@@ -8,13 +8,14 @@ export default async function handler(
   res: NextApiResponse
 ) {
   const base = process.env.API_BASE_URL;
-  const secret = process.env.API_BYPASS_SECRET;
+  const rawSecret = process.env.API_BYPASS_SECRET;
+  const secret = rawSecret?.trim();
   if (!base || !secret) {
     res.status(500).json({ ok: false, error: "proxy_misconfigured" });
     return;
   }
 
-  // Build target URL from /api/_proxy/<...path>?<query>
+  // Build target URL: API_BASE_URL + /<joined path> + original ?query
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []
   );
@@ -22,21 +23,20 @@ export default async function handler(
   const qIdx = req.url?.indexOf("?") ?? -1;
   if (qIdx >= 0) target.search = req.url!.slice(qIdx);
 
-  // Copy headers (minus hop-by-hop), add bypass header
-  const headers = new Headers();
+  // Hop-by-hop header filter
+  const fwdHeaders = new Headers();
   const drop = new Set(["host", "connection", "content-length"]);
   for (const [k, v] of Object.entries(req.headers) as [
     string,
     string | string[] | undefined,
   ][]) {
     if (drop.has(k.toLowerCase()) || v == null) continue;
-    headers.set(k, Array.isArray(v) ? v.join(",") : v);
+    fwdHeaders.set(k, Array.isArray(v) ? v.join(",") : v);
   }
-  headers.set("x-vercel-protection-bypass", secret);
 
   const init: RequestInit = {
     method: req.method,
-    headers,
+    headers: fwdHeaders,
     redirect: "manual",
     cache: "no-store",
   };
@@ -47,24 +47,36 @@ export default async function handler(
     (init as any).body = Buffer.concat(chunks);
   }
 
-  // 1st attempt: header
-  let r = await fetch(target.toString(), init);
+  // 1) First request: add bypass as QUERY PARAMS (no header), ask Vercel to set cookie
+  const withBypass = new URL(target.toString());
+  withBypass.searchParams.set("x-vercel-protection-bypass", secret);
+  withBypass.searchParams.set("x-vercel-set-bypass-cookie", "true");
 
-  // If Vercel still blocks (401 HTML), retry with query-param bypass
-  const isVercel401Html =
-    r.status === 401 &&
-    (r.headers.get("set-cookie")?.includes("_vercel_sso_nonce") ||
-      (r.headers.get("content-type") || "").includes("text/html"));
+  let r = await fetch(withBypass.toString(), init);
 
-  if (isVercel401Html) {
-    const retry = new URL(target.toString());
-    retry.searchParams.set("x-vercel-protection-bypass", secret);
-    retry.searchParams.set("x-vercel-set-bypass-cookie", "true");
-    r = await fetch(retry.toString(), init);
-    res.setHeader("x-proxy-retried", "query-bypass");
+  // 2) If Vercel returns a redirect with Set-Cookie, follow-up with the cookie to the ORIGINAL target
+  const setCookie = r.headers.get("set-cookie");
+  const isRedirect = r.status >= 300 && r.status < 400;
+  const looksLikeVercelAuth =
+    r.status === 401 ||
+    (setCookie?.includes("_vercel_") ?? false) ||
+    (r.headers.get("content-type") || "").includes("text/html");
+
+  if ((isRedirect || looksLikeVercelAuth) && setCookie) {
+    // Extract cookie pair (up to first ';') and retry to the original target
+    const cookiePair = setCookie.split(";")[0];
+    const retryHeaders = new Headers(fwdHeaders);
+    retryHeaders.set("cookie", cookiePair);
+    const retryInit: RequestInit = {
+      ...init,
+      headers: retryHeaders,
+      redirect: "manual",
+    };
+    r = await fetch(target.toString(), retryInit);
+    res.setHeader("x-proxy-retried", "cookie");
   }
 
-  // Pass status and headers through (avoid double compression)
+  // 3) Pass status and headers through (avoid double compression)
   res.status(r.status);
   r.headers.forEach((value: string, key: string): void => {
     if (key.toLowerCase() === "content-encoding") return;
