@@ -80,7 +80,7 @@ export default async function systemRoutes(app: FastifyInstance) {
         now: now_utc,
         db: {
           up: true,
-          parsedHost: parsedHost,
+          parsedHostX: parsedHost,
           provider: /\.neon\.tech$/i.test(parsedHost ?? "")
             ? "neon"
             : "postgres",
