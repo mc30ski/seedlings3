@@ -14,14 +14,15 @@ export default async function handler(
     return;
   }
 
+  // Build target URL from /api/_proxy/<...path>?<query>
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []
   );
-  const url = new URL(parts.join("/"), base);
-  const qIndex = req.url?.indexOf("?") ?? -1;
-  if (qIndex >= 0) url.search = req.url!.slice(qIndex);
+  const target = new URL(parts.join("/"), base);
+  const qIdx = req.url?.indexOf("?") ?? -1;
+  if (qIdx >= 0) target.search = req.url!.slice(qIdx);
 
-  // Copy headers, drop hop-by-hop, add bypass header
+  // Copy headers (minus hop-by-hop), add bypass header
   const headers = new Headers();
   const drop = new Set(["host", "connection", "content-length"]);
   for (const [k, v] of Object.entries(req.headers) as [
@@ -36,26 +37,40 @@ export default async function handler(
   const init: RequestInit = {
     method: req.method,
     headers,
-    redirect: "manual", // type: RequestRedirect
+    redirect: "manual",
     cache: "no-store",
   };
-
   if (req.method !== "GET" && req.method !== "HEAD") {
     const chunks: Uint8Array[] = [];
-    for await (const chunk of req as any) {
+    for await (const chunk of req as any)
       chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    }
-    init.body = Buffer.concat(chunks);
+    (init as any).body = Buffer.concat(chunks);
   }
 
-  const r = await fetch(url.toString(), init);
+  // 1st attempt: header
+  let r = await fetch(target.toString(), init);
 
-  // Pass status and headers through
+  // If Vercel still blocks (401 HTML), retry with query-param bypass
+  const isVercel401Html =
+    r.status === 401 &&
+    (r.headers.get("set-cookie")?.includes("_vercel_sso_nonce") ||
+      (r.headers.get("content-type") || "").includes("text/html"));
+
+  if (isVercel401Html) {
+    const retry = new URL(target.toString());
+    retry.searchParams.set("x-vercel-protection-bypass", secret);
+    retry.searchParams.set("x-vercel-set-bypass-cookie", "true");
+    r = await fetch(retry.toString(), init);
+    res.setHeader("x-proxy-retried", "query-bypass");
+  }
+
+  // Pass status and headers through (avoid double compression)
   res.status(r.status);
   r.headers.forEach((value: string, key: string): void => {
     if (key.toLowerCase() === "content-encoding") return;
     res.setHeader(key, value);
   });
+  res.setHeader("x-proxy-target", target.toString());
 
   const body = Buffer.from(await r.arrayBuffer());
   res.end(body);
