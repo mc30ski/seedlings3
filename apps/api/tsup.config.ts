@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
+  // add app + (optional) index to your entries
   entry: ["src/start.ts", "src/app.ts", "src/index.ts"],
   platform: "node",
   target: "node20",
