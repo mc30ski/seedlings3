@@ -60,6 +60,7 @@ export default async function handler(
     target: target,
     qIdx: qIdx,
     r: JSON.stringify(r),
+    h1: JSON.stringify(h1),
   });
   return;
 
