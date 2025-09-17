@@ -88,12 +88,15 @@ export default async function handler(
   res.status(200).json({
     ok: true,
     error: "got here2",
-    target: target,
     qIdx: qIdx,
     secret: secret,
     r: JSON.stringify(r),
     h1: JSON.stringify(h1),
     a1: a1,
+    target: target.toString(),
+    stage: stage,
+    rStatus: r.status,
+    rHeaders: Array.from(r.headers.entries()),
   });
   return;
 
