@@ -19,6 +19,7 @@ export default async function handler(
   res.status(200).json({ ok: true, error: "got here" });
   return;
 
+  /*
   // Build target URL: API_BASE_URL + /<joined path> + original search
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []
@@ -94,4 +95,5 @@ export default async function handler(
   });
   const body = Buffer.from(await r.arrayBuffer());
   res.end(body);
+  */
 }
