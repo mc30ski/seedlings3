@@ -137,7 +137,8 @@ export async function buildApp() {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  await app.register(meRoutes);
+  // TESTING DIFFERENT OPTIONS, ONLY /me WORKS ON VERCEL FOR SOME REASON
+  //await app.register(meRoutes);
   //await app.register(meRoutes, { prefix: "/v1" });
   /*
   await app.register(
@@ -163,6 +164,29 @@ export async function buildApp() {
     { prefix: "/api/v1" }
   );
   */
+
+  if (process.env.NODE_ENV === "development") {
+    await app.register(
+      async (api) => {
+        await api.register(rbac);
+        await api.register(meRoutes);
+        await api.register(workerRoutes);
+        await api.register(adminRoutes);
+        await api.register(userRoutes);
+        await api.register(auditRoutes);
+        await api.register(debugRoutes);
+      },
+      { prefix: "/api" }
+    );
+  } else {
+    await app.register(rbac);
+    await app.register(meRoutes);
+    await app.register(workerRoutes);
+    await app.register(adminRoutes);
+    await app.register(userRoutes);
+    await app.register(auditRoutes);
+    await app.register(debugRoutes);
+  }
 
   return app;
 }
