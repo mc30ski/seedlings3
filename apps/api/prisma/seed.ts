@@ -125,12 +125,6 @@ async function main() {
       },
     });
   });
-
-  console.log("Seed complete:", {
-    admin: admin.email,
-    worker: worker.email,
-    equipment: [mower.id, trimmer.id, blower.id],
-  });
 }
 
 main()

@@ -140,7 +140,7 @@ export async function buildApp() {
   // Guarded API
   await app.register(
     async (api) => {
-      console.log("TODO: FUCK YOU");
+      console.log("MIKEW: 1");
 
       await api.register(rbac);
       await api.register(meRoutes);
