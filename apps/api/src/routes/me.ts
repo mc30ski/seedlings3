@@ -43,7 +43,7 @@ const clerk = CLERK_SECRET_KEY
 
 export default async function meRoutes(app: FastifyInstance) {
   app.get("/me", async (req, reply) => {
-    // 0) Env sanity
+    console.log("MIKEW: 2");
 
     if (!CLERK_SECRET_KEY) {
       app.log.error("[/me] CLERK_SECRET_KEY is not set");
