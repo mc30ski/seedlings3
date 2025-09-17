@@ -54,20 +54,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  const f = async (api) => {
-    await api.register(auth); // Clerk auth (verifies bearer/cookie) :contentReference[oaicite:1]{index=1}
-    await api.register(rbac);
+  async function registerApi(app: FastifyInstance) {
+    await app.register(auth);
+    await app.register(rbac);
+    await app.register(meRoutes);
+    await app.register(workerRoutes);
+    await app.register(adminRoutes);
+    await app.register(userRoutes);
+    await app.register(auditRoutes);
+  }
 
-    await api.register(meRoutes); // /api/v1/me  (Clerk-backed) :contentReference[oaicite:2]{index=2}
-    await api.register(workerRoutes);
-    await api.register(adminRoutes);
-    await api.register(userRoutes);
-    await api.register(auditRoutes);
-  };
-
-  // Versioned API — auth + rbac + feature routes
-  await app.register(f, { prefix: "/v1" });
-  await app.register(f, { prefix: "/api/v1" });
+  await app.register(registerApi, { prefix: "/api/v1" }); // for local
+  await app.register(registerApi, { prefix: "/v1" }); // for Vercel
 
   // Opt-in route table dump
   if (process.env.ROUTE_DUMP === "1") {
