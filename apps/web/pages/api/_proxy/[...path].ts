@@ -14,6 +14,8 @@ export default async function handler(
     return;
   }
 
+  console.log("MIKEW", "In proxy handler", { base, secret });
+
   // Build target URL: API_BASE_URL + /<joined path> + original search
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []

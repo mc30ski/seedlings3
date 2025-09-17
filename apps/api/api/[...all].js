@@ -56,13 +56,7 @@ export default async function handler(req, res) {
 
   // Normalize: strip a single leading "/api" so Fastify sees the expected paths.
   const orig = req.url || "/";
-
-  console.log("HERE", orig);
-
   const s = stripFirstApi(orig);
-
-  console.log("HERE2", s);
-
   req.url = s;
 
   (await app).routing(req, res);
