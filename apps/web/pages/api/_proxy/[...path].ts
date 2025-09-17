@@ -33,14 +33,6 @@ export default async function handler(
     fwd.set(k, Array.isArray(v) ? v.join(",") : v);
   }
 
-  console.log("MIKEW", "In proxy handler", { base, secret });
-
-  res
-    .status(200)
-    .json({ ok: true, error: "got here2", target: target, qIdx: qIdx });
-  return;
-
-  /*
   const init: RequestInit = {
     method: req.method,
     headers: fwd,
@@ -60,11 +52,24 @@ export default async function handler(
   let r = await fetch(target.toString(), { ...init, headers: h1 });
   let stage = "header";
 
+  console.log("MIKEW", "In proxy handler", { base, secret });
+
+  res.status(200).json({
+    ok: true,
+    error: "got here2",
+    target: target,
+    qIdx: qIdx,
+    r: JSON.stringify(r),
+  });
+  return;
+
+  /*
   // Detect Vercel protection page
   const isBlocked = (resp: Response) =>
     resp.status === 401 ||
     (resp.headers.get("set-cookie")?.includes("_vercel_") ?? false) ||
     (resp.headers.get("content-type") || "").includes("text/html");
+
 
   // --- Attempt 2: bypass via QUERY PARAMS and ask Vercel to set cookie ---
   if (isBlocked(r)) {
