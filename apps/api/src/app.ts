@@ -54,20 +54,20 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  // Versioned API — auth + rbac + feature routes
-  await app.register(
-    async (api) => {
-      await api.register(auth); // Clerk auth (verifies bearer/cookie) :contentReference[oaicite:1]{index=1}
-      await api.register(rbac);
+  const f = async (api) => {
+    await api.register(auth); // Clerk auth (verifies bearer/cookie) :contentReference[oaicite:1]{index=1}
+    await api.register(rbac);
 
-      await api.register(meRoutes); // /api/v1/me  (Clerk-backed) :contentReference[oaicite:2]{index=2}
-      await api.register(workerRoutes);
-      await api.register(adminRoutes);
-      await api.register(userRoutes);
-      await api.register(auditRoutes);
-    },
-    { prefix: "/api/v1" }
-  );
+    await api.register(meRoutes); // /api/v1/me  (Clerk-backed) :contentReference[oaicite:2]{index=2}
+    await api.register(workerRoutes);
+    await api.register(adminRoutes);
+    await api.register(userRoutes);
+    await api.register(auditRoutes);
+  };
+
+  // Versioned API — auth + rbac + feature routes
+  await app.register(f, { prefix: "/v1" });
+  await app.register(f, { prefix: "/api/v1" });
 
   // Opt-in route table dump
   if (process.env.ROUTE_DUMP === "1") {
