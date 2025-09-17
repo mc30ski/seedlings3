@@ -96,6 +96,7 @@ export default async function handler(
     target: target.toString(),
     stage: stage,
     rStatus: r.status,
+    headers: new Headers(fwd),
     rHeaders: Array.from(r.headers.entries()),
   });
   return;
