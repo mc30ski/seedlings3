@@ -52,6 +52,21 @@ export default async function handler(
   let r = await fetch(target.toString(), { ...init, headers: h1 });
   let stage = "header";
 
+  // Detect Vercel protection page
+  const isBlocked = (resp: Response) =>
+    resp.status === 401 ||
+    (resp.headers.get("set-cookie")?.includes("_vercel_") ?? false) ||
+    (resp.headers.get("content-type") || "").includes("text/html");
+
+  // --- Attempt 2: bypass via QUERY PARAMS and ask Vercel to set cookie ---
+  if (isBlocked(r)) {
+    const qp = new URL(target.toString());
+    qp.searchParams.set("x-vercel-protection-bypass", secret);
+    qp.searchParams.set("x-vercel-set-bypass-cookie", "true");
+    r = await fetch(qp.toString(), init);
+    stage = "query";
+  }
+
   console.log("MIKEW", "In proxy handler", { base, secret });
 
   res.status(200).json({
@@ -65,21 +80,6 @@ export default async function handler(
   return;
 
   /*
-  // Detect Vercel protection page
-  const isBlocked = (resp: Response) =>
-    resp.status === 401 ||
-    (resp.headers.get("set-cookie")?.includes("_vercel_") ?? false) ||
-    (resp.headers.get("content-type") || "").includes("text/html");
-
-
-  // --- Attempt 2: bypass via QUERY PARAMS and ask Vercel to set cookie ---
-  if (isBlocked(r)) {
-    const qp = new URL(target.toString());
-    qp.searchParams.set("x-vercel-protection-bypass", secret);
-    qp.searchParams.set("x-vercel-set-bypass-cookie", "true");
-    r = await fetch(qp.toString(), init);
-    stage = "query";
-  }
 
   // --- Attempt 3: if Set-Cookie came back, retry original with that cookie ---
   if (isBlocked(r)) {
