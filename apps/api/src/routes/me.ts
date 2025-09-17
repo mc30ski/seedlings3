@@ -45,8 +45,7 @@ export default async function meRoutes(app: FastifyInstance) {
   app.get("/me", async (req, reply) => {
     // 0) Env sanity
 
-    app.log.warn("I AM HERE");
-    console.log("I AM HERE2");
+    console.log("/me I AM HERE");
 
     if (!CLERK_SECRET_KEY) {
       app.log.error("[/me] CLERK_SECRET_KEY is not set");
