@@ -18,8 +18,11 @@ function stripFirstApi(url) {
 }
 
 export default async function handler(req, res) {
-  const app = appPromise ?? (appPromise = buildApp());
-  await (await app).ready();
+  // On Vercel we run the built output
+  const mod = await import(new URL("../dist/app.js", import.meta.url).href);
+  const buildApp = mod.buildApp || mod.default?.buildApp || mod.default;
+  const app = await buildApp();
+  await app.ready();
 
   // Normalize: strip a single leading "/api" so Fastify sees the expected paths.
   // e.g. "/api/healthz" -> "/healthz", "/api/v1/me" -> "/v1/me"
