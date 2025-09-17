@@ -55,7 +55,6 @@ export default async function handler(req, res) {
   await app.ready();
 
   // Normalize: strip a single leading "/api" so Fastify sees the expected paths.
-  // e.g. "/api/healthz" -> "/healthz", "/api/v1/me" -> "/v1/me"
   const orig = req.url || "/";
 
   console.log("HERE", orig);

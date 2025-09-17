@@ -31,7 +31,7 @@ export default function HomePage() {
   const loadMe = useCallback(async () => {
     setMeLoading(true);
     try {
-      const data = await apiGet<Me>("/api/v1/me");
+      const data = await apiGet<Me>("/api/me");
       setMe(data);
     } catch {
       setMe(null);

@@ -67,7 +67,7 @@ export default function AdminEquipment() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<Equipment[]>("/api/v1/admin/equipment");
+      const data = await apiGet<Equipment[]>("/api/admin/equipment");
       setItems(data);
     } catch (err) {
       toaster.error({
@@ -134,7 +134,7 @@ export default function AdminEquipment() {
     }
     setCreating(true);
     try {
-      await apiPost("/api/v1/admin/equipment", {
+      await apiPost("/api/admin/equipment", {
         shortDesc,
         longDesc: longDesc || undefined,
         qrSlug: qrSlug || undefined,
@@ -157,7 +157,7 @@ export default function AdminEquipment() {
   // ---- actions ----
   async function forceRelease(id: string) {
     try {
-      await apiPost(`/api/v1/admin/equipment/${id}/release`, {});
+      await apiPost(`/api/admin/equipment/${id}/release`, {});
       toaster.success({ title: "Released" });
       await load();
     } catch (err) {
@@ -170,7 +170,7 @@ export default function AdminEquipment() {
 
   async function startMaint(id: string) {
     try {
-      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/start`, {});
+      await apiPost(`/api/admin/equipment/${id}/maintenance/start`, {});
       toaster.success({ title: "Maintenance started" });
       await load();
     } catch (err) {
@@ -183,7 +183,7 @@ export default function AdminEquipment() {
 
   async function endMaint(id: string) {
     try {
-      await apiPost(`/api/v1/admin/equipment/${id}/maintenance/end`, {});
+      await apiPost(`/api/admin/equipment/${id}/maintenance/end`, {});
       toaster.success({ title: "Maintenance ended" });
       await load();
     } catch (err) {
@@ -196,7 +196,7 @@ export default function AdminEquipment() {
 
   async function retire(id: string) {
     try {
-      await apiPost(`/api/v1/admin/equipment/${id}/retire`, {});
+      await apiPost(`/api/admin/equipment/${id}/retire`, {});
       toaster.success({ title: "Retired" });
       await load();
     } catch (err) {
@@ -209,7 +209,7 @@ export default function AdminEquipment() {
 
   async function unretire(id: string) {
     try {
-      await apiPost(`/api/v1/admin/equipment/${id}/unretire`, {});
+      await apiPost(`/api/admin/equipment/${id}/unretire`, {});
       toaster.success({ title: "Unretired" });
       await load();
     } catch (err) {
@@ -222,7 +222,7 @@ export default function AdminEquipment() {
 
   async function hardDelete(id: string) {
     try {
-      await apiDelete(`/api/v1/admin/equipment/${id}`);
+      await apiDelete(`/api/admin/equipment/${id}`);
       toaster.success({ title: "Deleted" });
       await load();
     } catch (err) {

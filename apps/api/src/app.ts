@@ -134,8 +134,8 @@ export async function buildApp() {
   });
 
   // Public routes
-  await app.register(systemRoutes);
-  await app.register(versionRoutes);
+  //await app.register(systemRoutes);
+  //await app.register(versionRoutes);
 
   // TESTING DIFFERENT OPTIONS, ONLY /me WORKS ON VERCEL FOR SOME REASON
   //await app.register(meRoutes);
@@ -168,6 +168,9 @@ export async function buildApp() {
   if (process.env.NODE_ENV === "development") {
     await app.register(
       async (api) => {
+        await api.register(systemRoutes);
+        await api.register(versionRoutes);
+
         await api.register(rbac);
         await api.register(meRoutes);
         await api.register(workerRoutes);
@@ -179,6 +182,9 @@ export async function buildApp() {
       { prefix: "/api" }
     );
   } else {
+    await app.register(systemRoutes);
+    await app.register(versionRoutes);
+
     await app.register(rbac);
     await app.register(meRoutes);
     await app.register(workerRoutes);

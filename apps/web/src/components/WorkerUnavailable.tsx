@@ -58,7 +58,7 @@ export default function WorkerUnavailable() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<Item[]>("/api/v1/equipment/unavailable");
+      const data = await apiGet<Item[]>("/api/equipment/unavailable");
       setItems(data);
     } catch (err) {
       toaster.error({

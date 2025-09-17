@@ -53,7 +53,7 @@ export default function WorkerMyEquipment() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const mineList = await apiGet<Equipment[]>("/api/v1/equipment/mine");
+      const mineList = await apiGet<Equipment[]>("/api/equipment/mine");
       setMine(mineList);
     } catch (err) {
       toaster.error({
@@ -78,7 +78,7 @@ export default function WorkerMyEquipment() {
   async function checkout(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/checkout`);
+      await apiPost(`/api/equipment/${id}/checkout`);
       toaster.success({ title: "Checked out" });
       notifyEquipmentUpdated();
       await refresh();
@@ -95,7 +95,7 @@ export default function WorkerMyEquipment() {
   async function cancelReserve(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/reserve/cancel`);
+      await apiPost(`/api/equipment/${id}/reserve/cancel`);
       toaster.info({ title: "Reservation canceled" });
       notifyEquipmentUpdated();
       await refresh();
@@ -112,7 +112,7 @@ export default function WorkerMyEquipment() {
   async function returnItem(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/return`);
+      await apiPost(`/api/equipment/${id}/return`);
       toaster.success({ title: "Returned" });
       notifyEquipmentUpdated();
       await refresh();
