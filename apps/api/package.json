@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/start.ts",
-    "build": "tsup --config tsup.config.ts && prisma generate",
+    "build": "tsup --config tsup.config.ts && npm run prisma:generate",
     "start": "node --enable-source-maps dist/start.js",
     "test": "vitest run",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "postinstall": "npm run prisma:generate"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts",
