@@ -14,12 +14,6 @@ export default async function handler(
     return;
   }
 
-  console.log("MIKEW", "In proxy handler", { base, secret });
-
-  res.status(200).json({ ok: true, error: "got here" });
-  return;
-
-  /*
   // Build target URL: API_BASE_URL + /<joined path> + original search
   const parts = ([] as string[]).concat(
     (req.query.path as string[] | string | undefined) ?? []
@@ -39,6 +33,14 @@ export default async function handler(
     fwd.set(k, Array.isArray(v) ? v.join(",") : v);
   }
 
+  console.log("MIKEW", "In proxy handler", { base, secret });
+
+  res
+    .status(200)
+    .json({ ok: true, error: "got here2", target: target, qIdx: qIdx });
+  return;
+
+  /*
   const init: RequestInit = {
     method: req.method,
     headers: fwd,
