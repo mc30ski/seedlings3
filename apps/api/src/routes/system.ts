@@ -24,7 +24,10 @@ function parseDbInfo(url?: string) {
 }
 
 export default async function systemRoutes(app: FastifyInstance) {
-  app.get("/hello", async (_req, _reply) => ({ message: "Hello from API" }));
+  app.get("/hello", async (_req, _reply) => {
+    console.log("Hello from API");
+    return { message: "Hello from API" };
+  });
 
   app.get("/healthz", async (req, reply) => {
     try {
