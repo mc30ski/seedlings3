@@ -67,8 +67,6 @@ export default async function handler(
     stage = "query";
   }
 
-  let a1;
-
   // --- Attempt 3: if Set-Cookie came back, retry original with that cookie ---
   if (isBlocked(r)) {
     const setCookie = r.headers.get("set-cookie");
@@ -78,30 +76,8 @@ export default async function handler(
       h3.set("cookie", cookiePair);
       r = await fetch(target.toString(), { ...init, headers: h3 });
       stage = "cookie";
-
-      a1 = cookiePair;
     }
   }
-
-  console.log("MIKEW", "In proxy handler", { base, secret });
-
-  res.status(200).json({
-    ok: true,
-    error: "got here2",
-    qIdx: qIdx,
-    secret: secret,
-    r: JSON.stringify(r),
-    h1: JSON.stringify(h1),
-    a1: a1,
-    target: target.toString(),
-    stage: stage,
-    rStatus: r.status,
-    headers: new Headers(fwd),
-    rHeaders: Array.from(r.headers.entries()),
-  });
-  return;
-
-  /*
 
   // Pass status/headers through, plus debug of what we did
   res.setHeader("x-proxy-target", target.toString());
@@ -113,5 +89,4 @@ export default async function handler(
   });
   const body = Buffer.from(await r.arrayBuffer());
   res.end(body);
-  */
 }
