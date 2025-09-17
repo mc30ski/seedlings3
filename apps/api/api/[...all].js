@@ -12,9 +12,39 @@ export default async function handler(req, res) {
 */
 
 function stripFirstApi(url) {
-  const u = new URL(url);
-  u.pathname = u.pathname.replace(/\/api/, "");
-  return u.toString();
+  // Split off hash
+  const hashIdx = url.indexOf("#");
+  const hash = hashIdx !== -1 ? url.slice(hashIdx) : "";
+  const noHash = hashIdx !== -1 ? url.slice(0, hashIdx) : url;
+
+  // Split off query
+  const qIdx = noHash.indexOf("?");
+  const query = qIdx !== -1 ? noHash.slice(qIdx) : "";
+  const base = qIdx !== -1 ? noHash.slice(0, qIdx) : noHash;
+
+  // Find where the path starts
+  let pathStart = 0;
+  const schemeIdx = base.indexOf("://");
+  if (schemeIdx !== -1) {
+    const firstSlash = base.indexOf("/", schemeIdx + 3);
+    pathStart = firstSlash !== -1 ? firstSlash : base.length;
+  } else if (base.startsWith("//")) {
+    const firstSlash = base.indexOf("/", 2);
+    pathStart = firstSlash !== -1 ? firstSlash : base.length;
+  } else if (base.startsWith("/")) {
+    pathStart = 0; // relative path like "/api/v1"
+  } else {
+    const firstSlash = base.indexOf("/");
+    pathStart = firstSlash !== -1 ? firstSlash : base.length; // "example.com/api/.."
+  }
+
+  const before = base.slice(0, pathStart);
+  const path = base.slice(pathStart);
+
+  // Remove only the first "/api" as a path segment (not in "campaign", etc.)
+  const newPath = path.replace(/\/api(?=\/|$)/, "");
+
+  return before + newPath + query + hash;
 }
 
 export default async function handler(req, res) {
