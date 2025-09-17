@@ -1,157 +1,80 @@
 // apps/api/src/app.ts
-import Fastify from "fastify";
-import cors, { type FastifyCorsOptions } from "@fastify/cors";
+import Fastify, { type FastifyInstance } from "fastify";
+import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
-import rbac from "./plugins/rbac";
-import meRoutes from "./routes/me";
-import workerRoutes from "./routes/worker";
-import adminRoutes from "./routes/admin";
-import userRoutes from "./routes/users";
-import auditRoutes from "./routes/audit";
-import systemRoutes from "./routes/system";
-import versionRoutes from "./routes/version";
-import errorMapper from "./plugins/errorMapper";
-import auth from "./plugins/auth";
-import debugRoutes from "./routes/debug";
 
-export async function buildApp() {
+import errorMapper from "./plugins/errorMapper.js";
+import rbac from "./plugins/rbac.js";
+import auth from "./plugins/auth.js"; // ← Clerk-based auth (replaces devAuth)
+
+import systemRoutes from "./routes/system.js";
+import versionRoutes from "./routes/version.js";
+import meRoutes from "./routes/me.js";
+import workerRoutes from "./routes/worker.js";
+import adminRoutes from "./routes/admin.js";
+import userRoutes from "./routes/users.js";
+import auditRoutes from "./routes/audit.js";
+
+export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: true });
 
-  // ---------- route capture (unchanged) ----------
-  type RouteRow = { method: string; path: string };
-  const __routes: RouteRow[] = [];
-  app.addHook("onRoute", (opts) => {
-    const methods = Array.isArray(opts.method) ? opts.method : [opts.method];
-    const rawPath = (opts as any).url ?? (opts as any).path ?? "/";
-    const path = String(rawPath).replace(/\/{2,}/g, "/");
-    for (const m of methods) __routes.push({ method: String(m), path });
-  });
-  app.get("/__routes", async (req, reply) => {
-    const wantsJSON =
-      String(req.headers.accept ?? "").includes("application/json") ||
-      (req.query as any)?.format === "json";
-    const hasGET = new Set(
-      __routes.filter((r) => r.method === "GET").map((r) => r.path)
-    );
-    const rows = __routes
-      .filter((r) => !(r.method === "HEAD" && hasGET.has(r.path)))
-      .sort(
-        (a, b) =>
-          a.path.localeCompare(b.path) || a.method.localeCompare(b.method)
-      );
-    if (wantsJSON) return reply.send(rows);
-    const lines = rows.map((r) => `${r.method.padEnd(6)} ${r.path}`);
-    return reply.type("text/plain; charset=utf-8").send(lines.join("\n"));
-  });
-  // ----------------------------------------------
+  // CORS — allow your web app + localhost
+  const webOrigin =
+    process.env.WEB_ORIGIN ||
+    (process.env.NODE_ENV !== "production"
+      ? "http://localhost:3000"
+      : undefined);
 
-  // ---------- CORS helpers ----------
-  function parseAllowedOrigins(): string[] {
-    return (process.env.WEB_ORIGIN ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  const ORIGIN_REGEX = process.env.WEB_ORIGIN_REGEX
-    ? new RegExp(process.env.WEB_ORIGIN_REGEX)
-    : null;
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      // Allow same-origin / curl / SSR
+      if (!origin) return cb(null, true);
 
-  function isOriginAllowed(origin?: string): boolean {
-    // dev: allow localhost & no-Origin (curl)
-    if (process.env.NODE_ENV !== "production") {
-      if (!origin) return true;
-      if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return true;
-    }
-    if (!origin) return false;
+      const allowList = [
+        webOrigin,
+        "http://localhost:3000",
+        // helpful when testing Vercel preview/prod without constantly editing WEB_ORIGIN
+        process.env.NEXT_PUBLIC_WEB_ORIGIN, // if you keep one of these around
+        process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
+          : undefined,
+      ].filter(Boolean) as string[];
 
-    // wildcard escape hatch
-    if ((process.env.WEB_ORIGIN ?? "").trim() === "*") return true;
-
-    // optional regex for preview branches
-    if (ORIGIN_REGEX && ORIGIN_REGEX.test(origin)) return true;
-
-    // exact list (default)
-    return parseAllowedOrigins().includes(origin);
-  }
-
-  // ---------- PRE-FLIGHT SHORT-CIRCUIT ----------
-  // Answer OPTIONS immediately with CORS headers *before* auth/RBAC.
-  app.addHook("onRequest", (req, reply, done) => {
-    if (req.method !== "OPTIONS") return done();
-
-    const origin = (req.headers.origin as string | undefined) ?? undefined;
-    const allowed = isOriginAllowed(origin);
-
-    if (process.env.DEBUG_CORS) {
-      app.log.info({ origin, allowed, path: req.url }, "CORS preflight");
-    }
-
-    if (!allowed) {
-      // No ACAO if not allowed (browser will block)
-      return reply.code(204).send();
-    }
-
-    // Reflect origin + requested headers/methods
-    reply.header("Access-Control-Allow-Origin", origin!);
-    reply.header("Vary", "Origin");
-    reply.header("Access-Control-Allow-Credentials", "true");
-    reply.header(
-      "Access-Control-Allow-Methods",
-      "GET,POST,PATCH,DELETE,OPTIONS"
-    );
-    const reqHeaders =
-      (req.headers["access-control-request-headers"] as string | undefined) ??
-      "authorization,content-type";
-    reply.header("Access-Control-Allow-Headers", reqHeaders);
-
-    return reply.code(204).send();
-  });
-
-  // ---------- CORS plugin (kept, but simplified) ----------
-  const corsOptions: FastifyCorsOptions = {
-    origin: (origin, cb) => cb(null, isOriginAllowed(origin ?? undefined)),
+      cb(null, allowList.includes(origin));
+    },
     credentials: true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    // omit allowedHeaders so the plugin reflects what the browser asks for
-  };
-  await app.register(cors, corsOptions);
-
-  await app.register(sensible);
-  await app.register(auth);
-  await app.register(errorMapper);
-
-  // Always attach ACAO on responses (including 401/403) for allowed origins.
-  app.addHook("onSend", (req, reply, payload, done) => {
-    const origin = req.headers.origin as string | undefined;
-    if (origin && isOriginAllowed(origin)) {
-      reply.header("Access-Control-Allow-Origin", origin);
-      reply.header("Vary", "Origin");
-      if (corsOptions.credentials) {
-        reply.header("Access-Control-Allow-Credentials", "true");
-      }
-    }
-    done();
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["X-Request-Id"],
   });
 
-  // Public routes
+  // Global plugins and public routes
+  await app.register(sensible);
+  await app.register(errorMapper);
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
-  // Guarded API
+  // Versioned API — auth + rbac + feature routes
   await app.register(
     async (api) => {
-      console.log("MIKEW: 1");
-
+      await api.register(auth); // Clerk auth (verifies bearer/cookie) :contentReference[oaicite:1]{index=1}
       await api.register(rbac);
-      await api.register(meRoutes);
+
+      await api.register(meRoutes); // /api/v1/me  (Clerk-backed) :contentReference[oaicite:2]{index=2}
       await api.register(workerRoutes);
       await api.register(adminRoutes);
       await api.register(userRoutes);
       await api.register(auditRoutes);
-      await api.register(debugRoutes);
     },
     { prefix: "/api/v1" }
   );
+
+  // Opt-in route table dump
+  if (process.env.ROUTE_DUMP === "1") {
+    app.get("/__routes", (_req, reply) =>
+      reply.type("text/plain").send(app.printRoutes())
+    );
+  }
 
   return app;
 }
