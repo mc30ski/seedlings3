@@ -137,14 +137,16 @@ export async function buildApp() {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
+  await app.register(meRoutes);
   //await app.register(meRoutes, { prefix: "/v1" });
-
+  /*
   await app.register(
     async (api) => {
       await api.register(meRoutes);
     },
     { prefix: "/v1" }
   );
+  */
 
   /*
   // Guarded API
