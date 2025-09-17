@@ -137,6 +137,9 @@ export async function buildApp() {
   await app.register(systemRoutes);
   await app.register(versionRoutes);
 
+  await app.register(meRoutes);
+
+  /*
   // Guarded API
   await app.register(
     async (api) => {
@@ -150,6 +153,7 @@ export async function buildApp() {
     },
     { prefix: "/api/v1" }
   );
+  */
 
   return app;
 }
