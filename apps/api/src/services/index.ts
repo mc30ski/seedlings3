@@ -10,8 +10,6 @@ import type { Services, EquipmentWithHolder } from "../types/services";
 import { ServiceError } from "../lib/errors";
 import { createClerkClient } from "@clerk/backend";
 
-console.log("HERE", process.env.CLERK_SECRET_KEY);
-
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
 }
