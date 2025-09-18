@@ -3,6 +3,98 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 export const config = { api: { bodyParser: false } };
 
+async function fetchFollowWithCookie(
+  url: string,
+  init: RequestInit,
+  opts: { maxHops?: number } = {}
+) {
+  const maxHops = opts.maxHops ?? 7;
+
+  // Clone/normalize headers we’ll mutate across hops
+  const headers = new Headers(init.headers || {});
+
+  // Build a cookie jar as a Map<string, string> (name -> value)
+  const jar = new Map<string, string>();
+
+  // Seed the jar from any incoming Cookie header
+  const seedCookie = headers.get("cookie");
+  if (seedCookie) {
+    for (const pair of seedCookie.split(";")) {
+      const trimmed = pair.trim();
+      if (!trimmed) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq <= 0) continue;
+      const name = trimmed.slice(0, eq).trim();
+      const value = trimmed.slice(eq + 1);
+      jar.set(name, value);
+    }
+  }
+
+  // Helper to apply jar to headers
+  const applyJarToHeaders = () => {
+    if (jar.size === 0) {
+      headers.delete("cookie");
+    } else {
+      const cookieHeader = Array.from(jar.entries())
+        .map(([k, v]) => `${k}=${v}`)
+        .join("; ");
+      headers.set("cookie", cookieHeader);
+    }
+  };
+
+  // Helper to merge Set-Cookie(s) into jar (keeps only name=value)
+  const mergeSetCookie = (setCookieHeader: string | null) => {
+    if (!setCookieHeader) return;
+    // split multiple Set-Cookie values safely (commas only between cookie records)
+    const records = setCookieHeader.split(/,(?=\s*\w+=)/);
+    for (const rec of records) {
+      const firstPart = rec.split(";")[0].trim(); // "name=value"
+      const eq = firstPart.indexOf("=");
+      if (eq <= 0) continue;
+      const name = firstPart.slice(0, eq).trim();
+      const value = firstPart.slice(eq + 1);
+      if (!name) continue;
+      jar.set(name, value);
+    }
+  };
+
+  // Follow redirects (carry cookies + guard loops)
+  let currentUrl = url;
+  const seen = new Set<string>();
+
+  for (let i = 0; i <= maxHops; i++) {
+    applyJarToHeaders();
+
+    const res = await fetch(currentUrl, {
+      ...init,
+      headers,
+      redirect: "manual",
+    });
+
+    // If upstream wants to set cookies (e.g., _vercel_jwt), store them for next hop
+    mergeSetCookie(res.headers.get("set-cookie"));
+
+    // Not a redirect? we’re done.
+    const loc = res.headers.get("location");
+    const is3xx = res.status >= 300 && res.status < 400 && !!loc;
+    if (!is3xx) return res;
+
+    // Resolve absolute next URL
+    const nextUrl = new URL(loc!, currentUrl).toString();
+
+    // Loop guard (helps with ping-pong)
+    const sig = `${res.status} ${currentUrl} -> ${nextUrl}`;
+    if (seen.has(sig)) return res;
+    seen.add(sig);
+
+    currentUrl = nextUrl;
+  }
+
+  // Exceeded max hops: final manual fetch (returns the last 3xx)
+  applyJarToHeaders();
+  return fetch(currentUrl, { ...init, headers, redirect: "manual" });
+}
+
 async function fetchFollow(
   url: string,
   init: RequestInit,
@@ -71,8 +163,10 @@ export default async function handler(
       "host",
       "connection",
       "content-length",
-      "accept-encoding", // avoid compressed upstream body piping issues
-      "cookie", // don't forward browser cookies to your API project
+      "accept-encoding", // avoid compressed body issues
+      "x-forwarded-host", // can trigger canonical host redirects
+      "x-forwarded-proto",
+      "x-real-ip",
     ]);
     for (const [k, v] of Object.entries(req.headers) as [
       string,
@@ -104,9 +198,7 @@ export default async function handler(
     console.log("HERE target", target.toString());
     console.log("HERE fwd", fwd);
 
-    // Single, straightforward fetch
-    //const upstream = await fetch(target.toString(), init);
-    const upstream = await fetchFollow(target.toString(), {
+    const upstream = await fetchFollowWithCookie(target.toString(), {
       ...init,
       headers: fwd,
     });
