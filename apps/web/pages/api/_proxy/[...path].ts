@@ -92,6 +92,9 @@ async function fetchFollowWithCookie(
 
   // Exceeded max hops: final manual fetch (returns the last 3xx)
   applyJarToHeaders();
+
+  console.log("HERE currentUrl", currentUrl);
+
   return fetch(currentUrl, { ...init, headers, redirect: "manual" });
 }
 
