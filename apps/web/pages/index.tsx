@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
@@ -12,30 +10,6 @@ import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
 import AdminApprovalBell from "../src/components/AdminApprovalBell";
 import { useRouter } from "next/router";
-
-export function EnablePreviewAccess() {
-  const isPreview = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-  const token = process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN;
-
-  if (!isPreview || !token) return null;
-
-  const enable = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("x-vercel-set-bypass-cookie", "true");
-    url.searchParams.set("x-vercel-protection-bypass", token);
-    // One-time redirect; cookie will be set for the whole preview deployment
-    window.location.replace(url.toString());
-  };
-
-  return (
-    <button
-      onClick={enable}
-      style={{ position: "fixed", bottom: 12, right: 12, zIndex: 9999 }}
-    >
-      Enable preview access
-    </button>
-  );
-}
 
 type Me = {
   id: string;
@@ -142,8 +116,6 @@ export default function HomePage() {
       </div>
       <div>VAR API_BASE_URL: {process.env.API_BASE_URL}</div>
       <div>VAR TEST: {process.env.TEST}</div>
-
-      {EnablePreviewAccess()}
 
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
