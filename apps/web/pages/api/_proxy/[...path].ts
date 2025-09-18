@@ -8,6 +8,9 @@ export default async function handler(
 ) {
   console.log("MIKEW", "I am here");
 
+  res.end("TEST");
+
+  /*
   const base = process.env.API_BASE_URL;
   const rawSecret = process.env.API_BYPASS_SECRET;
   const secret = rawSecret?.trim();
@@ -92,4 +95,5 @@ export default async function handler(
   const body = Buffer.from(await r.arrayBuffer());
 
   res.end(body);
+  */
 }
