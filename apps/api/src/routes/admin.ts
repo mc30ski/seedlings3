@@ -3,7 +3,9 @@ import { services } from "../services";
 
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
-    preHandler: (req: any, reply: any) => app.requireRole(req, reply, "ADMIN"),
+    preHandler: [
+      (app as any).requireRole.bind(app, undefined, undefined, "ADMIN"),
+    ],
   };
 
   // Equipment (basic + with holders)
