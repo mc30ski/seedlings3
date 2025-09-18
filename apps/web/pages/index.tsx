@@ -14,16 +14,15 @@ import { useRouter } from "next/router";
 
 export function EnablePreviewAccess() {
   const isPreview = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-  const token = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS;
-
-  if (!isPreview || !token) return <span>HI</span>;
+  const token = process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN;
+  if (!isPreview || !token) return null;
 
   const enable = () => {
     const url = new URL(window.location.href);
     url.searchParams.set("x-vercel-set-bypass-cookie", "true");
     url.searchParams.set("x-vercel-protection-bypass", token);
-    // One-time redirect; cookie will be set for the whole preview deployment
-    window.location.replace(url.toString());
+    url.searchParams.set("_cb", String(Date.now())); // cache buster so edge handles it
+    window.location.replace(url.toString()); // full nav => browser stores Set-Cookie
   };
 
   return (
