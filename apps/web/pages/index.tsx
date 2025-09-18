@@ -140,6 +140,8 @@ export default function HomePage() {
       <div>
         VAR NEXT_PUBLIC_VERCEL_ENV: {process.env.NEXT_PUBLIC_VERCEL_ENV}
       </div>
+      <div>VAR API_BASE_URL: {process.env.API_BASE_URL}</div>
+      <div>VAR TEST: {process.env.TEST}</div>
 
       {EnablePreviewAccess()}
 
