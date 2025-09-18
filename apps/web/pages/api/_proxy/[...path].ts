@@ -87,10 +87,14 @@ export default async function handler(
     res.setHeader("x-proxy-target", target.toString());
     res.setHeader("x-proxy-bypass", bypass ? "header" : "none");
 
+    const body = Buffer.from(await upstream.arrayBuffer());
+
+    console.log("HERE4 body", body);
+
     res.status(200).send("DONE");
 
     /*
-    const body = Buffer.from(await upstream.arrayBuffer());
+    
     res.end(body);
     */
   }
