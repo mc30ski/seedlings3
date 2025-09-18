@@ -77,7 +77,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   // -------- Users management (ADMIN only) --------
-  app.get("/admin/users", async (req: any) => {
+  app.get("/admin/users", adminGuard, async (req: any) => {
     const q = (req.query || {}) as {
       approved?: string; // "true" | "false"
       role?: "ADMIN" | "WORKER";

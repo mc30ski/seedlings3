@@ -182,6 +182,20 @@ export async function buildApp() {
       { prefix: "/api" }
     );
   } else {
+    await app.register(async (api) => {
+      await api.register(systemRoutes);
+      await api.register(versionRoutes);
+
+      await api.register(rbac);
+      await api.register(meRoutes);
+      await api.register(workerRoutes);
+      await api.register(adminRoutes);
+      await api.register(userRoutes);
+      await api.register(auditRoutes);
+      await api.register(debugRoutes);
+    });
+
+    /*
     await app.register(systemRoutes);
     await app.register(versionRoutes);
 
@@ -192,6 +206,7 @@ export async function buildApp() {
     await app.register(userRoutes);
     await app.register(auditRoutes);
     await app.register(debugRoutes);
+    */
   }
 
   return app;
