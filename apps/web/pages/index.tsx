@@ -99,7 +99,8 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      <span>I AM HERE {process.env.VERCEL_AUTOMATION_BYPASS_SECRET}</span>
+      <div>I AM HERE1 {process.env.VERCEL_AUTOMATION_BYPASS_SECRET}</div>
+      <div>I AM HERE2 {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}</div>
 
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
