@@ -22,6 +22,20 @@ async function authHeaders(h: Headers) {
   }
 }
 
+const IS_BROWSER = typeof window !== "undefined";
+const IS_PREVIEW = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
+const BYPASS = process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN || "";
+
+function makeAbsolute(url: string) {
+  // Works both client and server
+  if (!IS_BROWSER) return url; // assume absolute on server
+  return new URL(url, window.location.origin).toString();
+}
+function isCrossOrigin(absUrl: string) {
+  if (!IS_BROWSER) return false;
+  return new URL(absUrl).origin !== window.location.origin;
+}
+
 // Put these at module scope so they persist across calls in the same session
 let vercelBypassTried = false;
 
@@ -48,22 +62,25 @@ function addBypassHeadersOnce(headers: Headers) {
   vercelBypassTried = true;
 }
 
-async function request<T>(
+export async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown
 ): Promise<T> {
   const headers = new Headers();
-  await authHeaders(headers); // your existing auth header(s)
+  await authHeaders(headers); // your existing auth (e.g., Authorization)
 
-  // Add the bypass headers on the first request in preview (only once)
-  addBypassHeadersOnce(headers);
+  // Build the absolute URL we’ll call
+  const url = makeAbsolute(`${API_BASE}${path}`);
+  const cross = isCrossOrigin(url);
 
+  // IMPORTANT: let the browser send/receive cookies for Vercel preview protection
+  // - same-origin for same host
+  // - include for cross-origin (another preview domain)
   const init: RequestInit = {
     method,
     headers,
-    // you’re sending Authorization headers already
-    credentials: "omit",
+    credentials: cross ? "include" : "same-origin", // ← change from "omit"
     cache: "no-store",
   };
 
@@ -72,27 +89,22 @@ async function request<T>(
     init.body = JSON.stringify(body);
   }
 
-  // Build URL (if API_BASE is same-origin, good; if it’s a different preview domain,
-  // you’ll also need to mint the cookie on that other domain once).
-  const url = `${API_BASE}${path}`;
+  // Add Vercel preview-bypass headers (recommended by Vercel)
+  // These are harmless in prod and ensure the cookie gets minted if missing.
+  if (IS_BROWSER && IS_PREVIEW && BYPASS) {
+    headers.set("x-vercel-protection-bypass", BYPASS);
+    // If the API is on a different preview domain, instruct Vercel to set SameSite=None
+    headers.set("x-vercel-set-bypass-cookie", cross ? "samesitenone" : "true");
+  }
 
   // First attempt
   let res = await fetch(url, init);
 
-  // If we got a 401 on preview, try once more *forcing* the bypass headers
-  if (res.status === 401 && shouldBypass()) {
-    // Add headers again in case first call didn’t include them yet
-    headers.set(
-      "x-vercel-protection-bypass",
-      process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS!
-    );
-    headers.set("x-vercel-set-bypass-cookie", "true");
-
-    // Optional cache-buster helps avoid any cached 401 page in front of the edge
+  // If protection still blocked us (e.g., cached edge page), retry once with a cache buster
+  if (res.status === 401 && IS_BROWSER && IS_PREVIEW && BYPASS) {
     const retryUrl =
       url + (url.includes("?") ? "&" : "?") + `_cb=${Date.now()}`;
-
-    res = await fetch(retryUrl, { ...init, headers });
+    res = await fetch(retryUrl, init);
   }
 
   if (!res.ok) {
