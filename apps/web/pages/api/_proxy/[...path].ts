@@ -99,7 +99,7 @@ export default async function handler(
     ? authHeader.slice(7) // remove "Bearer "
     : undefined;
 
-  res.status(200).send({ token: token });
+  res.status(200).send({ headers: req.headers });
 
   //res.end(body);
 }
