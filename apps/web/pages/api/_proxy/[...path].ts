@@ -89,7 +89,9 @@ export default async function handler(
 
     const body = Buffer.from(await upstream.arrayBuffer());
 
-    console.log("HERE4 body", body);
+    const utf16Decoder = new TextDecoder("UTF-16");
+
+    console.log("HERE4 body", utf16Decoder.decode(body));
 
     res.status(200).send("DONE");
 
