@@ -95,40 +95,6 @@ async function fetchFollowWithCookie(
   return fetch(currentUrl, { ...init, headers, redirect: "manual" });
 }
 
-async function fetchFollow(
-  url: string,
-  init: RequestInit,
-  opts?: { maxHops?: number }
-) {
-  const maxHops = opts?.maxHops ?? 5;
-  let currentUrl = url;
-  let res = await fetch(currentUrl, { ...init, redirect: "manual" });
-
-  let it = 0;
-
-  for (let i = 0; i < maxHops; i++) {
-    it++;
-
-    const loc = res.headers.get("location");
-    const status = res.status;
-
-    // Only follow 301/302/303/307/308 when a Location is present
-    if (!loc || status < 300 || status > 399) break;
-
-    // Build absolute next URL
-    currentUrl = new URL(loc, currentUrl).toString();
-
-    // Re-issue same method/body for 307/308; for 301/302/303 you may switch to GET.
-    // Keeping it simple: preserve method/body for all 3xx
-    res = await fetch(currentUrl, { ...init, redirect: "manual" });
-  }
-
-  console.log("HERE fetchFollow res.status", res.status);
-  console.log("HERE fetchFollow it", it);
-
-  return res;
-}
-
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -226,11 +192,8 @@ export default async function handler(
 
     console.log("HERE4 body", utf16Decoder.decode(body));
 
-    res.status(200).send("DONE");
+    //res.status(200).send("DONE");
 
-    /*
-    
     res.end(body);
-    */
   }
 }
