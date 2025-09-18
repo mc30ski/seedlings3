@@ -24,6 +24,9 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
+const TEST = process.env.TEST!;
+console.log("TEST", TEST);
+
 type Me = {
   id: string;
   isApproved: boolean;
