@@ -152,19 +152,18 @@ export default async function handler(
     (init as any).body = Buffer.concat(chunks);
   }
 
-  console.log("HERE target", target.toString());
-  console.log("HERE fwd", fwd);
-
   const upstream = await fetchFollowWithCookie(target.toString(), {
     ...init,
     headers: fwd,
   });
 
+  if (req.url?.includes("/users")) {
+    console.log("HERE upstream.status", upstream.status);
+    console.log("HERE upstream.status toString()", upstream.toString());
+  }
+
   // optional debug so you can see when redirects happened
   res.setHeader("x-proxy-final-url", upstream.url);
-
-  console.log("HERE2 upstream.status", upstream.status);
-  console.log("HERE3 upstream.headers", upstream.headers);
 
   // Mirror status/headers (avoid double compression)
   res.status(upstream.status);
@@ -180,8 +179,6 @@ export default async function handler(
   const body = Buffer.from(await upstream.arrayBuffer());
 
   const utf16Decoder = new TextDecoder("UTF-16");
-
-  console.log("HERE4 body", utf16Decoder.decode(body));
 
   res.end(body);
 }
