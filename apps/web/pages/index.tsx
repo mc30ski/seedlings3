@@ -115,7 +115,7 @@ export default function HomePage() {
         VAR NEXT_PUBLIC_VERCEL_ENV: {process.env.NEXT_PUBLIC_VERCEL_ENV}
       </div>
       <div>VAR API_BASE_URL: {process.env.API_BASE_URL}</div>
-      <div>VAR TEST: {process.env.TEST}</div>
+      <div>VAR NEXT_PUBLIC_TEST: {process.env.NEXT_PUBLIC_TEST}</div>
 
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
