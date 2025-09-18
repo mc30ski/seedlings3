@@ -7,6 +7,9 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
+  res.status(200).json({ ok: true, message: "proxy disabled" });
+
+  /*
   const base = process.env.API_BASE_URL;
   const bypass = (process.env.API_BYPASS_SECRET || "").trim();
 
@@ -75,4 +78,5 @@ export default async function handler(
 
   const body = Buffer.from(await upstream.arrayBuffer());
   res.end(body);
+  */
 }
