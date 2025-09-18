@@ -67,12 +67,14 @@ export default async function handler(
       (init as any).body = Buffer.concat(chunks);
     }
 
-    console.log("HERE1 target", target.toString());
+    console.log("HERE target", target.toString());
+    console.log("HERE fwd", fwd);
 
-    res.status(200).send("DONE");
-    /*
     // Single, straightforward fetch
     const upstream = await fetch(target.toString(), init);
+
+    console.log("HERE2 upstream.status", upstream.status);
+    console.log("HERE3 upstream.headers", upstream.headers);
 
     // Mirror status/headers (avoid double compression)
     res.status(upstream.status);
@@ -85,6 +87,9 @@ export default async function handler(
     res.setHeader("x-proxy-target", target.toString());
     res.setHeader("x-proxy-bypass", bypass ? "header" : "none");
 
+    res.status(200).send("DONE");
+
+    /*
     const body = Buffer.from(await upstream.arrayBuffer());
     res.end(body);
     */
