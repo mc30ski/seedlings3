@@ -6,6 +6,7 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
+  /*
   const base = process.env.API_BASE_URL;
   const rawSecret = process.env.API_BYPASS_SECRET;
   const secret = rawSecret?.trim();
@@ -88,7 +89,7 @@ export default async function handler(
     res.setHeader(key, value);
   });
   const body = Buffer.from(await r.arrayBuffer());
-
+*/
   //////
 
   const authHeader = req.headers.authorization; // or req.headers['authorization']
