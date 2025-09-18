@@ -12,7 +12,11 @@ async function fetchFollow(
   let currentUrl = url;
   let res = await fetch(currentUrl, { ...init, redirect: "manual" });
 
+  let it = 0;
+
   for (let i = 0; i < maxHops; i++) {
+    it++;
+
     const loc = res.headers.get("location");
     const status = res.status;
 
@@ -26,6 +30,10 @@ async function fetchFollow(
     // Keeping it simple: preserve method/body for all 3xx
     res = await fetch(currentUrl, { ...init, redirect: "manual" });
   }
+
+  console.log("HERE fetchFollow res.status", res.status);
+  console.log("HERE fetchFollow it", it);
+
   return res;
 }
 
