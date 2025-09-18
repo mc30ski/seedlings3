@@ -24,7 +24,7 @@ async function authHeaders(h: Headers) {
 
 const IS_BROWSER = typeof window !== "undefined";
 const IS_PREVIEW = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-const BYPASS = process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN || "";
+const BYPASS = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS || "";
 
 function makeAbsolute(url: string) {
   // Works both client and server
