@@ -59,5 +59,12 @@ export default async function handler(req, res) {
   const s = stripFirstApi(orig);
   req.url = s;
 
-  (await app).routing(req, res);
+  console
+    .log(
+      "STRIP",
+      orig,
+      s
+    )
+    (await app)
+    .routing(req, res);
 }
