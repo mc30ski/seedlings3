@@ -16,7 +16,7 @@ export function EnablePreviewAccess() {
   const isPreview = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
   const token = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS;
 
-  if (!isPreview || !token) return null;
+  if (!isPreview || !token) return <span>HI</span>;
 
   const enable = () => {
     const url = new URL(window.location.href);
