@@ -67,6 +67,10 @@ export default async function handler(
       (init as any).body = Buffer.concat(chunks);
     }
 
+    console.log("HERE1 target", target.toString());
+
+    res.status(200).send("DONE");
+    /*
     // Single, straightforward fetch
     const upstream = await fetch(target.toString(), init);
 
@@ -83,5 +87,6 @@ export default async function handler(
 
     const body = Buffer.from(await upstream.arrayBuffer());
     res.end(body);
+    */
   }
 }
