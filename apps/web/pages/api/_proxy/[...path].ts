@@ -65,13 +65,15 @@ async function fetchFollowWithCookie(
   for (let i = 0; i <= maxHops; i++) {
     applyJarToHeaders();
 
-    console.log("HERE1 currentUrl", currentUrl);
+    console.log("HERE1.1 currentUrl", currentUrl);
 
     const res = await fetch(currentUrl, {
       ...init,
       headers,
       redirect: "manual",
     });
+
+    console.log("HERE1.2 res.status", res.status);
 
     // If upstream wants to set cookies (e.g., _vercel_jwt), store them for next hop
     mergeSetCookie(res.headers.get("set-cookie"));
