@@ -14,7 +14,7 @@ import { useRouter } from "next/router";
 
 export function EnablePreviewAccess() {
   const isPreview = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-  const token = process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN;
+  const token = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS;
   if (!isPreview || !token) return null;
 
   const enable = () => {
