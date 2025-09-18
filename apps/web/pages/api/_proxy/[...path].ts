@@ -6,7 +6,8 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  /*
+  console.log("MIKEW", "I am here");
+
   const base = process.env.API_BASE_URL;
   const rawSecret = process.env.API_BYPASS_SECRET;
   const secret = rawSecret?.trim();
@@ -89,17 +90,6 @@ export default async function handler(
     res.setHeader(key, value);
   });
   const body = Buffer.from(await r.arrayBuffer());
-*/
-  //////
 
-  const authHeader = req.headers.authorization; // or req.headers['authorization']
-
-  // Extract the token if it's in the format "Bearer <token>"
-  const token = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice(7) // remove "Bearer "
-    : undefined;
-
-  res.status(200).send({ headers: req.headers });
-
-  //res.end(body);
+  res.end(body);
 }
