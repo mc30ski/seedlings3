@@ -48,7 +48,7 @@ function AppInner({ Component, pageProps }: AppProps) {
 
   const loadMe = useCallback(async () => {
     try {
-      const m = await apiGet<Me>("/api/me");
+      const m = await apiGet<Me>("/api/_proxy/api/me");
       setMe(m);
     } catch {
       setMe(null);

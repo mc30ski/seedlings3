@@ -127,7 +127,7 @@ export default function AdminUsers() {
     let cancelled = false;
     (async () => {
       try {
-        const m = await apiGet<Me>("/api/me");
+        const m = await apiGet<Me>("/api/_proxy/api/me");
         if (!cancelled) setMe(m);
       } catch {
         if (!cancelled) setMe(null);
