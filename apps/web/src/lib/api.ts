@@ -34,7 +34,7 @@ function shouldBypass() {
   return (
     isBrowser() &&
     process.env.NEXT_PUBLIC_VERCEL_ENV === "preview" &&
-    !!process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN
+    !!process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS
   );
 }
 
@@ -42,7 +42,7 @@ function addBypassHeadersOnce(headers: Headers) {
   if (!shouldBypass() || vercelBypassTried) return;
   headers.set(
     "x-vercel-protection-bypass",
-    process.env.NEXT_PUBLIC_VERCEL_BYPASS_TOKEN!
+    process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS!
   );
   headers.set("x-vercel-set-bypass-cookie", "true");
   vercelBypassTried = true;
