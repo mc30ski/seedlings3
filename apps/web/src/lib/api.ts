@@ -22,6 +22,9 @@ async function authHeaders(h: Headers) {
   }
 }
 
+// Bypass is used to avoid the blocking (401) of Preview requests.
+// Vercel’s preview deployments require a valid _vercel_jwt cookie or the x-vercel-protection-bypass header on every request.
+
 const IS_BROWSER = typeof window !== "undefined";
 const IS_PREVIEW = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
 const BYPASS = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS || "";
@@ -34,32 +37,6 @@ function makeAbsolute(url: string) {
 function isCrossOrigin(absUrl: string) {
   if (!IS_BROWSER) return false;
   return new URL(absUrl).origin !== window.location.origin;
-}
-
-// Put these at module scope so they persist across calls in the same session
-let vercelBypassTried = false;
-
-function isBrowser() {
-  return typeof window !== "undefined";
-}
-
-function shouldBypass() {
-  // Only in Preview, only in browser (cookies), and only if you have a token configured
-  return (
-    isBrowser() &&
-    process.env.NEXT_PUBLIC_VERCEL_ENV === "preview" &&
-    !!process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS
-  );
-}
-
-function addBypassHeadersOnce(headers: Headers) {
-  if (!shouldBypass() || vercelBypassTried) return;
-  headers.set(
-    "x-vercel-protection-bypass",
-    process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS!
-  );
-  headers.set("x-vercel-set-bypass-cookie", "true");
-  vercelBypassTried = true;
 }
 
 export async function request<T>(

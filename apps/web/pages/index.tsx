@@ -12,29 +12,6 @@ import BrandLabel from "../src/components/BrandLabel";
 import AdminApprovalBell from "../src/components/AdminApprovalBell";
 import { useRouter } from "next/router";
 
-export function EnablePreviewAccess() {
-  const isPreview = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
-  const token = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS;
-  if (!isPreview || !token) return null;
-
-  const enable = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("x-vercel-set-bypass-cookie", "true");
-    url.searchParams.set("x-vercel-protection-bypass", token);
-    url.searchParams.set("_cb", String(Date.now())); // cache buster so edge handles it
-    window.location.replace(url.toString()); // full nav => browser stores Set-Cookie
-  };
-
-  return (
-    <button
-      onClick={enable}
-      style={{ position: "fixed", bottom: 12, right: 12, zIndex: 9999 }}
-    >
-      Enable preview access
-    </button>
-  );
-}
-
 type Me = {
   id: string;
   isApproved: boolean;
@@ -123,14 +100,6 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      {EnablePreviewAccess()}
-
-      <div>
-        NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS:{" "}
-        {process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS}
-      </div>
-      <div>NEXT_PUBLIC_VERCEL_ENV: {process.env.NEXT_PUBLIC_VERCEL_ENV}</div>
-
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
         <BrandLabel size={26} showText />

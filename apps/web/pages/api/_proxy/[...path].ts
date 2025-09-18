@@ -1,3 +1,4 @@
+// pages/api/_proxy/[...path].ts
 import type { NextApiRequest, NextApiResponse } from "next";
 
 export const config = { api: { bodyParser: false } };
@@ -6,16 +7,11 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  console.log("MIKEW", "I am here");
-
-  res.end("TEST");
-
-  /*
   const base = process.env.API_BASE_URL;
-  const rawSecret = process.env.API_BYPASS_SECRET;
-  const secret = rawSecret?.trim();
-  if (!base || !secret) {
-    res.status(500).json({ ok: false, error: "proxy_misconfigured" });
+  const bypass = (process.env.API_BYPASS_SECRET || "").trim();
+
+  if (!base) {
+    res.status(500).json({ ok: false, error: "proxy_misconfigured_base" });
     return;
   }
 
@@ -27,9 +23,15 @@ export default async function handler(
   const qIdx = req.url?.indexOf("?") ?? -1;
   if (qIdx >= 0) target.search = req.url!.slice(qIdx);
 
-  // Copy headers (minus hop-by-hop)
+  // Forward headers, minus hop-by-hop and anything you don't want to leak
   const fwd = new Headers();
-  const drop = new Set(["host", "connection", "content-length"]);
+  const drop = new Set([
+    "host",
+    "connection",
+    "content-length",
+    "accept-encoding", // avoid compressed upstream body piping issues
+    "cookie", // don't forward browser cookies to your API project
+  ]);
   for (const [k, v] of Object.entries(req.headers) as [
     string,
     string | string[] | undefined,
@@ -38,12 +40,18 @@ export default async function handler(
     fwd.set(k, Array.isArray(v) ? v.join(",") : v);
   }
 
+  // Add bypass header for preview-protected API deployments (safe to send always;
+  // in Production you can just not define API_BYPASS_SECRET)
+  if (bypass) fwd.set("x-vercel-protection-bypass", bypass);
+
   const init: RequestInit = {
     method: req.method,
     headers: fwd,
     redirect: "manual",
     cache: "no-store",
   };
+
+  // Stream body for non-GET/HEAD
   if (req.method !== "GET" && req.method !== "HEAD") {
     const chunks: Uint8Array[] = [];
     for await (const chunk of req as any)
@@ -51,49 +59,20 @@ export default async function handler(
     (init as any).body = Buffer.concat(chunks);
   }
 
-  // --- Attempt 1: bypass via HEADER (works per your Step A) ---
-  const h1 = new Headers(fwd);
-  h1.set("x-vercel-protection-bypass", secret);
-  let r = await fetch(target.toString(), { ...init, headers: h1 });
-  let stage = "header";
+  // Single, straightforward fetch
+  const upstream = await fetch(target.toString(), init);
 
-  // Detect Vercel protection page
-  const isBlocked = (resp: Response) =>
-    resp.status === 401 ||
-    (resp.headers.get("set-cookie")?.includes("_vercel_") ?? false) ||
-    (resp.headers.get("content-type") || "").includes("text/html");
-
-  // --- Attempt 2: bypass via QUERY PARAMS and ask Vercel to set cookie ---
-  if (isBlocked(r)) {
-    const qp = new URL(target.toString());
-    qp.searchParams.set("x-vercel-protection-bypass", secret);
-    qp.searchParams.set("x-vercel-set-bypass-cookie", "true");
-    r = await fetch(qp.toString(), init);
-    stage = "query";
-  }
-
-  // --- Attempt 3: if Set-Cookie came back, retry original with that cookie ---
-  if (isBlocked(r)) {
-    const setCookie = r.headers.get("set-cookie");
-    if (setCookie) {
-      const cookiePair = setCookie.split(";")[0];
-      const h3 = new Headers(fwd);
-      h3.set("cookie", cookiePair);
-      r = await fetch(target.toString(), { ...init, headers: h3 });
-      stage = "cookie";
-    }
-  }
-
-  // Pass status/headers through, plus debug of what we did
-  res.setHeader("x-proxy-target", target.toString());
-  res.setHeader("x-proxy-stage", stage);
-  res.status(r.status);
-  r.headers.forEach((value: string, key: string) => {
-    if (key.toLowerCase() === "content-encoding") return;
+  // Mirror status/headers (avoid double compression)
+  res.status(upstream.status);
+  for (const [key, value] of upstream.headers.entries()) {
+    if (key.toLowerCase() === "content-encoding") continue;
     res.setHeader(key, value);
-  });
-  const body = Buffer.from(await r.arrayBuffer());
+  }
 
+  // Optional: debugging
+  res.setHeader("x-proxy-target", target.toString());
+  res.setHeader("x-proxy-bypass", bypass ? "header" : "none");
+
+  const body = Buffer.from(await upstream.arrayBuffer());
   res.end(body);
-  */
 }
