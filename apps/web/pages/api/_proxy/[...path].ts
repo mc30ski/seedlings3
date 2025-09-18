@@ -7,11 +7,23 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  res.status(200).json({ ok: true, message: "proxy disabled" });
-
-  /*
   const base = process.env.API_BASE_URL;
   const bypass = (process.env.API_BYPASS_SECRET || "").trim();
+
+  if (!req.url?.includes("/me")) {
+    res
+      .status(200)
+      .json({
+        ok: true,
+        message: "proxy disabled",
+        base: base,
+        bypass: bypass,
+      });
+  } else {
+    res.status(200).json({ ok: true, message: "ME" });
+  }
+
+  /*
 
   if (!base) {
     res.status(500).json({ ok: false, error: "proxy_misconfigured_base" });
