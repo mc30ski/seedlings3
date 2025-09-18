@@ -65,6 +65,8 @@ async function fetchFollowWithCookie(
   for (let i = 0; i <= maxHops; i++) {
     applyJarToHeaders();
 
+    console.log("HERE1 currentUrl", currentUrl);
+
     const res = await fetch(currentUrl, {
       ...init,
       headers,
@@ -93,7 +95,7 @@ async function fetchFollowWithCookie(
   // Exceeded max hops: final manual fetch (returns the last 3xx)
   applyJarToHeaders();
 
-  console.log("HERE currentUrl", currentUrl);
+  console.log("HERE2 currentUrl", currentUrl);
 
   return fetch(currentUrl, { ...init, headers, redirect: "manual" });
 }
