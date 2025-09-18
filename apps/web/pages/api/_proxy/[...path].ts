@@ -88,5 +88,17 @@ export default async function handler(
     res.setHeader(key, value);
   });
   const body = Buffer.from(await r.arrayBuffer());
-  res.end(body);
+
+  //////
+
+  const authHeader = req.headers.authorization; // or req.headers['authorization']
+
+  // Extract the token if it's in the format "Bearer <token>"
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7) // remove "Bearer "
+    : undefined;
+
+  res.status(200).send({ token: token });
+
+  //res.end(body);
 }
