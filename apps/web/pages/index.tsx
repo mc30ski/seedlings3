@@ -99,6 +99,8 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
+      <span>I AM HERE {process.env.VERCEL_AUTOMATION_BYPASS_SECRET}</span>
+
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
         <BrandLabel size={26} showText />
