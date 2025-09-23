@@ -54,12 +54,12 @@ export default async function handler(req, res) {
   const app = await buildApp();
   await app.ready();
 
+  console.log("MIKEW, THIS SHOULD ONLY RUN IN THE CLOUD");
+
   // Normalize: strip a single leading "/api" so Fastify sees the expected paths.
   const orig = req.url || "/";
   const s = stripFirstApi(orig);
   req.url = s;
-
-  console.log("STRIP", orig, s);
 
   (await app).routing(req, res);
 }
