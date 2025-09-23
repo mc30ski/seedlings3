@@ -182,6 +182,8 @@ export async function buildApp() {
       { prefix: "/api" }
     );
   } else {
+    console.log("MIKEW app.ts", "SHOULD ONLY RUN ONCE");
+
     await app.register(async (api) => {
       await api.register(systemRoutes);
       await api.register(versionRoutes);
