@@ -9,7 +9,6 @@ import AdminUsers from "../src/components/AdminUsers";
 import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
-import AdminApprovalBell from "../src/components/AdminApprovalBell";
 import { useRouter } from "next/router";
 
 type Me = {
@@ -103,7 +102,6 @@ export default function HomePage() {
       {/* Header: brand on the left, approvals bell on the right */}
       <HStack justify="space-between" align="center" mb={2}>
         <BrandLabel size={26} showText />
-        <AdminApprovalBell />
       </HStack>
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">

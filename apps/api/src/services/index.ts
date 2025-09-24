@@ -800,6 +800,11 @@ export const services: Services = {
       return { deleted: true as const, clerkDeleted };
     },
 
+    async pendingApprovalCount(): Promise<{ pending: number }> {
+      const count = await prisma.user.count({ where: { isApproved: false } });
+      return { pending: count };
+    },
+
     // Implements a GET /me endpoint that authenticates with Clerk (via header or cookie),
     // ensures there’s a matching user in your Prisma DB, optionally bootstraps ADMIN/WORKER roles based on an env list,
     // then returns a normalized “me” object.
