@@ -98,6 +98,8 @@ export type Services = {
       actorUserId: string
     ): Promise<{ deleted: true; clerkDeleted: boolean }>;
 
+    pendingApprovalCount(): Promise<number>;
+
     me(token: string): Promise<{
       id: string;
       isApproved: boolean;

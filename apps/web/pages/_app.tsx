@@ -24,9 +24,6 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
-const TEST = process.env.TEST!;
-console.log("TEST", TEST);
-
 type Me = {
   id: string;
   isApproved: boolean;
@@ -47,6 +44,8 @@ function AppInner({ Component, pageProps }: AppProps) {
   const [me, setMe] = useState<Me | null>(null);
   const [pending, setPending] = useState<number | null>(null);
 
+  console.log("MIKEW", "me", me);
+
   const isAdmin = !!me?.isApproved && (me?.roles || []).includes("ADMIN");
 
   const loadMe = useCallback(async () => {
@@ -59,6 +58,7 @@ function AppInner({ Component, pageProps }: AppProps) {
   }, []);
 
   const loadPending = useCallback(async () => {
+    console.log("MIKEW", "IS ADMIN", isAdmin);
     // Only admins need pending count
     if (!isAdmin) {
       setPending(null);
@@ -68,6 +68,9 @@ function AppInner({ Component, pageProps }: AppProps) {
       const res = await apiGet<{ pending: number }>(
         "/api/admin/users/pendingCount"
       );
+
+      console.log("MIKEW", res.pending);
+
       setPending(res.pending ?? 0);
     } catch {
       // If the endpoint isn't reachable, just hide the alert
@@ -107,6 +110,7 @@ function AppInner({ Component, pageProps }: AppProps) {
       {/* header */}
       <HStack justify="flex-end" px="4" py="2" gap="3">
         {/* Show Approvals button only if admin AND pending > 0 */}
+        HERE {pending}
         {isAdmin && (pending ?? 0) > 0 ? (
           <Button
             size="sm"

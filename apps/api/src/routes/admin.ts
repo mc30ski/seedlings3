@@ -127,4 +127,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     const actorId = String(req.user?.id || "");
     return services.users.remove(targetId, actorId);
   });
+
+  app.get("/admin/users/pendingCount", adminGuard, async () => {
+    services.users.pendingApprovalCount();
+  });
 }
