@@ -98,7 +98,7 @@ export type Services = {
       actorUserId: string
     ): Promise<{ deleted: true; clerkDeleted: boolean }>;
 
-    pendingApprovalCount(): Promise<number>;
+    pendingApprovalCount(): Promise<{ pending: number }>;
 
     me(token: string): Promise<{
       id: string;

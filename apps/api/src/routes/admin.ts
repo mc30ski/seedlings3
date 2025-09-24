@@ -129,6 +129,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/users/pendingCount", adminGuard, async () => {
-    services.users.pendingApprovalCount();
+    return services.users.pendingApprovalCount();
   });
 }

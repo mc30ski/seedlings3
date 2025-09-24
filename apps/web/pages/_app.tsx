@@ -14,10 +14,12 @@ import {
   HStack,
   Button,
   Badge,
+  Box,
 } from "@chakra-ui/react";
 import { FiAlertCircle } from "react-icons/fi";
 import { setAuthTokenFetcher, apiGet } from "../src/lib/api";
 import Head from "next/head";
+import { useRouter } from "next/router";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
@@ -34,6 +36,7 @@ type Me = {
 
 function AppInner({ Component, pageProps }: AppProps) {
   const { getToken } = useAuth();
+  const router = useRouter();
 
   // Wire Clerk token into API client
   useEffect(() => {
@@ -43,8 +46,6 @@ function AppInner({ Component, pageProps }: AppProps) {
   // Top-right approvals indicator state
   const [me, setMe] = useState<Me | null>(null);
   const [pending, setPending] = useState<number | null>(null);
-
-  console.log("MIKEW", "me", me);
 
   const isAdmin = !!me?.isApproved && (me?.roles || []).includes("ADMIN");
 
@@ -58,7 +59,6 @@ function AppInner({ Component, pageProps }: AppProps) {
   }, []);
 
   const loadPending = useCallback(async () => {
-    console.log("MIKEW", "IS ADMIN", isAdmin);
     // Only admins need pending count
     if (!isAdmin) {
       setPending(null);
@@ -68,10 +68,8 @@ function AppInner({ Component, pageProps }: AppProps) {
       const res = await apiGet<{ pending: number }>(
         "/api/admin/users/pendingCount"
       );
-
-      console.log("MIKEW", res.pending);
-
-      setPending(res.pending ?? 0);
+      const count = res?.pending ?? 0;
+      setPending(count);
     } catch {
       // If the endpoint isn't reachable, just hide the alert
       setPending(0);
@@ -84,7 +82,7 @@ function AppInner({ Component, pageProps }: AppProps) {
 
   useEffect(() => {
     void loadPending();
-  }, [loadPending]);
+  }, [loadPending, me]);
 
   // Refresh pending count when users change (approve/remove/etc)
   useEffect(() => {
@@ -94,34 +92,43 @@ function AppInner({ Component, pageProps }: AppProps) {
       window.removeEventListener("seedlings3:users-changed", onUsersChanged);
   }, [loadPending]);
 
-  const gotoPendingApprovals = () => {
-    try {
-      // Tell the app to switch to Admin → Users and show "Pending"
-      window.dispatchEvent(
-        new CustomEvent("seedlings3:open-users", {
-          detail: { status: "pending" },
-        })
-      );
-    } catch {}
-  };
-
   return (
     <ChakraProvider value={defaultSystem}>
       {/* header */}
       <HStack justify="flex-end" px="4" py="2" gap="3">
         {/* Show Approvals button only if admin AND pending > 0 */}
-        HERE {pending}
         {isAdmin && (pending ?? 0) > 0 ? (
           <Button
             size="sm"
             variant="outline"
-            onClick={gotoPendingApprovals}
+            onClick={() =>
+              router.push({
+                pathname: "/",
+                query: { adminTab: "users", status: "pending" },
+              })
+            }
             title="Pending approvals"
           >
             <HStack gap="2">
               <FiAlertCircle />
               <span>Approvals</span>
-              <Badge>{pending}</Badge>
+              <Box
+                as="span"
+                position="absolute"
+                top="-2px"
+                right="-2px"
+                fontSize="11px"
+                minWidth="18px"
+                height="18px"
+                lineHeight="18px"
+                textAlign="center"
+                borderRadius="9999px"
+                background="tomato"
+                color="white"
+                px="1"
+              >
+                {pending}
+              </Box>
             </HStack>
           </Button>
         ) : null}

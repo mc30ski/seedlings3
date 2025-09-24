@@ -800,9 +800,9 @@ export const services: Services = {
       return { deleted: true as const, clerkDeleted };
     },
 
-    async pendingApprovalCount(): Promise<number> {
+    async pendingApprovalCount(): Promise<{ pending: number }> {
       const count = await prisma.user.count({ where: { isApproved: false } });
-      return count;
+      return { pending: count };
     },
 
     // Implements a GET /me endpoint that authenticates with Clerk (via header or cookie),
