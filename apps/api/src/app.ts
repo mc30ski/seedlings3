@@ -165,7 +165,7 @@ export async function buildApp() {
   );
   */
 
-  console.log("MIKEW app.ts", "SHOULD ONLY RUN ONCE2");
+  console.log("MIKEW", "app.ts", "THIS IS RUN");
 
   if (process.env.NODE_ENV === "development") {
     await app.register(
