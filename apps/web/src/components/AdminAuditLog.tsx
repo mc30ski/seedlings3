@@ -106,7 +106,7 @@ export default function AdminAuditLog() {
 
   async function loadLookups() {
     try {
-      const eq = await apiGet<EqRow[]>(`/api/v1/admin/equipment`);
+      const eq = await apiGet<EqRow[]>(`/api/admin/equipment`);
       const eqIndex: Record<string, string> = {};
       for (const e of eq) eqIndex[e.id] = e.shortDesc || e.id;
       setEqMap(eqIndex);
@@ -115,7 +115,7 @@ export default function AdminAuditLog() {
     }
 
     try {
-      const users = await apiGet<UserRow[]>(`/api/v1/admin/users`);
+      const users = await apiGet<UserRow[]>(`/api/admin/users`);
       const uIndex: Record<string, string> = {};
       for (const u of users) uIndex[u.id] = u.email ?? "";
       setUserMap(uIndex);
@@ -140,7 +140,7 @@ export default function AdminAuditLog() {
       if (toIso) params.set("to", toIso);
 
       const res = await apiGet<AuditResp>(
-        `/api/v1/admin/audit?${params.toString()}`
+        `/api/admin/audit?${params.toString()}`
       );
       setTotal(res.total);
       setItems((prev) => (reset ? res.items : [...prev, ...res.items]));

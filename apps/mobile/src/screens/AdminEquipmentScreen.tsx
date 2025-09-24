@@ -18,28 +18,28 @@ export default function AdminEquipmentScreen() {
   const [longDesc, setLong] = useState("");
 
   async function refresh() {
-    setItems(await apiGet("/api/v1/equipment"));
+    setItems(await apiGet("/api/equipment"));
   }
   useEffect(() => {
     refresh();
   }, []);
 
   async function create() {
-    await apiPost("/api/v1/equipment", { shortDesc, longDesc });
+    await apiPost("/api/equipment", { shortDesc, longDesc });
     setShort("");
     setLong("");
     refresh();
   }
   async function retire(id: string) {
-    await apiPost(`/api/v1/equipment/${id}/retire`);
+    await apiPost(`/api/equipment/${id}/retire`);
     refresh();
   }
   async function release(id: string) {
-    await apiPost(`/api/v1/equipment/${id}/release`);
+    await apiPost(`/api/equipment/${id}/release`);
     refresh();
   }
   async function del(id: string) {
-    await apiDelete(`/api/v1/equipment/${id}`);
+    await apiDelete(`/api/equipment/${id}`);
     refresh();
   }
 

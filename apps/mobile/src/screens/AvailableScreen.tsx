@@ -17,7 +17,7 @@ export default function AvailableScreen() {
   async function refresh() {
     setLoading(true);
     try {
-      setItems(await apiGet("/api/v1/equipment/available"));
+      setItems(await apiGet("/api/equipment/available"));
     } finally {
       setLoading(false);
     }
@@ -27,7 +27,7 @@ export default function AvailableScreen() {
   }, []);
 
   async function claim(id: string) {
-    await apiPost(`/api/v1/equipment/${id}/claim`);
+    await apiPost(`/api/equipment/${id}/claim`);
     refresh();
   }
 

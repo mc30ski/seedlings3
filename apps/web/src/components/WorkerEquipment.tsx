@@ -58,8 +58,8 @@ export default function WorkerEquipment() {
     setLoading(true);
     try {
       const [all, mineList] = await Promise.all([
-        apiGet<Equipment[]>("/api/v1/equipment"),
-        apiGet<Equipment[]>("/api/v1/equipment/mine"),
+        apiGet<Equipment[]>("/api/equipment"),
+        apiGet<Equipment[]>("/api/equipment/mine"),
       ]);
       setItems(all);
       setMine(mineList);
@@ -86,7 +86,7 @@ export default function WorkerEquipment() {
   async function reserve(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/reserve`);
+      await apiPost(`/api/equipment/${id}/reserve`);
       toaster.success({ title: "Reserved" });
       notifyEquipmentUpdated();
       await load();
@@ -103,7 +103,7 @@ export default function WorkerEquipment() {
   async function cancelReserve(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/reserve/cancel`);
+      await apiPost(`/api/equipment/${id}/reserve/cancel`);
       toaster.info({ title: "Reservation canceled" });
       notifyEquipmentUpdated();
       await load();
@@ -120,7 +120,7 @@ export default function WorkerEquipment() {
   async function checkout(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/checkout`);
+      await apiPost(`/api/equipment/${id}/checkout`);
       toaster.success({ title: "Checked out" });
       notifyEquipmentUpdated();
       await load();
@@ -137,7 +137,7 @@ export default function WorkerEquipment() {
   async function returnItem(id: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/v1/equipment/${id}/return`);
+      await apiPost(`/api/equipment/${id}/return`);
       toaster.success({ title: "Returned" });
       notifyEquipmentUpdated();
       await load();

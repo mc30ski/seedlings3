@@ -127,7 +127,7 @@ export default function AdminUsers() {
     let cancelled = false;
     (async () => {
       try {
-        const m = await apiGet<Me>("/api/v1/me");
+        const m = await apiGet<Me>("/api/me");
         if (!cancelled) setMe(m);
       } catch {
         if (!cancelled) setMe(null);
@@ -155,9 +155,9 @@ export default function AdminUsers() {
       // Load users + holdings together (holdings is a separate endpoint)
       const [users, holdings] = await Promise.all([
         apiGet<ApiUser[]>(
-          `/api/v1/admin/users${params.toString() ? `?${params}` : ""}`
+          `/api/admin/users${params.toString() ? `?${params}` : ""}`
         ),
-        apiGet<Holding[]>(`/api/v1/admin/holdings`),
+        apiGet<Holding[]>(`/api/admin/holdings`),
       ]);
 
       setItems(users);
@@ -199,7 +199,7 @@ export default function AdminUsers() {
 
   async function approve(userId: string) {
     try {
-      await apiPost(`/api/v1/admin/users/${userId}/approve`);
+      await apiPost(`/api/admin/users/${userId}/approve`);
       toaster.success({ title: "User approved" });
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
@@ -215,10 +215,10 @@ export default function AdminUsers() {
 
   async function addRole(userId: string, role: Role) {
     try {
-      await apiPost(`/api/v1/admin/users/${userId}/roles`, { role });
+      await apiPost(`/api/admin/users/${userId}/roles`, { role });
       if (role === "ADMIN") {
         try {
-          await apiPost(`/api/v1/admin/users/${userId}/roles`, {
+          await apiPost(`/api/admin/users/${userId}/roles`, {
             role: "WORKER",
           });
         } catch {}
@@ -241,7 +241,7 @@ export default function AdminUsers() {
 
   async function removeRole(userId: string, role: Role) {
     try {
-      await apiDelete(`/api/v1/admin/users/${userId}/roles/${role}`);
+      await apiDelete(`/api/admin/users/${userId}/roles/${role}`);
       toaster.success({ title: `Removed ${role}` });
       // clear any warning for this user on success
       setInlineErr((m) => {
@@ -272,7 +272,7 @@ export default function AdminUsers() {
   // Hard delete (DB + Clerk) — used for both Delete and Decline confirmations
   async function deleteUser(userId: string) {
     try {
-      await apiDelete(`/api/v1/admin/users/${userId}`);
+      await apiDelete(`/api/admin/users/${userId}`);
       toaster.success({ title: "User removed" });
       await load();
     } catch (err) {

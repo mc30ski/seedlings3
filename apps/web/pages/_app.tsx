@@ -24,6 +24,9 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
+const TEST = process.env.TEST!;
+console.log("TEST", TEST);
+
 type Me = {
   id: string;
   isApproved: boolean;
@@ -48,7 +51,7 @@ function AppInner({ Component, pageProps }: AppProps) {
 
   const loadMe = useCallback(async () => {
     try {
-      const m = await apiGet<Me>("/api/v1/me");
+      const m = await apiGet<Me>("/api/me");
       setMe(m);
     } catch {
       setMe(null);
@@ -63,7 +66,7 @@ function AppInner({ Component, pageProps }: AppProps) {
     }
     try {
       const res = await apiGet<{ pending: number }>(
-        "/api/v1/admin/users/pendingCount"
+        "/api/admin/users/pendingCount"
       );
       setPending(res.pending ?? 0);
     } catch {

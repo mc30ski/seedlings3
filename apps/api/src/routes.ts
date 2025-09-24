@@ -1,23 +1,63 @@
-// apps/api/src/app.ts
-import Fastify from "fastify";
+import { FastifyInstance } from "fastify";
 import cors, { type FastifyCorsOptions } from "@fastify/cors";
 import sensible from "@fastify/sensible";
-import rbac from "./plugins/rbac";
-import meRoutes from "./routes/me";
-import workerRoutes from "./routes/worker";
-import adminRoutes from "./routes/admin";
-import userRoutes from "./routes/users";
-import auditRoutes from "./routes/audit";
-import systemRoutes from "./routes/system";
-import versionRoutes from "./routes/version";
-import errorMapper from "./plugins/errorMapper";
+import { getVersionInfo } from "./lib/version";
 import auth from "./plugins/auth";
-import debugRoutes from "./routes/debug";
+import rbac from "./plugins/rbac";
+import errorMapper from "./plugins/errorMapper";
+import adminRoutes from "./routes/admin";
+import auditRoutes from "./routes/audit";
+import meRoutes from "./routes/me";
+import systemRoutes from "./routes/system";
+import usersRoutes from "./routes/users";
+import workerRoutes from "./routes/worker";
 
-export async function buildApp() {
-  const app = Fastify({ logger: true });
+// ---------- CORS Helpers
 
-  // ---------- route capture (unchanged) ----------
+function parseAllowedOrigins(): string[] {
+  return (process.env.WEB_ORIGIN ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+const ORIGIN_REGEX = process.env.WEB_ORIGIN_REGEX
+  ? new RegExp(process.env.WEB_ORIGIN_REGEX)
+  : null;
+
+function isOriginAllowed(origin?: string): boolean {
+  // dev: allow localhost & no-Origin (curl)
+  if (process.env.NODE_ENV !== "production") {
+    if (!origin) return true;
+    if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return true;
+  }
+  if (!origin) return false;
+
+  // wildcard escape hatch
+  if ((process.env.WEB_ORIGIN ?? "").trim() === "*") return true;
+
+  // optional regex for preview branches
+  if (ORIGIN_REGEX && ORIGIN_REGEX.test(origin)) return true;
+
+  // exact list (default)
+  return parseAllowedOrigins().includes(origin);
+}
+
+// ---------- Register all routes
+
+export async function registerRoutes(app: FastifyInstance) {
+  await app.register((app: FastifyInstance) =>
+    app.get("/", async () => {
+      return { message: "Use /api", version: getVersionInfo() };
+    })
+  );
+  await app.register((app: FastifyInstance) =>
+    app.get("/api", async () => {
+      return { message: "API endpoint.", version: getVersionInfo() };
+    })
+  );
+
+  // ---------- Register all routes
+
   type RouteRow = { method: string; path: string };
   const __routes: RouteRow[] = [];
   app.addHook("onRoute", (opts) => {
@@ -43,39 +83,9 @@ export async function buildApp() {
     const lines = rows.map((r) => `${r.method.padEnd(6)} ${r.path}`);
     return reply.type("text/plain; charset=utf-8").send(lines.join("\n"));
   });
-  // ----------------------------------------------
 
-  // ---------- CORS helpers ----------
-  function parseAllowedOrigins(): string[] {
-    return (process.env.WEB_ORIGIN ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  const ORIGIN_REGEX = process.env.WEB_ORIGIN_REGEX
-    ? new RegExp(process.env.WEB_ORIGIN_REGEX)
-    : null;
-
-  function isOriginAllowed(origin?: string): boolean {
-    // dev: allow localhost & no-Origin (curl)
-    if (process.env.NODE_ENV !== "production") {
-      if (!origin) return true;
-      if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return true;
-    }
-    if (!origin) return false;
-
-    // wildcard escape hatch
-    if ((process.env.WEB_ORIGIN ?? "").trim() === "*") return true;
-
-    // optional regex for preview branches
-    if (ORIGIN_REGEX && ORIGIN_REGEX.test(origin)) return true;
-
-    // exact list (default)
-    return parseAllowedOrigins().includes(origin);
-  }
-
-  // ---------- PRE-FLIGHT SHORT-CIRCUIT ----------
-  // Answer OPTIONS immediately with CORS headers *before* auth/RBAC.
+  // ---------- Pre-flight short-circuit
+  // Answer OPTIONS immediately with CORS headers before auth/RBAC.
   app.addHook("onRequest", (req, reply, done) => {
     if (req.method !== "OPTIONS") return done();
 
@@ -107,7 +117,7 @@ export async function buildApp() {
     return reply.code(204).send();
   });
 
-  // ---------- CORS plugin (kept, but simplified) ----------
+  // ---------- CORS plugin
   const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => cb(null, isOriginAllowed(origin ?? undefined)),
     credentials: true,
@@ -120,7 +130,7 @@ export async function buildApp() {
   await app.register(auth);
   await app.register(errorMapper);
 
-  // Always attach ACAO on responses (including 401/403) for allowed origins.
+  // ---------- Always attach ACAO on responses (including 401/403) for allowed origins.
   app.addHook("onSend", (req, reply, payload, done) => {
     const origin = req.headers.origin as string | undefined;
     if (origin && isOriginAllowed(origin)) {
@@ -133,23 +143,17 @@ export async function buildApp() {
     done();
   });
 
-  // Public routes
-  await app.register(systemRoutes);
-  await app.register(versionRoutes);
-
-  // Guarded API
+  // ---------- Register all API endpoints
   await app.register(
     async (api) => {
       await api.register(rbac);
+      await api.register(systemRoutes);
       await api.register(meRoutes);
-      await api.register(workerRoutes);
       await api.register(adminRoutes);
-      await api.register(userRoutes);
       await api.register(auditRoutes);
-      await api.register(debugRoutes);
+      await app.register(usersRoutes);
+      await app.register(workerRoutes);
     },
-    { prefix: "/api/v1" }
+    { prefix: "/api" }
   );
-
-  return app;
 }

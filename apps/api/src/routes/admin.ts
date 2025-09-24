@@ -1,15 +1,18 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { Role as RoleVal } from "@prisma/client";
 
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
-    preHandler: (req: any, reply: any) => app.requireRole(req, reply, "ADMIN"),
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireRole(req, reply, RoleVal.ADMIN),
   };
 
-  // Equipment (basic + with holders)
+  //TODO: WHY DO WE NEED BOTH OF THESE?
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAllAdmin()
   );
+
   app.get("/admin/equipment/with-holders", adminGuard, async () =>
     services.equipment.listAllAdmin()
   );
@@ -17,41 +20,47 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/equipment", adminGuard, async (req: any) =>
     services.equipment.create(req.body)
   );
+
   app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
     services.equipment.update(req.params.id, req.body)
   );
+
   app.post("/admin/equipment/:id/retire", adminGuard, async (req: any) =>
     services.equipment.retire(req.params.id)
   );
+
   app.post("/admin/equipment/:id/unretire", adminGuard, async (req: any) =>
     services.equipment.unretire(req.params.id)
   );
+
   app.delete("/admin/equipment/:id", adminGuard, async (req: any) =>
     services.equipment.hardDelete(req.params.id)
   );
+
   app.post("/admin/equipment/:id/assign", adminGuard, async (req: any) =>
     services.equipment.assign(req.params.id, req.body.userId)
   );
+
   app.post("/admin/equipment/:id/release", adminGuard, async (req: any) =>
     services.equipment.release(req.params.id)
   );
+
   app.post(
     "/admin/equipment/:id/maintenance/start",
     adminGuard,
     async (req: any) => services.maintenance.start(req.params.id)
   );
+
   app.post(
     "/admin/equipment/:id/maintenance/end",
     adminGuard,
     async (req: any) => services.maintenance.end(req.params.id)
   );
 
-  // Holdings (reserved + checked out) — via services layer
   app.get("/admin/holdings", adminGuard, async () => {
     return services.users.listHoldings();
   });
 
-  // Audit
   app.get("/admin/audit", adminGuard, async (req: any) => {
     const q = (req.query || {}) as {
       page?: string;
@@ -76,11 +85,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
   });
 
-  // -------- Users management (ADMIN only) --------
   app.get("/admin/users", adminGuard, async (req: any) => {
     const q = (req.query || {}) as {
       approved?: string; // "true" | "false"
-      role?: "ADMIN" | "WORKER";
+      role?: RoleVal;
     };
     const approved =
       q.approved === "true" ? true : q.approved === "false" ? false : undefined;
@@ -113,8 +121,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.users.removeRole(id, role as "ADMIN" | "WORKER");
   });
 
-  // Hard delete a user (DB + Clerk)
   app.delete("/admin/users/:id", adminGuard, async (req: any) => {
+    // Hard delete a user (DB + Clerk)
     const targetId = String(req.params.id);
     const actorId = String(req.user?.id || "");
     return services.users.remove(targetId, actorId);

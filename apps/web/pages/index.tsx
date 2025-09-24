@@ -1,3 +1,4 @@
+"use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
@@ -31,7 +32,7 @@ export default function HomePage() {
   const loadMe = useCallback(async () => {
     setMeLoading(true);
     try {
-      const data = await apiGet<Me>("/api/v1/me");
+      const data = await apiGet<Me>("/api/me");
       setMe(data);
     } catch {
       setMe(null);

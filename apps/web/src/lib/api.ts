@@ -22,19 +22,42 @@ async function authHeaders(h: Headers) {
   }
 }
 
-async function request<T>(
+// Bypass is used to avoid the blocking (401) of Preview requests.
+// Vercel’s preview deployments require a valid _vercel_jwt cookie or the x-vercel-protection-bypass header on every request.
+
+const IS_BROWSER = typeof window !== "undefined";
+const IS_PREVIEW = process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
+const BYPASS = process.env.NEXT_PUBLIC_VERCEL_AUTOMATION_BYPASS || "";
+
+function makeAbsolute(url: string) {
+  // Works both client and server
+  if (!IS_BROWSER) return url; // assume absolute on server
+  return new URL(url, window.location.origin).toString();
+}
+function isCrossOrigin(absUrl: string) {
+  if (!IS_BROWSER) return false;
+  return new URL(absUrl).origin !== window.location.origin;
+}
+
+export async function request<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown
 ): Promise<T> {
   const headers = new Headers();
-  await authHeaders(headers);
+  await authHeaders(headers); // your existing auth (e.g., Authorization)
 
+  // Build the absolute URL we’ll call
+  const url = makeAbsolute(`${API_BASE}${path}`);
+  const cross = isCrossOrigin(url);
+
+  // IMPORTANT: let the browser send/receive cookies for Vercel preview protection
+  // - same-origin for same host
+  // - include for cross-origin (another preview domain)
   const init: RequestInit = {
     method,
     headers,
-    // we use header auth; no cookies needed
-    credentials: "omit",
+    credentials: cross ? "include" : "same-origin", // ← change from "omit"
     cache: "no-store",
   };
 
@@ -43,7 +66,23 @@ async function request<T>(
     init.body = JSON.stringify(body);
   }
 
-  const res = await fetch(`${API_BASE}${path}`, init);
+  // Add Vercel preview-bypass headers (recommended by Vercel)
+  // These are harmless in prod and ensure the cookie gets minted if missing.
+  if (IS_BROWSER && IS_PREVIEW && BYPASS) {
+    headers.set("x-vercel-protection-bypass", BYPASS);
+    // If the API is on a different preview domain, instruct Vercel to set SameSite=None
+    headers.set("x-vercel-set-bypass-cookie", cross ? "samesitenone" : "true");
+  }
+
+  // First attempt
+  let res = await fetch(url, init);
+
+  // If protection still blocked us (e.g., cached edge page), retry once with a cache buster
+  if (res.status === 401 && IS_BROWSER && IS_PREVIEW && BYPASS) {
+    const retryUrl =
+      url + (url.includes("?") ? "&" : "?") + `_cb=${Date.now()}`;
+    res = await fetch(retryUrl, init);
+  }
 
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
@@ -66,7 +105,6 @@ async function request<T>(
     throw err;
   }
 
-  // some endpoints may 204/no-content; guard that
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
 }

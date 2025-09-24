@@ -1,11 +1,11 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { Role as RoleVal } from "@prisma/client";
 
 export default async function workerRoutes(app: FastifyInstance) {
   const workerGuard = {
-    preHandler: (req: any, reply: any) => {
-      return app.requireRole(req, reply, "WORKER");
-    },
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireRole(req, reply, RoleVal.WORKER),
   };
 
   // Workers can see all non-retired (includes MAINTENANCE / CHECKED_OUT)

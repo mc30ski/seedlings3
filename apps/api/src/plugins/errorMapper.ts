@@ -1,6 +1,9 @@
 import fp from "fastify-plugin";
 import { Prisma } from "@prisma/client";
 
+// Fastify plugin that installs a global error handler.
+// It normalizes errors into clean JSON responses, maps common Prisma errors to friendly HTTP status codes, and falls back to a 500 with logging.
+
 export default fp(async (app) => {
   app.setErrorHandler((err, _req, reply) => {
     const anyErr = err as any;

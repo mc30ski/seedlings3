@@ -1,19 +1,13 @@
-// apps/api/src/types/services.ts
-import type {
-  Equipment,
-  EquipmentStatus, // includes 'RESERVED'
-  AuditEvent,
-  User,
-  UserRole,
-} from "@prisma/client";
+import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
 
-// --- result helpers ---
+export type Role = "ADMIN" | "WORKER";
+
 type ReserveResult = { id: string; userId: string };
 type CheckoutResult = { id: string; userId: string };
 type ReleaseResult = { released: true };
 type CancelResult = { cancelled: true };
 
-// --- admin holder shape for listAllAdmin() ---
+//TODO: WHY DO I NEED BOTH OF THESE?
 export type AdminHolder = {
   userId: string;
   displayName?: string | null;
@@ -22,10 +16,6 @@ export type AdminHolder = {
   checkedOutAt?: Date | null;
   state: "RESERVED" | "CHECKED_OUT";
 };
-
-export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
-
-// --- holdings row for /admin/holdings ---
 export type AdminUserHolding = {
   userId: string;
   equipmentId: string;
@@ -35,21 +25,24 @@ export type AdminUserHolding = {
   checkedOutAt: Date | null;
 };
 
+export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
+
 export type Services = {
   equipment: {
-    // Lists
+    // -------- LISTS --------
     listAvailable(): Promise<Equipment[]>;
     listAll(): Promise<Equipment[]>;
-    /** Admin view with current holder (if any) */
+    // Admin view with current holder (if any)
     listAllAdmin(): Promise<EquipmentWithHolder[]>;
-    /** Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT */
+    // Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT
     listForWorkers(): Promise<Equipment[]>;
-    /** items workers cannot reserve (RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED) */
+    // Items workers cannot reserve RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED
     listUnavailableForWorkers(): Promise<Equipment[]>;
-    /** Items I currently hold (reserved or checked out) */
+    // Items I currently hold (reserved or checked out)
     listMine(userId: string): Promise<Equipment[]>;
+    listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
 
-    // CRUD
+    // -------- CRUD --------
     create(input: {
       shortDesc: string;
       longDesc?: string;
@@ -59,15 +52,15 @@ export type Services = {
       id: string,
       patch: Partial<Pick<Equipment, "shortDesc" | "longDesc" | "qrSlug">>
     ): Promise<Equipment>;
-    /** Blocked if status is RESERVED or CHECKED_OUT (or any active row exists) */
+    // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
     retire(id: string): Promise<Equipment>;
     unretire(id: string): Promise<Equipment>;
     hardDelete(id: string): Promise<{ deleted: true }>;
 
-    // Admin actions
-    /** Direct checkout to user (bypasses reserve step) */
+    // -------- ADMIN ACTIONS --------
+    // Direct checkout to user (bypasses reserve step)
     assign(id: string, userId: string): Promise<{ id: string; userId: string }>;
-    /** Force release (from RESERVED or CHECKED_OUT) */
+    // Force release (from RESERVED or CHECKED_OUT)
     release(id: string): Promise<ReleaseResult>;
 
     // Worker lifecycle (RESERVE → CHECKOUT → RETURN)
@@ -76,19 +69,12 @@ export type Services = {
     checkout(id: string, userId: string): Promise<CheckoutResult>;
     returnByUser(id: string, userId: string): Promise<ReleaseResult>;
 
-    // Back-compat shims (legacy endpoints)
-    /** Legacy "claim" maps to reserve() */
-    claim(id: string, userId: string): Promise<ReserveResult>;
-    /** Legacy "release" decides cancel vs return */
     releaseByUser(id: string, userId: string): Promise<ReleaseResult>;
-
-    listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
   };
 
-  // Maintenance toggle (sticky)
   maintenance: {
-    start(equipmentId: string): Promise<Equipment>; // -> MAINTENANCE
-    end(equipmentId: string): Promise<Equipment>; // -> recompute (AVAILABLE/RESERVED/CHECKED_OUT)
+    start(equipmentId: string): Promise<Equipment>;
+    end(equipmentId: string): Promise<Equipment>;
   };
 
   users: {
@@ -96,6 +82,9 @@ export type Services = {
       approved?: boolean;
       role?: "ADMIN" | "WORKER";
     }): Promise<(User & { roles: UserRole[] })[]>;
+    // Reserved + checked-out items (flat list used by AdminUsers UI)
+    listHoldings(): Promise<AdminUserHolding[]>;
+
     approve(userId: string): Promise<User>;
     addRole(userId: string, role: "ADMIN" | "WORKER"): Promise<UserRole>;
     removeRole(
@@ -103,23 +92,29 @@ export type Services = {
       role: "ADMIN" | "WORKER"
     ): Promise<{ deleted: boolean }>;
 
-    /** Current user snapshot for the web app */
-    me(clerkUserId: string): Promise<{
-      id: string;
-      isApproved: boolean;
-      roles: ("ADMIN" | "WORKER")[];
-      email?: string | null;
-      displayName?: string | null;
-    }>;
-
-    /** NEW: reserved + checked-out items (flat list used by AdminUsers UI) */
-    listHoldings(): Promise<AdminUserHolding[]>;
-
-    /** Hard-delete user (Clerk + DB) */
+    // Hard-delete user (Clerk + DB)
     remove(
       userId: string,
       actorUserId: string
     ): Promise<{ deleted: true; clerkDeleted: boolean }>;
+
+    me(token: string): Promise<{
+      id: string;
+      isApproved: boolean;
+      roles: Role[];
+      email?: string | null;
+      displayName?: string | null;
+    }>;
+  };
+
+  currentUser: {
+    me(clerkUserId: string): Promise<{
+      id: string;
+      isApproved: boolean;
+      roles: Role[];
+      email?: string | null;
+      displayName?: string | null;
+    }>;
   };
 
   audit: {

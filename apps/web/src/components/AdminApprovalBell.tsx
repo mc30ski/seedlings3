@@ -18,7 +18,7 @@ export default function AdminApprovalBell() {
     try {
       // Admin-only endpoint; will 403 for non-admins — that’s okay, we hide then.
       const pending = await apiGet<Array<unknown>>(
-        "/api/v1/admin/users?approved=false"
+        "/api/admin/users?approved=false"
       );
       setCount(Array.isArray(pending) ? pending.length : 0);
     } catch {
