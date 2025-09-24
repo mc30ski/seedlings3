@@ -1,11 +1,11 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { Role as RoleVal } from "@prisma/client";
 
 export default async function userRoutes(app: FastifyInstance) {
   const adminGuard = {
-    preHandler: [
-      (app as any).requireRole.bind(app, undefined, undefined, "ADMIN"),
-    ],
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireRole(req, reply, RoleVal.ADMIN),
   };
 
   app.get("/users", adminGuard, async (req: any) =>

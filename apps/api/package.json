@@ -1,10 +1,9 @@
 {
   "name": "@repo/api",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
-    "dev": "tsx watch src/start.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsup --config tsup.config.ts && npm run prisma:generate",
     "start": "node --enable-source-maps dist/start.js",
     "test": "vitest run",

@@ -49,7 +49,7 @@ export default async function systemRoutes(app: FastifyInstance) {
       >`
         select
           current_setting('neon.branch', true)      as branch,
-          current_setting('neon.branch_id', true)   as branch_id,   -- ⬅️ added
+          current_setting('neon.branch_id', true)   as branch_id,
           current_setting('neon.project_id', true)  as project_id,
           current_setting('neon.timeline_id', true) as timeline_id
       `;
