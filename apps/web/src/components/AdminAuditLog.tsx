@@ -1,5 +1,5 @@
 // apps/web/src/components/AdminAuditLog.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import {
   Box,
   Button,
@@ -11,6 +11,7 @@ import {
   Table,
   Spinner,
   HStack,
+  useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "../lib/api";
 import { toaster } from "./ui/toaster";
@@ -50,22 +51,22 @@ const LoadingCenter = () => (
   </Box>
 );
 
-/** Small helper to render one-line, ellipsized text with native hover tooltip */
+/** One-line, ellipsized text with native hover tooltip */
 function Trunc({
   text,
   maxW = "220px",
   as = "span",
 }: {
   text: string;
-  maxW?: string | number;
+  maxW?: string | number | undefined;
   as?: any;
 }) {
   return (
     <Text
       as={as}
       maxW={maxW}
-      lineClamp={1} // Chakra v3 (replaces noOfLines)
-      title={text} // native tooltip on hover
+      truncate
+      title={text}
       display="inline-block"
       verticalAlign="middle"
     >
@@ -196,6 +197,12 @@ export default function AdminAuditLog() {
     return "teal";
   };
 
+  // Responsive widths for truncation (string/number, not responsive object)
+  const truncW = useBreakpointValue({ base: "120px", md: "220px" }) ?? "220px";
+
+  // Responsive: 3 columns on mobile (Time, Action, Details), 5 on md+
+  const colSpan = useBreakpointValue({ base: 3, md: 5 }) ?? 5;
+
   return (
     <Box>
       <Heading size="md" mb={4}>
@@ -272,123 +279,149 @@ export default function AdminAuditLog() {
       {/* Loading */}
       {loading && items.length === 0 && <LoadingCenter />}
 
-      {/* Table */}
-      <Table.Root size="sm" variant="outline">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeader>Time</Table.ColumnHeader>
-            <Table.ColumnHeader>Action</Table.ColumnHeader>
-            <Table.ColumnHeader>Equipment</Table.ColumnHeader>
-            <Table.ColumnHeader>Actor</Table.ColumnHeader>
-            <Table.ColumnHeader>Details</Table.ColumnHeader>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {items.map((row) => {
-            const eqName = (row.equipmentId && eqMap[row.equipmentId]) || "—";
-            const actorEmail =
-              (row.actorUserId && userMap[row.actorUserId]) || "—";
+      {/* Responsive table: on mobile, hide Equipment & Actor columns; add horizontal scroll if needed */}
+      <Box
+        overflowX="auto"
+        w="100%"
+        maxW="100vw"
+        mt={2}
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        <Table.Root
+          size="sm"
+          variant="outline"
+          minW={{ base: "560px", md: "unset" }}
+        >
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader>Time</Table.ColumnHeader>
+              <Table.ColumnHeader>Action</Table.ColumnHeader>
+              <Table.ColumnHeader display={{ base: "none", md: "table-cell" }}>
+                Equipment
+              </Table.ColumnHeader>
+              <Table.ColumnHeader display={{ base: "none", md: "table-cell" }}>
+                Actor
+              </Table.ColumnHeader>
+              <Table.ColumnHeader>Details</Table.ColumnHeader>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {items.map((row) => {
+              const eqName = (row.equipmentId && eqMap[row.equipmentId]) || "—";
+              const actorEmail =
+                (row.actorUserId && userMap[row.actorUserId]) || "—";
 
-            return (
-              <>
-                <Table.Row key={row.id}>
-                  <Table.Cell title={new Date(row.createdAt).toLocaleString()}>
-                    {new Date(row.createdAt).toLocaleString()}
-                  </Table.Cell>
+              return (
+                <Fragment key={row.id}>
+                  <Table.Row>
+                    <Table.Cell
+                      title={new Date(row.createdAt).toLocaleString()}
+                    >
+                      {new Date(row.createdAt).toLocaleString()}
+                    </Table.Cell>
 
-                  <Table.Cell>
-                    <Badge colorPalette={actionBadgePalette(row.action)}>
-                      {row.action}
-                    </Badge>
-                  </Table.Cell>
+                    <Table.Cell>
+                      <Badge colorPalette={actionBadgePalette(row.action)}>
+                        {row.action}
+                      </Badge>
+                    </Table.Cell>
 
-                  <Table.Cell>
-                    <HStack gap="2" wrap="wrap" maxW="360px">
-                      {row.equipmentId ? (
-                        <>
-                          {/* Ellipsize long names, show full name on hover */}
-                          <Trunc text={eqName} />
-                          {/* Short id badge with full id on hover */}
+                    <Table.Cell display={{ base: "none", md: "table-cell" }}>
+                      <HStack
+                        gap="2"
+                        wrap="wrap"
+                        maxW={{ base: "160px", md: "360px" }}
+                      >
+                        {row.equipmentId ? (
+                          <>
+                            <Trunc text={eqName} maxW={truncW} />
+                            <Badge
+                              variant="subtle"
+                              colorPalette="gray"
+                              title={row.equipmentId}
+                            >
+                              {row.equipmentId.slice(0, 8)}…
+                            </Badge>
+                          </>
+                        ) : (
+                          <Text>—</Text>
+                        )}
+                      </HStack>
+                    </Table.Cell>
+
+                    <Table.Cell display={{ base: "none", md: "table-cell" }}>
+                      <HStack
+                        gap="2"
+                        wrap="wrap"
+                        maxW={{ base: "160px", md: "360px" }}
+                      >
+                        <Trunc text={actorEmail} maxW={truncW} />
+                        {row.actorUserId && (
                           <Badge
                             variant="subtle"
                             colorPalette="gray"
-                            title={row.equipmentId}
+                            title={row.actorUserId}
                           >
-                            {row.equipmentId.slice(0, 8)}…
+                            {row.actorUserId.slice(0, 8)}…
                           </Badge>
-                        </>
-                      ) : (
-                        <Text>—</Text>
-                      )}
-                    </HStack>
-                  </Table.Cell>
+                        )}
+                      </HStack>
+                    </Table.Cell>
 
-                  <Table.Cell>
-                    <HStack gap="2" wrap="wrap" maxW="360px">
-                      {/* Ellipsize email; full on hover */}
-                      <Trunc text={actorEmail} />
-                      {row.actorUserId && (
-                        <Badge
-                          variant="subtle"
-                          colorPalette="gray"
-                          title={row.actorUserId}
-                        >
-                          {row.actorUserId.slice(0, 8)}…
-                        </Badge>
-                      )}
-                    </HStack>
-                  </Table.Cell>
-
-                  <Table.Cell>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toggleDetails(row.id)}
-                    >
-                      {open[row.id] ? "Hide details" : "Open details"}
-                    </Button>
-                  </Table.Cell>
-                </Table.Row>
-
-                {open[row.id] && (
-                  <Table.Row key={`${row.id}-details`}>
-                    <Table.Cell colSpan={5}>
-                      <Box
-                        mt={2}
-                        p={3}
-                        borderWidth="1px"
-                        borderRadius="md"
-                        bg="gray.50"
+                    <Table.Cell>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => toggleDetails(row.id)}
                       >
-                        <Text fontSize="sm" mb={1} color="gray.700">
-                          Raw event data
-                        </Text>
-                        <Box
-                          as="pre"
-                          fontSize="xs"
-                          whiteSpace="pre-wrap"
-                          wordBreak="break-word"
-                          m={0}
-                        >
-                          {formatMetadata(row)}
-                        </Box>
-                      </Box>
+                        {open[row.id] ? "Hide details" : "Open details"}
+                      </Button>
                     </Table.Cell>
                   </Table.Row>
-                )}
-              </>
-            );
-          })}
 
-          {items.length === 0 && !loading && (
-            <Table.Row>
-              <Table.Cell colSpan={5}>
-                <Text>No results.</Text>
-              </Table.Cell>
-            </Table.Row>
-          )}
-        </Table.Body>
-      </Table.Root>
+                  {open[row.id] && (
+                    <Table.Row key={`${row.id}-details`}>
+                      <Table.Cell colSpan={colSpan}>
+                        <Box
+                          mt={2}
+                          p={3}
+                          borderWidth="1px"
+                          borderRadius="md"
+                          bg="gray.50"
+                          overflowX="auto"
+                          maxW="100%"
+                          style={{ WebkitOverflowScrolling: "touch" }}
+                        >
+                          <Text fontSize="sm" mb={1} color="gray.700">
+                            Raw event data
+                          </Text>
+                          <Box
+                            as="pre"
+                            fontSize="xs"
+                            whiteSpace="pre-wrap"
+                            wordBreak="break-word"
+                            m={0}
+                          >
+                            {formatMetadata(row)}
+                          </Box>
+                        </Box>
+                      </Table.Cell>
+                    </Table.Row>
+                  )}
+                </Fragment>
+              );
+            })}
+
+            {items.length === 0 && !loading && (
+              <Table.Row>
+                <Table.Cell colSpan={colSpan}>
+                  <Text>No results.</Text>
+                </Table.Cell>
+              </Table.Row>
+            )}
+          </Table.Body>
+        </Table.Root>
+      </Box>
 
       <Stack direction="row" gap="3" mt={3} align="center">
         <Text flex="1">
