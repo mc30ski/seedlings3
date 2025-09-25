@@ -14,7 +14,6 @@ import {
   defaultSystem,
   HStack,
   Button,
-  Badge,
   Box,
 } from "@chakra-ui/react";
 import { FiAlertCircle } from "react-icons/fi";
@@ -44,10 +43,9 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Top-right approvals indicator state
+  // Approvals badge state
   const [me, setMe] = useState<Me | null>(null);
   const [pending, setPending] = useState<number | null>(null);
-
   const isAdmin = !!me?.isApproved && (me?.roles || []).includes("ADMIN");
 
   const loadMe = useCallback(async () => {
@@ -60,7 +58,6 @@ function AppInner({ Component, pageProps }: AppProps) {
   }, []);
 
   const loadPending = useCallback(async () => {
-    // Only admins need pending count
     if (!isAdmin) {
       setPending(null);
       return;
@@ -69,10 +66,8 @@ function AppInner({ Component, pageProps }: AppProps) {
       const res = await apiGet<{ pending: number }>(
         "/api/admin/users/pendingCount"
       );
-      const count = res?.pending ?? 0;
-      setPending(count);
+      setPending(res?.pending ?? 0);
     } catch {
-      // If the endpoint isn't reachable, just hide the alert
       setPending(0);
     }
   }, [isAdmin]);
@@ -80,12 +75,9 @@ function AppInner({ Component, pageProps }: AppProps) {
   useEffect(() => {
     void loadMe();
   }, [loadMe]);
-
   useEffect(() => {
     void loadPending();
   }, [loadPending, me]);
-
-  // Refresh pending count when users change (approve/remove/etc)
   useEffect(() => {
     const onUsersChanged = () => void loadPending();
     window.addEventListener("seedlings3:users-changed", onUsersChanged);
@@ -93,50 +85,62 @@ function AppInner({ Component, pageProps }: AppProps) {
       window.removeEventListener("seedlings3:users-changed", onUsersChanged);
   }, [loadPending]);
 
+  // Place controls just below iOS status bar (0px on desktop browsers)
+  const TOP_OFFSET = "calc(env(safe-area-inset-top, 0px) + 6px)";
+
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* header */}
-      <HStack justify="flex-end" px="4" py="2" gap="3">
-        {/* Show Approvals button only if admin AND pending > 0 */}
-        {isAdmin && (pending ?? 0) > 0 ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              router.push({
-                pathname: "/",
-                query: { adminTab: "users", status: "pending" },
-              })
-            }
-            title="Pending approvals"
-            position="relative"
-          >
-            <HStack gap="2">
-              <FiAlertCircle />
-              <span>Approvals</span>
-              <Box
-                as="span"
-                position="absolute"
-                top="-2px"
-                right="-2px"
-                fontSize="11px"
-                minWidth="18px"
-                height="18px"
-                lineHeight="18px"
-                textAlign="center"
-                borderRadius="9999px"
-                background="tomato"
-                color="white"
-                px="1"
-              >
-                {pending}
-              </Box>
-            </HStack>
-          </Button>
-        ) : null}
-        <UserButton />
-      </HStack>
+      {/* Overlayed controls only (no extra brand row here) */}
+      <Box
+        position="fixed"
+        top={TOP_OFFSET}
+        right="12px"
+        zIndex={1000}
+        // Let clicks pass through except on the buttons themselves
+        pointerEvents="none"
+      >
+        <HStack gap="8px" pointerEvents="auto">
+          {isAdmin && (pending ?? 0) > 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                router.push({
+                  pathname: "/",
+                  query: { adminTab: "users", status: "pending" },
+                })
+              }
+              title="Pending approvals"
+              position="relative"
+            >
+              <HStack gap="6px">
+                <FiAlertCircle />
+                <span>Approvals</span>
+                <Box
+                  as="span"
+                  position="absolute"
+                  top="-2px"
+                  right="-2px"
+                  fontSize="11px"
+                  minWidth="18px"
+                  height="18px"
+                  lineHeight="18px"
+                  textAlign="center"
+                  borderRadius="9999px"
+                  background="tomato"
+                  color="white"
+                  px="1"
+                >
+                  {pending}
+                </Box>
+              </HStack>
+            </Button>
+          ) : null}
+          <UserButton />
+        </HStack>
+      </Box>
 
+      {/* Main app content (your existing page header with Seedlings icon/text remains) */}
       <SignedIn>
         <Component {...pageProps} />
       </SignedIn>
@@ -156,28 +160,21 @@ export default function MyApp(props: AppProps) {
   return (
     <>
       <Head>
-        {/* --- PWA / iOS standalone meta for app-like experience from Home Screen --- */}
-        {/* Required for iOS "Add to Home Screen" to open without Safari chrome */}
+        {/* iOS standalone & PWA meta */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        {/* Status bar appearance when launched from Home Screen */}
         <meta
           name="apple-mobile-web-app-status-bar-style"
           content="black-translucent"
         />
-        {/* Title under the Home Screen icon */}
         <meta name="apple-mobile-web-app-title" content="Seedlings" />
-        {/* Allow edge-to-edge layouts; important for notched devices */}
         <meta
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
-
-        {/* Web App Manifest (also used by iOS nowadays) */}
         <link rel="manifest" href="/manifest.webmanifest" />
-        {/* Theme color for splash / UIs that respect it */}
         <meta name="theme-color" content="#0a7cff" />
 
-        {/* Favicon / bookmark icons */}
+        {/* Icons */}
         <link rel="icon" href="/seedlings-icon.png" />
         <link
           rel="icon"
@@ -191,11 +188,7 @@ export default function MyApp(props: AppProps) {
           sizes="16x16"
           href="/seedlings-icon-16.png"
         />
-        {/* iOS home screen icon */}
         <link rel="apple-touch-icon" href="/seedlings-icon.png" />
-        {/* Optional: larger touch icons if you have them
-        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
-        */}
       </Head>
 
       <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
