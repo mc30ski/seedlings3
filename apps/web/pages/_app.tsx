@@ -7,7 +7,7 @@ import {
   SignIn,
   useAuth,
 } from "@clerk/clerk-react";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
@@ -26,16 +26,39 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Push content below iOS status area in standalone mode,
-  // but only a tiny 8px cushion on normal browsers.
-  const TOP_SAFE_PAD = "calc(env(safe-area-inset-top, 0px) + 8px)";
+  // Detect standalone (Home Screen) display mode
+  const [standalone, setStandalone] = useState(false);
+  useEffect(() => {
+    const detect = () =>
+      (window.navigator as any).standalone === true ||
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+    setStandalone(detect());
+
+    // Re-check on visibility/resizes (rare but cheap)
+    const onChange = () => setStandalone(detect());
+    window.addEventListener("visibilitychange", onChange);
+    window.addEventListener("resize", onChange);
+    return () => {
+      window.removeEventListener("visibilitychange", onChange);
+      window.removeEventListener("resize", onChange);
+    };
+  }, []);
+
+  // Minimize top gap:
+  // - In standalone: exactly the safe-area inset (tight, clears Dynamic Island).
+  // - In browsers: tiny 2px breathing room.
+  const TOP_PAD = useMemo(
+    () => (standalone ? "env(safe-area-inset-top, 0px)" : "2px"),
+    [standalone]
+  );
 
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* Apply safe-area padding to the whole app so the brand row isn't under the Dynamic Island */}
-      <Box pt={TOP_SAFE_PAD}>
-        {/* Custom pull-to-refresh only when installed as a Home-Screen app */}
+      {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
+      <Box pt={TOP_PAD}>
+        {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}
         <PWAPullToRefresh />
+
         <SignedIn>
           <Component {...pageProps} />
         </SignedIn>
