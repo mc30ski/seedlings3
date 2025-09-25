@@ -584,6 +584,7 @@ export const services: Services = {
               EquipmentStatus.MAINTENANCE,
               EquipmentStatus.RESERVED,
               EquipmentStatus.CHECKED_OUT,
+              EquipmentStatus.RETIRED,
             ],
           },
         },
@@ -606,7 +607,9 @@ export const services: Services = {
               email: active.user?.email ?? null,
               reservedAt: active.reservedAt,
               checkedOutAt: active.checkedOutAt ?? null,
-              state: active.checkedOutAt ? "CHECKED_OUT" : "RESERVED",
+              state: active.checkedOutAt
+                ? EquipmentStatus.CHECKED_OUT
+                : EquipmentStatus.RESERVED,
             }
           : null;
 

@@ -1,16 +1,16 @@
-import { useEffect, useState, useCallback } from "react";
+// apps/web/src/components/WorkerMyEquipment.tsx
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Heading,
+  HStack,
   Stack,
   Text,
   Badge,
+  Button,
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "../lib/api";
-import { toaster } from "./ui/toaster";
-import { getErrorMessage } from "../lib/errors";
 
 type EquipmentStatus =
   | "AVAILABLE"
@@ -18,6 +18,7 @@ type EquipmentStatus =
   | "CHECKED_OUT"
   | "MAINTENANCE"
   | "RETIRED";
+
 type Equipment = {
   id: string;
   shortDesc: string;
@@ -45,21 +46,37 @@ const LoadingCenter = () => (
   </Box>
 );
 
+function errorMessage(err: any): string {
+  return (
+    err?.message ||
+    err?.data?.message ||
+    err?.response?.data?.message ||
+    "Action failed"
+  );
+}
+
 export default function WorkerMyEquipment() {
-  const [mine, setMine] = useState<Equipment[]>([]);
+  const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Inline warning per equipment id
+  const [inlineWarn, setInlineWarn] = useState<Record<string, string>>({});
+
+  const myIds = useMemo(() => new Set(items.map((m) => m.id)), [items]);
+
+  const dismissInline = (id: string) =>
+    setInlineWarn((m) => {
+      const n = { ...m };
+      delete n[id];
+      return n;
+    });
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const mineList = await apiGet<Equipment[]>("/api/equipment/mine");
-      setMine(mineList);
-    } catch (err) {
-      toaster.error({
-        title: "Failed to load my equipment",
-        description: getErrorMessage(err),
-      });
+      setItems(mineList);
     } finally {
       setLoading(false);
     }
@@ -68,6 +85,7 @@ export default function WorkerMyEquipment() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
   useEffect(() => {
     const onUpd = () => void refresh();
     window.addEventListener("seedlings3:equipment-updated", onUpd);
@@ -75,18 +93,32 @@ export default function WorkerMyEquipment() {
       window.removeEventListener("seedlings3:equipment-updated", onUpd);
   }, [refresh]);
 
+  function captureInlineConflict(id: string, err: any) {
+    const status =
+      err?.status ?? err?.httpStatus ?? err?.response?.status ?? undefined;
+
+    if (status && status >= 400) {
+      setInlineWarn((m) => ({
+        ...m,
+        [id]: errorMessage(err),
+      }));
+    } else {
+      setInlineWarn((m) => ({
+        ...m,
+        [id]: errorMessage(err),
+      }));
+    }
+  }
+
   async function checkout(id: string) {
     setBusyId(id);
     try {
       await apiPost(`/api/equipment/${id}/checkout`);
-      toaster.success({ title: "Checked out" });
+      dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
-    } catch (err) {
-      toaster.error({
-        title: "Could not check out",
-        description: getErrorMessage(err),
-      });
+    } catch (err: any) {
+      captureInlineConflict(id, err);
     } finally {
       setBusyId(null);
     }
@@ -96,14 +128,11 @@ export default function WorkerMyEquipment() {
     setBusyId(id);
     try {
       await apiPost(`/api/equipment/${id}/reserve/cancel`);
-      toaster.info({ title: "Reservation canceled" });
+      dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
-    } catch (err) {
-      toaster.error({
-        title: "Could not cancel",
-        description: getErrorMessage(err),
-      });
+    } catch (err: any) {
+      captureInlineConflict(id, err);
     } finally {
       setBusyId(null);
     }
@@ -113,14 +142,11 @@ export default function WorkerMyEquipment() {
     setBusyId(id);
     try {
       await apiPost(`/api/equipment/${id}/return`);
-      toaster.success({ title: "Returned" });
+      dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
-    } catch (err) {
-      toaster.error({
-        title: "Could not return",
-        description: getErrorMessage(err),
-      });
+    } catch (err: any) {
+      captureInlineConflict(id, err);
     } finally {
       setBusyId(null);
     }
@@ -135,33 +161,65 @@ export default function WorkerMyEquipment() {
       <Stack gap="3">
         {loading && <LoadingCenter />}
 
-        {!loading && mine.length === 0 && (
-          <Text>You don’t have anything reserved or checked out.</Text>
-        )}
+        {!loading && items.length === 0 && <Text>No equipment.</Text>}
 
         {!loading &&
-          mine.map((item) => {
-            const chips =
-              item.status === "RESERVED"
-                ? "Reserved (You)"
-                : item.status === "CHECKED_OUT"
-                  ? "Checked out (You)"
-                  : item.status;
+          items.map((item) => {
+            const chip =
+              item.status === "AVAILABLE"
+                ? "Available"
+                : item.status === "RESERVED"
+                  ? myIds.has(item.id)
+                    ? "Reserved (You)"
+                    : "Reserved"
+                  : item.status === "CHECKED_OUT"
+                    ? myIds.has(item.id)
+                      ? "Checked out (You)"
+                      : "Checked out"
+                    : item.status === "MAINTENANCE"
+                      ? "Maintenance"
+                      : "Retired";
 
             return (
               <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
                 <Heading size="sm">
                   {item.shortDesc}{" "}
                   <Badge ml={2} {...statusColor[item.status]}>
-                    {chips}
+                    {chip}
                   </Badge>
                 </Heading>
                 <Text fontSize="sm" color="gray.500">
                   {item.longDesc}
                 </Text>
 
+                {/* Inline warning banner */}
+                {inlineWarn[item.id] && (
+                  <HStack
+                    mt={2}
+                    align="start"
+                    p={2.5}
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor="orange.300"
+                    bg="orange.50"
+                  >
+                    <Box flex="1">
+                      <Text fontSize="sm" color="orange.900">
+                        {inlineWarn[item.id]}
+                      </Text>
+                    </Box>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => dismissInline(item.id)}
+                    >
+                      Dismiss
+                    </Button>
+                  </HStack>
+                )}
+
                 <Stack direction="row" gap="2" mt={2}>
-                  {item.status === "RESERVED" && (
+                  {item.status === "RESERVED" ? (
                     <>
                       <Button
                         onClick={() => void checkout(item.id)}
@@ -179,8 +237,7 @@ export default function WorkerMyEquipment() {
                         Cancel Reservation
                       </Button>
                     </>
-                  )}
-                  {item.status === "CHECKED_OUT" && (
+                  ) : item.status === "CHECKED_OUT" ? (
                     <Button
                       onClick={() => void returnItem(item.id)}
                       disabled={!!busyId}
@@ -188,6 +245,8 @@ export default function WorkerMyEquipment() {
                     >
                       Return
                     </Button>
+                  ) : (
+                    <Button disabled>Not actionable</Button>
                   )}
                 </Stack>
               </Box>
