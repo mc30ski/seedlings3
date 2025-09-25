@@ -1,3 +1,4 @@
+// apps/web/pages/_app.tsx
 import type { AppProps } from "next/app";
 import {
   ClerkProvider,
@@ -108,6 +109,7 @@ function AppInner({ Component, pageProps }: AppProps) {
               })
             }
             title="Pending approvals"
+            position="relative"
           >
             <HStack gap="2">
               <FiAlertCircle />
@@ -154,9 +156,29 @@ export default function MyApp(props: AppProps) {
   return (
     <>
       <Head>
+        {/* --- PWA / iOS standalone meta for app-like experience from Home Screen --- */}
+        {/* Required for iOS "Add to Home Screen" to open without Safari chrome */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        {/* Status bar appearance when launched from Home Screen */}
+        <meta
+          name="apple-mobile-web-app-status-bar-style"
+          content="black-translucent"
+        />
+        {/* Title under the Home Screen icon */}
+        <meta name="apple-mobile-web-app-title" content="Seedlings" />
+        {/* Allow edge-to-edge layouts; important for notched devices */}
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+
+        {/* Web App Manifest (also used by iOS nowadays) */}
+        <link rel="manifest" href="/manifest.webmanifest" />
+        {/* Theme color for splash / UIs that respect it */}
+        <meta name="theme-color" content="#0a7cff" />
+
         {/* Favicon / bookmark icons */}
         <link rel="icon" href="/seedlings-icon.png" />
-        {/* Use crisp sizes if you added them */}
         <link
           rel="icon"
           type="image/png"
@@ -171,8 +193,11 @@ export default function MyApp(props: AppProps) {
         />
         {/* iOS home screen icon */}
         <link rel="apple-touch-icon" href="/seedlings-icon.png" />
-        {/* Title is optional here; keep your existing <title> if you have one elsewhere */}
+        {/* Optional: larger touch icons if you have them
+        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
+        */}
       </Head>
+
       <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
         <AppInner {...props} />
       </ClerkProvider>
