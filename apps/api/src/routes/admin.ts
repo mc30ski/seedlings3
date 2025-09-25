@@ -131,4 +131,13 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/users/pendingCount", adminGuard, async () => {
     return services.users.pendingApprovalCount();
   });
+
+  app.get("/admin/activity", adminGuard, async (req: any) => {
+    const q = (req.query?.q || "").toString().trim();
+    const limitPerUser = Math.min(
+      Math.max(parseInt(req.query?.limitPerUser as string) || 25, 1),
+      100
+    );
+    return services.admin.listUserActivity({ q, limitPerUser });
+  });
 }

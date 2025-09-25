@@ -119,6 +119,73 @@ async function writeAudit(
   }
 }
 
+function summarizeEvent(action: string, metadata?: any): string {
+  const t = String(action).toUpperCase();
+  if (t === "EQUIPMENT_RESERVED")
+    return labelWithEq("Reserved equipment", metadata);
+  if (t === "RESERVATION_CANCELLED")
+    return labelWithEq("Canceled reservation", metadata);
+  if (t === "EQUIPMENT_CHECKED_OUT")
+    return labelWithEq("Checked out equipment", metadata);
+  if (t === "EQUIPMENT_RETURNED")
+    return labelWithEq("Returned equipment", metadata);
+  if (t === "FORCE_RELEASED")
+    return labelWithEq("Force released equipment", metadata);
+  if (t === "USER_APPROVED") return "User approved";
+  if (t === "ROLE_ASSIGNED")
+    return `Role assigned${metadata?.role ? `: ${metadata.role}` : ""}`;
+  if (t === "MAINTENANCE_START")
+    return labelWithEq("Maintenance started", metadata);
+  if (t === "MAINTENANCE_END")
+    return labelWithEq("Maintenance ended", metadata);
+  return action;
+}
+
+function labelWithEq(base: string, metadata?: any) {
+  const eq = metadata?.equipment?.shortDesc || metadata?.shortDesc;
+  return eq ? `${base} — ${eq}` : base;
+}
+
+/**
+ * Build compact details for UI:
+ *  - equipmentName / equipmentDesc (from metadata OR joined equipment)
+ *  - common extras (role, notes, reason, from/to status, qrSlug)
+ * No equipmentId is returned (not useful to users).
+ */
+function buildEventDetails(
+  action: string,
+  metadata: any,
+  equipmentId: string | null | undefined,
+  eqMap: Record<string, { shortDesc: string | null; longDesc: string | null }>
+) {
+  const out: Record<string, any> = {};
+  const md = (metadata ?? {}) as any;
+  const mdEq = (md?.equipment ?? {}) as any;
+
+  // Prefer metadata, then DB join
+  const equipmentName =
+    mdEq.shortDesc ??
+    md.shortDesc ??
+    (equipmentId ? eqMap[equipmentId!]?.shortDesc : null);
+  const equipmentDesc =
+    mdEq.longDesc ??
+    md.longDesc ??
+    (equipmentId ? eqMap[equipmentId!]?.longDesc : null);
+
+  if (equipmentName) out.equipmentName = equipmentName;
+  if (equipmentDesc) out.equipmentDesc = equipmentDesc;
+
+  // Other common bits you already record
+  if (md?.qrSlug) out.qrSlug = md.qrSlug;
+  if (md?.role) out.role = md.role;
+  if (md?.reason) out.reason = md.reason;
+  if (md?.notes) out.notes = md.notes;
+  if (md?.fromStatus) out.fromStatus = md.fromStatus;
+  if (md?.toStatus) out.toStatus = md.toStatus;
+
+  return Object.keys(out).length ? out : null;
+}
+
 // ---------------------------------------------------------------------------
 
 export const services: Services = {
@@ -301,7 +368,7 @@ export const services: Services = {
         }
 
         await tx.equipment.update({
-          where: { id },
+          where: { id }, // ← fixed: use id, not equipmentId
           data: { status: EquipmentStatus.AVAILABLE, retiredAt: null },
         });
 
@@ -1009,6 +1076,204 @@ export const services: Services = {
         prisma.auditEvent.count({ where }),
       ]);
       return { items, total };
+    },
+  },
+
+  admin: {
+    async listUserActivity({
+      q,
+      limitPerUser,
+    }: {
+      q?: string;
+      limitPerUser: number;
+    }) {
+      const qStr = (q ?? "").trim();
+      const qLower = qStr.toLowerCase();
+
+      // --- 1) Find candidate users by identity (name/email) ---
+      const usersByIdentity = await prisma.user.findMany({
+        where: qStr
+          ? {
+              OR: [
+                { displayName: { contains: qStr, mode: "insensitive" } },
+                { email: { contains: qStr, mode: "insensitive" } },
+              ],
+            }
+          : {},
+        orderBy: [{ createdAt: "asc" }],
+        select: { id: true, displayName: true, email: true },
+      });
+
+      const userIdSet = new Set<string>(usersByIdentity.map((u) => u.id));
+
+      // --- 2) If searching, expand candidates by matching EVENTS too ---
+      // 2a) Equipment hits by name/description
+      let equipmentHits: { id: string }[] = [];
+      if (qStr) {
+        equipmentHits = await prisma.equipment.findMany({
+          where: {
+            OR: [
+              { shortDesc: { contains: qStr, mode: "insensitive" } },
+              { longDesc: { contains: qStr, mode: "insensitive" } },
+            ],
+          },
+          select: { id: true },
+        });
+      }
+      const equipmentHitIds: string[] = equipmentHits.map((e) => e.id);
+
+      // 2b) Actor userIds for events matching action (enum) or equipment
+      if (qStr) {
+        // Map text → matching enum values (case-insensitive)
+        const matchedActions = (
+          Object.values(AuditAction) as AuditAction[]
+        ).filter((a) => a.toLowerCase().includes(qLower));
+
+        const evAction =
+          matchedActions.length > 0
+            ? await prisma.auditEvent.findMany({
+                where: {
+                  actorUserId: { not: null },
+                  action: { in: matchedActions },
+                },
+                select: { actorUserId: true },
+              })
+            : [];
+
+        const evEquip =
+          equipmentHitIds.length > 0
+            ? await prisma.auditEvent.findMany({
+                where: {
+                  actorUserId: { not: null },
+                  equipmentId: { in: equipmentHitIds },
+                },
+                select: { actorUserId: true },
+              })
+            : [];
+
+        for (const r of [...evAction, ...evEquip]) {
+          if (r.actorUserId) userIdSet.add(r.actorUserId);
+        }
+      }
+
+      const userIds: string[] = Array.from(userIdSet);
+      if (userIds.length === 0) return [];
+
+      // Re-fetch full user rows (union of identity + event-based)
+      const users = await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, displayName: true, email: true },
+      });
+
+      // --- 3) Fetch events for those users (desc by time) ---
+      const events = await prisma.auditEvent.findMany({
+        where: { actorUserId: { in: userIds } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          actorUserId: true,
+          createdAt: true,
+          action: true,
+          metadata: true,
+          equipmentId: true,
+        },
+      });
+
+      // --- 4) Join equipment once for all referenced ids ---
+      const eqIds: string[] = Array.from(
+        new Set(
+          events
+            .map((e) => e.equipmentId)
+            .filter(
+              (id): id is string => typeof id === "string" && id.length > 0
+            )
+        )
+      );
+      const eqRows = eqIds.length
+        ? await prisma.equipment.findMany({
+            where: { id: { in: eqIds } },
+            select: { id: true, shortDesc: true, longDesc: true },
+          })
+        : [];
+      const eqMap = Object.fromEntries(
+        eqRows.map((e) => [
+          e.id,
+          { shortDesc: e.shortDesc, longDesc: e.longDesc },
+        ])
+      );
+
+      // Helper: does an event match q (by action, equipment names, or metadata text)?
+      const eventMatchesQuery = (ev: {
+        action: string;
+        metadata: any;
+        equipmentId: string | null;
+      }) => {
+        if (!qStr) return true;
+        // action
+        if (String(ev.action).toLowerCase().includes(qLower)) return true;
+        // equipment name/desc via join
+        if (ev.equipmentId) {
+          const eq = eqMap[ev.equipmentId];
+          if (
+            (eq?.shortDesc && eq.shortDesc.toLowerCase().includes(qLower)) ||
+            (eq?.longDesc && (eq.longDesc ?? "").toLowerCase().includes(qLower))
+          ) {
+            return true;
+          }
+        }
+        // metadata (best-effort text search)
+        try {
+          const s = JSON.stringify(ev.metadata ?? {}).toLowerCase();
+          if (s.includes(qLower)) return true;
+        } catch {}
+        return false;
+      };
+
+      // --- 5) Bucket events per user (apply query filter + per-user limit) ---
+      const byUser: Record<
+        string,
+        { events: typeof events; lastActivityAt: Date | null }
+      > = {};
+      for (const u of users)
+        byUser[u.id] = { events: [], lastActivityAt: null };
+
+      for (const ev of events) {
+        const uid = ev.actorUserId!;
+        const bucket = byUser[uid];
+        if (!bucket) continue;
+
+        // filter by event query when q is set
+        if (!eventMatchesQuery(ev)) continue;
+
+        if (bucket.events.length < limitPerUser) bucket.events.push(ev);
+        if (!bucket.lastActivityAt) bucket.lastActivityAt = ev.createdAt;
+      }
+
+      // --- 6) Map to API shape (NEWEST FIRST per user) ---
+      return users.map((u) => {
+        const bucket = byUser[u.id] ?? { events: [], lastActivityAt: null };
+        const evs = bucket.events; // already newest-first from DB
+
+        return {
+          userId: u.id,
+          displayName: u.displayName ?? null,
+          email: u.email ?? null,
+          lastActivityAt: bucket.lastActivityAt,
+          count: evs.length,
+          events: evs.map((e) => ({
+            id: e.id,
+            at: e.createdAt,
+            type: e.action, // expose action as 'type' for the UI
+            summary: summarizeEvent(e.action, e.metadata),
+            details: buildEventDetails(
+              e.action,
+              e.metadata,
+              e.equipmentId,
+              eqMap
+            ),
+          })),
+        };
+      });
     },
   },
 };
