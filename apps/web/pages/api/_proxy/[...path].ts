@@ -1,5 +1,9 @@
-// pages/api/_proxy/[...path].ts
 import type { NextApiRequest, NextApiResponse } from "next";
+
+// Runs on the Next.js server.
+// Proxies all network requests.
+// Needed because the Vercel preview URLs have protection and need a special API_BYPASS_SECRET token to access.
+// Web app (Browser) ->(bypass token)-> Next.js Proxy (Server) ->(bypass token)-> API (separate project)
 
 export const config = { api: { bodyParser: false } };
 
@@ -65,15 +69,11 @@ async function fetchFollowWithCookie(
   for (let i = 0; i <= maxHops; i++) {
     applyJarToHeaders();
 
-    console.log("HERE1.1 currentUrl", currentUrl);
-
     const res = await fetch(currentUrl, {
       ...init,
       headers,
       redirect: "manual",
     });
-
-    console.log("HERE1.2 res.status", res.status);
 
     // If upstream wants to set cookies (e.g., _vercel_jwt), store them for next hop
     mergeSetCookie(res.headers.get("set-cookie"));
@@ -96,8 +96,6 @@ async function fetchFollowWithCookie(
 
   // Exceeded max hops: final manual fetch (returns the last 3xx)
   applyJarToHeaders();
-
-  console.log("HERE2 currentUrl", currentUrl);
 
   return fetch(currentUrl, { ...init, headers, redirect: "manual" });
 }
@@ -163,11 +161,6 @@ export default async function handler(
     ...init,
     headers: fwd,
   });
-
-  if (req.url?.includes("/users")) {
-    console.log("HERE upstream.status", upstream.status);
-    console.log("HERE upstream.status toString()", upstream.toString());
-  }
 
   // optional debug so you can see when redirects happened
   res.setHeader("x-proxy-final-url", upstream.url);
