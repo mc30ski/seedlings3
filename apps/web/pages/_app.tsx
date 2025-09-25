@@ -5,153 +5,49 @@ import {
   SignedIn,
   SignedOut,
   SignIn,
-  UserButton,
   useAuth,
 } from "@clerk/clerk-react";
-import { useEffect, useState, useCallback } from "react";
-import {
-  ChakraProvider,
-  defaultSystem,
-  HStack,
-  Button,
-  Box,
-} from "@chakra-ui/react";
-import { FiAlertCircle } from "react-icons/fi";
-import { setAuthTokenFetcher, apiGet } from "../src/lib/api";
+import { useEffect } from "react";
+import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
 import Head from "next/head";
-import { useRouter } from "next/router";
+import { setAuthTokenFetcher } from "../src/lib/api";
+import PWAPullToRefresh from "../src/components/PWAPullToRefresh";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
-type Me = {
-  id: string;
-  isApproved: boolean;
-  roles: ("ADMIN" | "WORKER")[];
-  email?: string | null;
-  displayName?: string | null;
-};
-
 function AppInner({ Component, pageProps }: AppProps) {
   const { getToken } = useAuth();
-  const router = useRouter();
 
   // Wire Clerk token into API client
   useEffect(() => {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Approvals badge state
-  const [me, setMe] = useState<Me | null>(null);
-  const [pending, setPending] = useState<number | null>(null);
-  const isAdmin = !!me?.isApproved && (me?.roles || []).includes("ADMIN");
-
-  const loadMe = useCallback(async () => {
-    try {
-      const m = await apiGet<Me>("/api/me");
-      setMe(m);
-    } catch {
-      setMe(null);
-    }
-  }, []);
-
-  const loadPending = useCallback(async () => {
-    if (!isAdmin) {
-      setPending(null);
-      return;
-    }
-    try {
-      const res = await apiGet<{ pending: number }>(
-        "/api/admin/users/pendingCount"
-      );
-      setPending(res?.pending ?? 0);
-    } catch {
-      setPending(0);
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    void loadMe();
-  }, [loadMe]);
-  useEffect(() => {
-    void loadPending();
-  }, [loadPending, me]);
-  useEffect(() => {
-    const onUsersChanged = () => void loadPending();
-    window.addEventListener("seedlings3:users-changed", onUsersChanged);
-    return () =>
-      window.removeEventListener("seedlings3:users-changed", onUsersChanged);
-  }, [loadPending]);
-
-  // Place controls just below iOS status bar (0px on desktop browsers)
-  const TOP_OFFSET = "calc(env(safe-area-inset-top, 0px) + 6px)";
+  // Push content below iOS status area in standalone mode,
+  // but only a tiny 8px cushion on normal browsers.
+  const TOP_SAFE_PAD = "calc(env(safe-area-inset-top, 0px) + 8px)";
 
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* Overlayed controls only (no extra brand row here) */}
-      <Box
-        position="fixed"
-        top={TOP_OFFSET}
-        right="12px"
-        zIndex={1000}
-        // Let clicks pass through except on the buttons themselves
-        pointerEvents="none"
-      >
-        <HStack gap="8px" pointerEvents="auto">
-          {isAdmin && (pending ?? 0) > 0 ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                router.push({
-                  pathname: "/",
-                  query: { adminTab: "users", status: "pending" },
-                })
-              }
-              title="Pending approvals"
-              position="relative"
-            >
-              <HStack gap="6px">
-                <FiAlertCircle />
-                <span>Approvals</span>
-                <Box
-                  as="span"
-                  position="absolute"
-                  top="-2px"
-                  right="-2px"
-                  fontSize="11px"
-                  minWidth="18px"
-                  height="18px"
-                  lineHeight="18px"
-                  textAlign="center"
-                  borderRadius="9999px"
-                  background="tomato"
-                  color="white"
-                  px="1"
-                >
-                  {pending}
-                </Box>
-              </HStack>
-            </Button>
-          ) : null}
-          <UserButton />
-        </HStack>
+      {/* Apply safe-area padding to the whole app so the brand row isn't under the Dynamic Island */}
+      <Box pt={TOP_SAFE_PAD}>
+        {/* Custom pull-to-refresh only when installed as a Home-Screen app */}
+        <PWAPullToRefresh />
+        <SignedIn>
+          <Component {...pageProps} />
+        </SignedIn>
+
+        <SignedOut>
+          <div
+            style={{ display: "flex", justifyContent: "center", marginTop: 40 }}
+          >
+            <SignIn routing="hash" />
+          </div>
+        </SignedOut>
       </Box>
-
-      {/* Main app content (your existing page header with Seedlings icon/text remains) */}
-      <SignedIn>
-        <Component {...pageProps} />
-      </SignedIn>
-
-      <SignedOut>
-        <div
-          style={{ display: "flex", justifyContent: "center", marginTop: 40 }}
-        >
-          <SignIn routing="hash" />
-        </div>
-      </SignedOut>
     </ChakraProvider>
   );
 }
