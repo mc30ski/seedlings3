@@ -1,3 +1,4 @@
+// apps/web/src/types/services.ts
 import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
 
 export type Role = "ADMIN" | "WORKER";
@@ -26,6 +27,44 @@ export type AdminUserHolding = {
 };
 
 export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
+
+/** ------------------ Admin → Activity (types) ------------------ **/
+
+/** Query params for GET /api/admin/activity */
+export type AdminListUserActivityParams = {
+  /** Optional free-text search (matches displayName/email). */
+  q?: string;
+  /**
+   * Limit of events to return per user.
+   * Server defaults to 25 and caps at 100 if omitted/out of range.
+   */
+  limitPerUser?: number;
+};
+
+/** A single activity event associated with a user. */
+export type AdminActivityEvent = {
+  /** Event id (from audit log). */
+  id: string;
+  /** Timestamp of the event. */
+  at: Date;
+  /** Backend event type (e.g., "RESERVE", "CHECKOUT", "RETURN", "SIGN_IN"). */
+  type: string;
+  /** Human-readable summary generated on the server (optional). */
+  summary?: string;
+};
+
+/** Aggregated activity for a single user. */
+export type AdminActivityUser = {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  /** Timestamp of the most recent event for this user (or null). */
+  lastActivityAt: Date | null;
+  /** Number of events included in `events` for this response. */
+  count: number;
+  /** Chronological list of events (oldest → newest). */
+  events: AdminActivityEvent[];
+};
 
 export type Services = {
   equipment: {
@@ -129,5 +168,17 @@ export type Services = {
       page?: number;
       pageSize?: number;
     }): Promise<{ items: AuditEvent[]; total: number }>;
+  };
+
+  /** Admin-only helpers */
+  admin: {
+    /**
+     * List recent activity per user (schema-safe; uses existing audit data).
+     * - GET /api/admin/activity?q={q}&limitPerUser={n}
+     * - Returns one entry per user that matches the query.
+     */
+    listUserActivity(
+      params?: AdminListUserActivityParams
+    ): Promise<AdminActivityUser[]>;
   };
 };
