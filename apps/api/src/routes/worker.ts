@@ -8,6 +8,10 @@ export default async function workerRoutes(app: FastifyInstance) {
       app.requireRole(req, reply, RoleVal.WORKER),
   };
 
+  app.get("/equipment/all", workerGuard, async () => {
+    return services.equipment.listAllAdmin();
+  });
+
   // Workers can see all non-retired (includes MAINTENANCE / CHECKED_OUT)
   app.get("/equipment", workerGuard, async () => {
     return services.equipment.listForWorkers();
