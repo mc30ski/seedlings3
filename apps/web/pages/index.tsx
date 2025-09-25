@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
+import WorkerAll from "../src/components/WorkerAll";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
 import AdminUsers from "../src/components/AdminUsers";
@@ -139,18 +140,19 @@ export default function HomePage() {
                   <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
                   <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
                   <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
+                  <Tabs.Trigger value="all">All</Tabs.Trigger>
                 </Tabs.List>
-
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
-
                 <Tabs.Content value="mine">
                   <WorkerMyEquipment />
                 </Tabs.Content>
-
                 <Tabs.Content value="unavailable">
                   <WorkerUnavailable />
+                </Tabs.Content>
+                <Tabs.Content value="all">
+                  <WorkerAll />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
