@@ -10,6 +10,7 @@ import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
 import { useRouter } from "next/router";
+import AdminActivity from "../src/components/AdminActivity";
 
 type Me = {
   id: string;
@@ -186,6 +187,7 @@ export default function HomePage() {
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="users">Users</Tabs.Trigger>
+                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>{" "}
                   <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
                 </Tabs.List>
 
@@ -195,6 +197,10 @@ export default function HomePage() {
 
                 <Tabs.Content value="users">
                   <AdminUsers />
+                </Tabs.Content>
+
+                <Tabs.Content value="activity">
+                  <AdminActivity />
                 </Tabs.Content>
 
                 <Tabs.Content value="audit">

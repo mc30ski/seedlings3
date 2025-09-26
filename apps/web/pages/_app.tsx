@@ -7,8 +7,15 @@ import {
   SignIn,
   useAuth,
 } from "@clerk/clerk-react";
-import { useEffect, useRef } from "react";
-import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ChakraProvider,
+  defaultSystem,
+  Box,
+  HStack,
+  Spinner,
+  Text,
+} from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
 
@@ -17,11 +24,17 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
 }
 
-/** Lightweight pull-to-refresh that works in iOS standalone (and normal browsers) */
+/** Custom pull-to-refresh with a visible overlay, works in iOS standalone and normal browsers */
 function PullToRefresh() {
   const startY = useRef<number | null>(null);
   const pulling = useRef(false);
-  const threshold = 70; // px
+  const [offset, setOffset] = useState(0); // current pull distance in px
+  const [state, setState] = useState<
+    "idle" | "pulling" | "ready" | "refreshing"
+  >("idle");
+
+  const THRESHOLD = 70; // px
+  const MAX_PULL = 140; // px (cap for UI)
 
   useEffect(() => {
     const isTouch =
@@ -31,37 +44,52 @@ function PullToRefresh() {
     if (!isTouch) return;
 
     const onTouchStart = (e: TouchEvent) => {
-      // only when scrolled to top
-      if (window.scrollY > 0) return;
+      // Only begin when scrolled to the very top
+      if (window.scrollY > 0 || state === "refreshing") return;
       startY.current = e.touches[0].clientY;
       pulling.current = true;
+      setState("pulling");
+      setOffset(0);
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!pulling.current || startY.current == null) return;
+      if (!pulling.current || startY.current == null || state === "refreshing")
+        return;
       const dy = e.touches[0].clientY - startY.current;
-      // Stop overscroll bounce while pulling
+
+      // If pulling down at the top, prevent the native rubber-band and show our overlay
       if (dy > 0 && window.scrollY <= 0) {
-        e.preventDefault();
+        e.preventDefault(); // needs passive: false on listener
+        const clamped = Math.min(dy, MAX_PULL);
+        setOffset(clamped);
+        setState(clamped >= THRESHOLD ? "ready" : "pulling");
       }
     };
 
-    const onTouchEnd = (e: TouchEvent) => {
-      if (!pulling.current || startY.current == null) return;
-      const dy = (e.changedTouches[0]?.clientY ?? 0) - startY.current;
-      startY.current = null;
-      pulling.current = false;
-      if (dy > threshold) {
-        // hard refresh (most reliable for iOS standalone)
-        try {
-          // cache-bust just in case
-          const url = new URL(window.location.href);
-          url.searchParams.set("_ts", String(Date.now()));
-          window.location.replace(url.toString());
-        } catch {
-          window.location.reload();
-        }
+    const triggerRefresh = () => {
+      setState("refreshing");
+      // Keep overlay visible; perform a hard refresh (more reliable in iOS standalone)
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("_ts", String(Date.now()));
+        window.location.replace(url.toString());
+      } catch {
+        window.location.reload();
       }
+    };
+
+    const onTouchEnd = () => {
+      if (!pulling.current) return;
+      pulling.current = false;
+
+      if (state === "ready") {
+        triggerRefresh();
+      } else {
+        // Snap overlay back up
+        setState("idle");
+        setOffset(0);
+      }
+      startY.current = null;
     };
 
     window.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -73,9 +101,51 @@ function PullToRefresh() {
       window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("touchend", onTouchEnd);
     };
-  }, []);
+  }, [state]);
 
-  return null;
+  // Overlay UI
+  // Visual height of the banner (not counting safe-area padding)
+  const PTR_HEIGHT = 56; // px
+  // Translate from above the viewport: -PTR_HEIGHT -> 0 as you pull
+  const translateY = Math.max(0, offset) - PTR_HEIGHT;
+
+  const label =
+    state === "refreshing"
+      ? "Refreshing…"
+      : state === "ready"
+        ? "Release to refresh"
+        : "Pull to refresh";
+
+  return (
+    <Box
+      position="fixed"
+      top={0}
+      left={0}
+      right={0}
+      height={`${PTR_HEIGHT}px`}
+      pt="env(safe-area-inset-top, 0px)"
+      zIndex="modal"
+      pointerEvents="none"
+      bgGradient="linear(to-b, var(--chakra-colors-green-50), transparent)"
+      borderBottomWidth="1px"
+      borderColor="green.100"
+      style={{
+        transform: `translateY(${translateY}px)`,
+        transition:
+          pulling.current || state === "pulling"
+            ? "none"
+            : "transform 150ms ease",
+        willChange: "transform",
+      }}
+    >
+      <HStack h="full" align="center" justify="center" gap="2">
+        {state === "refreshing" ? <Spinner size="sm" /> : null}
+        <Text fontSize="sm" color="gray.700">
+          {label}
+        </Text>
+      </HStack>
+    </Box>
+  );
 }
 
 function AppInner({ Component, pageProps }: AppProps) {
@@ -92,23 +162,21 @@ function AppInner({ Component, pageProps }: AppProps) {
 
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* Global CSS nudge for the brand wash (used by header on index.tsx) */}
+      {/* Global CSS & small brand color nudge */}
       <style jsx global>{`
         :root {
-          /* Slightly softer green-50 if you use it for the header wash */
-          --chakra-colors-green-50: #eaf7ee;
+          --chakra-colors-green-50: #eaf7ee; /* subtle Seedlings wash */
         }
-        /* Prevent body overscroll glow on iOS */
         html,
         body {
-          overscroll-behavior-y: contain;
+          overscroll-behavior-y: contain; /* prevent native glow; we handle pull */
           background-color: var(--chakra-colors-bg);
         }
       `}</style>
 
-      {/* Keep safe-area padding so the brand row isn't under the Dynamic Island */}
+      {/* Safe-area padding so brand/header isn't under the Dynamic Island */}
       <Box pt={TOP_SAFE_PAD}>
-        {/* Custom pull-to-refresh preserved */}
+        {/* Custom pull-to-refresh with visible overlay */}
         <PullToRefresh />
 
         <SignedIn>
