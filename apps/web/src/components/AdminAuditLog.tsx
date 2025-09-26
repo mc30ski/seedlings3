@@ -224,8 +224,8 @@ export default function AdminAuditLog() {
 
   // widths / colspans
   const truncW = useBreakpointValue({ base: "160px", md: "260px" }) ?? "260px";
-  // 3 columns on mobile (Time, Action, Details) and 4 on md+ (Time, Action, Actor, Details)
-  const colSpan = useBreakpointValue({ base: 3, md: 4 }) ?? 4;
+  // Now: 4 columns on mobile (Time, Action, Details, Actor) and also 4 on md+
+  const colSpan = 4;
 
   // Text for the Details column (equipment OR role)
   function detailsCellText(row: AuditItem): string {
@@ -258,11 +258,11 @@ export default function AdminAuditLog() {
     return extras ? String(extras) : "—";
   }
 
-  // handler to auto-apply page size change (no Apply click required)
+  // handler to auto-apply page size change (footer selector)
   const onChangePageSize = (n: number) => {
     setPageSize(n);
     setPage(1);
-    void load(true, 1, n); // reload immediately with new page size
+    void load(true, 1, n);
   };
 
   return (
@@ -271,7 +271,7 @@ export default function AdminAuditLog() {
         Audit
       </Heading>
 
-      {/* Filters (kept the same, minus the page-size selector) */}
+      {/* Filters */}
       <Stack
         direction={{ base: "column", md: "row" }}
         gap="3"
@@ -321,16 +321,15 @@ export default function AdminAuditLog() {
         <Table.Root
           size="sm"
           variant="outline"
-          minW={{ base: "640px", md: "unset" }}
+          minW={{ base: "720px", md: "unset" }}
         >
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Time</Table.ColumnHeader>
               <Table.ColumnHeader>Action</Table.ColumnHeader>
-              <Table.ColumnHeader display={{ base: "none", md: "table-cell" }}>
-                Actor
-              </Table.ColumnHeader>
               <Table.ColumnHeader>Details</Table.ColumnHeader>
+              {/* NEW trailing Actor column */}
+              <Table.ColumnHeader>Actor</Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
 
@@ -359,20 +358,14 @@ export default function AdminAuditLog() {
                       </Badge>
                     </Table.Cell>
 
-                    {/* ACTOR: show only email (no actorUserId badge) */}
-                    <Table.Cell display={{ base: "none", md: "table-cell" }}>
-                      <HStack
-                        gap="2"
-                        wrap="wrap"
-                        maxW={{ base: "160px", md: "360px" }}
-                      >
-                        <Trunc text={actorEmail} maxW={truncW} />
-                      </HStack>
-                    </Table.Cell>
-
                     {/* DETAILS column (equipment OR role summary) */}
                     <Table.Cell>
                       <Trunc text={details} maxW={truncW} />
+                    </Table.Cell>
+
+                    {/* NEW trailing Actor column (email only) */}
+                    <Table.Cell>
+                      <Trunc text={actorEmail} maxW={truncW} />
                     </Table.Cell>
                   </Table.Row>
 
@@ -420,7 +413,7 @@ export default function AdminAuditLog() {
         </Table.Root>
       </Box>
 
-      {/* Footer: items-per-page moved below table, applied immediately on change */}
+      {/* Footer: items-per-page (auto-applies on change) + load more */}
       <Stack
         direction={{ base: "column", md: "row" }}
         gap="3"

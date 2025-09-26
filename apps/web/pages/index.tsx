@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
-import WorkerAll from "../src/components/WorkerAll";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
 import AdminUsers from "../src/components/AdminUsers";
@@ -11,7 +10,9 @@ import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
 import { useRouter } from "next/router";
+import { UserButton } from "@clerk/clerk-react";
 import AdminActivity from "../src/components/AdminActivity";
+import WorkerAllEquipment from "../src/components/WorkerAllEquipment";
 
 type Me = {
   id: string;
@@ -59,7 +60,7 @@ export default function HomePage() {
 
   // Control inner Admin tab so we can deep-link to Users
   const [adminInnerTab, setAdminInnerTab] = useState<
-    "equipment" | "users" | "audit"
+    "equipment" | "users" | "activity" | "audit"
   >("equipment");
 
   // Apply deep-link (?adminTab=users&status=pending) when ready
@@ -86,7 +87,6 @@ export default function HomePage() {
           ? (qStatusRaw as "pending" | "approved" | "all")
           : undefined;
 
-      // Tell AdminUsers to set its Status filter (uses your existing listener)
       requestAnimationFrame(() => {
         try {
           window.dispatchEvent(
@@ -99,29 +99,132 @@ export default function HomePage() {
     }
   }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
 
+  // Header sizing baseline
+  const BRAND_ICON_H = 26; // px
+
+  // De-dup the Clerk button robustly: hide OUR header button if ANY other Clerk user button exists
+  const headerBtnRef = useRef<HTMLDivElement | null>(null);
+  const [showLocalUserBtn, setShowLocalUserBtn] = useState(false); // start hidden to avoid flash
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+
+    const isInsideHeader = (el: Element | null) =>
+      !!(el && headerBtnRef.current && headerBtnRef.current.contains(el));
+
+    const hasExternalClerkButton = () => {
+      const nodes = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.cl-userButton-root, [class*="cl-userButton"], [data-cl-component="UserButton"]'
+        )
+      );
+      // true if any node exists that is NOT inside our header container
+      return nodes.some((n) => !isInsideHeader(n));
+    };
+
+    const raf = requestAnimationFrame(() => {
+      setShowLocalUserBtn(!hasExternalClerkButton());
+    });
+
+    // Observe DOM changes (Clerk mounts asynchronously)
+    const obs = new MutationObserver(() => {
+      const external = hasExternalClerkButton();
+      setShowLocalUserBtn(!external);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      obs.disconnect();
+    };
+  }, []);
+
   return (
     <Container maxW="5xl" py={8}>
-      {/* Header: brand on the left, approvals bell on the right */}
-      <HStack justify="space-between" align="center" mb={2}>
-        <BrandLabel size={26} showText />
-      </HStack>
+      {/* Brand header with subtle Seedlings green wash */}
+      <Box
+        as="header"
+        bg="green.50"
+        bgGradient="linear(to-b, var(--chakra-colors-green-50), transparent)"
+        borderBottomWidth="1px"
+        borderColor="green.100"
+        px={{ base: 3, md: 4 }}
+        py={{ base: 2, md: 3 }}
+        borderRadius="md"
+        mb={2}
+      >
+        {/* GRID: left brand, right Clerk. This forces right flush + exact vertical centering */}
+        <Box
+          display="grid"
+          gridTemplateColumns="1fr auto"
+          alignItems="center"
+          columnGap={3}
+          minH={`${BRAND_ICON_H}px`}
+        >
+          {/* Left: brand (keep your +1px nudge for optical match) */}
+          <Box
+            display="flex"
+            alignItems="center"
+            lineHeight="0"
+            style={{ transform: "translateY(1px)" }}
+          >
+            <BrandLabel size={BRAND_ICON_H} showText />
+          </Box>
+
+          {/* Right: Clerk pinned to far right and centered */}
+          <Box
+            ref={headerBtnRef}
+            justifySelf="end"
+            alignSelf="center"
+            display="grid"
+            placeItems="center"
+            lineHeight="0"
+            minH={`${BRAND_ICON_H}px`}
+          >
+            {mounted && showLocalUserBtn ? (
+              <UserButton
+                appearance={{
+                  elements: {
+                    rootBox: { display: "flex", alignItems: "center" },
+                    userButtonBox: { display: "flex", alignItems: "center" },
+                    userButtonTrigger: {
+                      display: "flex",
+                      alignItems: "center",
+                      padding: 0,
+                    },
+                    userButtonAvatarBox: {
+                      display: "flex",
+                      alignItems: "center",
+                    },
+                  },
+                }}
+              />
+            ) : null}
+          </Box>
+        </Box>
+      </Box>
+
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">
           <Spinner size="sm" />
           <Text>Loading…</Text>
         </Box>
       )}
+
       {!meLoading && me && !me.isApproved && (
         <Text color="red.500" mb={3}>
           Awaiting admin approval…
         </Text>
       )}
+
       {!meLoading && me?.isApproved && !hasAnyRole && (
         <Text color="orange.500" mb={3}>
           You have been approved, but don&apos;t have a role yet. Please contact
           your Administrator.
         </Text>
       )}
+
       {!meLoading && me?.isApproved && hasAnyRole && (
         <Tabs.Root
           value={topTab}
@@ -143,17 +246,21 @@ export default function HomePage() {
                   <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
                   <Tabs.Trigger value="all">All</Tabs.Trigger>
                 </Tabs.List>
+
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="mine">
                   <WorkerMyEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="unavailable">
                   <WorkerUnavailable />
                 </Tabs.Content>
+
                 <Tabs.Content value="all">
-                  <WorkerAll />
+                  <WorkerAllEquipment />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
@@ -164,7 +271,9 @@ export default function HomePage() {
               <Tabs.Root
                 value={adminInnerTab}
                 onValueChange={(d) =>
-                  setAdminInnerTab(d.value as "equipment" | "users" | "audit")
+                  setAdminInnerTab(
+                    d.value as "equipment" | "users" | "activity" | "audit"
+                  )
                 }
                 lazyMount
                 unmountOnExit
@@ -175,15 +284,19 @@ export default function HomePage() {
                   <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
+
                 <Tabs.Content value="equipment">
-                  <AdminEquipment key={`admin-${topTab}`} />
+                  <AdminEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="users">
                   <AdminUsers />
                 </Tabs.Content>
+
                 <Tabs.Content value="activity">
                   <AdminActivity />
                 </Tabs.Content>
+
                 <Tabs.Content value="audit">
                   <AdminAuditLog />
                 </Tabs.Content>
