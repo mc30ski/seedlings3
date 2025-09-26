@@ -7,15 +7,75 @@ import {
   SignIn,
   useAuth,
 } from "@clerk/clerk-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
-import PWAPullToRefresh from "../src/components/PWAPullToRefresh";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
+}
+
+/** Lightweight pull-to-refresh that works in iOS standalone (and normal browsers) */
+function PullToRefresh() {
+  const startY = useRef<number | null>(null);
+  const pulling = useRef(false);
+  const threshold = 70; // px
+
+  useEffect(() => {
+    const isTouch =
+      typeof window !== "undefined" &&
+      ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+
+    if (!isTouch) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      // only when scrolled to top
+      if (window.scrollY > 0) return;
+      startY.current = e.touches[0].clientY;
+      pulling.current = true;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pulling.current || startY.current == null) return;
+      const dy = e.touches[0].clientY - startY.current;
+      // Stop overscroll bounce while pulling
+      if (dy > 0 && window.scrollY <= 0) {
+        e.preventDefault();
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!pulling.current || startY.current == null) return;
+      const dy = (e.changedTouches[0]?.clientY ?? 0) - startY.current;
+      startY.current = null;
+      pulling.current = false;
+      if (dy > threshold) {
+        // hard refresh (most reliable for iOS standalone)
+        try {
+          // cache-bust just in case
+          const url = new URL(window.location.href);
+          url.searchParams.set("_ts", String(Date.now()));
+          window.location.replace(url.toString());
+        } catch {
+          window.location.reload();
+        }
+      }
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, []);
+
+  return null;
 }
 
 function AppInner({ Component, pageProps }: AppProps) {
@@ -26,38 +86,30 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Detect standalone (Home Screen) display mode
-  const [standalone, setStandalone] = useState(false);
-  useEffect(() => {
-    const detect = () =>
-      (window.navigator as any).standalone === true ||
-      window.matchMedia?.("(display-mode: standalone)")?.matches === true;
-    setStandalone(detect());
-
-    // Re-check on visibility/resizes (rare but cheap)
-    const onChange = () => setStandalone(detect());
-    window.addEventListener("visibilitychange", onChange);
-    window.addEventListener("resize", onChange);
-    return () => {
-      window.removeEventListener("visibilitychange", onChange);
-      window.removeEventListener("resize", onChange);
-    };
-  }, []);
-
-  // Minimize top gap:
-  // - In standalone: exactly the safe-area inset (tight, clears Dynamic Island).
-  // - In browsers: tiny 2px breathing room.
-  const TOP_PAD = useMemo(
-    () => (standalone ? "env(safe-area-inset-top, 0px)" : "2px"),
-    [standalone]
-  );
+  // Push content below iOS status area in standalone mode,
+  // but only a tiny 8px cushion on normal browsers.
+  const TOP_SAFE_PAD = "calc(env(safe-area-inset-top, 0px) + 8px)";
 
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
-      <Box pt={TOP_PAD}>
-        {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}
-        <PWAPullToRefresh />
+      {/* Global CSS nudge for the brand wash (used by header on index.tsx) */}
+      <style jsx global>{`
+        :root {
+          /* Slightly softer green-50 if you use it for the header wash */
+          --chakra-colors-green-50: #eaf7ee;
+        }
+        /* Prevent body overscroll glow on iOS */
+        html,
+        body {
+          overscroll-behavior-y: contain;
+          background-color: var(--chakra-colors-bg);
+        }
+      `}</style>
+
+      {/* Keep safe-area padding so the brand row isn't under the Dynamic Island */}
+      <Box pt={TOP_SAFE_PAD}>
+        {/* Custom pull-to-refresh preserved */}
+        <PullToRefresh />
 
         <SignedIn>
           <Component {...pageProps} />

@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
 import WorkerEquipment from "../src/components/WorkerEquipment";
 import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
-import WorkerAll from "../src/components/WorkerAll";
 import AdminEquipment from "../src/components/AdminEquipment";
 import AdminAuditLog from "../src/components/AdminAuditLog";
 import AdminUsers from "../src/components/AdminUsers";
@@ -11,7 +10,6 @@ import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
 import { useRouter } from "next/router";
-import AdminActivity from "../src/components/AdminActivity";
 
 type Me = {
   id: string;
@@ -101,27 +99,44 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      {/* Header: brand on the left, approvals bell on the right */}
-      <HStack justify="space-between" align="center" mb={2}>
-        <BrandLabel size={26} showText />
-      </HStack>
+      {/* Brand header with subtle Seedlings green wash */}
+      <Box
+        as="header"
+        bg="green.50"
+        bgGradient="linear(to-b, var(--chakra-colors-green-50), transparent)"
+        borderBottomWidth="1px"
+        borderColor="green.100"
+        px={{ base: 3, md: 4 }}
+        py={{ base: 2, md: 3 }}
+        borderRadius="md"
+        mb={2}
+      >
+        <HStack justify="space-between" align="center">
+          <BrandLabel size={26} showText />
+          {/* If you render a user/menu control on this page, place it here to align with BrandLabel */}
+        </HStack>
+      </Box>
+
       {meLoading && (
         <Box mb={4} display="flex" alignItems="center" gap="2">
           <Spinner size="sm" />
           <Text>Loading…</Text>
         </Box>
       )}
+
       {!meLoading && me && !me.isApproved && (
         <Text color="red.500" mb={3}>
           Awaiting admin approval…
         </Text>
       )}
+
       {!meLoading && me?.isApproved && !hasAnyRole && (
         <Text color="orange.500" mb={3}>
           You have been approved, but don&apos;t have a role yet. Please contact
           your Administrator.
         </Text>
       )}
+
       {!meLoading && me?.isApproved && hasAnyRole && (
         <Tabs.Root
           value={topTab}
@@ -141,19 +156,18 @@ export default function HomePage() {
                   <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
                   <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
                   <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
-                  <Tabs.Trigger value="all">All</Tabs.Trigger>
                 </Tabs.List>
+
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="mine">
                   <WorkerMyEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="unavailable">
                   <WorkerUnavailable />
-                </Tabs.Content>
-                <Tabs.Content value="all">
-                  <WorkerAll />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
@@ -172,18 +186,17 @@ export default function HomePage() {
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="users">Users</Tabs.Trigger>
-                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
-                  <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
+                  <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
                 </Tabs.List>
+
                 <Tabs.Content value="equipment">
-                  <AdminEquipment key={`admin-${topTab}`} />
+                  <AdminEquipment />
                 </Tabs.Content>
+
                 <Tabs.Content value="users">
                   <AdminUsers />
                 </Tabs.Content>
-                <Tabs.Content value="activity">
-                  <AdminActivity />
-                </Tabs.Content>
+
                 <Tabs.Content value="audit">
                   <AdminAuditLog />
                 </Tabs.Content>
