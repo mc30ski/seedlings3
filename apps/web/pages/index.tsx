@@ -99,7 +99,7 @@ export default function HomePage() {
     }
   }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
 
-  // Keep brand icon and Clerk button heights aligned for perfect vertical centering
+  // Header sizing baseline
   const BRAND_ICON_H = 26; // px
 
   // De-dup the Clerk button robustly: hide OUR header button if ANY other Clerk user button exists
@@ -114,7 +114,6 @@ export default function HomePage() {
       !!(el && headerBtnRef.current && headerBtnRef.current.contains(el));
 
     const hasExternalClerkButton = () => {
-      // Look for a variety of possible Clerk classnames/attrs
       const nodes = Array.from(
         document.querySelectorAll<HTMLElement>(
           '.cl-userButton-root, [class*="cl-userButton"], [data-cl-component="UserButton"]'
@@ -124,7 +123,6 @@ export default function HomePage() {
       return nodes.some((n) => !isInsideHeader(n));
     };
 
-    // Initial check after paint
     const raf = requestAnimationFrame(() => {
       setShowLocalUserBtn(!hasExternalClerkButton());
     });
@@ -156,51 +154,55 @@ export default function HomePage() {
         borderRadius="md"
         mb={2}
       >
-        <HStack justify="space-between" align="center">
-          <BrandLabel size={BRAND_ICON_H} showText />
-
-          {/* Vertically center the Clerk UserButton to match BrandLabel, but avoid duplicates */}
+        {/* GRID: left brand, right Clerk. This forces right flush + exact vertical centering */}
+        <Box
+          display="grid"
+          gridTemplateColumns="1fr auto"
+          alignItems="center"
+          columnGap={3}
+          minH={`${BRAND_ICON_H}px`}
+        >
+          {/* Left: brand (keep your +1px nudge for optical match) */}
           <Box
-            ref={headerBtnRef}
             display="flex"
             alignItems="center"
-            justifyContent="center"
-            alignSelf="stretch" // NEW: stretch to header height
-            h="full" // NEW: fill cross-axis height
             lineHeight="0"
-            style={{ transform: "translateY(1px)" }} // NEW: tiny optical nudge
+            style={{ transform: "translateY(1px)" }}
+          >
+            <BrandLabel size={BRAND_ICON_H} showText />
+          </Box>
+
+          {/* Right: Clerk pinned to far right and centered */}
+          <Box
+            ref={headerBtnRef}
+            justifySelf="end"
+            alignSelf="center"
+            display="grid"
+            placeItems="center"
+            lineHeight="0"
+            minH={`${BRAND_ICON_H}px`}
           >
             {mounted && showLocalUserBtn ? (
               <UserButton
                 appearance={{
                   elements: {
-                    rootBox: {
-                      display: "flex",
-                      alignItems: "center",
-                      height: "100%",
-                    },
-                    userButtonBox: {
-                      display: "flex",
-                      alignItems: "center",
-                      height: "100%",
-                    },
+                    rootBox: { display: "flex", alignItems: "center" },
+                    userButtonBox: { display: "flex", alignItems: "center" },
                     userButtonTrigger: {
                       display: "flex",
                       alignItems: "center",
-                      height: "100%",
                       padding: 0,
                     },
                     userButtonAvatarBox: {
                       display: "flex",
                       alignItems: "center",
-                      height: "100%",
                     },
                   },
                 }}
               />
             ) : null}
           </Box>
-        </HStack>
+        </Box>
       </Box>
 
       {meLoading && (
