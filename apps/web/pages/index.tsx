@@ -10,7 +10,9 @@ import { apiGet } from "../src/lib/api";
 import WorkerUnavailable from "../src/components/WorkerUnavailable";
 import BrandLabel from "../src/components/BrandLabel";
 import { useRouter } from "next/router";
+import { UserButton } from "@clerk/clerk-react";
 import AdminActivity from "../src/components/AdminActivity";
+import WorkerAllEquipment from "../src/components/WorkerAllEquipment";
 
 type Me = {
   id: string;
@@ -58,7 +60,7 @@ export default function HomePage() {
 
   // Control inner Admin tab so we can deep-link to Users
   const [adminInnerTab, setAdminInnerTab] = useState<
-    "equipment" | "users" | "audit"
+    "equipment" | "users" | "activity" | "audit"
   >("equipment");
 
   // Apply deep-link (?adminTab=users&status=pending) when ready
@@ -85,7 +87,6 @@ export default function HomePage() {
           ? (qStatusRaw as "pending" | "approved" | "all")
           : undefined;
 
-      // Tell AdminUsers to set its Status filter (uses your existing listener)
       requestAnimationFrame(() => {
         try {
           window.dispatchEvent(
@@ -97,6 +98,49 @@ export default function HomePage() {
       });
     }
   }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
+
+  // Keep brand icon and Clerk button heights aligned for perfect vertical centering
+  const BRAND_ICON_H = 26; // px
+
+  // De-dup the Clerk button robustly: hide OUR header button if ANY other Clerk user button exists
+  const headerBtnRef = useRef<HTMLDivElement | null>(null);
+  const [showLocalUserBtn, setShowLocalUserBtn] = useState(false); // start hidden to avoid flash
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+
+    const isInsideHeader = (el: Element | null) =>
+      !!(el && headerBtnRef.current && headerBtnRef.current.contains(el));
+
+    const hasExternalClerkButton = () => {
+      // Look for a variety of possible Clerk classnames/attrs
+      const nodes = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.cl-userButton-root, [class*="cl-userButton"], [data-cl-component="UserButton"]'
+        )
+      );
+      // true if any node exists that is NOT inside our header container
+      return nodes.some((n) => !isInsideHeader(n));
+    };
+
+    // Initial check after paint
+    const raf = requestAnimationFrame(() => {
+      setShowLocalUserBtn(!hasExternalClerkButton());
+    });
+
+    // Observe DOM changes (Clerk mounts asynchronously)
+    const obs = new MutationObserver(() => {
+      const external = hasExternalClerkButton();
+      setShowLocalUserBtn(!external);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      obs.disconnect();
+    };
+  }, []);
 
   return (
     <Container maxW="5xl" py={8}>
@@ -113,8 +157,49 @@ export default function HomePage() {
         mb={2}
       >
         <HStack justify="space-between" align="center">
-          <BrandLabel size={26} showText />
-          {/* If you render a user/menu control on this page, place it here to align with BrandLabel */}
+          <BrandLabel size={BRAND_ICON_H} showText />
+
+          {/* Vertically center the Clerk UserButton to match BrandLabel, but avoid duplicates */}
+          <Box
+            ref={headerBtnRef}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            alignSelf="stretch" // NEW: stretch to header height
+            h="full" // NEW: fill cross-axis height
+            lineHeight="0"
+            style={{ transform: "translateY(1px)" }} // NEW: tiny optical nudge
+          >
+            {mounted && showLocalUserBtn ? (
+              <UserButton
+                appearance={{
+                  elements: {
+                    rootBox: {
+                      display: "flex",
+                      alignItems: "center",
+                      height: "100%",
+                    },
+                    userButtonBox: {
+                      display: "flex",
+                      alignItems: "center",
+                      height: "100%",
+                    },
+                    userButtonTrigger: {
+                      display: "flex",
+                      alignItems: "center",
+                      height: "100%",
+                      padding: 0,
+                    },
+                    userButtonAvatarBox: {
+                      display: "flex",
+                      alignItems: "center",
+                      height: "100%",
+                    },
+                  },
+                }}
+              />
+            ) : null}
+          </Box>
         </HStack>
       </Box>
 
@@ -157,6 +242,7 @@ export default function HomePage() {
                   <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
                   <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
                   <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
+                  <Tabs.Trigger value="all">All</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">
@@ -170,6 +256,10 @@ export default function HomePage() {
                 <Tabs.Content value="unavailable">
                   <WorkerUnavailable />
                 </Tabs.Content>
+
+                <Tabs.Content value="all">
+                  <WorkerAllEquipment />
+                </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
           )}
@@ -179,7 +269,9 @@ export default function HomePage() {
               <Tabs.Root
                 value={adminInnerTab}
                 onValueChange={(d) =>
-                  setAdminInnerTab(d.value as "equipment" | "users" | "audit")
+                  setAdminInnerTab(
+                    d.value as "equipment" | "users" | "activity" | "audit"
+                  )
                 }
                 lazyMount
                 unmountOnExit
@@ -187,8 +279,8 @@ export default function HomePage() {
                 <Tabs.List mb={4}>
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="users">Users</Tabs.Trigger>
-                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>{" "}
-                  <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
+                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
+                  <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="equipment">

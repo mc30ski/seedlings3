@@ -7,145 +7,15 @@ import {
   SignIn,
   useAuth,
 } from "@clerk/clerk-react";
-import { useEffect, useRef, useState } from "react";
-import {
-  ChakraProvider,
-  defaultSystem,
-  Box,
-  HStack,
-  Spinner,
-  Text,
-} from "@chakra-ui/react";
+import { useEffect, useMemo, useState } from "react";
+import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
+import PWAPullToRefresh from "../src/components/PWAPullToRefresh";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
   throw new Error("Missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
-}
-
-/** Custom pull-to-refresh with a visible overlay, works in iOS standalone and normal browsers */
-function PullToRefresh() {
-  const startY = useRef<number | null>(null);
-  const pulling = useRef(false);
-  const [offset, setOffset] = useState(0); // current pull distance in px
-  const [state, setState] = useState<
-    "idle" | "pulling" | "ready" | "refreshing"
-  >("idle");
-
-  const THRESHOLD = 70; // px
-  const MAX_PULL = 140; // px (cap for UI)
-
-  useEffect(() => {
-    const isTouch =
-      typeof window !== "undefined" &&
-      ("ontouchstart" in window || navigator.maxTouchPoints > 0);
-
-    if (!isTouch) return;
-
-    const onTouchStart = (e: TouchEvent) => {
-      // Only begin when scrolled to the very top
-      if (window.scrollY > 0 || state === "refreshing") return;
-      startY.current = e.touches[0].clientY;
-      pulling.current = true;
-      setState("pulling");
-      setOffset(0);
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (!pulling.current || startY.current == null || state === "refreshing")
-        return;
-      const dy = e.touches[0].clientY - startY.current;
-
-      // If pulling down at the top, prevent the native rubber-band and show our overlay
-      if (dy > 0 && window.scrollY <= 0) {
-        e.preventDefault(); // needs passive: false on listener
-        const clamped = Math.min(dy, MAX_PULL);
-        setOffset(clamped);
-        setState(clamped >= THRESHOLD ? "ready" : "pulling");
-      }
-    };
-
-    const triggerRefresh = () => {
-      setState("refreshing");
-      // Keep overlay visible; perform a hard refresh (more reliable in iOS standalone)
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set("_ts", String(Date.now()));
-        window.location.replace(url.toString());
-      } catch {
-        window.location.reload();
-      }
-    };
-
-    const onTouchEnd = () => {
-      if (!pulling.current) return;
-      pulling.current = false;
-
-      if (state === "ready") {
-        triggerRefresh();
-      } else {
-        // Snap overlay back up
-        setState("idle");
-        setOffset(0);
-      }
-      startY.current = null;
-    };
-
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: false });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-
-    return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
-    };
-  }, [state]);
-
-  // Overlay UI
-  // Visual height of the banner (not counting safe-area padding)
-  const PTR_HEIGHT = 56; // px
-  // Translate from above the viewport: -PTR_HEIGHT -> 0 as you pull
-  const translateY = Math.max(0, offset) - PTR_HEIGHT;
-
-  const label =
-    state === "refreshing"
-      ? "Refreshing…"
-      : state === "ready"
-        ? "Release to refresh"
-        : "Pull to refresh";
-
-  return (
-    <Box
-      position="fixed"
-      top={0}
-      left={0}
-      right={0}
-      height={`${PTR_HEIGHT}px`}
-      pt="env(safe-area-inset-top, 0px)"
-      zIndex="modal"
-      pointerEvents="none"
-      bgGradient="linear(to-b, var(--chakra-colors-green-50), transparent)"
-      borderBottomWidth="1px"
-      borderColor="green.100"
-      style={{
-        transform: `translateY(${translateY}px)`,
-        transition:
-          pulling.current || state === "pulling"
-            ? "none"
-            : "transform 150ms ease",
-        willChange: "transform",
-      }}
-    >
-      <HStack h="full" align="center" justify="center" gap="2">
-        {state === "refreshing" ? <Spinner size="sm" /> : null}
-        <Text fontSize="sm" color="gray.700">
-          {label}
-        </Text>
-      </HStack>
-    </Box>
-  );
 }
 
 function AppInner({ Component, pageProps }: AppProps) {
@@ -156,28 +26,38 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Push content below iOS status area in standalone mode,
-  // but only a tiny 8px cushion on normal browsers.
-  const TOP_SAFE_PAD = "calc(env(safe-area-inset-top, 0px) + 8px)";
+  // Detect standalone (Home Screen) display mode
+  const [standalone, setStandalone] = useState(false);
+  useEffect(() => {
+    const detect = () =>
+      (window.navigator as any).standalone === true ||
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+    setStandalone(detect());
+
+    // Re-check on visibility/resizes (rare but cheap)
+    const onChange = () => setStandalone(detect());
+    window.addEventListener("visibilitychange", onChange);
+    window.addEventListener("resize", onChange);
+    return () => {
+      window.removeEventListener("visibilitychange", onChange);
+      window.removeEventListener("resize", onChange);
+    };
+  }, []);
+
+  // Minimize top gap:
+  // - In standalone: exactly the safe-area inset (tight, clears Dynamic Island).
+  // - In browsers: tiny 2px breathing room.
+  const TOP_PAD = useMemo(
+    () => (standalone ? "env(safe-area-inset-top, 0px)" : "2px"),
+    [standalone]
+  );
 
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* Global CSS & small brand color nudge */}
-      <style jsx global>{`
-        :root {
-          --chakra-colors-green-50: #eaf7ee; /* subtle Seedlings wash */
-        }
-        html,
-        body {
-          overscroll-behavior-y: contain; /* prevent native glow; we handle pull */
-          background-color: var(--chakra-colors-bg);
-        }
-      `}</style>
-
-      {/* Safe-area padding so brand/header isn't under the Dynamic Island */}
-      <Box pt={TOP_SAFE_PAD}>
-        {/* Custom pull-to-refresh with visible overlay */}
-        <PullToRefresh />
+      {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
+      <Box pt={TOP_PAD}>
+        {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}
+        <PWAPullToRefresh />
 
         <SignedIn>
           <Component {...pageProps} />
