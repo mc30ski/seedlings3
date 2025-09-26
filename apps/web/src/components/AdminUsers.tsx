@@ -193,7 +193,8 @@ export default function AdminUsers() {
     return items.filter((u) => {
       const name = (u.displayName ?? "").toLowerCase();
       const email = (u.email ?? "").toLowerCase();
-      return name.includes(qlc) || email.includes(qlc) || u.id.includes(qlc);
+      // Removed user-id searching from filter
+      return name.includes(qlc) || email.includes(qlc);
     });
   }, [items, q]);
 
@@ -357,7 +358,7 @@ export default function AdminUsers() {
           </HStack>
 
           <Input
-            placeholder="Search name/email/user id…"
+            placeholder="Search name or email…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             maxW="320px"
@@ -421,7 +422,7 @@ export default function AdminUsers() {
                     {isMe && <Badge ml="2">You</Badge>}
                   </Heading>
                   <Text fontSize="xs" color="gray.600" wordBreak="break-word">
-                    {u.email || "—"} · id: {u.id.slice(0, 8)}…
+                    {u.email || "—"}
                   </Text>
                   <HStack gap="2" mt={2} flexWrap="wrap">
                     <Badge>{u.isApproved ? "Approved" : "Pending"}</Badge>

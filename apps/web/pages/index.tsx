@@ -173,7 +173,7 @@ export default function HomePage() {
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="users">Users</Tabs.Trigger>
                   <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
-                  <Tabs.Trigger value="audit">Audit Log</Tabs.Trigger>
+                  <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
                 <Tabs.Content value="equipment">
                   <AdminEquipment key={`admin-${topTab}`} />

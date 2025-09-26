@@ -29,21 +29,8 @@ type AuditItem = {
 type AuditResp = { items: AuditItem[]; total: number };
 
 // minimal shapes for lookups
-type EqRow = { id: string; shortDesc: string };
+type EqRow = { id: string; shortDesc: string; longDesc?: string | null };
 type UserRow = { id: string; email: string | null; displayName: string | null };
-
-const ACTIONS = [
-  "USER_APPROVED",
-  "ROLE_ASSIGNED",
-  "EQUIPMENT_CREATED",
-  "EQUIPMENT_UPDATED",
-  "EQUIPMENT_RETIRED",
-  "EQUIPMENT_DELETED",
-  "EQUIPMENT_CHECKED_OUT",
-  "EQUIPMENT_RELEASED", // legacy-safe
-  "MAINTENANCE_START",
-  "MAINTENANCE_END",
-] as const;
 
 const LoadingCenter = () => (
   <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
@@ -82,15 +69,17 @@ export default function AdminAuditLog() {
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
 
-  // filters
-  const [actorUserId, setActor] = useState("");
-  const [equipmentId, setEquip] = useState("");
-  const [action, setAction] = useState("");
+  // simple, Activity-style text search (client-side)
+  const [q, setQ] = useState("");
+
+  // date filters (server-side)
   const [from, setFrom] = useState(""); // yyyy-mm-dd
   const [to, setTo] = useState("");
 
   // lookups
-  const [eqMap, setEqMap] = useState<Record<string, string>>({});
+  const [eqMap, setEqMap] = useState<
+    Record<string, { name: string; desc: string }>
+  >({});
   const [userMap, setUserMap] = useState<Record<string, string>>({}); // id -> email
 
   // open details per row id
@@ -108,8 +97,13 @@ export default function AdminAuditLog() {
   async function loadLookups() {
     try {
       const eq = await apiGet<EqRow[]>(`/api/admin/equipment`);
-      const eqIndex: Record<string, string> = {};
-      for (const e of eq) eqIndex[e.id] = e.shortDesc || e.id;
+      const eqIndex: Record<string, { name: string; desc: string }> = {};
+      for (const e of eq) {
+        eqIndex[e.id] = {
+          name: e.shortDesc || e.id,
+          desc: (e.longDesc ?? "") || "",
+        };
+      }
       setEqMap(eqIndex);
     } catch {
       setEqMap({});
@@ -125,16 +119,19 @@ export default function AdminAuditLog() {
     }
   }
 
-  async function load(reset = false, pageOverride?: number) {
+  async function load(
+    reset = false,
+    pageOverride?: number,
+    pageSizeOverride?: number
+  ) {
     setLoading(true);
     try {
       const p = pageOverride ?? (reset ? 1 : page);
+      const ps = pageSizeOverride ?? pageSize;
+
       const params = new URLSearchParams();
       params.set("page", String(p));
-      params.set("pageSize", String(pageSize));
-      if (actorUserId.trim()) params.set("actorUserId", actorUserId.trim());
-      if (equipmentId.trim()) params.set("equipmentId", equipmentId.trim());
-      if (action) params.set("action", action);
+      params.set("pageSize", String(ps));
       const fromIso = toIsoStart(from);
       if (fromIso) params.set("from", fromIso);
       const toIso = toIsoEnd(to);
@@ -173,11 +170,10 @@ export default function AdminAuditLog() {
   }
 
   function clearFilters() {
-    setActor("");
-    setEquip("");
-    setAction("");
     setFrom("");
     setTo("");
+    setQ("");
+    setOpen({});
     void load(true);
   }
 
@@ -185,101 +181,136 @@ export default function AdminAuditLog() {
     setOpen((m) => ({ ...m, [id]: !m[id] }));
 
   const actionBadgePalette = (act: string) => {
-    if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
-    if (act.includes("CHECKED_OUT") || act.includes("MAINTENANCE_START"))
+    const t = act.toUpperCase();
+    if (t.includes("RETIRED") || t.includes("DELETED")) return "gray";
+    if (t.includes("CHECKED_OUT") || t.includes("MAINTENANCE_START"))
       return "red";
-    if (act.includes("MAINTENANCE_END")) return "yellow";
-    if (act.includes("UPDATED") || act.includes("RESERVED")) return "orange";
-    if (act.includes("APPROVED") || act.includes("ROLE_ASSIGNED"))
-      return "purple";
-    if (act.includes("RELEASED") || act.includes("FORCE_RELEASED"))
-      return "blue";
+    if (t.includes("MAINTENANCE_END")) return "yellow";
+    if (t.includes("UPDATED") || t.includes("RESERVED")) return "orange";
+    if (t.includes("APPROVED") || t.includes("ROLE_ASSIGNED")) return "purple";
+    if (t.includes("RELEASED") || t.includes("FORCE_RELEASED")) return "blue";
     return "teal";
   };
 
-  // Responsive widths for truncation (string/number, not responsive object)
-  const truncW = useBreakpointValue({ base: "120px", md: "220px" }) ?? "220px";
+  // client-side Activity-like search over loaded rows
+  const filtered = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    if (!ql) return items;
+    return items.filter((row) => {
+      const action = row.action.toLowerCase();
+      const eq = row.equipmentId ? eqMap[row.equipmentId] : undefined;
+      const eqName = (eq?.name ?? "").toLowerCase();
+      const eqDesc = (eq?.desc ?? "").toLowerCase();
+      const actorEmail = (row.actorUserId && userMap[row.actorUserId]) || "";
+      const actorL = actorEmail.toLowerCase();
+      let md = "";
+      try {
+        md = JSON.stringify(row.metadata ?? {}).toLowerCase();
+      } catch {}
+      const idBits =
+        (row.id?.slice(0, 8) ?? "") +
+        (row.equipmentId?.slice(0, 8) ?? "") +
+        (row.actorUserId?.slice(0, 8) ?? "");
+      return (
+        action.includes(ql) ||
+        eqName.includes(ql) ||
+        eqDesc.includes(ql) ||
+        actorL.includes(ql) ||
+        md.includes(ql) ||
+        idBits.includes(ql)
+      );
+    });
+  }, [items, q, eqMap, userMap]);
 
-  // Responsive: 3 columns on mobile (Time, Action, Details), 5 on md+
-  const colSpan = useBreakpointValue({ base: 3, md: 5 }) ?? 5;
+  // widths / colspans
+  const truncW = useBreakpointValue({ base: "160px", md: "260px" }) ?? "260px";
+  // 3 columns on mobile (Time, Action, Details) and 4 on md+ (Time, Action, Actor, Details)
+  const colSpan = useBreakpointValue({ base: 3, md: 4 }) ?? 4;
+
+  // Text for the Details column (equipment OR role)
+  function detailsCellText(row: AuditItem): string {
+    const md = (row.metadata ?? {}) as any;
+
+    // Role-centric events
+    if (row.action === "ROLE_ASSIGNED" && md?.role) {
+      return `Role: ${String(md.role)}`;
+    }
+    if (row.action === "USER_APPROVED") {
+      return "User approved";
+    }
+
+    // Equipment-centric
+    if (row.equipmentId) {
+      const eq = eqMap[row.equipmentId];
+      const name = (md?.equipment?.shortDesc ??
+        md?.shortDesc ??
+        eq?.name ??
+        row.equipmentId) as string;
+      const desc = (md?.equipment?.longDesc ??
+        md?.longDesc ??
+        eq?.desc ??
+        "") as string;
+      return desc ? `${name} — ${desc}` : name;
+    }
+
+    // Other bits
+    const extras = md?.reason || md?.notes || md?.via || "";
+    return extras ? String(extras) : "—";
+  }
+
+  // handler to auto-apply page size change (no Apply click required)
+  const onChangePageSize = (n: number) => {
+    setPageSize(n);
+    setPage(1);
+    void load(true, 1, n); // reload immediately with new page size
+  };
 
   return (
     <Box>
       <Heading size="md" mb={4}>
-        Audit Log
+        Audit
       </Heading>
 
-      {/* Filters */}
-      <Stack direction={{ base: "column", md: "row" }} gap="3" mb={3}>
+      {/* Filters (kept the same, minus the page-size selector) */}
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="3"
+        mb={3}
+        align="center"
+      >
         <Input
-          placeholder="Actor User ID"
-          value={actorUserId}
-          onChange={(e) => setActor(e.currentTarget.value)}
+          placeholder="Search (status, equipment, actor, details)"
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+          maxW={{ base: "100%", md: "360px" }}
+          flex="0 0 auto"
         />
-        <Input
-          placeholder="Equipment ID"
-          value={equipmentId}
-          onChange={(e) => setEquip(e.currentTarget.value)}
-        />
-
-        {/* Native select for Action */}
-        <select
-          value={action}
-          onChange={(e) => setAction(e.currentTarget.value)}
-          style={{
-            padding: "8px",
-            borderRadius: "8px",
-            border: "1px solid var(--chakra-colors-border)",
-          }}
-        >
-          <option value="">Action (Any)</option>
-          {ACTIONS.map((a) => (
-            <option key={a} value={a}>
-              {a}
-            </option>
-          ))}
-        </select>
-
         <Input
           type="date"
           value={from}
           onChange={(e) => setFrom(e.currentTarget.value)}
+          title="From date"
         />
         <Input
           type="date"
           value={to}
           onChange={(e) => setTo(e.currentTarget.value)}
+          title="To date"
         />
-
-        {/* Native select for Page size */}
-        <select
-          value={pageSize}
-          onChange={(e) => setPageSize(Number(e.currentTarget.value))}
-          style={{
-            padding: "8px",
-            borderRadius: "8px",
-            border: "1px solid var(--chakra-colors-border)",
-          }}
-        >
-          {[25, 50, 100].map((n) => (
-            <option key={n} value={n}>
-              {n}/page
-            </option>
-          ))}
-        </select>
-
-        <Button onClick={applyFilters} disabled={loading} loading={loading}>
-          Apply
-        </Button>
-        <Button variant="outline" onClick={clearFilters} disabled={loading}>
-          Clear
-        </Button>
+        <HStack gap="2" ml="auto">
+          <Button onClick={applyFilters} disabled={loading} loading={loading}>
+            Apply
+          </Button>
+          <Button variant="outline" onClick={clearFilters} disabled={loading}>
+            Clear
+          </Button>
+        </HStack>
       </Stack>
 
       {/* Loading */}
       {loading && items.length === 0 && <LoadingCenter />}
 
-      {/* Responsive table: on mobile, hide Equipment & Actor columns; add horizontal scroll if needed */}
+      {/* Table */}
       <Box
         overflowX="auto"
         w="100%"
@@ -290,30 +321,32 @@ export default function AdminAuditLog() {
         <Table.Root
           size="sm"
           variant="outline"
-          minW={{ base: "560px", md: "unset" }}
+          minW={{ base: "640px", md: "unset" }}
         >
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader>Time</Table.ColumnHeader>
               <Table.ColumnHeader>Action</Table.ColumnHeader>
               <Table.ColumnHeader display={{ base: "none", md: "table-cell" }}>
-                Equipment
-              </Table.ColumnHeader>
-              <Table.ColumnHeader display={{ base: "none", md: "table-cell" }}>
                 Actor
               </Table.ColumnHeader>
               <Table.ColumnHeader>Details</Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
+
           <Table.Body>
-            {items.map((row) => {
-              const eqName = (row.equipmentId && eqMap[row.equipmentId]) || "—";
+            {filtered.map((row) => {
               const actorEmail =
                 (row.actorUserId && userMap[row.actorUserId]) || "—";
+              const details = detailsCellText(row);
 
               return (
                 <Fragment key={row.id}>
-                  <Table.Row>
+                  <Table.Row
+                    onClick={() => toggleDetails(row.id)}
+                    _hover={{ bg: "gray.50", cursor: "pointer" }}
+                    title="Click to toggle details"
+                  >
                     <Table.Cell
                       title={new Date(row.createdAt).toLocaleString()}
                     >
@@ -326,29 +359,7 @@ export default function AdminAuditLog() {
                       </Badge>
                     </Table.Cell>
 
-                    <Table.Cell display={{ base: "none", md: "table-cell" }}>
-                      <HStack
-                        gap="2"
-                        wrap="wrap"
-                        maxW={{ base: "160px", md: "360px" }}
-                      >
-                        {row.equipmentId ? (
-                          <>
-                            <Trunc text={eqName} maxW={truncW} />
-                            <Badge
-                              variant="subtle"
-                              colorPalette="gray"
-                              title={row.equipmentId}
-                            >
-                              {row.equipmentId.slice(0, 8)}…
-                            </Badge>
-                          </>
-                        ) : (
-                          <Text>—</Text>
-                        )}
-                      </HStack>
-                    </Table.Cell>
-
+                    {/* ACTOR: show only email (no actorUserId badge) */}
                     <Table.Cell display={{ base: "none", md: "table-cell" }}>
                       <HStack
                         gap="2"
@@ -356,26 +367,12 @@ export default function AdminAuditLog() {
                         maxW={{ base: "160px", md: "360px" }}
                       >
                         <Trunc text={actorEmail} maxW={truncW} />
-                        {row.actorUserId && (
-                          <Badge
-                            variant="subtle"
-                            colorPalette="gray"
-                            title={row.actorUserId}
-                          >
-                            {row.actorUserId.slice(0, 8)}…
-                          </Badge>
-                        )}
                       </HStack>
                     </Table.Cell>
 
+                    {/* DETAILS column (equipment OR role summary) */}
                     <Table.Cell>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => toggleDetails(row.id)}
-                      >
-                        {open[row.id] ? "Hide details" : "Open details"}
-                      </Button>
+                      <Trunc text={details} maxW={truncW} />
                     </Table.Cell>
                   </Table.Row>
 
@@ -412,7 +409,7 @@ export default function AdminAuditLog() {
               );
             })}
 
-            {items.length === 0 && !loading && (
+            {filtered.length === 0 && !loading && (
               <Table.Row>
                 <Table.Cell colSpan={colSpan}>
                   <Text>No results.</Text>
@@ -423,10 +420,39 @@ export default function AdminAuditLog() {
         </Table.Root>
       </Box>
 
-      <Stack direction="row" gap="3" mt={3} align="center">
+      {/* Footer: items-per-page moved below table, applied immediately on change */}
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="3"
+        mt={3}
+        align="center"
+      >
         <Text flex="1">
           Showing {items.length} of {total}
         </Text>
+
+        <HStack gap="2">
+          <Text fontSize="sm" color="gray.600">
+            Items per page:
+          </Text>
+          <select
+            value={pageSize}
+            onChange={(e) => onChangePageSize(Number(e.currentTarget.value))}
+            style={{
+              padding: "8px",
+              borderRadius: "8px",
+              border: "1px solid var(--chakra-colors-border)",
+            }}
+            title="Rows per page"
+          >
+            {[25, 50, 100].map((n) => (
+              <option key={n} value={n}>
+                {n}/page
+              </option>
+            ))}
+          </select>
+        </HStack>
+
         <Button
           onClick={loadMore}
           disabled={!hasMore || loading}
@@ -444,7 +470,7 @@ function formatMetadata(row: AuditItem): string {
     const pretty = {
       id: row.id,
       action: row.action,
-      actorUserId: row.actorUserId ?? null,
+      actorUserId: row.actorUserId ?? null, // kept in raw JSON
       equipmentId: row.equipmentId ?? null,
       metadata: row.metadata ?? null,
       createdAt: row.createdAt,
