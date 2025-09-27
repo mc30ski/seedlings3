@@ -7,8 +7,8 @@ import rbac from "./plugins/rbac";
 import errorMapper from "./plugins/errorMapper";
 import adminRoutes from "./routes/admin";
 import auditRoutes from "./routes/audit";
-import meRoutes from "./routes/me";
 import systemRoutes from "./routes/system";
+import meRoutes from "./routes/me";
 import usersRoutes from "./routes/users";
 import workerRoutes from "./routes/worker";
 
