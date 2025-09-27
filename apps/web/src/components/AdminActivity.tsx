@@ -19,7 +19,7 @@ type ActivityEvent = {
   at: string; // ISO
   type: string;
   summary?: string;
-  details?: Record<string, any>; // ⬅️ now provided by API
+  details?: Record<string, any>;
 };
 
 type ActivityUser = {
@@ -167,7 +167,21 @@ export default function AdminActivity() {
     [rows]
   );
 
-  const expandAll = () => setExpanded(rows.map((u) => u.userId));
+  // --- NEW: sort users by most recent activity (latest first). Nulls go last.
+  const sortedRows = useMemo(() => {
+    const toTs = (iso: string | null) => (iso ? new Date(iso).getTime() : 0);
+    return [...rows].sort((a, b) => {
+      const tb = toTs(b.lastActivityAt);
+      const ta = toTs(a.lastActivityAt);
+      if (tb !== ta) return tb - ta; // desc
+      // stable-ish fallback by displayName/email
+      const an = (a.displayName || a.email || "").toLowerCase();
+      const bn = (b.displayName || b.email || "").toLowerCase();
+      return an.localeCompare(bn);
+    });
+  }, [rows]);
+
+  const expandAll = () => setExpanded(sortedRows.map((u) => u.userId));
   const collapseAll = () => setExpanded([]);
 
   return (
@@ -226,7 +240,7 @@ export default function AdminActivity() {
       )}
 
       {/* Results — Chakra v3 namespaced Accordion */}
-      {!loading && rows.length > 0 && (
+      {!loading && sortedRows.length > 0 && (
         <Accordion.Root
           multiple
           value={expanded}
@@ -234,7 +248,7 @@ export default function AdminActivity() {
             setExpanded(details?.value ?? [])
           }
         >
-          {rows.map((u) => {
+          {sortedRows.map((u) => {
             const title = u.displayName || u.email || u.userId.slice(0, 8);
             return (
               <Accordion.Item
@@ -290,7 +304,6 @@ export default function AdminActivity() {
                         No activity found for this user (within current limits).
                       </Text>
                     )}
-
                     {u.events.map((e) => (
                       <Box
                         key={e.id}
@@ -319,7 +332,7 @@ export default function AdminActivity() {
                           </Text>
                         </HStack>
 
-                        {/* NEW: details, if present */}
+                        {/* Details, if present */}
                         <DetailsBlock details={e.details} />
                       </Box>
                     ))}

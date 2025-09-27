@@ -58,12 +58,10 @@ export default function HomePage() {
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
-  // Control inner Admin tab so we can deep-link to Users
   const [adminInnerTab, setAdminInnerTab] = useState<
     "equipment" | "users" | "activity" | "audit"
   >("equipment");
 
-  // Apply deep-link (?adminTab=users&status=pending) when ready
   const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!router.isReady || !isAdmin) return;
@@ -99,12 +97,11 @@ export default function HomePage() {
     }
   }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
 
-  // Header sizing baseline
   const BRAND_ICON_H = 26; // px
 
-  // De-dup the Clerk button robustly: hide OUR header button if ANY other Clerk user button exists
+  // De-dup the Clerk button robustly
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
-  const [showLocalUserBtn, setShowLocalUserBtn] = useState(false); // start hidden to avoid flash
+  const [showLocalUserBtn, setShowLocalUserBtn] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -119,7 +116,6 @@ export default function HomePage() {
           '.cl-userButton-root, [class*="cl-userButton"], [data-cl-component="UserButton"]'
         )
       );
-      // true if any node exists that is NOT inside our header container
       return nodes.some((n) => !isInsideHeader(n));
     };
 
@@ -127,7 +123,6 @@ export default function HomePage() {
       setShowLocalUserBtn(!hasExternalClerkButton());
     });
 
-    // Observe DOM changes (Clerk mounts asynchronously)
     const obs = new MutationObserver(() => {
       const external = hasExternalClerkButton();
       setShowLocalUserBtn(!external);
@@ -140,9 +135,54 @@ export default function HomePage() {
     };
   }, []);
 
+  // ---- Pending approvals badge (admin only) ----
+  const [pending, setPending] = useState<number>(0);
+
+  const loadPending = useCallback(async () => {
+    if (!isAdmin) {
+      setPending(0);
+      return;
+    }
+    try {
+      const res = await apiGet<{ pending: number }>(
+        "/api/admin/users/pendingCount"
+      );
+      setPending(res?.pending ?? 0);
+    } catch {
+      setPending(0);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    void loadPending();
+  }, [loadPending]);
+
+  useEffect(() => {
+    const onUsersChanged = () => void loadPending();
+    window.addEventListener("seedlings3:users-changed", onUsersChanged);
+    return () =>
+      window.removeEventListener("seedlings3:users-changed", onUsersChanged);
+  }, [loadPending]);
+
+  const goToApprovals = useCallback(() => {
+    setTopTab("admin");
+    setAdminInnerTab("users");
+    router.push(
+      { pathname: "/", query: { adminTab: "users", status: "pending" } },
+      undefined,
+      { shallow: true }
+    );
+    try {
+      window.dispatchEvent(
+        new CustomEvent("seedlings3:open-users", {
+          detail: { status: "pending" },
+        })
+      );
+    } catch {}
+  }, [router]);
+
   return (
     <Container maxW="5xl" py={8}>
-      {/* Brand header with subtle Seedlings green wash */}
       <Box
         as="header"
         bg="green.50"
@@ -154,7 +194,7 @@ export default function HomePage() {
         borderRadius="md"
         mb={2}
       >
-        {/* GRID: left brand, right Clerk. This forces right flush + exact vertical centering */}
+        {/* GRID header: left brand, right controls */}
         <Box
           display="grid"
           gridTemplateColumns="1fr auto"
@@ -162,7 +202,7 @@ export default function HomePage() {
           columnGap={3}
           minH={`${BRAND_ICON_H}px`}
         >
-          {/* Left: brand (keep your +1px nudge for optical match) */}
+          {/* Left: brand with your 1px nudge */}
           <Box
             display="flex"
             alignItems="center"
@@ -172,36 +212,66 @@ export default function HomePage() {
             <BrandLabel size={BRAND_ICON_H} showText />
           </Box>
 
-          {/* Right: Clerk pinned to far right and centered */}
-          <Box
+          {/* Right: badge (left) + Clerk (right). Order is enforced explicitly. */}
+          <HStack
             ref={headerBtnRef}
             justifySelf="end"
-            alignSelf="center"
-            display="grid"
-            placeItems="center"
+            align="center"
+            gap="8px"
             lineHeight="0"
             minH={`${BRAND_ICON_H}px`}
+            // Ensure LTR flow
+            style={{ direction: "ltr" }}
           >
-            {mounted && showLocalUserBtn ? (
-              <UserButton
-                appearance={{
-                  elements: {
-                    rootBox: { display: "flex", alignItems: "center" },
-                    userButtonBox: { display: "flex", alignItems: "center" },
-                    userButtonTrigger: {
-                      display: "flex",
-                      alignItems: "center",
-                      padding: 0,
+            {/* Badge FIRST (order 0) */}
+            {isAdmin && pending > 0 && (
+              <Box
+                as="button"
+                aria-label="Pending approvals"
+                title="Pending approvals"
+                onClick={goToApprovals}
+                width="22px"
+                height="22px"
+                minW="22px"
+                borderRadius="9999px"
+                bg="red.500"
+                color="white"
+                fontSize="12px"
+                fontWeight="bold"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "red.600" }}
+                _active={{ transform: "translateY(1px)" }}
+                style={{ order: 0 }}
+              >
+                {pending}
+              </Box>
+            )}
+
+            {/* Clerk SECOND (order 1) */}
+            <Box style={{ order: 1 }} display="flex" alignItems="center">
+              {mounted && showLocalUserBtn ? (
+                <UserButton
+                  appearance={{
+                    elements: {
+                      rootBox: { display: "flex", alignItems: "center" },
+                      userButtonBox: { display: "flex", alignItems: "center" },
+                      userButtonTrigger: {
+                        display: "flex",
+                        alignItems: "center",
+                        padding: 0,
+                      },
+                      userButtonAvatarBox: {
+                        display: "flex",
+                        alignItems: "center",
+                      },
                     },
-                    userButtonAvatarBox: {
-                      display: "flex",
-                      alignItems: "center",
-                    },
-                  },
-                }}
-              />
-            ) : null}
-          </Box>
+                  }}
+                />
+              ) : null}
+            </Box>
+          </HStack>
         </Box>
       </Box>
 
