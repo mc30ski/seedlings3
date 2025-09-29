@@ -23,21 +23,17 @@ type Equipment = {
   id: string;
   shortDesc: string;
   longDesc: string;
+  brand?: string | null;
+  model?: string | null;
   status: EquipmentStatus;
 };
 
 const statusColor: Record<EquipmentStatus, any> = {
   AVAILABLE: { colorPalette: "green" },
-  RESERVED: { colorPalette: "orange" },
-  CHECKED_OUT: { colorPalette: "red" },
-  MAINTENANCE: { colorPalette: "yellow" },
+  RESERVED: { colorPalette: "yellow" },
+  CHECKED_OUT: { colorPalette: "blue" },
+  MAINTENANCE: { colorPalette: "orange" },
   RETIRED: { colorPalette: "gray" },
-};
-
-const notifyEquipmentUpdated = () => {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event("seedlings3:equipment-updated"));
-  }
 };
 
 const LoadingCenter = () => (
@@ -53,6 +49,13 @@ function errorMessage(err: any): string {
     err?.response?.data?.message ||
     "Action failed"
   );
+}
+
+// Shared update signal
+function notifyEquipmentUpdated() {
+  try {
+    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
+  } catch {}
 }
 
 export default function WorkerMyEquipment() {
@@ -96,18 +99,10 @@ export default function WorkerMyEquipment() {
   function captureInlineConflict(id: string, err: any) {
     const status =
       err?.status ?? err?.httpStatus ?? err?.response?.status ?? undefined;
-
-    if (status && status >= 400) {
-      setInlineWarn((m) => ({
-        ...m,
-        [id]: errorMessage(err),
-      }));
-    } else {
-      setInlineWarn((m) => ({
-        ...m,
-        [id]: errorMessage(err),
-      }));
-    }
+    setInlineWarn((m) => ({
+      ...m,
+      [id]: errorMessage(err),
+    }));
   }
 
   async function checkout(id: string) {
@@ -155,7 +150,7 @@ export default function WorkerMyEquipment() {
   return (
     <Box>
       <Heading size="md" mb={4}>
-        Equipment I've Claimed
+        Equipment I&apos;ve Claimed
       </Heading>
 
       <Stack gap="3">
@@ -183,7 +178,8 @@ export default function WorkerMyEquipment() {
             return (
               <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
                 <Heading size="sm">
-                  {item.shortDesc}{" "}
+                  {item.brand ? `${item.brand} ` : ""}
+                  {item.model ? `${item.model} ` : ""}({item.shortDesc})
                   <Badge ml={2} {...statusColor[item.status]}>
                     {chip}
                   </Badge>
@@ -226,13 +222,13 @@ export default function WorkerMyEquipment() {
                         disabled={!!busyId}
                         loading={busyId === item.id}
                       >
-                        Checkout
+                        Check Out
                       </Button>
                       <Button
+                        variant="outline"
                         onClick={() => void cancelReserve(item.id)}
                         disabled={!!busyId}
                         loading={busyId === item.id}
-                        variant="outline"
                       >
                         Cancel Reservation
                       </Button>

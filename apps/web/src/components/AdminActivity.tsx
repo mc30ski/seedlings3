@@ -68,6 +68,18 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   const name = details.equipmentName as string | undefined;
   const desc = details.equipmentDesc as string | undefined;
 
+  const brand =
+    (details.brand as string | undefined) ??
+    (details.equipmentBrand as string | undefined) ??
+    (details.input?.brand as string | undefined) ??
+    (details.patch?.brand as string | undefined);
+
+  const model =
+    (details.model as string | undefined) ??
+    (details.equipmentModel as string | undefined) ??
+    (details.input?.model as string | undefined) ??
+    (details.patch?.model as string | undefined);
+
   // Known keys to show as key/value rows AFTER the name/desc block
   const knownOrder: Array<[string, string]> = [
     ["role", "Role"],
@@ -85,9 +97,17 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
     if (d[k] != null && d[k] !== "") extras.push([label, d[k]]);
   }
 
-  // Gather any other primitive keys not yet shown (excluding equipmentName/Desc)
+  // Gather any other primitive keys not yet shown (excluding equipmentName/Desc & brand/model keys)
   Object.keys(d).forEach((k) => {
-    if (k === "equipmentName" || k === "equipmentDesc") return;
+    if (
+      k === "equipmentName" ||
+      k === "equipmentDesc" ||
+      k === "brand" ||
+      k === "model" ||
+      k === "equipmentBrand" ||
+      k === "equipmentModel"
+    )
+      return;
     if (knownOrder.find(([kk]) => kk === k)) return;
     const v = d[k];
     if (v == null) return;
@@ -97,17 +117,19 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
     }
   });
 
+  const brandModelLine = [brand, model].filter(Boolean).join(" ");
+
   return (
     <Box mt="8px">
-      {(name || desc) && (
+      {(name || desc || brandModelLine) && (
         <Box mb={extras.length ? "6px" : "0"}>
           {name && (
             <Text fontWeight="semibold" lineHeight="1.2">
-              {name}
+              {brandModelLine} ({name})
             </Text>
           )}
           {desc && (
-            <Text fontSize="sm" color="gray.600" lineHeight="1.2" mt="2px">
+            <Text fontSize="sm" color="gray.700" lineHeight="1.2" mt="2px">
               {desc}
             </Text>
           )}

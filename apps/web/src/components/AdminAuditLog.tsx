@@ -29,7 +29,13 @@ type AuditItem = {
 type AuditResp = { items: AuditItem[]; total: number };
 
 // minimal shapes for lookups
-type EqRow = { id: string; shortDesc: string; longDesc?: string | null };
+type EqRow = {
+  id: string;
+  shortDesc: string;
+  longDesc?: string | null;
+  brand?: string | null;
+  model?: string | null;
+};
 type UserRow = { id: string; email: string | null; displayName: string | null };
 
 const LoadingCenter = () => (
@@ -78,7 +84,15 @@ export default function AdminAuditLog() {
 
   // lookups
   const [eqMap, setEqMap] = useState<
-    Record<string, { name: string; desc: string }>
+    Record<
+      string,
+      {
+        name: string;
+        desc: string;
+        brand?: string | null;
+        model?: string | null;
+      }
+    >
   >({});
   const [userMap, setUserMap] = useState<Record<string, string>>({}); // id -> email
 
@@ -97,11 +111,21 @@ export default function AdminAuditLog() {
   async function loadLookups() {
     try {
       const eq = await apiGet<EqRow[]>(`/api/admin/equipment`);
-      const eqIndex: Record<string, { name: string; desc: string }> = {};
+      const eqIndex: Record<
+        string,
+        {
+          name: string;
+          desc: string;
+          brand?: string | null;
+          model?: string | null;
+        }
+      > = {};
       for (const e of eq) {
         eqIndex[e.id] = {
           name: e.shortDesc || e.id,
-          desc: (e.longDesc ?? "") || "",
+          desc: e.longDesc ?? "",
+          brand: e.brand ?? null,
+          model: e.model ?? null,
         };
       }
       setEqMap(eqIndex);
@@ -250,7 +274,17 @@ export default function AdminAuditLog() {
         md?.longDesc ??
         eq?.desc ??
         "") as string;
-      return desc ? `${name} — ${desc}` : name;
+      const brand = (md?.equipment?.brand ??
+        md?.brand ??
+        eq?.brand ??
+        "") as string;
+      const model = (md?.equipment?.model ??
+        md?.model ??
+        eq?.model ??
+        "") as string;
+      const label = [brand, model].filter(Boolean).join(" ");
+      const head = label ? `${label} — ${name}` : name;
+      return desc ? `${head} — ${desc}` : head;
     }
 
     // Other bits

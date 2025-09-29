@@ -23,21 +23,18 @@ type Equipment = {
   id: string;
   shortDesc: string;
   longDesc: string;
+  brand?: string | null;
+  model?: string | null;
+
   status: EquipmentStatus;
 };
 
 const statusColor: Record<EquipmentStatus, any> = {
   AVAILABLE: { colorPalette: "green" },
-  RESERVED: { colorPalette: "orange" },
-  CHECKED_OUT: { colorPalette: "red" },
-  MAINTENANCE: { colorPalette: "yellow" },
+  RESERVED: { colorPalette: "yellow" },
+  CHECKED_OUT: { colorPalette: "blue" },
+  MAINTENANCE: { colorPalette: "orange" },
   RETIRED: { colorPalette: "gray" },
-};
-
-const notifyEquipmentUpdated = () => {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
-  }
 };
 
 const LoadingCenter = () => (
@@ -47,13 +44,19 @@ const LoadingCenter = () => (
 );
 
 function errorMessage(err: any): string {
-  // Try common shapes from your fetch wrapper / API
   return (
     err?.message ||
     err?.data?.message ||
     err?.response?.data?.message ||
     "Action failed"
   );
+}
+
+// Light helper for cross-tab refreshes (unchanged convention)
+function notifyEquipmentUpdated() {
+  try {
+    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
+  } catch {}
 }
 
 export default function WorkerEquipment() {
@@ -102,21 +105,10 @@ export default function WorkerEquipment() {
   function captureInlineConflict(id: string, err: any) {
     const status =
       err?.status ?? err?.httpStatus ?? err?.response?.status ?? undefined;
-
-    // Show inline warning for any client/server error. Conflict-like codes get the API message.
-    if (status && status >= 400) {
-      setInlineWarn((m) => ({
-        ...m,
-        [id]: errorMessage(err),
-      }));
-    } else {
-      // If we can't read status, still surface something inline.
-      setInlineWarn((m) => ({
-        ...m,
-        [id]: errorMessage(err),
-      }));
-    }
-    // No toasts by design.
+    setInlineWarn((m) => ({
+      ...m,
+      [id]: errorMessage(err),
+    }));
   }
 
   async function reserve(id: string) {
@@ -184,12 +176,11 @@ export default function WorkerEquipment() {
       <Stack gap="3">
         {loading && <LoadingCenter />}
 
-        {!loading && items.length === 0 && <Text>No equipment.</Text>}
-
         {!loading &&
           items.map((item) => {
             const isMine = myIds.has(item.id);
 
+            // Actions follow your existing state machine
             const actions: JSX.Element[] = [];
 
             if (item.status === "AVAILABLE") {
@@ -212,16 +203,16 @@ export default function WorkerEquipment() {
                     disabled={!!busyId}
                     loading={busyId === item.id}
                   >
-                    Checkout
+                    Check Out
                   </Button>
                 );
                 actions.push(
                   <Button
                     key="cancel"
+                    variant="outline"
                     onClick={() => void cancelReserve(item.id)}
                     disabled={!!busyId}
                     loading={busyId === item.id}
-                    variant="outline"
                   >
                     Cancel Reservation
                   </Button>
@@ -263,7 +254,8 @@ export default function WorkerEquipment() {
             return (
               <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
                 <Heading size="sm">
-                  {item.shortDesc}{" "}
+                  {item.brand ? `${item.brand} ` : ""}
+                  {item.model ? `${item.model} ` : ""}({item.shortDesc})
                   <Badge ml={2} {...statusColor[item.status]}>
                     {item.status === "AVAILABLE"
                       ? "Available"
@@ -280,6 +272,7 @@ export default function WorkerEquipment() {
                             : "Retired"}
                   </Badge>
                 </Heading>
+
                 <Text fontSize="sm" color="gray.500">
                   {item.longDesc}
                 </Text>
@@ -316,6 +309,8 @@ export default function WorkerEquipment() {
               </Box>
             );
           })}
+
+        {!loading && items.length === 0 && <Text>No equipment.</Text>}
       </Stack>
     </Box>
   );

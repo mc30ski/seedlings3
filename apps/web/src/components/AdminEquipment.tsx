@@ -36,6 +36,10 @@ type Equipment = {
   shortDesc: string;
   longDesc: string | null;
   qrSlug: string | null;
+  // NEW: brand/model now present on items
+  brand: string | null;
+  model: string | null;
+
   status: EquipmentStatus;
   createdAt: string;
   updatedAt: string;
@@ -58,6 +62,9 @@ export default function AdminEquipment() {
   const [newShort, setNewShort] = useState("");
   const [newLong, setNewLong] = useState("");
   const [newQr, setNewQr] = useState("");
+  // NEW: brand/model fields (required)
+  const [newBrand, setNewBrand] = useState("");
+  const [newModel, setNewModel] = useState("");
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<
@@ -128,21 +135,35 @@ export default function AdminEquipment() {
     const shortDesc = newShort.trim();
     const longDesc = newLong.trim();
     const qrSlug = newQr.trim();
+    const brand = newBrand.trim();
+    const model = newModel.trim();
+
     if (!shortDesc) {
       toaster.error({ title: "Short description is required" });
       return;
     }
+    // NEW: require brand + model
+    if (!brand || !model) {
+      toaster.error({ title: "Brand and Model are required" });
+      return;
+    }
+
     setCreating(true);
     try {
       await apiPost("/api/admin/equipment", {
         shortDesc,
         longDesc: longDesc || undefined,
         qrSlug: qrSlug || undefined,
+        // NEW: send brand/model
+        brand,
+        model,
       });
       toaster.success({ title: "Equipment created" });
       setNewShort("");
       setNewLong("");
       setNewQr("");
+      setNewBrand(""); // NEW
+      setNewModel(""); // NEW
       await load();
     } catch (err) {
       toaster.error({
@@ -275,6 +296,16 @@ export default function AdminEquipment() {
           align={{ base: "stretch", md: "end" }}
         >
           <Input
+            placeholder="Brand *"
+            value={newBrand}
+            onChange={(e) => setNewBrand(e.target.value)}
+          />
+          <Input
+            placeholder="Model *"
+            value={newModel}
+            onChange={(e) => setNewModel(e.target.value)}
+          />
+          <Input
             placeholder="Short description *"
             value={newShort}
             onChange={(e) => setNewShort(e.target.value)}
@@ -292,7 +323,12 @@ export default function AdminEquipment() {
           <Button
             onClick={createEquipment}
             loading={creating}
-            disabled={creating || !newShort.trim()}
+            disabled={
+              creating ||
+              !newShort.trim() ||
+              !newBrand.trim() ||
+              !newModel.trim()
+            }
             size={{ base: "sm", md: "sm" }}
           >
             Create
@@ -389,7 +425,8 @@ export default function AdminEquipment() {
             >
               <Box flex="1 1 0" minW={0}>
                 <Heading size={{ base: "sm", md: "sm" }} wordBreak="break-word">
-                  {item.shortDesc}{" "}
+                  {item.brand ? `${item.brand} ` : ""}
+                  {item.model ? `${item.model} ` : ""}({item.shortDesc})
                   <Badge ml={2} {...statusColor[item.status]}>
                     {item.status === "AVAILABLE"
                       ? "Available"
