@@ -24,14 +24,14 @@ npm run dev
 We use **Vercel** for both **web** and **api**.  
 There are three environments:
 
-- **Production** – deploys from the **Production Branch** (`prod-dummy-prod-promote-via-preview`)
+- **Production** – deploys from the **Production Branch** (`production`)
 - **Preview** – deploys from any non-production branch (e.g. `main`, feature branches, PRs)
-- **Development** – local development using `vercel dev` or `.env.local`
+- **Development** – local development using `script.start.api.sh` and `script.start.web.sh` scripts
 
 ### Branch strategy
 
 - `main` → **Preview** deployments for both projects
-- `prod-dummy-prod-promote-via-preview` → **Production** deployments for both projects  
+- `production` → **Production** deployments for both projects  
   (either push/merge to this branch or use “Promote to Production” in Vercel which rebuilds with Production env vars)
 
 ### Project wiring (Vercel)
@@ -47,17 +47,9 @@ Set **Node.js = 20.x** for both projects.
 
 For the **API** project you have two options for Output Directory:
 
-- **Recommended**: set **Output Directory = `dist`** (tsup build output), or
-- Add an empty `apps/api/public/.gitkeep` to satisfy Vercel’s “public folder” check.
+The Vercel web application uses a proxy `[...path].ts` to funnel all web requests through so that it can set the bypass tokens to allow access to the API preview.
 
-Optionally add `apps/api/vercel.json` to rewrite root paths to the function prefix:
-
-```json
-{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }]
-}
-```
+web application → `api.ts` (adds bypass) → web server `pages/api/_proxy/[...path].ts` → (adds bypass) → api server less functions
 
 ---
 
