@@ -36,6 +36,8 @@ type Holding = {
   userId: string;
   equipmentId: string;
   shortDesc: string;
+  brand?: string | null;
+  model?: string | null;
   state: "RESERVED" | "CHECKED_OUT";
   reservedAt: string; // ISO
   checkedOutAt: string | null; // ISO
@@ -613,7 +615,10 @@ export default function AdminUsers() {
                         h.state === "CHECKED_OUT" ? "red" : "orange"
                       }
                     >
-                      {h.shortDesc} · {h.state.toLowerCase().replace("_", " ")}
+                      {[h.brand, h.model, h.shortDesc]
+                        .filter(Boolean)
+                        .join(" - ")}{" "}
+                      · {h.state.toLowerCase().replace("_", " ")}
                     </Badge>
                   ))}
                 </Stack>

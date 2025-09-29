@@ -156,7 +156,15 @@ function buildEventDetails(
   action: string,
   metadata: any,
   equipmentId: string | null | undefined,
-  eqMap: Record<string, { shortDesc: string | null; longDesc: string | null }>
+  eqMap: Record<
+    string,
+    {
+      shortDesc: string | null;
+      longDesc: string | null;
+      brand: string | null;
+      model: string | null;
+    }
+  >
 ) {
   const out: Record<string, any> = {};
   const md = (metadata ?? {}) as any;
@@ -172,8 +180,15 @@ function buildEventDetails(
     md.longDesc ??
     (equipmentId ? eqMap[equipmentId!]?.longDesc : null);
 
+  const brand =
+    mdEq.brand ?? md.brand ?? (equipmentId ? eqMap[equipmentId!]?.brand : null);
+  const model =
+    mdEq.model ?? md.model ?? (equipmentId ? eqMap[equipmentId!]?.model : null);
+
   if (equipmentName) out.equipmentName = equipmentName;
   if (equipmentDesc) out.equipmentDesc = equipmentDesc;
+  if (brand) out.brand = brand;
+  if (model) out.model = model;
 
   // Other common bits you already record
   if (md?.qrSlug) out.qrSlug = md.qrSlug;
@@ -288,8 +303,12 @@ export const services: Services = {
           shortDesc: input.shortDesc,
           longDesc: input.longDesc ?? "",
           ...(input.qrSlug !== undefined ? { qrSlug: input.qrSlug } : {}),
+          ...(input.brand !== undefined ? { brand: input.brand } : {}),
+          ...(input.model !== undefined ? { model: input.model } : {}),
         };
+
         const created = await tx.equipment.create({ data });
+
         await writeAudit(
           tx,
           AuditAction.EQUIPMENT_CREATED,
@@ -297,6 +316,7 @@ export const services: Services = {
           created.id,
           { input }
         );
+
         return created;
       });
     },
@@ -311,12 +331,16 @@ export const services: Services = {
         if (patch.shortDesc !== undefined) data.shortDesc = patch.shortDesc;
         if (patch.longDesc !== undefined) data.longDesc = patch.longDesc;
         if (patch.qrSlug !== undefined) data.qrSlug = patch.qrSlug;
+        if (patch.brand !== undefined) data.brand = patch.brand;
+        if (patch.model !== undefined) data.model = patch.model;
 
         const updated = await tx.equipment.update({ where: { id }, data });
+
         await writeAudit(tx, AuditAction.EQUIPMENT_UPDATED, undefined, id, {
           before,
           patch,
         });
+
         return updated;
       });
     },
@@ -755,7 +779,9 @@ export const services: Services = {
       const rows = await prisma.checkout.findMany({
         where: { releasedAt: null },
         include: {
-          equipment: { select: { id: true, shortDesc: true } },
+          equipment: {
+            select: { id: true, shortDesc: true, brand: true, model: true },
+          },
         },
         orderBy: { reservedAt: "desc" },
       });
@@ -764,9 +790,11 @@ export const services: Services = {
         userId: r.userId,
         equipmentId: r.equipmentId,
         shortDesc: r.equipment?.shortDesc ?? "",
+        brand: r.equipment?.brand ?? null,
+        model: r.equipment?.model ?? null,
         state: r.checkedOutAt
-          ? EquipmentStatus.CHECKED_OUT
-          : EquipmentStatus.RESERVED,
+          ? ("CHECKED_OUT" as const)
+          : ("RESERVED" as const),
         reservedAt: r.reservedAt,
         checkedOutAt: r.checkedOutAt ?? null,
       }));
@@ -1192,13 +1220,24 @@ export const services: Services = {
       const eqRows = eqIds.length
         ? await prisma.equipment.findMany({
             where: { id: { in: eqIds } },
-            select: { id: true, shortDesc: true, longDesc: true },
+            select: {
+              id: true,
+              shortDesc: true,
+              longDesc: true,
+              brand: true,
+              model: true,
+            },
           })
         : [];
       const eqMap = Object.fromEntries(
         eqRows.map((e) => [
           e.id,
-          { shortDesc: e.shortDesc, longDesc: e.longDesc },
+          {
+            shortDesc: e.shortDesc,
+            longDesc: e.longDesc,
+            brand: e.brand,
+            model: e.model,
+          },
         ])
       );
 

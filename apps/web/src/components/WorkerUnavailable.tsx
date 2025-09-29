@@ -34,6 +34,8 @@ type Equipment = {
   shortDesc: string;
   longDesc: string | null;
   status: EquipmentStatus;
+  brand?: string | null;
+  model?: string | null;
   holder: Holder | null;
 };
 
@@ -104,7 +106,8 @@ export default function WorkerUnavailable() {
               <HStack justify="space-between" align="start">
                 <Box>
                   <Heading size="sm">
-                    {item.shortDesc}{" "}
+                    {item.brand ? `${item.brand} ` : ""}
+                    {item.model ? `${item.model} ` : ""}({item.shortDesc})
                     <Badge ml={2} {...statusColor[item.status]}>
                       {prettyStatus(item.status)}
                       {isMine &&
