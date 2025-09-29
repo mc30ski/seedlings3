@@ -70,13 +70,15 @@ model Equipment {
   longDesc   String
   status     EquipmentStatus  @default(AVAILABLE)
   qrSlug     String?          @unique
-  retiredAt  DateTime?
+  brand      String?
+  model      String?
 
   checkouts    Checkout[]
   auditEvents  AuditEvent[]     @relation("AuditEquipment")
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  retiredAt  DateTime?
 }
 
 model Checkout {
