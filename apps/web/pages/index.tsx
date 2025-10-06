@@ -10,7 +10,7 @@ import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
 import AdminActivity from "@/src/components/AdminActivity";
 
-import WorkerEquipment2 from "@/src/components/WorkerEquipment2";
+import WorkerEquipment from "@/src/components/WorkerEquipment";
 import WorkerJobs from "@/src/components/WorkerJobs";
 import WorkerClients from "@/src/components/WorkerClients";
 
@@ -310,7 +310,7 @@ export default function HomePage() {
                   <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
                 </Tabs.List>
                 <Tabs.Content value="equipment2">
-                  <WorkerEquipment2 />
+                  <WorkerEquipment />
                 </Tabs.Content>
                 <Tabs.Content value="jobs">
                   <WorkerJobs />

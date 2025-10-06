@@ -1,91 +1,43 @@
-// apps/web/src/components/WorkerEquipment.tsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+// apps/web/src/components/WorkerAll.tsx
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Heading,
-  Stack,
   Text,
-  Badge,
-  Spinner,
   HStack,
+  Stack,
+  Button,
+  Input,
 } from "@chakra-ui/react";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet } from "../lib/api";
+import { getErrorMessage } from "../lib/errors";
+import { Me, EquipmentStatus, Equipment } from "../lib/types";
+import EquipmentTile from "./ui/EquipmentTile";
+import LoadingCenter from "./ui/LoadingCenter";
 
-type EquipmentStatus =
-  | "AVAILABLE"
-  | "RESERVED"
-  | "CHECKED_OUT"
-  | "MAINTENANCE"
-  | "RETIRED";
-
-type Equipment = {
-  id: string;
-  shortDesc: string;
-  longDesc: string;
-  brand?: string | null;
-  model?: string | null;
-
-  status: EquipmentStatus;
-};
-
-const statusColor: Record<EquipmentStatus, any> = {
-  AVAILABLE: { colorPalette: "green" },
-  RESERVED: { colorPalette: "yellow" },
-  CHECKED_OUT: { colorPalette: "blue" },
-  MAINTENANCE: { colorPalette: "orange" },
-  RETIRED: { colorPalette: "gray" },
-};
-
-const LoadingCenter = () => (
-  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
-    <Spinner size="lg" />
-  </Box>
-);
-
-function errorMessage(err: any): string {
-  return (
-    err?.message ||
-    err?.data?.message ||
-    err?.response?.data?.message ||
-    "Action failed"
-  );
-}
-
-// Light helper for cross-tab refreshes (unchanged convention)
-function notifyEquipmentUpdated() {
-  try {
-    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
-  } catch {}
-}
-
-export default function WorkerEquipment() {
+export default function WorkerEquipment2() {
   const [items, setItems] = useState<Equipment[]>([]);
-  const [mine, setMine] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-
-  // Inline warning per equipment id
-  const [inlineWarn, setInlineWarn] = useState<Record<string, string>>({});
-
-  const myIds = useMemo(() => new Set(mine.map((m) => m.id)), [mine]);
-
-  const dismissInline = (id: string) =>
-    setInlineWarn((m) => {
-      const n = { ...m };
-      delete n[id];
-      return n;
-    });
+  const [me, setMe] = useState<Me | null>(null);
+  const [status, setStatus] = useState<
+    "claimed" | "available" | "unavailable" | "all"
+  >("claimed");
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [all, mineList] = await Promise.all([
-        apiGet<Equipment[]>("/api/equipment"),
-        apiGet<Equipment[]>("/api/equipment/mine"),
+      const [data, meResp] = await Promise.all([
+        apiGet<Equipment[]>("/api/equipment/all"),
+        apiGet<Me>("/api/me"),
       ]);
-      setItems(all);
-      setMine(mineList);
+      setItems(data);
+      setMe(meResp);
+    } catch (err) {
+      setError(true);
+      setErrorMsg(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -95,223 +47,139 @@ export default function WorkerEquipment() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    const onUpd = () => void load();
-    window.addEventListener("seedlings3:equipment-updated", onUpd);
-    return () =>
-      window.removeEventListener("seedlings3:equipment-updated", onUpd);
-  }, [load]);
+  const filtered = useMemo(() => {
+    let rows = items;
 
-  function captureInlineConflict(id: string, err: any) {
-    const status =
-      err?.status ?? err?.httpStatus ?? err?.response?.status ?? undefined;
-    setInlineWarn((m) => ({
-      ...m,
-      [id]: errorMessage(err),
-    }));
-  }
+    if (status !== "all") {
+      let want: EquipmentStatus[] | null = null;
+      switch (status) {
+        case "claimed":
+          want = ["RESERVED", "CHECKED_OUT"];
+          break;
+        case "available":
+          want = ["AVAILABLE"];
+          break;
+        case "unavailable":
+          want = ["RESERVED", "CHECKED_OUT", "MAINTENANCE"];
+          break;
+      }
+      if (want) rows = rows.filter((r) => want!.includes(r.status));
 
-  async function reserve(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/reserve`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
+      if (status === "claimed") {
+        rows = rows.filter((r) => r.holder?.userId === me?.id);
+      }
     }
-  }
 
-  async function cancelReserve(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/reserve/cancel`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
+    const qlc = search.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((r) => {
+        const s1 = (r.status || "").toLowerCase();
+        const s2 = (r.brand || "").toLowerCase();
+        const s3 = (r.model || "").toLowerCase();
+        const s4 = (r.shortDesc || "").toLowerCase();
+        const s5 = (r.longDesc || "").toLowerCase();
+        const who =
+          r.holder?.displayName?.toLowerCase() ||
+          r.holder?.email?.toLowerCase() ||
+          "";
+        return (
+          s1.includes(qlc) ||
+          s2.includes(qlc) ||
+          s3.includes(qlc) ||
+          s4.includes(qlc) ||
+          s5.includes(qlc) ||
+          who.includes(qlc)
+        );
+      });
     }
-  }
 
-  async function checkout(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/checkout`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
-    }
-  }
+    return rows;
+  }, [items, status, search]);
 
-  async function returnItem(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/return`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await load();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
-    }
-  }
+  if (loading) return <LoadingCenter />;
 
   return (
     <Box>
-      <Heading size="md" mb={4}>
-        Equipment Available
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="2"
+        align={{ base: "stretch", md: "center" }}
+        mb={3}
+      >
+        <Box display="flex" flexWrap="wrap" gap="6px">
+          {(
+            [
+              ["claimed", "Claimed"],
+              ["available", "Available"],
+              ["unavailable", "Unavailable"],
+              ["all", "All"],
+            ] as const
+          ).map(([val, label]) => (
+            <Button
+              key={val}
+              size="sm"
+              variant={status === val ? "solid" : "outline"}
+              onClick={() => setStatus(val)}
+            >
+              {label}
+            </Button>
+          ))}
+        </Box>
+
+        <Input
+          placeholder="Search description / holder…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          w={{ base: "100%", md: "320px" }}
+        />
+      </Stack>
+
+      {/* Separator */}
+      <Box h="1px" bg="gray.200" mb={3} />
+
+      <Heading size="md" mb={3}>
+        {status === "claimed"
+          ? "Equipment I've Claimed"
+          : status === "available"
+            ? "Equipment Available to Reserve"
+            : status === "unavailable"
+              ? "Equipment Already Claimed or Unavailable"
+              : "All Equipment"}
       </Heading>
 
-      <Stack gap="3">
-        {loading && <LoadingCenter />}
+      {error && (
+        <HStack
+          w="full"
+          mt={2}
+          align="start"
+          p={2.5}
+          borderRadius="md"
+          borderWidth="1px"
+          borderColor="red.300"
+          bg="red.50"
+        >
+          <Box flex="1">
+            <Text fontSize="sm" color="red.900">
+              Failed to load equipment: {errorMsg}
+            </Text>
+          </Box>
+        </HStack>
+      )}
 
-        {!loading &&
-          items.map((item) => {
-            const isMine = myIds.has(item.id);
-
-            // Actions follow your existing state machine
-            const actions: JSX.Element[] = [];
-
-            if (item.status === "AVAILABLE") {
-              actions.push(
-                <Button
-                  key="reserve"
-                  onClick={() => void reserve(item.id)}
-                  disabled={!!busyId}
-                  loading={busyId === item.id}
-                >
-                  Reserve
-                </Button>
-              );
-            } else if (item.status === "RESERVED") {
-              if (isMine) {
-                actions.push(
-                  <Button
-                    key="checkout"
-                    onClick={() => void checkout(item.id)}
-                    disabled={!!busyId}
-                    loading={busyId === item.id}
-                  >
-                    Check Out
-                  </Button>
-                );
-                actions.push(
-                  <Button
-                    key="cancel"
-                    variant="outline"
-                    onClick={() => void cancelReserve(item.id)}
-                    disabled={!!busyId}
-                    loading={busyId === item.id}
-                  >
-                    Cancel Reservation
-                  </Button>
-                );
-              } else {
-                actions.push(
-                  <Button key="reserved" disabled>
-                    Reserved
-                  </Button>
-                );
-              }
-            } else if (item.status === "CHECKED_OUT") {
-              if (isMine) {
-                actions.push(
-                  <Button
-                    key="return"
-                    onClick={() => void returnItem(item.id)}
-                    disabled={!!busyId}
-                    loading={busyId === item.id}
-                  >
-                    Return
-                  </Button>
-                );
-              } else {
-                actions.push(
-                  <Button key="checked" disabled>
-                    Checked out
-                  </Button>
-                );
-              }
-            } else {
-              actions.push(
-                <Button key="na" disabled>
-                  {item.status === "MAINTENANCE" ? "Maintenance" : "Retired"}
-                </Button>
-              );
-            }
-
-            return (
-              <Box key={item.id} p={4} borderWidth="1px" borderRadius="lg">
-                <Heading size="sm">
-                  {item.brand ? `${item.brand} ` : ""}
-                  {item.model ? `${item.model} ` : ""}({item.shortDesc})
-                  <Badge ml={2} {...statusColor[item.status]}>
-                    {item.status === "AVAILABLE"
-                      ? "Available"
-                      : item.status === "RESERVED"
-                        ? isMine
-                          ? "Reserved (You)"
-                          : "Reserved"
-                        : item.status === "CHECKED_OUT"
-                          ? isMine
-                            ? "Checked out (You)"
-                            : "Checked out"
-                          : item.status === "MAINTENANCE"
-                            ? "Maintenance"
-                            : "Retired"}
-                  </Badge>
-                </Heading>
-
-                <Text fontSize="sm" color="gray.500">
-                  {item.longDesc}
-                </Text>
-
-                {/* Inline warning banner for this item */}
-                {inlineWarn[item.id] && (
-                  <HStack
-                    mt={2}
-                    align="start"
-                    p={2.5}
-                    borderRadius="md"
-                    borderWidth="1px"
-                    borderColor="orange.300"
-                    bg="orange.50"
-                  >
-                    <Box flex="1">
-                      <Text fontSize="sm" color="orange.900">
-                        {inlineWarn[item.id]}
-                      </Text>
-                    </Box>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => dismissInline(item.id)}
-                    >
-                      Dismiss
-                    </Button>
-                  </HStack>
-                )}
-
-                <Stack direction="row" gap="2" mt={2}>
-                  {actions}
-                </Stack>
-              </Box>
-            );
-          })}
-
-        {!loading && items.length === 0 && <Text>No equipment.</Text>}
-      </Stack>
+      {!error && filtered.length === 0 && (
+        <Text>No equipment matches the current filters.</Text>
+      )}
+      {filtered.map((item) => {
+        const isMine = !!me && !!item.holder && item.holder.userId === me.id;
+        return (
+          <EquipmentTile
+            item={item}
+            isMine={isMine}
+            filter={status}
+            refresh={load}
+          />
+        );
+      })}
     </Box>
   );
 }
