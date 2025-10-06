@@ -1,22 +1,22 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
-import AdminEquipment from "@/src/components/AdminEquipment";
-import AdminAuditLog from "@/src/components/AdminAuditLog";
-import AdminUsers from "@/src/components/AdminUsers";
+import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
+import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
+import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import { apiGet } from "@/src/lib/api";
-import BrandLabel from "@/src/components/BrandLabel";
+import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
-import AdminActivity from "@/src/components/AdminActivity";
+import AdminActivity from "@/src/ui/tabs/AdminActivity";
 
-import AppSplash from "../src/components/AppSplash";
-import AwaitingApprovalNotice from "../src/components/AwaitingApprovalNotice";
-import NoRoleNotice from "../src/components/NoRoleNotice";
+import AppSplash from "../src/ui/helpers/AppSplash";
+import AwaitingApprovalNotice from "../src/ui/notices/AwaitingApprovalNotice";
+import NoRoleNotice from "../src/ui/notices/NoRoleNotice";
 
-import WorkerEquipment from "@/src/components/WorkerEquipment";
-import WorkerJobs from "@/src/components/WorkerJobs";
-import WorkerClients from "@/src/components/WorkerClients";
+import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
+import WorkerJobs from "@/src/ui/tabs/WorkerJobs";
+import WorkerClients from "@/src/ui/tabs/WorkerClients";
 
 import { Me } from "@/src/lib/types";
 

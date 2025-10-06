@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
-import PWAPullToRefresh from "../src/components/PWAPullToRefresh";
+import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {

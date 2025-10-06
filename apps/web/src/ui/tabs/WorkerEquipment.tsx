@@ -9,11 +9,11 @@ import {
   Button,
   Input,
 } from "@chakra-ui/react";
-import { apiGet } from "../lib/api";
-import { getErrorMessage } from "../lib/errors";
-import { Me, EquipmentStatus, Equipment } from "../lib/types";
-import EquipmentTile from "./ui/EquipmentTile";
-import LoadingCenter from "./ui/LoadingCenter";
+import { apiGet } from "../../lib/api";
+import { getErrorMessage } from "../../lib/errors";
+import { Me, EquipmentStatus, Equipment } from "../../lib/types";
+import EquipmentTile from "../components/EquipmentTile";
+import LoadingCenter from "../helpers/LoadingCenter";
 
 export default function WorkerEquipment2() {
   const [items, setItems] = useState<Equipment[]>([]);

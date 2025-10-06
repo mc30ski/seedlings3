@@ -1,4 +1,4 @@
-import StatusPanel from "./StatusPanel";
+import StatusPanel from "../helpers/StatusPanel";
 
 export default function AwaitingApprovalNotice() {
   return (

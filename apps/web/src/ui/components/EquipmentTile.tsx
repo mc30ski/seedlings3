@@ -8,38 +8,13 @@ import {
   Button,
 } from "@chakra-ui/react";
 import { useState } from "react";
-import { Equipment, EquipmentStatus } from "../../lib/types";
 import { apiPost } from "../../lib/api";
-
-// Shared update signal
-function notifyEquipmentUpdated() {
-  try {
-    window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
-  } catch {}
-}
-
-function errorMessage(err: any): string {
-  return (
-    err?.message ||
-    err?.data?.message ||
-    err?.response?.data?.message ||
-    "Action failed"
-  );
-}
-
-// Pretty-print status like other tabs: "Available", "Checked out", etc.
-function prettyStatus(s: EquipmentStatus): string {
-  const lower = s.toLowerCase().replace(/_/g, " ");
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
-
-const statusColor: Record<EquipmentStatus, any> = {
-  AVAILABLE: { colorPalette: "green" },
-  RESERVED: { colorPalette: "orange" },
-  CHECKED_OUT: { colorPalette: "red" },
-  MAINTENANCE: { colorPalette: "yellow" },
-  RETIRED: { colorPalette: "gray" },
-};
+import { Equipment, StatusColor } from "../../lib/types";
+import {
+  errorMessage,
+  notifyEquipmentUpdated,
+  prettyStatus,
+} from "../../lib/lib";
 
 type EquipmentTileProps = {
   item: Equipment;
@@ -74,10 +49,10 @@ export default function EquipmentTile({
     }));
   }
 
-  async function checkout(id: string) {
+  async function service(id: string, url: string) {
     setBusyId(id);
     try {
-      await apiPost(`/api/equipment/${id}/checkout`);
+      await apiPost(url);
       dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
@@ -86,48 +61,22 @@ export default function EquipmentTile({
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function checkout(id: string) {
+    return service(id, `/api/equipment/${id}/checkout`);
   }
 
   async function reserve(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/reserve`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await refresh();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
-    }
+    return service(id, `/api/equipment/${id}/reserve`);
   }
 
   async function cancelReserve(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/reserve/cancel`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await refresh();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
-    }
+    return service(id, `/api/equipment/${id}/reserve/cancel`);
   }
 
   async function returnItem(id: string) {
-    setBusyId(id);
-    try {
-      await apiPost(`/api/equipment/${id}/return`);
-      dismissInline(id);
-      notifyEquipmentUpdated();
-      await refresh();
-    } catch (err: any) {
-      captureInlineConflict(id, err);
-    } finally {
-      setBusyId(null);
-    }
+    return service(id, `/api/equipment/${id}/return`);
   }
 
   function unavailableMessage(item: Equipment) {
@@ -169,7 +118,7 @@ export default function EquipmentTile({
           <Heading size="sm">
             {item.brand ? `${item.brand} ` : ""}
             {item.model ? `${item.model} ` : ""}
-            <Badge ml={2} {...statusColor[item.status]}>
+            <Badge ml={2} {...StatusColor[item.status]}>
               {prettyStatus(item.status)}
               {isMine &&
               (item.status === "RESERVED" || item.status === "CHECKED_OUT")

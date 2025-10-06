@@ -12,7 +12,7 @@ import {
   Spinner,
   Accordion,
 } from "@chakra-ui/react";
-import { apiGet } from "../lib/api";
+import { apiGet } from "../../lib/api";
 
 type ActivityEvent = {
   id: string;

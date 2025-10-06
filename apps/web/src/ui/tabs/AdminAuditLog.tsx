@@ -13,9 +13,9 @@ import {
   HStack,
   useBreakpointValue,
 } from "@chakra-ui/react";
-import { apiGet } from "../lib/api";
-import { toaster } from "./ui/toaster";
-import { getErrorMessage } from "../lib/errors";
+import { apiGet } from "../../lib/api";
+import { toaster } from "../old/toaster";
+import { getErrorMessage } from "../../lib/errors";
 
 type AuditItem = {
   id: string;

@@ -11,9 +11,9 @@ import {
   Input,
   Spinner,
 } from "@chakra-ui/react";
-import { apiGet, apiPost, apiDelete } from "../lib/api";
-import { toaster } from "./ui/toaster";
-import { getErrorMessage } from "../lib/errors";
+import { apiGet, apiPost, apiDelete } from "../../lib/api";
+import { toaster } from "../old/toaster";
+import { getErrorMessage } from "../../lib/errors";
 
 type EquipmentStatus =
   | "AVAILABLE"
