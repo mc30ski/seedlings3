@@ -16,8 +16,8 @@ const fadeOut = keyframes`
 
 export default function AppSplash({
   show,
-  minDurationMs = 800,
-  fadeMs = 280,
+  minDurationMs = 1000,
+  fadeMs = 350,
 }: {
   show: boolean;
   minDurationMs?: number;

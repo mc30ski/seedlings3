@@ -11,6 +11,8 @@ import { UserButton } from "@clerk/clerk-react";
 import AdminActivity from "@/src/components/AdminActivity";
 
 import AppSplash from "../src/components/AppSplash";
+import AwaitingApprovalNotice from "../src/components/AwaitingApprovalNotice";
+import NoRoleNotice from "../src/components/NoRoleNotice";
 
 import WorkerEquipment from "@/src/components/WorkerEquipment";
 import WorkerJobs from "@/src/components/WorkerJobs";
@@ -273,18 +275,9 @@ export default function HomePage() {
         </Box>
       </Box>
 
-      {!meLoading && me && !me.isApproved && (
-        <Text color="red.500" mb={3}>
-          Awaiting admin approval…
-        </Text>
-      )}
+      {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
 
-      {!meLoading && me?.isApproved && !hasAnyRole && (
-        <Text color="orange.500" mb={3}>
-          You have been approved, but don&apos;t have a role yet. Please contact
-          your Administrator.
-        </Text>
-      )}
+      {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
 
       {!meLoading && me?.isApproved && hasAnyRole && (
         <Tabs.Root
