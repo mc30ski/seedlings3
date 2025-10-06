@@ -8,7 +8,6 @@ import {
   Stack,
   Button,
   Input,
-  Spinner,
 } from "@chakra-ui/react";
 import { apiGet } from "../lib/api";
 import { getErrorMessage } from "../lib/errors";
