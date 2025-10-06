@@ -1,26 +1,20 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
-import WorkerEquipment from "../src/components/WorkerEquipment";
-import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
-import AdminEquipment from "../src/components/AdminEquipment";
-import AdminAuditLog from "../src/components/AdminAuditLog";
-import AdminUsers from "../src/components/AdminUsers";
-import { apiGet } from "../src/lib/api";
-import WorkerUnavailable from "../src/components/WorkerUnavailable";
-import BrandLabel from "../src/components/BrandLabel";
+import AdminEquipment from "@/src/components/AdminEquipment";
+import AdminAuditLog from "@/src/components/AdminAuditLog";
+import AdminUsers from "@/src/components/AdminUsers";
+import { apiGet } from "@/src/lib/api";
+import BrandLabel from "@/src/components/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
-import AdminActivity from "../src/components/AdminActivity";
-import WorkerAllEquipment from "../src/components/WorkerAllEquipment";
+import AdminActivity from "@/src/components/AdminActivity";
 
-type Me = {
-  id: string;
-  isApproved: boolean;
-  roles: ("ADMIN" | "WORKER")[];
-  email?: string | null;
-  displayName?: string | null;
-};
+import WorkerEquipment2 from "@/src/components/WorkerEquipment2";
+import WorkerJobs from "@/src/components/WorkerJobs";
+import WorkerClients from "@/src/components/WorkerClients";
+
+import { Me } from "@/src/lib/types";
 
 const hasRole = (roles: Me["roles"] | undefined, role: "ADMIN" | "WORKER") =>
   !!roles?.includes(role);
@@ -309,28 +303,20 @@ export default function HomePage() {
 
           {isWorker && (
             <Tabs.Content value="worker">
-              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
+              <Tabs.Root defaultValue="equipment2" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
-                  <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
-                  <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
-                  <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
-                  <Tabs.Trigger value="all">All</Tabs.Trigger>
+                  <Tabs.Trigger value="equipment2">Equipment</Tabs.Trigger>
+                  <Tabs.Trigger value="jobs">Jobs</Tabs.Trigger>
+                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
                 </Tabs.List>
-
-                <Tabs.Content value="equipment">
-                  <WorkerEquipment />
+                <Tabs.Content value="equipment2">
+                  <WorkerEquipment2 />
                 </Tabs.Content>
-
-                <Tabs.Content value="mine">
-                  <WorkerMyEquipment />
+                <Tabs.Content value="jobs">
+                  <WorkerJobs />
                 </Tabs.Content>
-
-                <Tabs.Content value="unavailable">
-                  <WorkerUnavailable />
-                </Tabs.Content>
-
-                <Tabs.Content value="all">
-                  <WorkerAllEquipment />
+                <Tabs.Content value="clients">
+                  <WorkerClients />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
@@ -354,19 +340,15 @@ export default function HomePage() {
                   <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
-
                 <Tabs.Content value="equipment">
                   <AdminEquipment />
                 </Tabs.Content>
-
                 <Tabs.Content value="users">
                   <AdminUsers />
                 </Tabs.Content>
-
                 <Tabs.Content value="activity">
                   <AdminActivity />
                 </Tabs.Content>
-
                 <Tabs.Content value="audit">
                   <AdminAuditLog />
                 </Tabs.Content>
