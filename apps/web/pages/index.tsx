@@ -10,6 +10,8 @@ import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
 import AdminActivity from "@/src/components/AdminActivity";
 
+import AppSplash from "../src/components/AppSplash";
+
 import WorkerEquipment from "@/src/components/WorkerEquipment";
 import WorkerJobs from "@/src/components/WorkerJobs";
 import WorkerClients from "@/src/components/WorkerClients";
@@ -177,6 +179,8 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
+      <AppSplash show={meLoading} />
+
       <Box
         as="header"
         bg="green.50"
@@ -268,13 +272,6 @@ export default function HomePage() {
           </HStack>
         </Box>
       </Box>
-
-      {meLoading && (
-        <Box mb={4} display="flex" alignItems="center" gap="2">
-          <Spinner size="sm" />
-          <Text>Loading…</Text>
-        </Box>
-      )}
 
       {!meLoading && me && !me.isApproved && (
         <Text color="red.500" mb={3}>
