@@ -49,6 +49,30 @@ export default function EquipmentTile({
     }));
   }
 
+  function ActionButton({
+    key,
+    label,
+    action,
+    variant = "solid",
+  }: {
+    key: string;
+    label: string;
+    action: any;
+    variant?: any;
+  }) {
+    return (
+      <Button
+        key={key}
+        variant={variant}
+        onClick={action}
+        disabled={!!busyId}
+        loading={busyId === item.id}
+      >
+        {label}
+      </Button>
+    );
+  }
+
   async function service(id: string, url: string) {
     setBusyId(id);
     try {
@@ -63,15 +87,15 @@ export default function EquipmentTile({
     }
   }
 
-  async function checkout(id: string) {
+  async function checkoutItem(id: string) {
     return service(id, `/api/equipment/${id}/checkout`);
   }
 
-  async function reserve(id: string) {
+  async function reserveItem(id: string) {
     return service(id, `/api/equipment/${id}/reserve`);
   }
 
-  async function cancelReserve(id: string) {
+  async function cancelItem(id: string) {
     return service(id, `/api/equipment/${id}/reserve/cancel`);
   }
 
@@ -172,39 +196,30 @@ export default function EquipmentTile({
           <Stack direction="row" gap="2" mt={2}>
             {filter === "claimed" && item.status === "RESERVED" ? (
               <>
-                <Button
-                  onClick={() => void checkout(item.id)}
-                  disabled={!!busyId}
-                  loading={busyId === item.id}
-                >
-                  Check Out
-                </Button>
-                <Button
+                <ActionButton
+                  key="worker_checkout"
+                  label="Check Out"
+                  action={() => void checkoutItem(item.id)}
+                />
+                <ActionButton
+                  key="worker_cancel"
+                  label="Cancel Reservation"
+                  action={() => void cancelItem(item.id)}
                   variant="outline"
-                  onClick={() => void cancelReserve(item.id)}
-                  disabled={!!busyId}
-                  loading={busyId === item.id}
-                >
-                  Cancel Reservation
-                </Button>
+                />
               </>
             ) : filter === "claimed" && item.status === "CHECKED_OUT" ? (
-              <Button
-                onClick={() => void returnItem(item.id)}
-                disabled={!!busyId}
-                loading={busyId === item.id}
-              >
-                Return
-              </Button>
+              <ActionButton
+                key="worker_return"
+                label="Return"
+                action={() => void returnItem(item.id)}
+              />
             ) : filter === "available" && item.status === "AVAILABLE" ? (
-              <Button
-                key="reserve"
-                onClick={() => void reserve(item.id)}
-                disabled={!!busyId}
-                loading={busyId === item.id}
-              >
-                Reserve
-              </Button>
+              <ActionButton
+                key="worker_reserve"
+                label="Reserve"
+                action={() => void reserveItem(item.id)}
+              />
             ) : null}
           </Stack>
         </Box>
