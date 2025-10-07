@@ -1,5 +1,18 @@
 export type Role = "ADMIN" | "WORKER";
 
+export const EQUIPMENT_TYPES = [
+  "MOWER",
+  "TRIMMER",
+  "BLOWER",
+  "HEDGER",
+  "EDGER",
+  "CUTTER",
+  "SPREADER",
+  "MISC",
+] as const;
+
+export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
+
 export type EquipmentStatus =
   | "AVAILABLE"
   | "RESERVED"
@@ -27,6 +40,7 @@ export type Equipment = {
   retiredAt: string | null;
   brand: string | null;
   model: string | null;
+  type: EquipmentType | null;
   holder: EquipmentHolder | null;
 };
 

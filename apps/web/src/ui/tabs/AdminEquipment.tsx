@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Heading, Text, Stack, Button, Input } from "@chakra-ui/react";
+import {
+  Box,
+  Heading,
+  Text,
+  Stack,
+  Button,
+  Input,
+  NativeSelectField,
+  NativeSelectRoot,
+} from "@chakra-ui/react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
-import { Me, EquipmentStatus, Equipment } from "../../lib/types";
+import { EquipmentStatus, Equipment, EQUIPMENT_TYPES } from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineError from "../helpers/InlineMessage";
@@ -14,6 +23,7 @@ export default function AdminEquipment() {
     "all" | "available" | "reserved" | "checked_out" | "maintenance" | "retired"
   >("all");
   const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
   const [error, setError] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -24,6 +34,7 @@ export default function AdminEquipment() {
   const [newQr, setNewQr] = useState("");
   const [newBrand, setNewBrand] = useState("");
   const [newModel, setNewModel] = useState("");
+  const [newType, setNewType] = useState("");
 
   const [success, setSuccess] = useState("");
 
@@ -72,6 +83,10 @@ export default function AdminEquipment() {
       if (want) rows = rows.filter((r) => want!.includes(r.status));
     }
 
+    if (filterType) {
+      rows = rows.filter((r) => r.type === filterType);
+    }
+
     const qlc = search.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) => {
@@ -80,6 +95,7 @@ export default function AdminEquipment() {
         const s3 = (r.model || "").toLowerCase();
         const s4 = (r.shortDesc || "").toLowerCase();
         const s5 = (r.longDesc || "").toLowerCase();
+        const s6 = (r.type || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -90,13 +106,14 @@ export default function AdminEquipment() {
           s3.includes(qlc) ||
           s4.includes(qlc) ||
           s5.includes(qlc) ||
+          s6.includes(qlc) ||
           who.includes(qlc)
         );
       });
     }
 
     return rows;
-  }, [items, status, search]);
+  }, [items, status, search, filterType]);
 
   async function createEquipment() {
     const shortDesc = newShort.trim();
@@ -104,6 +121,7 @@ export default function AdminEquipment() {
     const qrSlug = newQr.trim();
     const brand = newBrand.trim();
     const model = newModel.trim();
+    const type = newType.trim();
 
     setCreating(true);
     try {
@@ -113,12 +131,14 @@ export default function AdminEquipment() {
         qrSlug: qrSlug || undefined,
         brand,
         model,
+        type,
       });
       setNewShort("");
       setNewLong("");
       setNewQr("");
       setNewBrand("");
       setNewModel("");
+      setNewType("");
       await load();
       setSuccess("Equipment created");
     } catch (err) {
@@ -152,6 +172,20 @@ export default function AdminEquipment() {
             gap="2"
             align={{ base: "stretch", md: "end" }}
           >
+            <NativeSelectRoot size="sm">
+              <NativeSelectField
+                value={newType}
+                onChange={(e) => setNewType(e.target.value)}
+                placeholder="Type *"
+              >
+                <option value="" />
+                {EQUIPMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </NativeSelectField>
+            </NativeSelectRoot>
             <Input
               placeholder="Brand *"
               value={newBrand}
@@ -163,7 +197,7 @@ export default function AdminEquipment() {
               onChange={(e) => setNewModel(e.target.value)}
             />
             <Input
-              placeholder="Short description *"
+              placeholder="Description *"
               value={newShort}
               onChange={(e) => setNewShort(e.target.value)}
             />
@@ -184,7 +218,8 @@ export default function AdminEquipment() {
                 creating ||
                 !newShort.trim() ||
                 !newBrand.trim() ||
-                !newModel.trim()
+                !newModel.trim() ||
+                !newType.trim()
               }
               size={{ base: "sm", md: "sm" }}
             >
@@ -221,13 +256,38 @@ export default function AdminEquipment() {
             </Button>
           ))}
         </Box>
+      </Stack>
 
-        <Input
-          placeholder="Search description / holder…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          w={{ base: "100%", md: "320px" }}
-        />
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="2"
+        align={{ base: "stretch", md: "center" }}
+        mb={3}
+      >
+        <Box display="flex" flexWrap="wrap" gap="6px">
+          <NativeSelectRoot size="sm">
+            <NativeSelectField
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              placeholder="Select Type"
+            >
+              <option value="" />
+              {EQUIPMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </NativeSelectField>
+          </NativeSelectRoot>
+        </Box>
+        <Box display="flex" flexWrap="wrap" gap="6px">
+          <Input
+            placeholder="Search description / holder…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            w={{ base: "100%", md: "320px" }}
+          />
+        </Box>
       </Stack>
 
       {/* Separator */}

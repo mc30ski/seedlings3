@@ -66,12 +66,13 @@ model UserRole {
 
 model Equipment {
   id         String           @id @default(uuid()) // stable external ID for labels/QR
-  shortDesc  String
-  longDesc   String
-  status     EquipmentStatus  @default(AVAILABLE)
   qrSlug     String?          @unique
+  status     EquipmentStatus  @default(AVAILABLE)
+  type       String?
   brand      String?
   model      String?
+  shortDesc  String?
+  longDesc   String?
 
   checkouts    Checkout[]
   auditEvents  AuditEvent[]     @relation("AuditEquipment")

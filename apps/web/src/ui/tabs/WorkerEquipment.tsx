@@ -1,9 +1,23 @@
 // apps/web/src/components/WorkerAll.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Heading, Text, Stack, Button, Input } from "@chakra-ui/react";
+import {
+  Box,
+  Heading,
+  Text,
+  Stack,
+  Button,
+  Input,
+  NativeSelectField,
+  NativeSelectRoot,
+} from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
-import { Me, EquipmentStatus, Equipment } from "../../lib/types";
+import {
+  Me,
+  EquipmentStatus,
+  Equipment,
+  EQUIPMENT_TYPES,
+} from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
@@ -16,6 +30,7 @@ export default function WorkerEquipment() {
     "claimed" | "available" | "unavailable" | "all"
   >("claimed");
   const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
   const [error, setError] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -63,6 +78,10 @@ export default function WorkerEquipment() {
       }
     }
 
+    if (filterType) {
+      rows = rows.filter((r) => r.type === filterType);
+    }
+
     const qlc = search.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) => {
@@ -71,6 +90,7 @@ export default function WorkerEquipment() {
         const s3 = (r.model || "").toLowerCase();
         const s4 = (r.shortDesc || "").toLowerCase();
         const s5 = (r.longDesc || "").toLowerCase();
+        const s6 = (r.type || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -81,13 +101,14 @@ export default function WorkerEquipment() {
           s3.includes(qlc) ||
           s4.includes(qlc) ||
           s5.includes(qlc) ||
+          s6.includes(qlc) ||
           who.includes(qlc)
         );
       });
     }
 
     return rows;
-  }, [items, status, search]);
+  }, [items, status, search, filterType]);
 
   if (loading) return <LoadingCenter />;
 
@@ -118,13 +139,38 @@ export default function WorkerEquipment() {
             </Button>
           ))}
         </Box>
+      </Stack>
 
-        <Input
-          placeholder="Search description / holder…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          w={{ base: "100%", md: "320px" }}
-        />
+      <Stack
+        direction={{ base: "column", md: "row" }}
+        gap="2"
+        align={{ base: "stretch", md: "center" }}
+        mb={3}
+      >
+        <Box display="flex" flexWrap="wrap" gap="6px">
+          <NativeSelectRoot size="sm">
+            <NativeSelectField
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              placeholder="Select Type"
+            >
+              <option value="" />
+              {EQUIPMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </NativeSelectField>
+          </NativeSelectRoot>
+        </Box>
+        <Box display="flex" flexWrap="wrap" gap="6px">
+          <Input
+            placeholder="Search description / holder…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            w={{ base: "100%", md: "320px" }}
+          />
+        </Box>
       </Stack>
 
       {/* Separator */}

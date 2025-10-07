@@ -198,6 +198,7 @@ export default function EquipmentTile({
     >
       <HStack justify="space-between" align="start" w="full">
         <Box flex="1" w="full">
+          <Heading size="md">{item.type ? `${item.type} ` : ""}</Heading>
           <Heading size="sm">
             {item.brand ? `${item.brand} ` : ""}
             {item.model ? `${item.model} ` : ""}
