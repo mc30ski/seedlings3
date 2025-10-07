@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   Dialog,
+  Portal,
 } from "@chakra-ui/react";
 import { useState, useRef } from "react";
 import { apiPost, apiDelete } from "../../lib/api";
@@ -359,43 +360,62 @@ export default function EquipmentTile({
         open={!!toDelete}
         onOpenChange={(e) => !e.open && setToDelete(null)}
         initialFocusEl={() => cancelRef.current}
+        placement="center"
       >
-        <Dialog.Content>
-          <Dialog.Header>Delete equipment?</Dialog.Header>
-          <Dialog.Body>
-            <Text mb="2">
-              This will <b>permanently delete</b> the equipment record.
-            </Text>
-            {toDelete?.label ? (
-              <Text color="gray.600">Item: {toDelete.label}</Text>
-            ) : null}
-          </Dialog.Body>
-          <Dialog.Footer>
-            <HStack justify="flex-end" w="full" gap="2">
-              <Dialog.CloseTrigger asChild>
-                <Button ref={cancelRef} variant="outline">
-                  Cancel
-                </Button>
-              </Dialog.CloseTrigger>
+        <Portal>
+          {/* Backdrop below */}
+          <Dialog.Backdrop zIndex={1500} />
 
-              {/* Destructive action */}
-              <Button
-                variant={"danger" as any}
-                onClick={async () => {
-                  if (!toDelete) return;
-                  try {
-                    // call your existing delete function here
-                    await adminHardDelete(toDelete.id);
-                  } finally {
-                    setToDelete(null);
-                  }
-                }}
-              >
-                Delete
-              </Button>
-            </HStack>
-          </Dialog.Footer>
-        </Dialog.Content>
+          {/* Positioner + Content above */}
+          <Dialog.Positioner zIndex={1600}>
+            <Dialog.Content
+              maxW={{ base: "calc(100vw - 2rem)", sm: "420px" }}
+              w="full"
+              mx="auto"
+              my={{ base: "1rem", sm: "10vh" }}
+              maxH="80vh"
+              overflowY="auto"
+              // Make sure the panel isn't transparent
+              bg="white"
+              _dark={{ bg: "gray.800" }}
+              // optional niceties
+              borderRadius="lg"
+              boxShadow="lg"
+            >
+              <Dialog.Header>Delete equipment?</Dialog.Header>
+              <Dialog.Body>
+                <Text mb="2">
+                  This will <b>permanently delete</b> the equipment record.
+                </Text>
+                {toDelete?.label ? (
+                  <Text color="gray.600">Item: {toDelete.label}</Text>
+                ) : null}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap="2">
+                  <Dialog.CloseTrigger asChild>
+                    <Button ref={cancelRef} variant="outline">
+                      Cancel
+                    </Button>
+                  </Dialog.CloseTrigger>
+                  <Button
+                    variant={"danger" as any}
+                    onClick={async () => {
+                      if (!toDelete) return;
+                      try {
+                        await adminHardDelete(toDelete.id);
+                      } finally {
+                        setToDelete(null);
+                      }
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
       </Dialog.Root>
     </>
   );
