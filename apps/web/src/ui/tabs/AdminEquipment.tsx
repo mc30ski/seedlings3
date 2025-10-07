@@ -11,7 +11,9 @@ import {
   HStack,
   Separator,
   Collapsible,
+  Icon,
 } from "@chakra-ui/react";
+import { ChevronDown, Plus } from "lucide-react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
 import {
@@ -45,6 +47,7 @@ export default function AdminEquipment() {
   const [newBrand, setNewBrand] = useState("");
   const [newModel, setNewModel] = useState("");
   const [newType, setNewType] = useState("");
+  const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -245,14 +248,20 @@ export default function AdminEquipment() {
                   : "All Equipment"}
       </Heading>
 
-      <Collapsible.Root defaultOpen={false}>
+      <Collapsible.Root open={open} onOpenChange={({ open }) => setOpen(open)}>
         <HStack justify="space-between" mb="2">
           <Collapsible.Trigger asChild>
-            <Button
-              variant="outline"
-              size="sm" /* rightIcon={<ChevronDown size={16} />} */
-            >
-              Create equipment
+            <Button variant="outline" size="sm">
+              <HStack gap="2">
+                <Icon as={Plus} boxSize={4} />
+                <span>Create equipment</span>
+                <Icon
+                  as={ChevronDown}
+                  boxSize={4}
+                  style={{ transition: "transform 0.2s ease" }}
+                  transform={open ? "rotate(180deg)" : "rotate(0deg)"}
+                />
+              </HStack>
             </Button>
           </Collapsible.Trigger>
         </HStack>
@@ -280,6 +289,7 @@ export default function AdminEquipment() {
                   ))}
                 </NativeSelectField>
               </NativeSelectRoot>
+
               <Input
                 placeholder="Brand *"
                 value={newBrand}
@@ -316,7 +326,6 @@ export default function AdminEquipment() {
                 </Collapsible.Trigger>
                 <Button
                   size="sm"
-                  // leftIcon={<Plus size={16} />}
                   onClick={createEquipment}
                   disabled={
                     creating ||
@@ -326,7 +335,9 @@ export default function AdminEquipment() {
                     !newType.trim()
                   }
                 >
-                  Create
+                  <HStack gap="2">
+                    <span>Create</span>
+                  </HStack>
                 </Button>
               </HStack>
             </Stack>

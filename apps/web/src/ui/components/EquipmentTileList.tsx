@@ -183,7 +183,7 @@ export default function EquipmentTileList({
 
   async function adminHardDelete(id: string) {
     if (await service(id, `/api/admin/equipment/${id}`, true)) {
-      setMessage("Equipment successfully released", InlineMessageType.SUCCESS);
+      setMessage("Equipment successfully deleted", InlineMessageType.SUCCESS);
     }
   }
 
