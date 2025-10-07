@@ -127,6 +127,7 @@ export default function AdminEquipment() {
         return s.includes(qlc) || l.includes(qlc) || who.includes(qlc);
       });
     }
+
     return rows;
   }, [items, q, status]);
 

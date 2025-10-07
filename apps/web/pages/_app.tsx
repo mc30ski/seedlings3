@@ -7,8 +7,9 @@ import {
   SignIn,
   useAuth,
 } from "@clerk/clerk-react";
+import { system } from "../src/styles/theme";
 import { useEffect, useMemo, useState } from "react";
-import { ChakraProvider, defaultSystem, Box } from "@chakra-ui/react";
+import { ChakraProvider, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
 import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
@@ -53,7 +54,7 @@ function AppInner({ Component, pageProps }: AppProps) {
   );
 
   return (
-    <ChakraProvider value={defaultSystem}>
+    <ChakraProvider value={system}>
       {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
       <Box pt={TOP_PAD}>
         {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}

@@ -8,8 +8,8 @@ import {
   Button,
 } from "@chakra-ui/react";
 import { useState } from "react";
-import { apiPost } from "../../lib/api";
-import { Equipment, StatusColor } from "../../lib/types";
+import { apiPost, apiDelete } from "../../lib/api";
+import { Role, Equipment, StatusColor } from "../../lib/types";
 import {
   errorMessage,
   notifyEquipmentUpdated,
@@ -19,6 +19,7 @@ import {
 type EquipmentTileProps = {
   item: Equipment;
   isMine: boolean;
+  role: Role;
   filter: string;
   refresh: any;
 };
@@ -26,6 +27,7 @@ type EquipmentTileProps = {
 export default function EquipmentTile({
   item,
   isMine,
+  role,
   filter,
   refresh,
 }: EquipmentTileProps) {
@@ -73,10 +75,15 @@ export default function EquipmentTile({
     );
   }
 
-  async function service(id: string, url: string) {
+  async function service(
+    id: string,
+    url: string,
+    remove: boolean = false,
+    body: any = undefined
+  ) {
     setBusyId(id);
     try {
-      await apiPost(url);
+      remove ? await apiDelete(url) : await apiPost(url, body);
       dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
@@ -87,20 +94,44 @@ export default function EquipmentTile({
     }
   }
 
-  async function checkoutItem(id: string) {
+  async function workerCheckout(id: string) {
     return service(id, `/api/equipment/${id}/checkout`);
   }
 
-  async function reserveItem(id: string) {
+  async function workerReserve(id: string) {
     return service(id, `/api/equipment/${id}/reserve`);
   }
 
-  async function cancelItem(id: string) {
+  async function workerCancel(id: string) {
     return service(id, `/api/equipment/${id}/reserve/cancel`);
   }
 
-  async function returnItem(id: string) {
+  async function workerReturn(id: string) {
     return service(id, `/api/equipment/${id}/return`);
+  }
+
+  async function adminForceRelease(id: string) {
+    return service(id, `/api/admin/equipment/${id}/release`);
+  }
+
+  async function adminStartMaintainence(id: string) {
+    return service(id, `/api/admin/equipment/${id}/maintenance/start`);
+  }
+
+  async function adminEndMaintainence(id: string) {
+    return service(id, `/api/admin/equipment/${id}/maintenance/end`);
+  }
+
+  async function adminRetire(id: string) {
+    return service(id, `/api/admin/equipment/${id}/retire`);
+  }
+
+  async function adminUnretire(id: string) {
+    return service(id, `/api/admin/equipment/${id}/unretire`);
+  }
+
+  async function adminHardDelete(id: string) {
+    return service(id, `/api/admin/equipment/${id}`, true);
   }
 
   function unavailableMessage(item: Equipment) {
@@ -127,6 +158,34 @@ export default function EquipmentTile({
       return null;
     }
   }
+
+  const canWorkerCheckout = (e: Equipment) =>
+    role === "WORKER" && filter === "claimed" && item.status === "RESERVED";
+  const canWorkerCancel = (e: Equipment) =>
+    role === "WORKER" && filter === "claimed" && item.status === "RESERVED";
+  const canWorkerReturn = (e: Equipment) =>
+    role === "WORKER" && filter === "claimed" && item.status === "CHECKED_OUT";
+  const canWorkerReserve = (e: Equipment) =>
+    role === "WORKER" && filter === "available" && item.status === "AVAILABLE";
+
+  const canAdminForceRelease = (e: Equipment) => role === "ADMIN" && !!e.holder;
+  const canAdminStartMaintenance = (e: Equipment) =>
+    role === "ADMIN" &&
+    e.status !== "RETIRED" &&
+    e.status !== "MAINTENANCE" &&
+    !e.holder;
+  const canAdminEndMaintenance = (e: Equipment) =>
+    role === "ADMIN" && e.status === "MAINTENANCE";
+  const canAdminRetire = (e: Equipment) =>
+    role === "ADMIN" &&
+    e.status !== "RETIRED" &&
+    !e.holder &&
+    e.status !== "RESERVED" &&
+    e.status !== "CHECKED_OUT";
+  const canAdminUnretire = (e: Equipment) =>
+    role === "ADMIN" && e.status === "RETIRED";
+  const canAdminHardDelete = (e: Equipment) =>
+    role === "ADMIN" && e.status === "RETIRED";
 
   return (
     <Box
@@ -194,33 +253,84 @@ export default function EquipmentTile({
           )}
 
           <Stack direction="row" gap="2" mt={2}>
-            {filter === "claimed" && item.status === "RESERVED" ? (
-              <>
+            <>
+              {canWorkerCheckout(item) && (
                 <ActionButton
                   key="worker_checkout"
                   label="Check Out"
-                  action={() => void checkoutItem(item.id)}
+                  action={() => void workerCheckout(item.id)}
                 />
+              )}
+              {canWorkerCancel(item) && (
                 <ActionButton
                   key="worker_cancel"
                   label="Cancel Reservation"
-                  action={() => void cancelItem(item.id)}
+                  action={() => void workerCancel(item.id)}
                   variant="outline"
                 />
-              </>
-            ) : filter === "claimed" && item.status === "CHECKED_OUT" ? (
-              <ActionButton
-                key="worker_return"
-                label="Return"
-                action={() => void returnItem(item.id)}
-              />
-            ) : filter === "available" && item.status === "AVAILABLE" ? (
-              <ActionButton
-                key="worker_reserve"
-                label="Reserve"
-                action={() => void reserveItem(item.id)}
-              />
-            ) : null}
+              )}
+              {canWorkerReturn(item) && (
+                <ActionButton
+                  key="worker_return"
+                  label="Return"
+                  action={() => void workerReturn(item.id)}
+                />
+              )}
+              {canWorkerReserve(item) && (
+                <ActionButton
+                  key="worker_reserve"
+                  label="Reserve"
+                  action={() => void workerReserve(item.id)}
+                />
+              )}
+              {canAdminForceRelease(item) && (
+                <ActionButton
+                  key="admin_forceRelease"
+                  label="Force release"
+                  action={() => void adminForceRelease(item.id)}
+                />
+              )}
+              {canAdminStartMaintenance(item) && (
+                <ActionButton
+                  key="admin_startMaintenance"
+                  label="Start maintenance"
+                  action={() => void adminStartMaintainence(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminEndMaintenance(item) && (
+                <ActionButton
+                  key="admin_endMaintenance"
+                  label="End maintenance"
+                  action={() => void adminEndMaintainence(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminRetire(item) && (
+                <ActionButton
+                  key="admin_retire"
+                  label="Retire"
+                  action={() => void adminRetire(item.id)}
+                  variant="outline"
+                />
+              )}
+              {canAdminUnretire(item) && (
+                <ActionButton
+                  key="admin_unretire"
+                  label="Unretire"
+                  action={() => void adminUnretire(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminHardDelete(item) && (
+                <ActionButton
+                  key="admin_delete"
+                  label="Delete"
+                  action={() => void adminHardDelete(item.id)}
+                  variant="danger-outline"
+                />
+              )}
+            </>
           </Stack>
         </Box>
       </HStack>

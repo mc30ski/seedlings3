@@ -1,3 +1,5 @@
+export type Role = "ADMIN" | "WORKER";
+
 export type EquipmentStatus =
   | "AVAILABLE"
   | "RESERVED"
@@ -31,7 +33,7 @@ export type Equipment = {
 export type Me = {
   id: string;
   isApproved?: boolean;
-  roles?: ("ADMIN" | "WORKER")[];
+  roles?: Role[];
   email?: string | null;
   displayName?: string | null;
 };

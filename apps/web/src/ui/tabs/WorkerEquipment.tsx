@@ -1,21 +1,14 @@
 // apps/web/src/components/WorkerAll.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Box,
-  Heading,
-  Text,
-  HStack,
-  Stack,
-  Button,
-  Input,
-} from "@chakra-ui/react";
+import { Box, Heading, Text, Stack, Button, Input } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
 import { Me, EquipmentStatus, Equipment } from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
 import LoadingCenter from "../helpers/LoadingCenter";
+import InlineMessage from "../helpers/InlineMessage";
 
-export default function WorkerEquipment2() {
+export default function WorkerEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
@@ -148,22 +141,10 @@ export default function WorkerEquipment2() {
       </Heading>
 
       {error && (
-        <HStack
-          w="full"
-          mt={2}
-          align="start"
-          p={2.5}
-          borderRadius="md"
-          borderWidth="1px"
-          borderColor="red.300"
-          bg="red.50"
-        >
-          <Box flex="1">
-            <Text fontSize="sm" color="red.900">
-              Failed to load equipment: {errorMsg}
-            </Text>
-          </Box>
-        </HStack>
+        <InlineMessage
+          type="ERROR"
+          msg={"Failed to load equipment: " + errorMsg}
+        />
       )}
 
       {!error && filtered.length === 0 && (
@@ -175,6 +156,7 @@ export default function WorkerEquipment2() {
           <EquipmentTile
             item={item}
             isMine={isMine}
+            role={"WORKER"}
             filter={status}
             refresh={load}
           />

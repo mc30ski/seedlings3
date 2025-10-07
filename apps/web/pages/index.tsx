@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
-import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
+import AdminEquipment from "@/src/ui/tabs/AdminEquipment2";
 import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
 import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import { apiGet } from "@/src/lib/api";
@@ -293,13 +293,13 @@ export default function HomePage() {
 
           {isWorker && (
             <Tabs.Content value="worker">
-              <Tabs.Root defaultValue="equipment2" lazyMount unmountOnExit>
+              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment2">Equipment</Tabs.Trigger>
+                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="jobs">Jobs</Tabs.Trigger>
                   <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
                 </Tabs.List>
-                <Tabs.Content value="equipment2">
+                <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
                 <Tabs.Content value="jobs">
