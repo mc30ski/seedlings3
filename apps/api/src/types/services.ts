@@ -114,6 +114,11 @@ export type Services = {
     reserve(id: string, userId: string): Promise<ReserveResult>;
     cancelReservation(id: string, userId: string): Promise<CancelResult>;
     checkout(id: string, userId: string): Promise<CheckoutResult>;
+    checkoutWithQr(
+      id: string,
+      userId: string,
+      slug: string
+    ): Promise<CheckoutResult>;
     returnByUser(id: string, userId: string): Promise<ReleaseResult>;
 
     releaseByUser(id: string, userId: string): Promise<ReleaseResult>;

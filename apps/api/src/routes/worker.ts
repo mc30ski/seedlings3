@@ -37,6 +37,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.equipment.checkout(id, req.user.id);
   });
 
+  // Enforce QR slug verification before finishing checkout
+  app.post("/equipment/:id/checkout/verify", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    const slug = String(req.body?.slug ?? "").trim();
+    return services.equipment.checkoutWithQr(id, req.user.id, slug);
+  });
+
   app.post("/equipment/:id/return", workerGuard, async (req: any) => {
     const id = req.params.id as string;
     return services.equipment.returnByUser(id, req.user.id);

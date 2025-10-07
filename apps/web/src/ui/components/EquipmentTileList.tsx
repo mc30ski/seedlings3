@@ -16,7 +16,9 @@ import {
   errorMessage,
   notifyEquipmentUpdated,
   prettyStatus,
+  extractSlug,
 } from "../../lib/lib";
+import QRScannerDialog from "./QRScannerDialog";
 
 type EquipmentTileProps = {
   item: Equipment;
@@ -41,6 +43,7 @@ export default function EquipmentTile({
     label: string;
   }>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const [scanFor, setScanFor] = useState<string | null>(null);
 
   const dismissInline = (id: string) =>
     setInlineWarn((m) => {
@@ -101,8 +104,12 @@ export default function EquipmentTile({
     }
   }
 
-  async function workerCheckout(id: string) {
-    service(id, `/api/equipment/${id}/checkout`);
+  //async function workerCheckout(id: string) {
+  //  service(id, `/api/equipment/${id}/checkout`);
+  //}
+
+  async function workerCheckoutVerified(id: string, slug: string) {
+    await service(id, `/api/equipment/${id}/checkout/verify`, false, { slug });
   }
 
   async function workerReserve(id: string) {
@@ -139,6 +146,12 @@ export default function EquipmentTile({
 
   async function adminHardDelete(id: string) {
     service(id, `/api/admin/equipment/${id}`, true);
+  }
+
+  async function checkoutWithSlug(id: string, slug: string) {
+    service(id, `/api/equipment/${id}/checkout/verify`, false, {
+      slug: extractSlug(slug),
+    });
   }
 
   function unavailableMessage(item: Equipment) {
@@ -196,6 +209,16 @@ export default function EquipmentTile({
 
   return (
     <>
+      <QRScannerDialog
+        open={!!scanFor}
+        onClose={() => setScanFor(null)}
+        onDetected={(slug) => {
+          const id = scanFor!;
+          setScanFor(null);
+          checkoutWithSlug(id, slug);
+        }}
+      />
+
       <Box
         key={item.id}
         p={4}
@@ -267,7 +290,7 @@ export default function EquipmentTile({
                   <ActionButton
                     key="worker_checkout"
                     label="Check Out"
-                    action={() => void workerCheckout(item.id)}
+                    action={() => setScanFor(item.id)}
                   />
                 )}
                 {canWorkerCancel(item) && (

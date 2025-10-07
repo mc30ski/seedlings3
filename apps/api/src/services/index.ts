@@ -718,6 +718,58 @@ export const services: Services = {
 
       return mapped;
     },
+
+    async checkoutWithQr(id: string, userId: string, slug: string) {
+      if (!slug)
+        throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
+
+      return prisma.$transaction(async (tx) => {
+        await lockEquipment(tx, id);
+
+        const eq = await tx.equipment.findUnique({ where: { id } });
+        if (!eq)
+          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+        if (!eq.qrSlug)
+          throw new ServiceError(
+            "NO_QR",
+            "This equipment doesn't have a QR code",
+            409
+          );
+        if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
+          throw new ServiceError(
+            "QR_MISMATCH",
+            "QR code doesn't match this equipment",
+            403
+          );
+
+        // Find this user's active (unreleased) reservation for the item
+        const active = await tx.checkout.findFirst({
+          where: { equipmentId: id, userId, releasedAt: null },
+          orderBy: { reservedAt: "desc" },
+        });
+        if (!active || active.checkedOutAt)
+          throw new ServiceError(
+            "NOT_ALLOWED",
+            "Reservation not owned or already checked out",
+            403
+          );
+
+        await tx.checkout.update({
+          where: { id: active.id },
+          data: { checkedOutAt: new Date() },
+        });
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.CHECKED_OUT },
+        });
+
+        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {
+          qrSlug: slug,
+          via: "qr",
+        });
+        return { id, userId };
+      });
+    },
   },
 
   maintenance: {
