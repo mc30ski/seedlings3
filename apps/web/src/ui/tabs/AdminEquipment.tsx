@@ -8,6 +8,9 @@ import {
   Input,
   NativeSelectField,
   NativeSelectRoot,
+  HStack,
+  Separator,
+  Collapsible,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
@@ -158,83 +161,6 @@ export default function AdminEquipment() {
         align={{ base: "stretch", md: "center" }}
         mb={3}
       >
-        {/* Create panel */}
-        <Box
-          w="full"
-          mb={4}
-          p={3}
-          borderWidth="1px"
-          borderRadius="lg"
-          bg="gray.50"
-        >
-          <Stack
-            direction={{ base: "column", md: "row" }}
-            gap="2"
-            align={{ base: "stretch", md: "end" }}
-          >
-            <NativeSelectRoot size="sm">
-              <NativeSelectField
-                value={newType}
-                onChange={(e) => setNewType(e.target.value)}
-                placeholder="Type *"
-              >
-                <option value="" />
-                {EQUIPMENT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </NativeSelectField>
-            </NativeSelectRoot>
-            <Input
-              placeholder="Brand *"
-              value={newBrand}
-              onChange={(e) => setNewBrand(e.target.value)}
-            />
-            <Input
-              placeholder="Model *"
-              value={newModel}
-              onChange={(e) => setNewModel(e.target.value)}
-            />
-            <Input
-              placeholder="Description *"
-              value={newShort}
-              onChange={(e) => setNewShort(e.target.value)}
-            />
-            <Input
-              placeholder="Details (optional)"
-              value={newLong}
-              onChange={(e) => setNewLong(e.target.value)}
-            />
-            <Input
-              placeholder="QR slug (optional)"
-              value={newQr}
-              onChange={(e) => setNewQr(e.target.value)}
-            />
-            <Button
-              onClick={createEquipment}
-              loading={creating}
-              disabled={
-                creating ||
-                !newShort.trim() ||
-                !newBrand.trim() ||
-                !newModel.trim() ||
-                !newType.trim()
-              }
-              size={{ base: "sm", md: "sm" }}
-            >
-              Create
-            </Button>
-          </Stack>
-        </Box>
-      </Stack>
-
-      <Stack
-        direction={{ base: "column", md: "row" }}
-        gap="2"
-        align={{ base: "stretch", md: "center" }}
-        mb={3}
-      >
         <Box display="flex" flexWrap="wrap" gap="6px">
           {(
             [
@@ -306,6 +232,98 @@ export default function AdminEquipment() {
                   ? "Equipment in Retired"
                   : "All Equipment"}
       </Heading>
+
+      <Collapsible.Root defaultOpen={false}>
+        <HStack justify="space-between" mb="2">
+          <Collapsible.Trigger asChild>
+            <Button
+              variant="outline"
+              size="sm" /* rightIcon={<ChevronDown size={16} />} */
+            >
+              Create equipment
+            </Button>
+          </Collapsible.Trigger>
+        </HStack>
+
+        <Collapsible.Content>
+          <Box
+            p="4"
+            borderWidth="1px"
+            borderRadius="lg"
+            bg="white"
+            _dark={{ bg: "gray.800" }}
+          >
+            <Stack gap="3">
+              {/* your existing create form fields go here */}
+              {/* e.g., Brand / Model / TypeSelect / ShortDesc / LongDesc / QR */}
+
+              <NativeSelectRoot size="sm">
+                <NativeSelectField
+                  value={newType}
+                  onChange={(e) => setNewType(e.target.value)}
+                  placeholder="Type *"
+                >
+                  <option value="" />
+                  {EQUIPMENT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </NativeSelectField>
+              </NativeSelectRoot>
+              <Input
+                placeholder="Brand *"
+                value={newBrand}
+                onChange={(e) => setNewBrand(e.target.value)}
+              />
+              <Input
+                placeholder="Model *"
+                value={newModel}
+                onChange={(e) => setNewModel(e.target.value)}
+              />
+              <Input
+                placeholder="Description *"
+                value={newShort}
+                onChange={(e) => setNewShort(e.target.value)}
+              />
+              <Input
+                placeholder="Details (optional)"
+                value={newLong}
+                onChange={(e) => setNewLong(e.target.value)}
+              />
+              <Input
+                placeholder="QR slug (optional)"
+                value={newQr}
+                onChange={(e) => setNewQr(e.target.value)}
+              />
+
+              <Separator my="2" />
+
+              <HStack justify="flex-end" gap="2">
+                <Collapsible.Trigger asChild>
+                  <Button variant="ghost" size="sm">
+                    Cancel
+                  </Button>
+                </Collapsible.Trigger>
+                <Button
+                  size="sm"
+                  // leftIcon={<Plus size={16} />}
+                  onClick={createEquipment}
+                  disabled={
+                    creating ||
+                    !newShort.trim() ||
+                    !newBrand.trim() ||
+                    !newModel.trim() ||
+                    !newType.trim()
+                  }
+                >
+                  Create
+                </Button>
+              </HStack>
+            </Stack>
+          </Box>
+        </Collapsible.Content>
+      </Collapsible.Root>
 
       {error && <InlineError type="ERROR" msg={errorMsg} />}
       {success && <InlineError type="SUCCESS" msg={success} />}
