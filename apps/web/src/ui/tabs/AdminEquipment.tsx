@@ -12,7 +12,7 @@ import {
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
 import { EquipmentStatus, Equipment, EQUIPMENT_TYPES } from "../../lib/types";
-import EquipmentTile from "../components/EquipmentTile";
+import EquipmentTileList from "../components/EquipmentTileList";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineError from "../helpers/InlineMessage";
 
@@ -315,7 +315,7 @@ export default function AdminEquipment() {
       )}
       {filtered.map((item) => {
         return (
-          <EquipmentTile
+          <EquipmentTileList
             item={item}
             isMine={false}
             role={"ADMIN"}

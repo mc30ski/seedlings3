@@ -18,7 +18,7 @@ import {
   Equipment,
   EQUIPMENT_TYPES,
 } from "../../lib/types";
-import EquipmentTile from "../components/EquipmentTile";
+import EquipmentTileList from "../components/EquipmentTileList";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
 
@@ -199,7 +199,7 @@ export default function WorkerEquipment() {
       {filtered.map((item) => {
         const isMine = !!me && !!item.holder && item.holder.userId === me.id;
         return (
-          <EquipmentTile
+          <EquipmentTileList
             item={item}
             isMine={isMine}
             role={"WORKER"}
