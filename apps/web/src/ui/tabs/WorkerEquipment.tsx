@@ -1,4 +1,3 @@
-// apps/web/src/components/WorkerAll.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -183,6 +182,8 @@ export default function WorkerEquipment() {
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
 
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
+
       <Heading size="md" mb={3}>
         {status === "claimed"
           ? "Equipment I've Claimed"
@@ -192,8 +193,6 @@ export default function WorkerEquipment() {
               ? "Equipment Already Claimed or Unavailable"
               : "All Equipment"}
       </Heading>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>

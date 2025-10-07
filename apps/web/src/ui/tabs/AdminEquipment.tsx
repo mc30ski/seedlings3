@@ -234,6 +234,8 @@ export default function AdminEquipment() {
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
 
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
+
       <Heading size="md" mb={3}>
         {status === "available"
           ? "Equipment Available to Reserve"
@@ -344,8 +346,6 @@ export default function AdminEquipment() {
           </Box>
         </Collapsible.Content>
       </Collapsible.Root>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
