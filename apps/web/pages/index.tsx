@@ -1,26 +1,25 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
-import WorkerEquipment from "../src/components/WorkerEquipment";
-import WorkerMyEquipment from "../src/components/WorkerMyEquipment";
-import AdminEquipment from "../src/components/AdminEquipment";
-import AdminAuditLog from "../src/components/AdminAuditLog";
-import AdminUsers from "../src/components/AdminUsers";
-import { apiGet } from "../src/lib/api";
-import WorkerUnavailable from "../src/components/WorkerUnavailable";
-import BrandLabel from "../src/components/BrandLabel";
+import { apiGet } from "@/src/lib/api";
+import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
-import AdminActivity from "../src/components/AdminActivity";
-import WorkerAllEquipment from "../src/components/WorkerAllEquipment";
 
-type Me = {
-  id: string;
-  isApproved: boolean;
-  roles: ("ADMIN" | "WORKER")[];
-  email?: string | null;
-  displayName?: string | null;
-};
+import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
+import WorkerJobs from "@/src/ui/tabs/WorkerJobs";
+import WorkerClients from "@/src/ui/tabs/WorkerClients";
+
+import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
+import AdminUsers from "@/src/ui/tabs/AdminUsers";
+import AdminActivity from "@/src/ui/tabs/AdminActivity";
+import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
+
+import AppSplash from "../src/ui/helpers/AppSplash";
+import AwaitingApprovalNotice from "../src/ui/notices/AwaitingApprovalNotice";
+import NoRoleNotice from "../src/ui/notices/NoRoleNotice";
+
+import { Me } from "@/src/lib/types";
 
 const hasRole = (roles: Me["roles"] | undefined, role: "ADMIN" | "WORKER") =>
   !!roles?.includes(role);
@@ -183,6 +182,8 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
+      <AppSplash show={meLoading} />
+
       <Box
         as="header"
         bg="green.50"
@@ -275,25 +276,9 @@ export default function HomePage() {
         </Box>
       </Box>
 
-      {meLoading && (
-        <Box mb={4} display="flex" alignItems="center" gap="2">
-          <Spinner size="sm" />
-          <Text>Loading…</Text>
-        </Box>
-      )}
+      {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
 
-      {!meLoading && me && !me.isApproved && (
-        <Text color="red.500" mb={3}>
-          Awaiting admin approval…
-        </Text>
-      )}
-
-      {!meLoading && me?.isApproved && !hasAnyRole && (
-        <Text color="orange.500" mb={3}>
-          You have been approved, but don&apos;t have a role yet. Please contact
-          your Administrator.
-        </Text>
-      )}
+      {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
 
       {!meLoading && me?.isApproved && hasAnyRole && (
         <Tabs.Root
@@ -311,26 +296,18 @@ export default function HomePage() {
             <Tabs.Content value="worker">
               <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
                 <Tabs.List mb={4}>
-                  <Tabs.Trigger value="mine">Claimed</Tabs.Trigger>
-                  <Tabs.Trigger value="equipment">Available</Tabs.Trigger>
-                  <Tabs.Trigger value="unavailable">Unavailable</Tabs.Trigger>
-                  <Tabs.Trigger value="all">All</Tabs.Trigger>
+                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
+                  <Tabs.Trigger value="jobs">Jobs</Tabs.Trigger>
+                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
                 </Tabs.List>
-
                 <Tabs.Content value="equipment">
                   <WorkerEquipment />
                 </Tabs.Content>
-
-                <Tabs.Content value="mine">
-                  <WorkerMyEquipment />
+                <Tabs.Content value="jobs">
+                  <WorkerJobs />
                 </Tabs.Content>
-
-                <Tabs.Content value="unavailable">
-                  <WorkerUnavailable />
-                </Tabs.Content>
-
-                <Tabs.Content value="all">
-                  <WorkerAllEquipment />
+                <Tabs.Content value="clients">
+                  <WorkerClients />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
@@ -354,19 +331,15 @@ export default function HomePage() {
                   <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
-
                 <Tabs.Content value="equipment">
                   <AdminEquipment />
                 </Tabs.Content>
-
                 <Tabs.Content value="users">
                   <AdminUsers />
                 </Tabs.Content>
-
                 <Tabs.Content value="activity">
                   <AdminActivity />
                 </Tabs.Content>
-
                 <Tabs.Content value="audit">
                   <AdminAuditLog />
                 </Tabs.Content>

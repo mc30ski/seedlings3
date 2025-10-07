@@ -87,12 +87,16 @@ export type Services = {
       longDesc?: string;
       brand?: string;
       model?: string;
+      type?: string;
       qrSlug?: string | null;
     }): Promise<Equipment>;
     update(
       id: string,
       patch: Partial<
-        Pick<Equipment, "shortDesc" | "longDesc" | "qrSlug" | "brand" | "model">
+        Pick<
+          Equipment,
+          "shortDesc" | "longDesc" | "qrSlug" | "brand" | "model" | "type"
+        >
       >
     ): Promise<Equipment>;
     // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)

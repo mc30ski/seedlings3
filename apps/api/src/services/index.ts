@@ -163,6 +163,7 @@ function buildEventDetails(
       longDesc: string | null;
       brand: string | null;
       model: string | null;
+      type: string | null;
     }
   >
 ) {
@@ -184,11 +185,14 @@ function buildEventDetails(
     mdEq.brand ?? md.brand ?? (equipmentId ? eqMap[equipmentId!]?.brand : null);
   const model =
     mdEq.model ?? md.model ?? (equipmentId ? eqMap[equipmentId!]?.model : null);
+  const type =
+    mdEq.type ?? md.type ?? (equipmentId ? eqMap[equipmentId!]?.type : null);
 
   if (equipmentName) out.equipmentName = equipmentName;
   if (equipmentDesc) out.equipmentDesc = equipmentDesc;
   if (brand) out.brand = brand;
   if (model) out.model = model;
+  if (type) out.type = type;
 
   // Other common bits you already record
   if (md?.qrSlug) out.qrSlug = md.qrSlug;
@@ -305,6 +309,7 @@ export const services: Services = {
           ...(input.qrSlug !== undefined ? { qrSlug: input.qrSlug } : {}),
           ...(input.brand !== undefined ? { brand: input.brand } : {}),
           ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(input.type !== undefined ? { type: input.type } : {}),
         };
 
         const created = await tx.equipment.create({ data });
@@ -333,6 +338,7 @@ export const services: Services = {
         if (patch.qrSlug !== undefined) data.qrSlug = patch.qrSlug;
         if (patch.brand !== undefined) data.brand = patch.brand;
         if (patch.model !== undefined) data.model = patch.model;
+        if (patch.type !== undefined) data.type = patch.type;
 
         const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -780,7 +786,13 @@ export const services: Services = {
         where: { releasedAt: null },
         include: {
           equipment: {
-            select: { id: true, shortDesc: true, brand: true, model: true },
+            select: {
+              id: true,
+              shortDesc: true,
+              brand: true,
+              model: true,
+              type: true,
+            },
           },
         },
         orderBy: { reservedAt: "desc" },
@@ -792,6 +804,7 @@ export const services: Services = {
         shortDesc: r.equipment?.shortDesc ?? "",
         brand: r.equipment?.brand ?? null,
         model: r.equipment?.model ?? null,
+        type: r.equipment?.type ?? null,
         state: r.checkedOutAt
           ? ("CHECKED_OUT" as const)
           : ("RESERVED" as const),
@@ -1226,6 +1239,7 @@ export const services: Services = {
               longDesc: true,
               brand: true,
               model: true,
+              type: true,
             },
           })
         : [];
@@ -1237,6 +1251,7 @@ export const services: Services = {
             longDesc: e.longDesc,
             brand: e.brand,
             model: e.model,
+            type: e.type,
           },
         ])
       );
