@@ -32,10 +32,10 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
     let stopped = false;
     let done = false;
 
-    // Timing & debounce for error display
+    // Error display timing
     let firstFrameAt: number | null = null;
     let showErrTimer: number | null = null;
-    const ARM_ERROR_AFTER_MS = 3500; // wait ~3.5s before showing *any* error
+    const ARM_ERROR_AFTER_MS = 3500;
 
     const armErrorTimer = () => {
       if (showErrTimer != null || done || stopped) return;
@@ -60,6 +60,25 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
       }
     };
 
+    // Helper: only surface meaningful errors (ignore Abort/normal scan errors)
+    function showMeaningfulError(e: unknown) {
+      const name = (e as any)?.name as string | undefined;
+      if (name === "AbortError" || name === "AbortException") return; // ignore
+      if (
+        name === "NotFoundException" ||
+        name === "ChecksumException" ||
+        name === "FormatException"
+      )
+        return; // normal
+      if (name === "NotAllowedError") {
+        setError(
+          "Camera permission denied. You can use Upload or Manual instead."
+        );
+        return;
+      }
+      setError(String((e as any)?.message ?? "Camera error"));
+    }
+
     async function start() {
       setError(null);
 
@@ -78,15 +97,14 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
         if (!videoRef.current) return;
         videoRef.current.srcObject = stream;
 
+        // mark first playable frame
+        const v = videoRef.current;
         const onFirstFrame = () => {
           if (firstFrameAt == null) {
             firstFrameAt = Date.now();
-            armErrorTimer(); // begin grace-timed error timer once we actually see frames
+            armErrorTimer();
           }
         };
-
-        // Mark first playable frame
-        const v = videoRef.current;
         const onPlaying = () => onFirstFrame();
         const onLoadedMeta = () => onFirstFrame();
         v.addEventListener("playing", onPlaying);
@@ -118,15 +136,16 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
                 onDetected(String(raw).trim());
                 return;
               }
-            } catch {
-              // ignore per-frame errors; timer will handle user feedback if needed
+            } catch (e) {
+              // ignore per-frame errors; timer handles UX if needed
+              // (do not setError here)
             }
             raf = requestAnimationFrame(scan);
           };
 
           raf = requestAnimationFrame(scan);
           cleanupFns.push(() => cancelAnimationFrame(raf));
-          return; // If BD path active, do not start ZXing
+          return; // don't start ZXing if BD is active
         }
 
         // ---------- ZXING FALLBACK ----------
@@ -159,7 +178,8 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
             }
 
             // Ignore all per-frame decode errors; rely on the grace timer for UX.
-            // (ZXing frequently emits NotFound/Checksum/Format exceptions between frames.)
+            // If you still want to surface *unexpected* errors, you could:
+            // if (err) showMeaningfulError(err);
           }
         );
 
@@ -169,9 +189,9 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
           } catch {}
         });
         // -----------------------------------
-      } catch (e: any) {
-        // Only show an immediate error if we never even got a stream.
-        setError(e?.message ?? "Unable to access camera");
+      } catch (e) {
+        // Only surface meaningful errors; ignore AbortError noise
+        showMeaningfulError(e);
       }
     }
 
@@ -211,8 +231,12 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
       const reader = new BrowserMultiFormatReader();
       const result = await reader.decodeFromImageElement(img);
       onDetected(result.getText().trim());
-    } catch {
-      setError("Couldn’t read a QR from that image. Try a clearer photo.");
+    } catch (e) {
+      // Ignore AbortError from canceled loads; otherwise show a friendly message
+      const name = (e as any)?.name;
+      if (name !== "AbortError" && name !== "AbortException") {
+        setError("Couldn’t read a QR from that image. Try a clearer photo.");
+      }
     } finally {
       URL.revokeObjectURL(url);
     }
