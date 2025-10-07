@@ -1,10 +1,11 @@
 import { HStack, Box, Text } from "@chakra-ui/react";
+import { InlineMessageType } from "../../lib/types";
 
 export default function InlineMessage({
   type,
   msg,
 }: {
-  type: "SUCCESS" | "WARNING" | "INFO" | "ERROR";
+  type: InlineMessageType;
   msg: string;
 }) {
   const color =

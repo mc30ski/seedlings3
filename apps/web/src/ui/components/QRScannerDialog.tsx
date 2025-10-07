@@ -14,11 +14,17 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 
 type Props = {
   open: boolean;
+  label: string;
   onClose: () => void;
   onDetected: (slug: string) => void;
 };
 
-export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
+export default function QRScannerDialog({
+  open,
+  label,
+  onClose,
+  onDetected,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
@@ -264,7 +270,7 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
           borderRadius="lg"
           boxShadow="lg"
         >
-          <Dialog.Header>Scan to Check Out</Dialog.Header>
+          <Dialog.Header>{label}</Dialog.Header>
           <Dialog.Body>
             <Stack gap="3">
               {hasCamera ? (

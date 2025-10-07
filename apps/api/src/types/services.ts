@@ -122,6 +122,12 @@ export type Services = {
     returnByUser(id: string, userId: string): Promise<ReleaseResult>;
 
     releaseByUser(id: string, userId: string): Promise<ReleaseResult>;
+
+    returnWithQr(
+      id: string,
+      userId: string,
+      slug: string
+    ): Promise<ReleaseResult>;
   };
 
   maintenance: {

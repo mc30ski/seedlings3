@@ -14,10 +14,15 @@ import {
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
-import { EquipmentStatus, Equipment, EQUIPMENT_TYPES } from "../../lib/types";
+import {
+  EquipmentStatus,
+  Equipment,
+  InlineMessageType,
+  EQUIPMENT_TYPES,
+} from "../../lib/types";
 import EquipmentTileList from "../components/EquipmentTileList";
 import LoadingCenter from "../helpers/LoadingCenter";
-import InlineError from "../helpers/InlineMessage";
+import InlineMessage from "../helpers/InlineMessage";
 
 export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
@@ -27,8 +32,10 @@ export default function AdminEquipment() {
   >("all");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [error, setError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
 
   // create form state
   const [creating, setCreating] = useState(false);
@@ -39,19 +46,16 @@ export default function AdminEquipment() {
   const [newModel, setNewModel] = useState("");
   const [newType, setNewType] = useState("");
 
-  const [success, setSuccess] = useState("");
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await apiGet<Equipment[]>("/api/admin/equipment");
       setItems(data);
-      setSuccess("");
-      setError(false);
-      setErrorMsg("");
     } catch (err) {
-      setError(true);
-      setErrorMsg(getErrorMessage(err));
+      setInlineMsg({
+        msg: getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     } finally {
       setLoading(false);
     }
@@ -143,9 +147,15 @@ export default function AdminEquipment() {
       setNewModel("");
       setNewType("");
       await load();
-      setSuccess("Equipment created");
+      setInlineMsg({
+        msg: "Equipment created",
+        type: InlineMessageType.SUCCESS,
+      });
     } catch (err) {
-      setErrorMsg("Equipment create failed");
+      setInlineMsg({
+        msg: "Equipment create failed",
+        type: InlineMessageType.SUCCESS,
+      });
     } finally {
       setCreating(false);
     }
@@ -176,7 +186,9 @@ export default function AdminEquipment() {
               key={val}
               size="sm"
               variant={status === val ? "solid" : "outline"}
-              onClick={() => setStatus(val)}
+              onClick={() => {
+                setStatus(val), setInlineMsg(null);
+              }}
             >
               {label}
             </Button>
@@ -254,9 +266,6 @@ export default function AdminEquipment() {
             _dark={{ bg: "gray.800" }}
           >
             <Stack gap="3">
-              {/* your existing create form fields go here */}
-              {/* e.g., Brand / Model / TypeSelect / ShortDesc / LongDesc / QR */}
-
               <NativeSelectRoot size="sm">
                 <NativeSelectField
                   value={newType}
@@ -325,10 +334,9 @@ export default function AdminEquipment() {
         </Collapsible.Content>
       </Collapsible.Root>
 
-      {error && <InlineError type="ERROR" msg={errorMsg} />}
-      {success && <InlineError type="SUCCESS" msg={success} />}
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
-      {!error && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
       {filtered.map((item) => {
@@ -339,6 +347,9 @@ export default function AdminEquipment() {
             role={"ADMIN"}
             filter={status}
             refresh={load}
+            setMessage={(msg: string, type: InlineMessageType) => {
+              setInlineMsg({ msg: msg, type: type });
+            }}
           />
         );
       })}

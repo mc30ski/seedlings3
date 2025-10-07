@@ -770,6 +770,71 @@ export const services: Services = {
         return { id, userId };
       });
     },
+
+    async returnWithQr(id: string, userId: string, slug: string) {
+      if (!slug)
+        throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
+
+      return prisma.$transaction(async (tx) => {
+        await lockEquipment(tx, id);
+
+        // 1) Verify item + QR
+        const eq = await tx.equipment.findUnique({ where: { id } });
+        if (!eq)
+          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+        if (!eq.qrSlug)
+          throw new ServiceError(
+            "NO_QR",
+            "This item doesn't have a QR code",
+            409
+          );
+        if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
+          throw new ServiceError(
+            "QR_MISMATCH",
+            "QR code doesn't match this item",
+            403
+          );
+
+        // 2) Find the active checkout for this user & item
+        const active = await tx.checkout.findFirst({
+          where: {
+            equipmentId: id,
+            userId,
+            releasedAt: null,
+            checkedOutAt: { not: null },
+          },
+          orderBy: { checkedOutAt: "desc" },
+        });
+        if (!active) {
+          throw new ServiceError(
+            "NOT_ALLOWED",
+            "No active checkout for this user",
+            403
+          );
+        }
+
+        // 3) Mark returned
+        const now = new Date();
+        await tx.checkout.update({
+          where: { id: active.id },
+          data: { releasedAt: now },
+        });
+
+        // 4) Flip equipment status back to AVAILABLE (adjust if your app uses a different state machine)
+        await tx.equipment.update({
+          where: { id },
+          data: { status: EquipmentStatus.AVAILABLE },
+        });
+
+        // 5) Audit
+        await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {
+          qrSlug: slug,
+          via: "qr",
+        });
+
+        return { released: true };
+      });
+    },
   },
 
   maintenance: {

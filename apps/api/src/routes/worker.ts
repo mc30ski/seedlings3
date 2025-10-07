@@ -70,4 +70,10 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/equipment/unavailable", workerGuard, async () =>
     services.equipment.listUnavailableWithHolder()
   );
+
+  app.post("/equipment/:id/return/verify", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    const slug = String(req.body?.slug ?? "").trim();
+    return services.equipment.returnWithQr(id, req.user.id, slug);
+  });
 }
