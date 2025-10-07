@@ -35,7 +35,7 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
     // Error display timing
     let firstFrameAt: number | null = null;
     let showErrTimer: number | null = null;
-    const ARM_ERROR_AFTER_MS = 3500;
+    const ARM_ERROR_AFTER_MS = 5000;
 
     const armErrorTimer = () => {
       if (showErrTimer != null || done || stopped) return;
