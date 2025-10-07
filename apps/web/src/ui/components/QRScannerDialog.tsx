@@ -10,7 +10,6 @@ import {
   Box,
   HStack,
 } from "@chakra-ui/react";
-// FIX: only import BrowserMultiFormatReader (NotFoundException is *not* exported here)
 import { BrowserMultiFormatReader } from "@zxing/browser";
 
 type Props = {
@@ -31,6 +30,7 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
     let stream: MediaStream | null = null;
     const cleanupFns: Array<() => void> = [];
     let stopped = false;
+    let done = false; // ★ prevent late callbacks after success
 
     async function start() {
       setError(null);
@@ -51,7 +51,6 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
         await videoRef.current.play();
 
         // Prefer native BarcodeDetector if available
-        // (fast + low CPU/battery)
         // @ts-ignore
         const BD = window.BarcodeDetector as any | undefined;
         if (BD) {
@@ -59,12 +58,13 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
           let raf = 0;
 
           const scan = async () => {
-            if (stopped || !videoRef.current) return;
+            if (stopped || done || !videoRef.current) return; // ★ guard on done
             try {
-              // BarcodeDetector can detect directly from <video> in modern browsers
               const codes = await detector.detect(videoRef.current);
               const raw = codes?.[0]?.rawValue;
               if (raw) {
+                done = true; // ★ mark success
+                setError(null); // ★ clear any transient errors
                 stopAll();
                 onDetected(String(raw).trim());
                 return;
@@ -81,21 +81,17 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
         }
 
         // ---------- ZXING FALLBACK (when BarcodeDetector is not present) ----------
-        // FIX: use decodeFromConstraints (no need for listVideoInputDevices static)
         const reader = new BrowserMultiFormatReader();
 
-        // Start continuous decode with your own constraints (rear cam when available)
-        // NOTE: this returns "controls" (stop, switchTorch, etc.) — we keep a ref to stop on cleanup
         const controls = await reader.decodeFromConstraints(
           {
             audio: false,
-            video: {
-              facingMode: { ideal: "environment" },
-            },
+            video: { facingMode: { ideal: "environment" } },
           },
           videoRef.current!,
           (result, err, ctrls) => {
-            if (stopped) {
+            if (stopped || done) {
+              // ★ guard on done
               try {
                 ctrls?.stop();
               } catch {}
@@ -103,7 +99,8 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
             }
 
             if (result) {
-              // Got a code
+              done = true; // ★ mark success
+              setError(null); // ★ clear any transient error
               try {
                 ctrls?.stop();
               } catch {}
@@ -112,15 +109,18 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
               return;
             }
 
-            // FIX: we don't import NotFoundException; just ignore "not found" by name
-            if (
-              err &&
-              typeof err === "object" &&
-              (err as any)?.name &&
-              (err as any).name !== "NotFoundException"
-            ) {
+            // ★ Ignore common per-frame decode errors; only show unexpected ones
+            if (err && typeof err === "object") {
+              const name = (err as any).name as string | undefined;
+              if (
+                name === "NotFoundException" ||
+                name === "ChecksumException" ||
+                name === "FormatException"
+              ) {
+                return; // normal while scanning
+              }
               setError(
-                "Scanning error: " + String((err as any).message ?? err)
+                "Camera error. Try repositioning, or use Upload/Manual."
               );
             }
           }
@@ -129,7 +129,6 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
         // Ensure we stop controls on cleanup
         cleanupFns.push(() => {
           try {
-            // FIX: BrowserMultiFormatReader instance may not have reset(); use controls.stop()
             controls?.stop();
           } catch {}
         });
@@ -241,12 +240,6 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
                     Continue
                   </Button>
                 </HStack>
-
-                <Text fontSize="xs" color="gray.600">
-                  Tip: The QR can encode just the slug (e.g. <i>mower-hrx217</i>
-                  ) or a URL that contains it. If you encode a URL, parse out
-                  the slug before verifying.
-                </Text>
               </Stack>
             </Stack>
           </Dialog.Body>
