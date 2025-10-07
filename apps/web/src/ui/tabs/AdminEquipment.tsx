@@ -19,18 +19,22 @@ export default function AdminEquipment() {
 
   // create form state
   const [creating, setCreating] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [newShort, setNewShort] = useState("");
   const [newLong, setNewLong] = useState("");
   const [newQr, setNewQr] = useState("");
   const [newBrand, setNewBrand] = useState("");
   const [newModel, setNewModel] = useState("");
 
+  const [success, setSuccess] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await apiGet<Equipment[]>("/api/admin/equipment");
       setItems(data);
+      setSuccess("");
+      setError(false);
+      setErrorMsg("");
     } catch (err) {
       setError(true);
       setErrorMsg(getErrorMessage(err));
@@ -116,6 +120,7 @@ export default function AdminEquipment() {
       setNewBrand("");
       setNewModel("");
       await load();
+      setSuccess("Equipment created");
     } catch (err) {
       setErrorMsg("Equipment create failed");
     } finally {
@@ -243,7 +248,7 @@ export default function AdminEquipment() {
       </Heading>
 
       {error && <InlineError type="ERROR" msg={errorMsg} />}
-      {success && <InlineError type="SUCCESS" msg="Equipment created" />}
+      {success && <InlineError type="SUCCESS" msg={success} />}
 
       {!error && filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>

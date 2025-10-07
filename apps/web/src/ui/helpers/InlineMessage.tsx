@@ -26,6 +26,7 @@ export default function InlineMessage({
       borderWidth="1px"
       borderColor={`${color}.300`}
       bg={`${color}.50`}
+      mb={2}
     >
       <Box flex="1">
         <Text fontSize="sm" color={`${color}.900`}>
