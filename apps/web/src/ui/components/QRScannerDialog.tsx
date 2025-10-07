@@ -30,13 +30,35 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
     let stream: MediaStream | null = null;
     const cleanupFns: Array<() => void> = [];
     let stopped = false;
-    let done = false; // prevent late callbacks after success
+    let done = false;
 
-    // Grace/threshold controls for early/ephemeral errors
-    const STARTED_AT = Date.now();
-    let unexpectedErrs = 0;
-    const ERROR_GRACE_MS = 1200; // don't show errors for the first ~1.2s
-    const ERROR_THRESHOLD = 2; // require 2 unexpected errors before showing UI
+    // Timing & debounce for error display
+    let firstFrameAt: number | null = null;
+    let showErrTimer: number | null = null;
+    const ARM_ERROR_AFTER_MS = 3500; // wait ~3.5s before showing *any* error
+
+    const armErrorTimer = () => {
+      if (showErrTimer != null || done || stopped) return;
+      const delay =
+        Math.max(
+          0,
+          (firstFrameAt ?? Date.now()) + ARM_ERROR_AFTER_MS - Date.now()
+        ) || ARM_ERROR_AFTER_MS;
+      showErrTimer = window.setTimeout(() => {
+        if (!done && !stopped) {
+          setError(
+            "Camera not detecting a code yet. Try repositioning, or use Upload/Manual."
+          );
+        }
+      }, delay);
+    };
+
+    const clearErrorTimer = () => {
+      if (showErrTimer != null) {
+        clearTimeout(showErrTimer);
+        showErrTimer = null;
+      }
+    };
 
     async function start() {
       setError(null);
@@ -47,14 +69,34 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
         const cam = devices?.some((d) => d.kind === "videoinput");
         setHasCamera(!!cam);
 
-        // Start a stream so the <video> shows preview regardless of detector
+        // Start camera
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: "environment" } },
           audio: false,
         });
+
         if (!videoRef.current) return;
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+
+        const onFirstFrame = () => {
+          if (firstFrameAt == null) {
+            firstFrameAt = Date.now();
+            armErrorTimer(); // begin grace-timed error timer once we actually see frames
+          }
+        };
+
+        // Mark first playable frame
+        const v = videoRef.current;
+        const onPlaying = () => onFirstFrame();
+        const onLoadedMeta = () => onFirstFrame();
+        v.addEventListener("playing", onPlaying);
+        v.addEventListener("loadedmetadata", onLoadedMeta);
+        cleanupFns.push(() => {
+          v.removeEventListener("playing", onPlaying);
+          v.removeEventListener("loadedmetadata", onLoadedMeta);
+        });
+
+        await v.play();
 
         // Prefer native BarcodeDetector if available
         // @ts-ignore
@@ -70,23 +112,24 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
               const raw = codes?.[0]?.rawValue;
               if (raw) {
                 done = true;
-                setError(null); // clear any transient error
+                clearErrorTimer();
+                setError(null);
                 stopAll();
                 onDetected(String(raw).trim());
                 return;
               }
             } catch {
-              // ignore per-frame detect errors
+              // ignore per-frame errors; timer will handle user feedback if needed
             }
             raf = requestAnimationFrame(scan);
           };
 
           raf = requestAnimationFrame(scan);
           cleanupFns.push(() => cancelAnimationFrame(raf));
-          return; // If BD path is active, do not start ZXing
+          return; // If BD path active, do not start ZXing
         }
 
-        // ---------- ZXING FALLBACK (when BarcodeDetector is not present) ----------
+        // ---------- ZXING FALLBACK ----------
         const reader = new BrowserMultiFormatReader();
 
         const controls = await reader.decodeFromConstraints(
@@ -105,7 +148,8 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
 
             if (result) {
               done = true;
-              setError(null); // clear any transient error
+              clearErrorTimer();
+              setError(null);
               try {
                 ctrls?.stop();
               } catch {}
@@ -114,48 +158,26 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
               return;
             }
 
-            // Ignore common per-frame decode errors; only show unexpected ones,
-            // and only after a grace window + enough consecutive occurrences.
-            if (err && typeof err === "object") {
-              const name = (err as any).name as string | undefined;
-
-              if (
-                name === "NotFoundException" ||
-                name === "ChecksumException" ||
-                name === "FormatException"
-              ) {
-                return; // normal while scanning
-              }
-
-              // Too soon after opening? Don't show an error yet.
-              if (Date.now() - STARTED_AT < ERROR_GRACE_MS) {
-                return;
-              }
-
-              unexpectedErrs += 1;
-              if (unexpectedErrs >= ERROR_THRESHOLD && !done && !stopped) {
-                setError(
-                  "Camera error. Try repositioning, or use Upload/Manual."
-                );
-              }
-            }
+            // Ignore all per-frame decode errors; rely on the grace timer for UX.
+            // (ZXing frequently emits NotFound/Checksum/Format exceptions between frames.)
           }
         );
 
-        // Ensure we stop controls on cleanup
         cleanupFns.push(() => {
           try {
             controls?.stop();
           } catch {}
         });
-        // -------------------------------------------------------------------------
+        // -----------------------------------
       } catch (e: any) {
+        // Only show an immediate error if we never even got a stream.
         setError(e?.message ?? "Unable to access camera");
       }
     }
 
     function stopAll() {
       stopped = true;
+      clearErrorTimer();
       cleanupFns.forEach((fn) => {
         try {
           fn();
