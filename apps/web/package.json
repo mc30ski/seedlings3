@@ -16,6 +16,7 @@
     "@clerk/nextjs": "^6.31.4",
     "@emotion/react": "^11.14.0",
     "@repo/tokens": "0.1.0",
+    "@zxing/browser": "^0.1.5",
     "clsx": "^2.1.1",
     "lucide-react": "^0.541.0",
     "next": "^14.2.26",

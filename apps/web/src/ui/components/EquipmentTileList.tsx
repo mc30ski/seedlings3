@@ -16,23 +16,28 @@ import {
   errorMessage,
   notifyEquipmentUpdated,
   prettyStatus,
+  extractSlug,
 } from "../../lib/lib";
+import QRScannerDialog from "./QRScannerDialog";
+import { InlineMessageType } from "../../lib/types";
 
-type EquipmentTileProps = {
+type EquipmentTileListProps = {
   item: Equipment;
   isMine: boolean;
   role: Role;
   filter: string;
   refresh: any;
+  setMessage: (msg: string, type: InlineMessageType) => void;
 };
 
-export default function EquipmentTile({
+export default function EquipmentTileList({
   item,
   isMine,
   role,
   filter,
   refresh,
-}: EquipmentTileProps) {
+  setMessage,
+}: EquipmentTileListProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   // Inline warning per equipment id
   const [inlineWarn, setInlineWarn] = useState<Record<string, string>>({});
@@ -41,6 +46,8 @@ export default function EquipmentTile({
     label: string;
   }>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const [scanFor, setScanFor] = useState<string | null>(null);
+  const [scanReturnFor, setScanReturnFor] = useState<string | null>(null);
 
   const dismissInline = (id: string) =>
     setInlineWarn((m) => {
@@ -94,51 +101,90 @@ export default function EquipmentTile({
       dismissInline(id);
       notifyEquipmentUpdated();
       await refresh();
+      return true;
     } catch (err: any) {
       captureInlineConflict(id, err);
+      return false;
     } finally {
       setBusyId(null);
     }
   }
 
-  async function workerCheckout(id: string) {
-    service(id, `/api/equipment/${id}/checkout`);
+  //async function workerCheckout(id: string) {
+  //  service(id, `/api/equipment/${id}/checkout`);
+  //}
+
+  //async function workerReturn(id: string) {
+  //  await service(id, `/api/equipment/${id}/return`);
+  //}
+
+  async function workerCheckoutVerifiedWithSlug(id: string, slug: string) {
+    await service(id, `/api/equipment/${id}/checkout/verify`, false, {
+      slug: extractSlug(slug),
+    });
+  }
+
+  async function workerReturnVerifiedWithSlug(id: string, slug: string) {
+    await service(id, `/api/equipment/${id}/return/verify`, false, {
+      slug: extractSlug(slug),
+    });
   }
 
   async function workerReserve(id: string) {
-    service(id, `/api/equipment/${id}/reserve`);
+    if (await service(id, `/api/equipment/${id}/reserve`)) {
+      setMessage("Equipment successfully reserved", InlineMessageType.SUCCESS);
+    }
   }
 
   async function workerCancel(id: string) {
-    service(id, `/api/equipment/${id}/reserve/cancel`);
-  }
-
-  async function workerReturn(id: string) {
-    service(id, `/api/equipment/${id}/return`);
+    if (await service(id, `/api/equipment/${id}/reserve/cancel`)) {
+      setMessage(
+        "Equipment reservation successully canceled",
+        InlineMessageType.SUCCESS
+      );
+    }
   }
 
   async function adminForceRelease(id: string) {
-    service(id, `/api/admin/equipment/${id}/release`);
+    if (await service(id, `/api/admin/equipment/${id}/release`)) {
+      setMessage("Equipment successfully released", InlineMessageType.SUCCESS);
+    }
   }
 
   async function adminStartMaintainence(id: string) {
-    service(id, `/api/admin/equipment/${id}/maintenance/start`);
+    if (await service(id, `/api/admin/equipment/${id}/maintenance/start`)) {
+      setMessage(
+        "Equipment maintenance successfully started",
+        InlineMessageType.SUCCESS
+      );
+    }
   }
 
   async function adminEndMaintainence(id: string) {
-    service(id, `/api/admin/equipment/${id}/maintenance/end`);
+    if (await service(id, `/api/admin/equipment/${id}/maintenance/end`)) {
+      setMessage(
+        "Equipment maintenance successfully ended",
+        InlineMessageType.SUCCESS
+      );
+    }
   }
 
   async function adminRetire(id: string) {
-    service(id, `/api/admin/equipment/${id}/retire`);
+    if (await service(id, `/api/admin/equipment/${id}/retire`)) {
+      setMessage("Equipment successfully retired", InlineMessageType.SUCCESS);
+    }
   }
 
   async function adminUnretire(id: string) {
-    service(id, `/api/admin/equipment/${id}/unretire`);
+    if (await service(id, `/api/admin/equipment/${id}/unretire`)) {
+      setMessage("Equipment successfully unretired", InlineMessageType.SUCCESS);
+    }
   }
 
   async function adminHardDelete(id: string) {
-    service(id, `/api/admin/equipment/${id}`, true);
+    if (await service(id, `/api/admin/equipment/${id}`, true)) {
+      setMessage("Equipment successfully deleted", InlineMessageType.SUCCESS);
+    }
   }
 
   function unavailableMessage(item: Equipment) {
@@ -196,6 +242,40 @@ export default function EquipmentTile({
 
   return (
     <>
+      <QRScannerDialog
+        open={!!scanFor}
+        label="Scan to Check Out"
+        onClose={() => {
+          setScanFor(null);
+        }}
+        onDetected={(slug) => {
+          const id = scanFor!;
+          setScanFor(null);
+          workerCheckoutVerifiedWithSlug(id, slug);
+          setMessage(
+            "Equipment successfully checked in",
+            InlineMessageType.SUCCESS
+          );
+        }}
+      />
+
+      <QRScannerDialog
+        open={!!scanReturnFor}
+        label="Scan to Return"
+        onClose={() => {
+          setScanReturnFor(null);
+          setMessage(
+            "Equipment successfully returned",
+            InlineMessageType.SUCCESS
+          );
+        }}
+        onDetected={(slug) => {
+          const id = scanReturnFor!;
+          setScanReturnFor(null);
+          void workerReturnVerifiedWithSlug(id, slug);
+        }}
+      />
+
       <Box
         key={item.id}
         p={4}
@@ -267,7 +347,7 @@ export default function EquipmentTile({
                   <ActionButton
                     key="worker_checkout"
                     label="Check Out"
-                    action={() => void workerCheckout(item.id)}
+                    action={() => setScanFor(item.id)}
                   />
                 )}
                 {canWorkerCancel(item) && (
@@ -282,7 +362,7 @@ export default function EquipmentTile({
                   <ActionButton
                     key="worker_return"
                     label="Return"
-                    action={() => void workerReturn(item.id)}
+                    action={() => setScanReturnFor(item.id)}
                   />
                 )}
                 {canWorkerReserve(item) && (

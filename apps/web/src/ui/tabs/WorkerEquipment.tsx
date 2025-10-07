@@ -1,4 +1,3 @@
-// apps/web/src/components/WorkerAll.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -16,6 +15,7 @@ import {
   Me,
   EquipmentStatus,
   Equipment,
+  InlineMessageType,
   EQUIPMENT_TYPES,
 } from "../../lib/types";
 import EquipmentTileList from "../components/EquipmentTileList";
@@ -31,8 +31,10 @@ export default function WorkerEquipment() {
   >("claimed");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [error, setError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,8 +46,10 @@ export default function WorkerEquipment() {
       setItems(data);
       setMe(meResp);
     } catch (err) {
-      setError(true);
-      setErrorMsg(getErrorMessage(err));
+      setInlineMsg({
+        msg: getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     } finally {
       setLoading(false);
     }
@@ -133,7 +137,9 @@ export default function WorkerEquipment() {
               key={val}
               size="sm"
               variant={status === val ? "solid" : "outline"}
-              onClick={() => setStatus(val)}
+              onClick={() => {
+                setStatus(val), setInlineMsg(null);
+              }}
             >
               {label}
             </Button>
@@ -176,6 +182,8 @@ export default function WorkerEquipment() {
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
 
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
+
       <Heading size="md" mb={3}>
         {status === "claimed"
           ? "Equipment I've Claimed"
@@ -186,14 +194,7 @@ export default function WorkerEquipment() {
               : "All Equipment"}
       </Heading>
 
-      {error && (
-        <InlineMessage
-          type="ERROR"
-          msg={"Failed to load equipment: " + errorMsg}
-        />
-      )}
-
-      {!error && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
       {filtered.map((item) => {
@@ -205,6 +206,9 @@ export default function WorkerEquipment() {
             role={"WORKER"}
             filter={status}
             refresh={load}
+            setMessage={(msg: string, type: InlineMessageType) => {
+              setInlineMsg({ msg: msg, type: type });
+            }}
           />
         );
       })}

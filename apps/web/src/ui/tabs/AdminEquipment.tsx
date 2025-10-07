@@ -11,13 +11,20 @@ import {
   HStack,
   Separator,
   Collapsible,
+  Icon,
 } from "@chakra-ui/react";
+import { ChevronDown, Plus } from "lucide-react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
-import { EquipmentStatus, Equipment, EQUIPMENT_TYPES } from "../../lib/types";
+import {
+  EquipmentStatus,
+  Equipment,
+  InlineMessageType,
+  EQUIPMENT_TYPES,
+} from "../../lib/types";
 import EquipmentTileList from "../components/EquipmentTileList";
 import LoadingCenter from "../helpers/LoadingCenter";
-import InlineError from "../helpers/InlineMessage";
+import InlineMessage from "../helpers/InlineMessage";
 
 export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
@@ -27,8 +34,10 @@ export default function AdminEquipment() {
   >("all");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [error, setError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
 
   // create form state
   const [creating, setCreating] = useState(false);
@@ -38,20 +47,18 @@ export default function AdminEquipment() {
   const [newBrand, setNewBrand] = useState("");
   const [newModel, setNewModel] = useState("");
   const [newType, setNewType] = useState("");
-
-  const [success, setSuccess] = useState("");
+  const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await apiGet<Equipment[]>("/api/admin/equipment");
       setItems(data);
-      setSuccess("");
-      setError(false);
-      setErrorMsg("");
     } catch (err) {
-      setError(true);
-      setErrorMsg(getErrorMessage(err));
+      setInlineMsg({
+        msg: getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     } finally {
       setLoading(false);
     }
@@ -143,9 +150,15 @@ export default function AdminEquipment() {
       setNewModel("");
       setNewType("");
       await load();
-      setSuccess("Equipment created");
+      setInlineMsg({
+        msg: "Equipment created",
+        type: InlineMessageType.SUCCESS,
+      });
     } catch (err) {
-      setErrorMsg("Equipment create failed");
+      setInlineMsg({
+        msg: "Equipment create failed",
+        type: InlineMessageType.SUCCESS,
+      });
     } finally {
       setCreating(false);
     }
@@ -176,7 +189,9 @@ export default function AdminEquipment() {
               key={val}
               size="sm"
               variant={status === val ? "solid" : "outline"}
-              onClick={() => setStatus(val)}
+              onClick={() => {
+                setStatus(val), setInlineMsg(null);
+              }}
             >
               {label}
             </Button>
@@ -219,6 +234,8 @@ export default function AdminEquipment() {
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
 
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
+
       <Heading size="md" mb={3}>
         {status === "available"
           ? "Equipment Available to Reserve"
@@ -233,14 +250,20 @@ export default function AdminEquipment() {
                   : "All Equipment"}
       </Heading>
 
-      <Collapsible.Root defaultOpen={false}>
+      <Collapsible.Root open={open} onOpenChange={({ open }) => setOpen(open)}>
         <HStack justify="space-between" mb="2">
           <Collapsible.Trigger asChild>
-            <Button
-              variant="outline"
-              size="sm" /* rightIcon={<ChevronDown size={16} />} */
-            >
-              Create equipment
+            <Button variant="outline" size="sm">
+              <HStack gap="2">
+                <Icon as={Plus} boxSize={4} />
+                <span>Create equipment</span>
+                <Icon
+                  as={ChevronDown}
+                  boxSize={4}
+                  style={{ transition: "transform 0.2s ease" }}
+                  transform={open ? "rotate(180deg)" : "rotate(0deg)"}
+                />
+              </HStack>
             </Button>
           </Collapsible.Trigger>
         </HStack>
@@ -254,9 +277,6 @@ export default function AdminEquipment() {
             _dark={{ bg: "gray.800" }}
           >
             <Stack gap="3">
-              {/* your existing create form fields go here */}
-              {/* e.g., Brand / Model / TypeSelect / ShortDesc / LongDesc / QR */}
-
               <NativeSelectRoot size="sm">
                 <NativeSelectField
                   value={newType}
@@ -271,6 +291,7 @@ export default function AdminEquipment() {
                   ))}
                 </NativeSelectField>
               </NativeSelectRoot>
+
               <Input
                 placeholder="Brand *"
                 value={newBrand}
@@ -307,7 +328,6 @@ export default function AdminEquipment() {
                 </Collapsible.Trigger>
                 <Button
                   size="sm"
-                  // leftIcon={<Plus size={16} />}
                   onClick={createEquipment}
                   disabled={
                     creating ||
@@ -317,7 +337,9 @@ export default function AdminEquipment() {
                     !newType.trim()
                   }
                 >
-                  Create
+                  <HStack gap="2">
+                    <span>Create</span>
+                  </HStack>
                 </Button>
               </HStack>
             </Stack>
@@ -325,10 +347,7 @@ export default function AdminEquipment() {
         </Collapsible.Content>
       </Collapsible.Root>
 
-      {error && <InlineError type="ERROR" msg={errorMsg} />}
-      {success && <InlineError type="SUCCESS" msg={success} />}
-
-      {!error && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
       {filtered.map((item) => {
@@ -339,6 +358,9 @@ export default function AdminEquipment() {
             role={"ADMIN"}
             filter={status}
             refresh={load}
+            setMessage={(msg: string, type: InlineMessageType) => {
+              setInlineMsg({ msg: msg, type: type });
+            }}
           />
         );
       })}

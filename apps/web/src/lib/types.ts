@@ -1,3 +1,10 @@
+export enum InlineMessageType {
+  SUCCESS = "SUCCESS",
+  WARNING = "WARNING",
+  INFO = "INFO",
+  ERROR = "ERROR",
+}
+
 export type Role = "ADMIN" | "WORKER";
 
 export const EQUIPMENT_TYPES = [
