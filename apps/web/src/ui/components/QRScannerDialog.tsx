@@ -30,7 +30,13 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
     let stream: MediaStream | null = null;
     const cleanupFns: Array<() => void> = [];
     let stopped = false;
-    let done = false; // ★ prevent late callbacks after success
+    let done = false; // prevent late callbacks after success
+
+    // Grace/threshold controls for early/ephemeral errors
+    const STARTED_AT = Date.now();
+    let unexpectedErrs = 0;
+    const ERROR_GRACE_MS = 1200; // don't show errors for the first ~1.2s
+    const ERROR_THRESHOLD = 2; // require 2 unexpected errors before showing UI
 
     async function start() {
       setError(null);
@@ -58,13 +64,13 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
           let raf = 0;
 
           const scan = async () => {
-            if (stopped || done || !videoRef.current) return; // ★ guard on done
+            if (stopped || done || !videoRef.current) return;
             try {
               const codes = await detector.detect(videoRef.current);
               const raw = codes?.[0]?.rawValue;
               if (raw) {
-                done = true; // ★ mark success
-                setError(null); // ★ clear any transient errors
+                done = true;
+                setError(null); // clear any transient error
                 stopAll();
                 onDetected(String(raw).trim());
                 return;
@@ -91,7 +97,6 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
           videoRef.current!,
           (result, err, ctrls) => {
             if (stopped || done) {
-              // ★ guard on done
               try {
                 ctrls?.stop();
               } catch {}
@@ -99,8 +104,8 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
             }
 
             if (result) {
-              done = true; // ★ mark success
-              setError(null); // ★ clear any transient error
+              done = true;
+              setError(null); // clear any transient error
               try {
                 ctrls?.stop();
               } catch {}
@@ -109,9 +114,11 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
               return;
             }
 
-            // ★ Ignore common per-frame decode errors; only show unexpected ones
+            // Ignore common per-frame decode errors; only show unexpected ones,
+            // and only after a grace window + enough consecutive occurrences.
             if (err && typeof err === "object") {
               const name = (err as any).name as string | undefined;
+
               if (
                 name === "NotFoundException" ||
                 name === "ChecksumException" ||
@@ -119,9 +126,18 @@ export default function QRScannerDialog({ open, onClose, onDetected }: Props) {
               ) {
                 return; // normal while scanning
               }
-              setError(
-                "Camera error. Try repositioning, or use Upload/Manual."
-              );
+
+              // Too soon after opening? Don't show an error yet.
+              if (Date.now() - STARTED_AT < ERROR_GRACE_MS) {
+                return;
+              }
+
+              unexpectedErrs += 1;
+              if (unexpectedErrs >= ERROR_THRESHOLD && !done && !stopped) {
+                setError(
+                  "Camera error. Try repositioning, or use Upload/Manual."
+                );
+              }
             }
           }
         );
