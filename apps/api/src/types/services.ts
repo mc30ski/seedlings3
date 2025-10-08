@@ -1,7 +1,7 @@
 // apps/web/src/types/services.ts
 import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
 
-export type Role = "ADMIN" | "WORKER";
+export type Role = "SUPER" | "ADMIN" | "WORKER";
 
 type ReserveResult = { id: string; userId: string };
 type CheckoutResult = { id: string; userId: string };
@@ -145,17 +145,14 @@ export type Services = {
   users: {
     list(params?: {
       approved?: boolean;
-      role?: "ADMIN" | "WORKER";
+      role?: Role;
     }): Promise<(User & { roles: UserRole[] })[]>;
     // Reserved + checked-out items (flat list used by AdminUsers UI)
     listHoldings(): Promise<AdminUserHolding[]>;
 
     approve(userId: string): Promise<User>;
-    addRole(userId: string, role: "ADMIN" | "WORKER"): Promise<UserRole>;
-    removeRole(
-      userId: string,
-      role: "ADMIN" | "WORKER"
-    ): Promise<{ deleted: boolean }>;
+    addRole(userId: string, role: Role): Promise<UserRole>;
+    removeRole(userId: string, role: Role): Promise<{ deleted: boolean }>;
 
     // Hard-delete user (Clerk + DB)
     remove(

@@ -17,19 +17,21 @@ import { ChevronDown, Plus } from "lucide-react";
 import { apiGet, apiPost } from "../../lib/api";
 import { getErrorMessage } from "../../lib/errors";
 import {
+  Me,
   EquipmentStatus,
   Equipment,
   InlineMessageType,
   EQUIPMENT_TYPES,
   EQUIPMENT_ENERGY,
 } from "../../lib/types";
-import EquipmentTileList from "../components/EquipmentTileList";
+import EquipmentTile from "../components/EquipmentTile";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
 
 export default function AdminEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
   const [status, setStatus] = useState<
     "all" | "available" | "reserved" | "checked_out" | "maintenance" | "retired"
   >("all");
@@ -54,7 +56,11 @@ export default function AdminEquipment() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<Equipment[]>("/api/admin/equipment");
+      const [data, meResp] = await Promise.all([
+        apiGet<Equipment[]>("/api/equipment/all"),
+        apiGet<Me>("/api/me"),
+      ]);
+      setMe(meResp);
       setItems(data);
     } catch (err) {
       setInlineMsg({
@@ -380,10 +386,12 @@ export default function AdminEquipment() {
         <Text>No equipment matches the current filters.</Text>
       )}
       {filtered.map((item) => {
+        const isMine = !!me && !!item.holder && item.holder.userId === me.id;
         return (
-          <EquipmentTileList
+          <EquipmentTile
             item={item}
-            isMine={false}
+            isMine={isMine}
+            isSuper={me?.roles?.includes("SUPER") ? true : false}
             role={"ADMIN"}
             filter={status}
             refresh={load}

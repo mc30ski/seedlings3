@@ -18,7 +18,7 @@ import {
   InlineMessageType,
   EQUIPMENT_TYPES,
 } from "../../lib/types";
-import EquipmentTileList from "../components/EquipmentTileList";
+import EquipmentTile from "../components/EquipmentTile";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
 
@@ -46,8 +46,8 @@ export default function WorkerEquipment() {
       const anyClaimed =
         data.filter((i) => i.holder?.userId === meResp?.id).length > 0;
       setStatus(anyClaimed ? "claimed" : "available");
-      setItems(data);
       setMe(meResp);
+      setItems(data);
     } catch (err) {
       setInlineMsg({
         msg: getErrorMessage(err),
@@ -205,9 +205,10 @@ export default function WorkerEquipment() {
       {filtered.map((item) => {
         const isMine = !!me && !!item.holder && item.holder.userId === me.id;
         return (
-          <EquipmentTileList
+          <EquipmentTile
             item={item}
             isMine={isMine}
+            isSuper={false}
             role={"WORKER"}
             filter={status}
             refresh={load}

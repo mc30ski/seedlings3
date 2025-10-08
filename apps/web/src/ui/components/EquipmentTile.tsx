@@ -24,6 +24,7 @@ import { InlineMessageType } from "../../lib/types";
 type EquipmentTileListProps = {
   item: Equipment;
   isMine: boolean;
+  isSuper: boolean;
   role: Role;
   filter: string;
   refresh: any;
@@ -33,6 +34,7 @@ type EquipmentTileListProps = {
 export default function EquipmentTileList({
   item,
   isMine,
+  isSuper,
   role,
   filter,
   refresh,
@@ -70,18 +72,20 @@ export default function EquipmentTileList({
     label,
     action,
     variant = "solid",
+    disabled = false,
   }: {
     key: string;
     label: string;
     action: any;
     variant?: any;
+    disabled?: boolean;
   }) {
     return (
       <Button
         key={key}
         variant={variant}
         onClick={action}
-        disabled={!!busyId}
+        disabled={!!busyId || disabled}
         loading={busyId === item.id}
       >
         {label}
@@ -439,6 +443,7 @@ export default function EquipmentTileList({
                       })
                     }
                     variant="danger-outline"
+                    disabled={!isSuper}
                   />
                 )}
               </>
