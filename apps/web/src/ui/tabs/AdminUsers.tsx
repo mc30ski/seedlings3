@@ -12,10 +12,10 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
+import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 
-type Role = "ADMIN" | "WORKER";
 type ApiUser = {
   id: string;
   email?: string | null;
@@ -27,7 +27,7 @@ type ApiUser = {
 type Me = {
   id: string;
   isApproved: boolean;
-  roles: ("ADMIN" | "WORKER")[];
+  roles: Role[];
   email?: string | null;
   displayName?: string | null;
 };
@@ -547,6 +547,9 @@ export default function AdminUsers() {
                                     setConfirm({ userId: u.id, kind: "delete" })
                                   }
                                   title="Remove this user completely"
+                                  disabled={
+                                    me?.roles?.includes("SUPER") ? false : true
+                                  }
                                 >
                                   Delete
                                 </Button>

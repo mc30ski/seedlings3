@@ -5,7 +5,7 @@ export enum InlineMessageType {
   ERROR = "ERROR",
 }
 
-export type Role = "ADMIN" | "WORKER";
+export type Role = "SUPER" | "ADMIN" | "WORKER";
 
 export const EQUIPMENT_TYPES = [
   "MOWER",

@@ -12,6 +12,7 @@ datasource db {
 enum Role {
   WORKER
   ADMIN
+  SUPER
 }
 
 enum EquipmentStatus {

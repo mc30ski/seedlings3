@@ -15,13 +15,13 @@ import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import AdminActivity from "@/src/ui/tabs/AdminActivity";
 import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
 
-import AppSplash from "../src/ui/helpers/AppSplash";
-import AwaitingApprovalNotice from "../src/ui/notices/AwaitingApprovalNotice";
-import NoRoleNotice from "../src/ui/notices/NoRoleNotice";
+import AppSplash from "@/src/ui/helpers/AppSplash";
+import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
+import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
-import { Me } from "@/src/lib/types";
+import { Me, Role } from "@/src/lib/types";
 
-const hasRole = (roles: Me["roles"] | undefined, role: "ADMIN" | "WORKER") =>
+const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
 
 export default function HomePage() {
