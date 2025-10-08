@@ -164,6 +164,7 @@ function buildEventDetails(
       brand: string | null;
       model: string | null;
       type: string | null;
+      energy: string | null;
     }
   >
 ) {
@@ -187,12 +188,17 @@ function buildEventDetails(
     mdEq.model ?? md.model ?? (equipmentId ? eqMap[equipmentId!]?.model : null);
   const type =
     mdEq.type ?? md.type ?? (equipmentId ? eqMap[equipmentId!]?.type : null);
+  const energy =
+    mdEq.energy ??
+    md.energy ??
+    (equipmentId ? eqMap[equipmentId!]?.energy : null);
 
   if (equipmentName) out.equipmentName = equipmentName;
   if (equipmentDesc) out.equipmentDesc = equipmentDesc;
   if (brand) out.brand = brand;
   if (model) out.model = model;
   if (type) out.type = type;
+  if (energy) out.energy = energy;
 
   // Other common bits you already record
   if (md?.qrSlug) out.qrSlug = md.qrSlug;
@@ -310,6 +316,7 @@ export const services: Services = {
           ...(input.brand !== undefined ? { brand: input.brand } : {}),
           ...(input.model !== undefined ? { model: input.model } : {}),
           ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.energy !== undefined ? { energy: input.energy } : {}),
         };
 
         const created = await tx.equipment.create({ data });
@@ -339,6 +346,7 @@ export const services: Services = {
         if (patch.brand !== undefined) data.brand = patch.brand;
         if (patch.model !== undefined) data.model = patch.model;
         if (patch.type !== undefined) data.type = patch.type;
+        if (patch.energy !== undefined) data.energy = patch.energy;
 
         const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -909,6 +917,7 @@ export const services: Services = {
               brand: true,
               model: true,
               type: true,
+              energy: true,
             },
           },
         },
@@ -922,6 +931,7 @@ export const services: Services = {
         brand: r.equipment?.brand ?? null,
         model: r.equipment?.model ?? null,
         type: r.equipment?.type ?? null,
+        energy: r.equipment?.energy ?? null,
         state: r.checkedOutAt
           ? ("CHECKED_OUT" as const)
           : ("RESERVED" as const),
@@ -1357,6 +1367,7 @@ export const services: Services = {
               brand: true,
               model: true,
               type: true,
+              energy: true,
             },
           })
         : [];
@@ -1369,6 +1380,7 @@ export const services: Services = {
             brand: e.brand,
             model: e.model,
             type: e.type,
+            energy: e.energy,
           },
         ])
       );

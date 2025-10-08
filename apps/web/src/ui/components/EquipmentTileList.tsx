@@ -189,9 +189,8 @@ export default function EquipmentTileList({
 
   function unavailableMessage(item: Equipment) {
     if (
-      filter !== "claimed" &&
-      (item.holder?.state === "CHECKED_OUT" ||
-        item.holder?.state === "RESERVED")
+      item.holder?.state === "CHECKED_OUT" ||
+      item.holder?.state === "RESERVED"
     ) {
       let str =
         item.holder.state === "CHECKED_OUT"
@@ -203,9 +202,9 @@ export default function EquipmentTileList({
         item.holder?.userId.slice(0, 8);
 
       return (
-        <Text fontSize="xs" color="gray.700" mt={1}>
-          {str}
-        </Text>
+        <Box pt="2">
+          <Badge bg="gray.100">{str}</Badge>
+        </Box>
       );
     } else {
       return null;
@@ -286,32 +285,45 @@ export default function EquipmentTileList({
       >
         <HStack justify="space-between" align="start" w="full">
           <Box flex="1" w="full">
-            <Heading size="md">{item.type ? `${item.type} ` : ""}</Heading>
-            <Heading size="sm">
-              {item.brand ? `${item.brand} ` : ""}
-              {item.model ? `${item.model} ` : ""}
-              <Badge ml={2} {...StatusColor[item.status]}>
+            <HStack w="full" justify="space-between" align="center">
+              <Heading size="md" color="gray.400">
+                {item.type ?? ""}
+              </Heading>
+              <Badge {...StatusColor[item.status]}>
                 {prettyStatus(item.status)}
                 {isMine &&
                 (item.status === "RESERVED" || item.status === "CHECKED_OUT")
                   ? " (You)"
                   : ""}
               </Badge>
+            </HStack>
+
+            <Heading size="md">
+              {item.brand ? `${item.brand} ` : ""}
+              {item.model ? `${item.model} ` : ""}
             </Heading>
 
-            {unavailableMessage(item)}
-
-            {item.shortDesc && (
-              <Text fontSize="sm" color="gray.600" mt={1}>
-                {item.shortDesc}
-              </Text>
-            )}
+            {item.shortDesc && <Heading size="sm">{item.shortDesc}</Heading>}
 
             {item.longDesc && (
               <Text fontSize="sm" color="gray.500" mt={1}>
+                <Text as="span" fontWeight="bold">
+                  Details:{" "}
+                </Text>
                 {item.longDesc}
               </Text>
             )}
+
+            {item.energy && (
+              <Text fontSize="sm" color="gray.500" mt={1}>
+                <Text as="span" fontWeight="bold">
+                  Energy:{" "}
+                </Text>
+                {item.energy}
+              </Text>
+            )}
+
+            {unavailableMessage(item)}
 
             {/* Inline warning banner for this item */}
             {inlineWarn[item.id] && (

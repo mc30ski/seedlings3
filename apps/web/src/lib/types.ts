@@ -18,6 +18,18 @@ export const EQUIPMENT_TYPES = [
   "MISC",
 ] as const;
 
+export const EQUIPMENT_ENERGY = [
+  "87 Octane",
+  "93 Octane",
+  "50:1 Mixed",
+  "40:1 Mixed",
+  "Electric Plugin",
+  "Electric Battery",
+  "Manual",
+] as const;
+
+export type EquipmentEnergy = (typeof EQUIPMENT_ENERGY)[number];
+
 export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
 
 export type EquipmentStatus =
@@ -48,6 +60,7 @@ export type Equipment = {
   brand: string | null;
   model: string | null;
   type: EquipmentType | null;
+  energy: EquipmentEnergy | null;
   holder: EquipmentHolder | null;
 };
 
