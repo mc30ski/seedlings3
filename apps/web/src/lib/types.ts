@@ -15,6 +15,7 @@ export const EQUIPMENT_TYPES = [
   "EDGER",
   "CUTTER",
   "SPREADER",
+  "WASHER",
   "MISC",
 ] as const;
 
