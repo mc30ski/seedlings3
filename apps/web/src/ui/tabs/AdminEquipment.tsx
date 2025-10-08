@@ -257,119 +257,124 @@ export default function AdminEquipment() {
                   : "All Equipment"}
       </Heading>
 
-      <Collapsible.Root open={open} onOpenChange={({ open }) => setOpen(open)}>
-        <HStack justify="space-between" mb="2">
-          <Collapsible.Trigger asChild>
-            <Button variant="outline" size="sm">
-              <HStack gap="2">
-                <Icon as={Plus} boxSize={4} />
-                <span>Create equipment</span>
-                <Icon
-                  as={ChevronDown}
-                  boxSize={4}
-                  style={{ transition: "transform 0.2s ease" }}
-                  transform={open ? "rotate(180deg)" : "rotate(0deg)"}
+      {status === "all" && (
+        <Collapsible.Root
+          open={open}
+          onOpenChange={({ open }) => setOpen(open)}
+        >
+          <HStack justify="space-between" mb="2">
+            <Collapsible.Trigger asChild>
+              <Button variant="outline" size="sm">
+                <HStack gap="2">
+                  <Icon as={Plus} boxSize={4} />
+                  <span>Create equipment</span>
+                  <Icon
+                    as={ChevronDown}
+                    boxSize={4}
+                    style={{ transition: "transform 0.2s ease" }}
+                    transform={open ? "rotate(180deg)" : "rotate(0deg)"}
+                  />
+                </HStack>
+              </Button>
+            </Collapsible.Trigger>
+          </HStack>
+
+          <Collapsible.Content>
+            <Box
+              p="4"
+              borderWidth="1px"
+              borderRadius="lg"
+              bg="white"
+              _dark={{ bg: "gray.800" }}
+            >
+              <Stack gap="3">
+                <NativeSelectRoot size="sm">
+                  <NativeSelectField
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value)}
+                    placeholder="Type *"
+                  >
+                    <option value="" />
+                    {EQUIPMENT_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </NativeSelectField>
+                </NativeSelectRoot>
+
+                <Input
+                  placeholder="Brand *"
+                  value={newBrand}
+                  onChange={(e) => setNewBrand(e.target.value)}
                 />
-              </HStack>
-            </Button>
-          </Collapsible.Trigger>
-        </HStack>
+                <Input
+                  placeholder="Model *"
+                  value={newModel}
+                  onChange={(e) => setNewModel(e.target.value)}
+                />
+                <Input
+                  placeholder="Description *"
+                  value={newShort}
+                  onChange={(e) => setNewShort(e.target.value)}
+                />
 
-        <Collapsible.Content>
-          <Box
-            p="4"
-            borderWidth="1px"
-            borderRadius="lg"
-            bg="white"
-            _dark={{ bg: "gray.800" }}
-          >
-            <Stack gap="3">
-              <NativeSelectRoot size="sm">
-                <NativeSelectField
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value)}
-                  placeholder="Type *"
-                >
-                  <option value="" />
-                  {EQUIPMENT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </NativeSelectField>
-              </NativeSelectRoot>
+                <NativeSelectRoot size="sm">
+                  <NativeSelectField
+                    value={newEnergy}
+                    onChange={(e) => setNewEnergy(e.target.value)}
+                    placeholder="Select Energy *"
+                  >
+                    <option value="" />
+                    {EQUIPMENT_ENERGY.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </NativeSelectField>
+                </NativeSelectRoot>
 
-              <Input
-                placeholder="Brand *"
-                value={newBrand}
-                onChange={(e) => setNewBrand(e.target.value)}
-              />
-              <Input
-                placeholder="Model *"
-                value={newModel}
-                onChange={(e) => setNewModel(e.target.value)}
-              />
-              <Input
-                placeholder="Description *"
-                value={newShort}
-                onChange={(e) => setNewShort(e.target.value)}
-              />
+                <Input
+                  placeholder="Details (optional)"
+                  value={newLong}
+                  onChange={(e) => setNewLong(e.target.value)}
+                />
+                <Input
+                  placeholder="QR slug (optional)"
+                  value={newQr}
+                  onChange={(e) => setNewQr(e.target.value)}
+                />
 
-              <NativeSelectRoot size="sm">
-                <NativeSelectField
-                  value={newEnergy}
-                  onChange={(e) => setNewEnergy(e.target.value)}
-                  placeholder="Select Energy"
-                >
-                  <option value="" />
-                  {EQUIPMENT_ENERGY.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </NativeSelectField>
-              </NativeSelectRoot>
+                <Separator my="2" />
 
-              <Input
-                placeholder="Details (optional)"
-                value={newLong}
-                onChange={(e) => setNewLong(e.target.value)}
-              />
-              <Input
-                placeholder="QR slug (optional)"
-                value={newQr}
-                onChange={(e) => setNewQr(e.target.value)}
-              />
-
-              <Separator my="2" />
-
-              <HStack justify="flex-end" gap="2">
-                <Collapsible.Trigger asChild>
-                  <Button variant="ghost" size="sm">
-                    Cancel
+                <HStack justify="flex-end" gap="2">
+                  <Collapsible.Trigger asChild>
+                    <Button variant="ghost" size="sm">
+                      Cancel
+                    </Button>
+                  </Collapsible.Trigger>
+                  <Button
+                    size="sm"
+                    onClick={createEquipment}
+                    disabled={
+                      creating ||
+                      !newShort.trim() ||
+                      !newBrand.trim() ||
+                      !newModel.trim() ||
+                      !newType.trim() ||
+                      !newEnergy.trim()
+                    }
+                  >
+                    <HStack gap="2">
+                      <span>Create</span>
+                    </HStack>
                   </Button>
-                </Collapsible.Trigger>
-                <Button
-                  size="sm"
-                  onClick={createEquipment}
-                  disabled={
-                    creating ||
-                    !newShort.trim() ||
-                    !newBrand.trim() ||
-                    !newModel.trim() ||
-                    !newType.trim() ||
-                    !newEnergy.trim()
-                  }
-                >
-                  <HStack gap="2">
-                    <span>Create</span>
-                  </HStack>
-                </Button>
-              </HStack>
-            </Stack>
-          </Box>
-        </Collapsible.Content>
-      </Collapsible.Root>
+                </HStack>
+              </Stack>
+            </Box>
+          </Collapsible.Content>
+        </Collapsible.Root>
+      )}
 
       {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
