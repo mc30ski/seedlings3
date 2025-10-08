@@ -247,7 +247,7 @@ export default function EquipmentTileList({
     <>
       <QRScannerDialog
         open={!!scanFor}
-        label="Scan to Check Out"
+        label="Scan QR Code to Check Out"
         onClose={() => {
           setScanFor(null);
         }}
@@ -264,7 +264,7 @@ export default function EquipmentTileList({
 
       <QRScannerDialog
         open={!!scanReturnFor}
-        label="Scan to Return"
+        label="Scan QR Code to Return"
         onClose={() => {
           setScanReturnFor(null);
           setMessage(
