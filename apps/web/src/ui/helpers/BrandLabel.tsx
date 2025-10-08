@@ -1,4 +1,3 @@
-// apps/web/src/components/BrandLabel.tsx
 import { HStack, Image, Text, Box } from "@chakra-ui/react";
 import {
   SignedIn,

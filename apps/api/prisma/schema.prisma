@@ -73,6 +73,7 @@ model Equipment {
   model      String?
   shortDesc  String?
   longDesc   String?
+  energy     String?
 
   checkouts    Checkout[]
   auditEvents  AuditEvent[]     @relation("AuditEquipment")

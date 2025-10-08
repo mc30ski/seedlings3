@@ -21,6 +21,7 @@ import {
   Equipment,
   InlineMessageType,
   EQUIPMENT_TYPES,
+  EQUIPMENT_ENERGY,
 } from "../../lib/types";
 import EquipmentTileList from "../components/EquipmentTileList";
 import LoadingCenter from "../helpers/LoadingCenter";
@@ -47,6 +48,7 @@ export default function AdminEquipment() {
   const [newBrand, setNewBrand] = useState("");
   const [newModel, setNewModel] = useState("");
   const [newType, setNewType] = useState("");
+  const [newEnergy, setNewEnergy] = useState("");
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -106,6 +108,7 @@ export default function AdminEquipment() {
         const s4 = (r.shortDesc || "").toLowerCase();
         const s5 = (r.longDesc || "").toLowerCase();
         const s6 = (r.type || "").toLowerCase();
+        const s7 = (r.energy || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -117,6 +120,7 @@ export default function AdminEquipment() {
           s4.includes(qlc) ||
           s5.includes(qlc) ||
           s6.includes(qlc) ||
+          s7.includes(qlc) ||
           who.includes(qlc)
         );
       });
@@ -132,6 +136,7 @@ export default function AdminEquipment() {
     const brand = newBrand.trim();
     const model = newModel.trim();
     const type = newType.trim();
+    const energy = newEnergy.trim();
 
     setCreating(true);
     try {
@@ -142,6 +147,7 @@ export default function AdminEquipment() {
         brand,
         model,
         type,
+        energy,
       });
       setNewShort("");
       setNewLong("");
@@ -149,6 +155,7 @@ export default function AdminEquipment() {
       setNewBrand("");
       setNewModel("");
       setNewType("");
+      setNewEnergy("");
       await load();
       setInlineMsg({
         msg: "Equipment created",
@@ -307,6 +314,22 @@ export default function AdminEquipment() {
                 value={newShort}
                 onChange={(e) => setNewShort(e.target.value)}
               />
+
+              <NativeSelectRoot size="sm">
+                <NativeSelectField
+                  value={newEnergy}
+                  onChange={(e) => setNewEnergy(e.target.value)}
+                  placeholder="Select Energy"
+                >
+                  <option value="" />
+                  {EQUIPMENT_ENERGY.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </NativeSelectField>
+              </NativeSelectRoot>
+
               <Input
                 placeholder="Details (optional)"
                 value={newLong}
@@ -334,7 +357,8 @@ export default function AdminEquipment() {
                     !newShort.trim() ||
                     !newBrand.trim() ||
                     !newModel.trim() ||
-                    !newType.trim()
+                    !newType.trim() ||
+                    !newEnergy.trim()
                   }
                 >
                   <HStack gap="2">

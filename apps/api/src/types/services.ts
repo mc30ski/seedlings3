@@ -88,6 +88,7 @@ export type Services = {
       brand?: string;
       model?: string;
       type?: string;
+      energy?: string;
       qrSlug?: string | null;
     }): Promise<Equipment>;
     update(
@@ -95,7 +96,13 @@ export type Services = {
       patch: Partial<
         Pick<
           Equipment,
-          "shortDesc" | "longDesc" | "qrSlug" | "brand" | "model" | "type"
+          | "shortDesc"
+          | "longDesc"
+          | "qrSlug"
+          | "brand"
+          | "model"
+          | "type"
+          | "energy"
         >
       >
     ): Promise<Equipment>;

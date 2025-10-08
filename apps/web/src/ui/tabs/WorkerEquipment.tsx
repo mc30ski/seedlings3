@@ -43,6 +43,9 @@ export default function WorkerEquipment() {
         apiGet<Equipment[]>("/api/equipment/all"),
         apiGet<Me>("/api/me"),
       ]);
+      const anyClaimed =
+        data.filter((i) => i.holder?.userId === meResp?.id).length > 0;
+      setStatus(anyClaimed ? "claimed" : "available");
       setItems(data);
       setMe(meResp);
     } catch (err) {
@@ -95,6 +98,7 @@ export default function WorkerEquipment() {
         const s4 = (r.shortDesc || "").toLowerCase();
         const s5 = (r.longDesc || "").toLowerCase();
         const s6 = (r.type || "").toLowerCase();
+        const s7 = (r.energy || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -106,6 +110,7 @@ export default function WorkerEquipment() {
           s4.includes(qlc) ||
           s5.includes(qlc) ||
           s6.includes(qlc) ||
+          s7.includes(qlc) ||
           who.includes(qlc)
         );
       });
