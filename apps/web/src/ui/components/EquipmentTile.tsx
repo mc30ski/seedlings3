@@ -293,7 +293,10 @@ export default function EquipmentTileList({
                   style={{ rowGap: "0.25rem" }} // ~ spacing={1}
                 >
                   {item.longDesc && (
-                    <Text fontSize="sm" color="gray.600" lineHeight="1.25">
+                    <Text fontSize="sm" color="gray.500" lineHeight="1.25">
+                      <Text as="span" fontWeight="bold">
+                        Description:{" "}
+                      </Text>
                       {item.longDesc}
                     </Text>
                   )}
@@ -423,7 +426,7 @@ export default function EquipmentTileList({
               </HStack>
             )}
 
-            <Stack direction="row" gap="2" mt={2}>
+            <Stack direction="row" gap="2" mt={2} justify="flex-end">
               <>
                 {canWorkerCheckout(item) && (
                   <ActionButton
