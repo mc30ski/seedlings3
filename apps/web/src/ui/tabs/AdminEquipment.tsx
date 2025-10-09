@@ -155,6 +155,10 @@ export default function AdminEquipment() {
     const model = newModel.trim();
     const type = newType.trim();
     const energy = newEnergy.trim();
+    const features = newEnergy.trim();
+    const condition = newEnergy.trim();
+    const issues = newEnergy.trim();
+    const age = newEnergy.trim();
 
     setCreating(true);
     try {
