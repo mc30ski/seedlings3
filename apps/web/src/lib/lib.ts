@@ -34,3 +34,32 @@ export function extractSlug(value: string): string {
     return value;
   }
 }
+
+export function statusColor(value: string): string {
+  switch (value) {
+    case "AVAILABLE":
+      return "green";
+    case "RESERVED":
+      return "orange";
+    case "CHECKED_OUT":
+      return "cyan";
+    case "MAINTENANCE":
+      return "yellow";
+    case "RETIRED":
+      return "red";
+  }
+  return "gray";
+}
+
+export function actionStatusColor(value: string): string {
+  const act = (value || "").toUpperCase();
+  if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
+  if (act.includes("CHECKED_OUT") || act.includes("MAINTENANCE_START"))
+    return "red";
+  if (act.includes("MAINTENANCE_END")) return "yellow";
+  if (act.includes("UPDATED") || act.includes("RESERVED")) return "orange";
+  if (act.includes("APPROVED") || act.includes("ROLE_ASSIGNED"))
+    return "purple";
+  if (act.includes("RELEASED") || act.includes("FORCE_RELEASED")) return "blue";
+  return "teal";
+}

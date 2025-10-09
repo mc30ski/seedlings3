@@ -12,6 +12,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
+import { prettyStatus, statusColor } from "../../lib/lib";
 import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
@@ -36,8 +37,9 @@ type Holding = {
   userId: string;
   equipmentId: string;
   shortDesc: string;
-  brand?: string | null;
-  model?: string | null;
+  brand: string | null;
+  model: string | null;
+  qrSlug: string | null;
   state: "RESERVED" | "CHECKED_OUT";
   reservedAt: string; // ISO
   checkedOutAt: string | null; // ISO
@@ -401,6 +403,8 @@ export default function AdminUsers() {
           const confirmCTA =
             confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
 
+          const displayName = u.displayName || u.email;
+
           return (
             <Box
               key={u.id}
@@ -410,7 +414,6 @@ export default function AdminUsers() {
               mb={3}
               w="full"
             >
-              {/* TOP ROW: identity + badges + warning + actions */}
               <Stack
                 direction={{ base: "column", md: "row" }}
                 align={{ base: "stretch", md: "start" }}
@@ -418,23 +421,36 @@ export default function AdminUsers() {
                 gap="3"
                 w="full"
               >
-                {/* LEFT: identity + badges + warning */}
                 <Box flex="1 1 0" minW={0}>
-                  <Heading size="sm" wordBreak="break-word">
-                    {u.displayName || u.email || "(no name)"}{" "}
-                    {isMe && <Badge ml="2">You</Badge>}
-                  </Heading>
-                  <Text fontSize="xs" color="gray.600" wordBreak="break-word">
-                    {u.email || "—"}
-                  </Text>
+                  <HStack
+                    justify="space-between"
+                    w="100%"
+                    align="center"
+                    wrap="wrap"
+                    gap="6px"
+                  >
+                    <HStack gap="8px" minW="0">
+                      <Text
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                      >
+                        {displayName || "(no name)"}
+                      </Text>
+                      {displayName !== u.email && <Badge>{u.email}</Badge>}
+                    </HStack>
+                  </HStack>
+
                   <HStack gap="2" mt={2} flexWrap="wrap">
-                    <Badge>{u.isApproved ? "Approved" : "Pending"}</Badge>
-                    {isWorker && <Badge colorPalette="blue">Worker</Badge>}
+                    <Badge colorPalette="green">
+                      {u.isApproved ? "Approved" : "Pending"}
+                    </Badge>
+                    {isWorker && <Badge>Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                     {isSuper && <Badge colorPalette="yellow">Super</Badge>}
                   </HStack>
 
-                  {/* Inline warnings (role removal, delete errors, etc.) */}
                   {inlineErr[u.id] && (
                     <HStack
                       mt={3}
@@ -534,7 +550,6 @@ export default function AdminUsers() {
                                 Add Worker
                               </Button>
                             ) : null}
-                            {/* Delete (destructive) only when approved & no roles, never for self */}
                             {u.isApproved &&
                               !(isAdmin || isWorker) &&
                               !isMe &&
@@ -562,7 +577,6 @@ export default function AdminUsers() {
                 )}
               </Stack>
 
-              {/* Inline confirm bar (full width, below actions, mobile-friendly) */}
               {isConfirming && (
                 <HStack
                   mt={3}
@@ -607,22 +621,14 @@ export default function AdminUsers() {
                 </HStack>
               )}
 
-              {/* FULL-WIDTH ROW: holdings chips (never squashed by actions) */}
               {(holdingsByUser[u.id]?.length ?? 0) > 0 && (
                 <Stack direction="row" gap="2" flexWrap="wrap" mt={2} w="full">
                   {holdingsByUser[u.id].map((h) => (
                     <Badge
                       key={h.equipmentId}
                       variant="subtle"
-                      colorPalette={
-                        h.state === "CHECKED_OUT" ? "red" : "orange"
-                      }
-                    >
-                      {[h.brand, h.model, h.shortDesc]
-                        .filter(Boolean)
-                        .join(" - ")}{" "}
-                      · {h.state.toLowerCase().replace("_", " ")}
-                    </Badge>
+                      colorPalette={statusColor(h.state)}
+                    >{`${h.shortDesc} (${h.qrSlug}) - ${prettyStatus(h.state)}`}</Badge>
                   ))}
                 </Stack>
               )}

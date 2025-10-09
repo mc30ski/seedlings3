@@ -8,22 +8,19 @@ import {
   Button,
   Dialog,
   Portal,
-  VStack,
   useDisclosure,
 } from "@chakra-ui/react";
-import { Collapse } from "@chakra-ui/transition";
-import { ChevronDownIcon } from "@chakra-ui/icons";
 import { useState, useRef } from "react";
 import { apiPost, apiDelete } from "../../lib/api";
-import { Role, Equipment, StatusColor } from "../../lib/types";
+import { Role, Equipment, InlineMessageType } from "../../lib/types";
 import {
   errorMessage,
   notifyEquipmentUpdated,
   prettyStatus,
   extractSlug,
+  statusColor,
 } from "../../lib/lib";
 import QRScannerDialog from "./QRScannerDialog";
-import { InlineMessageType } from "../../lib/types";
 
 type EquipmentTileListProps = {
   item: Equipment;
@@ -389,7 +386,7 @@ export default function EquipmentTileList({
               <Heading size="md" color="gray.400">
                 {item.type ?? ""}
               </Heading>
-              <Badge {...StatusColor[item.status]}>
+              <Badge colorPalette={statusColor(item.status)}>
                 {prettyStatus(item.status)}
                 {isMine &&
                 (item.status === "RESERVED" || item.status === "CHECKED_OUT")
