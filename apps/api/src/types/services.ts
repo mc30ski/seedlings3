@@ -89,6 +89,10 @@ export type Services = {
       model?: string;
       type?: string;
       energy?: string;
+      features?: string;
+      condition?: string;
+      issues?: string;
+      age?: string;
       qrSlug?: string | null;
     }): Promise<Equipment>;
     update(
@@ -103,6 +107,10 @@ export type Services = {
           | "model"
           | "type"
           | "energy"
+          | "features"
+          | "condition"
+          | "issues"
+          | "age"
         >
       >
     ): Promise<Equipment>;

@@ -165,6 +165,10 @@ function buildEventDetails(
       model: string | null;
       type: string | null;
       energy: string | null;
+      features: string | null;
+      condition: string | null;
+      issues: string | null;
+      age: string | null;
     }
   >
 ) {
@@ -192,6 +196,20 @@ function buildEventDetails(
     mdEq.energy ??
     md.energy ??
     (equipmentId ? eqMap[equipmentId!]?.energy : null);
+  const features =
+    mdEq.features ??
+    md.features ??
+    (equipmentId ? eqMap[equipmentId!]?.features : null);
+  const condition =
+    mdEq.condition ??
+    md.condition ??
+    (equipmentId ? eqMap[equipmentId!]?.condition : null);
+  const issues =
+    mdEq.issues ??
+    md.issues ??
+    (equipmentId ? eqMap[equipmentId!]?.issues : null);
+  const age =
+    mdEq.age ?? md.age ?? (equipmentId ? eqMap[equipmentId!]?.age : null);
 
   if (equipmentName) out.equipmentName = equipmentName;
   if (equipmentDesc) out.equipmentDesc = equipmentDesc;
@@ -199,6 +217,10 @@ function buildEventDetails(
   if (model) out.model = model;
   if (type) out.type = type;
   if (energy) out.energy = energy;
+  if (features) out.features = features;
+  if (condition) out.condition = condition;
+  if (issues) out.issues = issues;
+  if (age) out.age = age;
 
   // Other common bits you already record
   if (md?.qrSlug) out.qrSlug = md.qrSlug;
@@ -317,6 +339,12 @@ export const services: Services = {
           ...(input.model !== undefined ? { model: input.model } : {}),
           ...(input.type !== undefined ? { type: input.type } : {}),
           ...(input.energy !== undefined ? { energy: input.energy } : {}),
+          ...(input.features !== undefined ? { features: input.features } : {}),
+          ...(input.condition !== undefined
+            ? { condition: input.condition }
+            : {}),
+          ...(input.issues !== undefined ? { issues: input.issues } : {}),
+          ...(input.age !== undefined ? { age: input.age } : {}),
         };
 
         const created = await tx.equipment.create({ data });
@@ -347,6 +375,10 @@ export const services: Services = {
         if (patch.model !== undefined) data.model = patch.model;
         if (patch.type !== undefined) data.type = patch.type;
         if (patch.energy !== undefined) data.energy = patch.energy;
+        if (patch.features !== undefined) data.features = patch.features;
+        if (patch.condition !== undefined) data.condition = patch.condition;
+        if (patch.issues !== undefined) data.issues = patch.issues;
+        if (patch.age !== undefined) data.age = patch.age;
 
         const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -918,6 +950,10 @@ export const services: Services = {
               model: true,
               type: true,
               energy: true,
+              features: true,
+              condition: true,
+              issues: true,
+              age: true,
             },
           },
         },
@@ -932,6 +968,10 @@ export const services: Services = {
         model: r.equipment?.model ?? null,
         type: r.equipment?.type ?? null,
         energy: r.equipment?.energy ?? null,
+        features: r.equipment?.features ?? null,
+        condition: r.equipment?.condition ?? null,
+        issues: r.equipment?.issues ?? null,
+        age: r.equipment?.age ?? null,
         state: r.checkedOutAt
           ? ("CHECKED_OUT" as const)
           : ("RESERVED" as const),
@@ -1368,6 +1408,10 @@ export const services: Services = {
               model: true,
               type: true,
               energy: true,
+              features: true,
+              condition: true,
+              issues: true,
+              age: true,
             },
           })
         : [];
@@ -1381,6 +1425,10 @@ export const services: Services = {
             model: e.model,
             type: e.type,
             energy: e.energy,
+            features: e.features,
+            condition: e.condition,
+            issues: e.issues,
+            age: e.age,
           },
         ])
       );

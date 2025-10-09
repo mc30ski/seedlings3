@@ -51,6 +51,10 @@ export default function AdminEquipment() {
   const [newModel, setNewModel] = useState("");
   const [newType, setNewType] = useState("");
   const [newEnergy, setNewEnergy] = useState("");
+  const [newFeatures, setNewFeatures] = useState("");
+  const [newCondition, setNewCondition] = useState("");
+  const [newIssues, setNewIssues] = useState("");
+  const [newAge, setNewAge] = useState("");
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -115,6 +119,10 @@ export default function AdminEquipment() {
         const s5 = (r.longDesc || "").toLowerCase();
         const s6 = (r.type || "").toLowerCase();
         const s7 = (r.energy || "").toLowerCase();
+        const s8 = (r.features || "").toLowerCase();
+        const s9 = (r.condition || "").toLowerCase();
+        const s10 = (r.issues || "").toLowerCase();
+        const s11 = (r.age || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -127,6 +135,10 @@ export default function AdminEquipment() {
           s5.includes(qlc) ||
           s6.includes(qlc) ||
           s7.includes(qlc) ||
+          s8.includes(qlc) ||
+          s9.includes(qlc) ||
+          s10.includes(qlc) ||
+          s11.includes(qlc) ||
           who.includes(qlc)
         );
       });
@@ -154,6 +166,10 @@ export default function AdminEquipment() {
         model,
         type,
         energy,
+        features,
+        condition,
+        issues,
+        age,
       });
       setNewShort("");
       setNewLong("");
@@ -162,6 +178,10 @@ export default function AdminEquipment() {
       setNewModel("");
       setNewType("");
       setNewEnergy("");
+      setNewFeatures("");
+      setNewCondition("");
+      setNewIssues("");
+      setNewAge("");
       await load();
       setInlineMsg({
         msg: "Equipment created",
@@ -341,14 +361,40 @@ export default function AdminEquipment() {
                 </NativeSelectRoot>
 
                 <Input
+                  placeholder="ID / QR slug *"
+                  value={newQr}
+                  onChange={(e) => setNewQr(e.target.value)}
+                />
+                <Input
+                  placeholder="Summary *"
+                  value={newShort}
+                  onChange={(e) => setNewShort(e.target.value)}
+                />
+                <Input
                   placeholder="Details (optional)"
                   value={newLong}
                   onChange={(e) => setNewLong(e.target.value)}
                 />
+
                 <Input
-                  placeholder="QR slug (optional)"
-                  value={newQr}
-                  onChange={(e) => setNewQr(e.target.value)}
+                  placeholder="Features (optional)"
+                  value={newLong}
+                  onChange={(e) => setNewFeatures(e.target.value)}
+                />
+                <Input
+                  placeholder="Condition (optional)"
+                  value={newLong}
+                  onChange={(e) => setNewCondition(e.target.value)}
+                />
+                <Input
+                  placeholder="Issues (optional)"
+                  value={newLong}
+                  onChange={(e) => setNewIssues(e.target.value)}
+                />
+                <Input
+                  placeholder="Age (optional)"
+                  value={newLong}
+                  onChange={(e) => setNewAge(e.target.value)}
                 />
 
                 <Separator my="2" />
@@ -368,7 +414,8 @@ export default function AdminEquipment() {
                       !newBrand.trim() ||
                       !newModel.trim() ||
                       !newType.trim() ||
-                      !newEnergy.trim()
+                      !newEnergy.trim() ||
+                      !newQr.trim()
                     }
                   >
                     <HStack gap="2">
