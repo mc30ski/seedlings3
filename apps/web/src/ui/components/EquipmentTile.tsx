@@ -8,7 +8,11 @@ import {
   Button,
   Dialog,
   Portal,
+  VStack,
+  useDisclosure,
 } from "@chakra-ui/react";
+import { Collapse } from "@chakra-ui/transition";
+import { ChevronDownIcon } from "@chakra-ui/icons";
 import { useState, useRef } from "react";
 import { apiPost, apiDelete } from "../../lib/api";
 import { Role, Equipment, StatusColor } from "../../lib/types";
@@ -243,6 +247,65 @@ export default function EquipmentTileList({
   const canAdminHardDelete = (e: Equipment) =>
     role === "ADMIN" && e.status === "RETIRED";
 
+  function ItemTile({ item, isMine }: { item: any; isMine?: boolean }) {
+    const { open, onToggle } = useDisclosure();
+
+    return (
+      <HStack justify="space-between" alignItems="flex-start" w="full">
+        <Box flex="1" w="full">
+          {(item.longDesc || item.energy) && (
+            <Box mt={1}>
+              <Button
+                onClick={onToggle}
+                size="xs"
+                variant="ghost"
+                px={1}
+                mb={1}
+                h="20px"
+                fontWeight="semibold"
+                color="gray.600"
+                aria-expanded={open}
+                aria-controls="item-details"
+              >
+                <HStack gap={1} alignItems="center">
+                  <Box as="span">Details</Box>
+                  <Box
+                    as="span"
+                    aria-hidden
+                    display="inline-block"
+                    transition="transform 0.2s"
+                    style={{
+                      transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                    }}
+                  >
+                    ▼{/* Or: <ChevronDownIcon /> */}
+                  </Box>
+                </HStack>
+              </Button>
+
+              {open && (
+                <Box
+                  id="item-details"
+                  pl={2}
+                  pt={1}
+                  // Create vertical rhythm without `spacing` by using row gap
+                  display="grid"
+                  style={{ rowGap: "0.25rem" }} // ~ spacing={1}
+                >
+                  {item.longDesc && (
+                    <Text fontSize="sm" color="gray.600" lineHeight="1.25">
+                      {item.longDesc}
+                    </Text>
+                  )}
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
+      </HStack>
+    );
+  }
+
   return (
     <>
       <QRScannerDialog
@@ -302,19 +365,19 @@ export default function EquipmentTileList({
               </Badge>
             </HStack>
 
-            <Heading size="md">
+            {item.shortDesc && <Heading size="md">{item.shortDesc}</Heading>}
+
+            <Heading size="sm">
               {item.brand ? `${item.brand} ` : ""}
               {item.model ? `${item.model} ` : ""}
             </Heading>
 
-            {item.shortDesc && <Heading size="sm">{item.shortDesc}</Heading>}
-
-            {item.longDesc && (
+            {item.qrSlug && (
               <Text fontSize="sm" color="gray.500" mt={1}>
                 <Text as="span" fontWeight="bold">
-                  Details:{" "}
+                  ID:{" "}
                 </Text>
-                {item.longDesc}
+                {item.qrSlug}
               </Text>
             )}
 
@@ -326,6 +389,9 @@ export default function EquipmentTileList({
                 {item.energy}
               </Text>
             )}
+
+            {/* Minimal collapsible for details */}
+            <ItemTile item={item} isMine={isMine} />
 
             {unavailableMessage(item)}
 
@@ -443,7 +509,6 @@ export default function EquipmentTileList({
                       })
                     }
                     variant="danger-outline"
-                    disabled={!isSuper}
                   />
                 )}
               </>
@@ -485,8 +550,15 @@ export default function EquipmentTileList({
                   This will <b>permanently delete</b> the equipment record.
                 </Text>
                 {toDelete?.label ? (
-                  <Text color="gray.600">Item: {toDelete.label}</Text>
+                  <Text mb="2" color="gray.600">
+                    Item: {toDelete.label}
+                  </Text>
                 ) : null}
+                {!isSuper && (
+                  <Text color="red.500">
+                    You must be a Super Admin to delete.
+                  </Text>
+                )}
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full" gap="2">
@@ -505,6 +577,7 @@ export default function EquipmentTileList({
                         setToDelete(null);
                       }
                     }}
+                    disabled={!isSuper}
                   >
                     Delete
                   </Button>
