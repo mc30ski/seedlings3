@@ -55,6 +55,7 @@ export default function AdminEquipment() {
   const [newCondition, setNewCondition] = useState("");
   const [newIssues, setNewIssues] = useState("");
   const [newAge, setNewAge] = useState("");
+
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -155,10 +156,10 @@ export default function AdminEquipment() {
     const model = newModel.trim();
     const type = newType.trim();
     const energy = newEnergy.trim();
-    const features = newEnergy.trim();
-    const condition = newEnergy.trim();
-    const issues = newEnergy.trim();
-    const age = newEnergy.trim();
+    const features = newFeatures.trim();
+    const condition = newCondition.trim();
+    const issues = newIssues.trim();
+    const age = newAge.trim();
 
     setCreating(true);
     try {
@@ -344,11 +345,15 @@ export default function AdminEquipment() {
                   onChange={(e) => setNewModel(e.target.value)}
                 />
                 <Input
-                  placeholder="Description *"
+                  placeholder="ID / QR slug *"
+                  value={newQr}
+                  onChange={(e) => setNewQr(e.target.value)}
+                />
+                <Input
+                  placeholder="Summary *"
                   value={newShort}
                   onChange={(e) => setNewShort(e.target.value)}
                 />
-
                 <NativeSelectRoot size="sm">
                   <NativeSelectField
                     value={newEnergy}
@@ -363,17 +368,6 @@ export default function AdminEquipment() {
                     ))}
                   </NativeSelectField>
                 </NativeSelectRoot>
-
-                <Input
-                  placeholder="ID / QR slug *"
-                  value={newQr}
-                  onChange={(e) => setNewQr(e.target.value)}
-                />
-                <Input
-                  placeholder="Summary *"
-                  value={newShort}
-                  onChange={(e) => setNewShort(e.target.value)}
-                />
                 <Input
                   placeholder="Details (optional)"
                   value={newLong}
@@ -382,22 +376,22 @@ export default function AdminEquipment() {
 
                 <Input
                   placeholder="Features (optional)"
-                  value={newLong}
+                  value={newFeatures}
                   onChange={(e) => setNewFeatures(e.target.value)}
                 />
                 <Input
                   placeholder="Condition (optional)"
-                  value={newLong}
+                  value={newCondition}
                   onChange={(e) => setNewCondition(e.target.value)}
                 />
                 <Input
                   placeholder="Issues (optional)"
-                  value={newLong}
+                  value={newIssues}
                   onChange={(e) => setNewIssues(e.target.value)}
                 />
                 <Input
                   placeholder="Age (optional)"
-                  value={newLong}
+                  value={newAge}
                   onChange={(e) => setNewAge(e.target.value)}
                 />
 
