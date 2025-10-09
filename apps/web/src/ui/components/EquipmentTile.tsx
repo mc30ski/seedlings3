@@ -426,7 +426,8 @@ export default function EquipmentTileList({
               </HStack>
             )}
 
-            <Stack direction="row" gap="2" mt={2} justify="flex-end">
+            <Stack direction={{ base: "column", sm: "row" }} gap="2" mt={2}>
+              {" "}
               <>
                 {canWorkerCheckout(item) && (
                   <ActionButton
