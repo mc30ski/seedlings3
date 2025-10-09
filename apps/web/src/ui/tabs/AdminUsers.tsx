@@ -381,6 +381,7 @@ export default function AdminUsers() {
           const s = rolesSet(u);
           const isAdmin = s.has("ADMIN");
           const isWorker = s.has("WORKER");
+          const isSuper = s.has("SUPER");
           const hasAnyRole = isAdmin || isWorker;
           const isMe = !!me?.id && u.id === me.id;
           const holdings = holdingsByUser[u.id] ?? [];
@@ -430,6 +431,7 @@ export default function AdminUsers() {
                     <Badge>{u.isApproved ? "Approved" : "Pending"}</Badge>
                     {isWorker && <Badge colorPalette="blue">Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
+                    {isSuper && <Badge colorPalette="yellow">Super</Badge>}
                   </HStack>
 
                   {/* Inline warnings (role removal, delete errors, etc.) */}
@@ -494,7 +496,7 @@ export default function AdminUsers() {
                         ) : (
                           <>
                             {/* Role toggles */}
-                            {isAdmin ? (
+                            {isAdmin && !isSuper ? (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 onClick={() => removeRole(u.id, "ADMIN")}
@@ -502,7 +504,7 @@ export default function AdminUsers() {
                               >
                                 Remove Admin
                               </Button>
-                            ) : (
+                            ) : !isSuper ? (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 onClick={() => addRole(u.id, "ADMIN")}
@@ -510,9 +512,8 @@ export default function AdminUsers() {
                               >
                                 Make Admin
                               </Button>
-                            )}
-
-                            {isWorker ? (
+                            ) : null}
+                            {isWorker && !isSuper ? (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 onClick={() => removeRole(u.id, "WORKER")}
@@ -524,7 +525,7 @@ export default function AdminUsers() {
                               >
                                 Remove Worker
                               </Button>
-                            ) : (
+                            ) : !isSuper ? (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 onClick={() => addRole(u.id, "WORKER")}
@@ -532,8 +533,7 @@ export default function AdminUsers() {
                               >
                                 Add Worker
                               </Button>
-                            )}
-
+                            ) : null}
                             {/* Delete (destructive) only when approved & no roles, never for self */}
                             {u.isApproved &&
                               !(isAdmin || isWorker) &&
