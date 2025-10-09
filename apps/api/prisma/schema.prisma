@@ -75,6 +75,10 @@ model Equipment {
   shortDesc  String?
   longDesc   String?
   energy     String?
+  features   String?
+  condition  String?
+  issues     String?
+  age        String?
 
   checkouts    Checkout[]
   auditEvents  AuditEvent[]     @relation("AuditEquipment")

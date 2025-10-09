@@ -99,6 +99,10 @@ export default function WorkerEquipment() {
         const s5 = (r.longDesc || "").toLowerCase();
         const s6 = (r.type || "").toLowerCase();
         const s7 = (r.energy || "").toLowerCase();
+        const s8 = (r.features || "").toLowerCase();
+        const s9 = (r.condition || "").toLowerCase();
+        const s10 = (r.issues || "").toLowerCase();
+        const s11 = (r.age || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -111,6 +115,10 @@ export default function WorkerEquipment() {
           s5.includes(qlc) ||
           s6.includes(qlc) ||
           s7.includes(qlc) ||
+          s8.includes(qlc) ||
+          s9.includes(qlc) ||
+          s10.includes(qlc) ||
+          s11.includes(qlc) ||
           who.includes(qlc)
         );
       });

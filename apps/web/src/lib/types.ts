@@ -62,6 +62,10 @@ export type Equipment = {
   model: string | null;
   type: EquipmentType | null;
   energy: EquipmentEnergy | null;
+  features: string | null;
+  condition: string | null;
+  issues: string | null;
+  age: string | null;
   holder: EquipmentHolder | null;
 };
 

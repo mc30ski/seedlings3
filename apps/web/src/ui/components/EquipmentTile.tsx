@@ -253,57 +253,87 @@ export default function EquipmentTileList({
     return (
       <HStack justify="space-between" alignItems="flex-start" w="full">
         <Box flex="1" w="full">
-          {(item.longDesc || item.energy) && (
-            <Box mt={1}>
-              <Button
-                onClick={onToggle}
-                size="xs"
-                variant="ghost"
-                px={1}
-                mb={1}
-                h="20px"
-                fontWeight="semibold"
-                color="gray.600"
-                aria-expanded={open}
-                aria-controls="item-details"
-              >
-                <HStack gap={1} alignItems="center">
-                  <Box as="span">Details</Box>
-                  <Box
-                    as="span"
-                    aria-hidden
-                    display="inline-block"
-                    transition="transform 0.2s"
-                    style={{
-                      transform: open ? "rotate(180deg)" : "rotate(0deg)",
-                    }}
-                  >
-                    ▼{/* Or: <ChevronDownIcon /> */}
-                  </Box>
-                </HStack>
-              </Button>
-
-              {open && (
+          <Box mt={1}>
+            <Button
+              onClick={onToggle}
+              size="xs"
+              variant="ghost"
+              px={1}
+              mb={1}
+              h="20px"
+              fontWeight="semibold"
+              color="gray.600"
+              aria-expanded={open}
+              aria-controls="item-details"
+            >
+              <HStack gap={1} alignItems="center">
+                <Box as="span">Details</Box>
                 <Box
-                  id="item-details"
-                  pl={2}
-                  pt={1}
-                  // Create vertical rhythm without `spacing` by using row gap
-                  display="grid"
-                  style={{ rowGap: "0.25rem" }} // ~ spacing={1}
+                  as="span"
+                  aria-hidden
+                  display="inline-block"
+                  transition="transform 0.2s"
+                  style={{
+                    transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                  }}
                 >
-                  {item.longDesc && (
-                    <Text fontSize="sm" color="gray.500" lineHeight="1.25">
-                      <Text as="span" fontWeight="bold">
-                        Description:{" "}
-                      </Text>
-                      {item.longDesc}
-                    </Text>
-                  )}
+                  ▼{/* Or: <ChevronDownIcon /> */}
                 </Box>
-              )}
-            </Box>
-          )}
+              </HStack>
+            </Button>
+
+            {open && (
+              <Box
+                id="item-details"
+                pl={2}
+                pt={1}
+                // Create vertical rhythm without `spacing` by using row gap
+                display="grid"
+                style={{ rowGap: "0.25rem" }}
+              >
+                {item.longDesc && (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text as="span" fontWeight="bold">
+                      Description:{" "}
+                    </Text>
+                    {item.longDesc}
+                  </Text>
+                )}
+                {item.features && (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text as="span" fontWeight="bold">
+                      Features:{" "}
+                    </Text>
+                    {item.features}
+                  </Text>
+                )}
+                {item.condition && (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text as="span" fontWeight="bold">
+                      Condition:{" "}
+                    </Text>
+                    {item.condition}
+                  </Text>
+                )}
+                {item.issues && (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text as="span" fontWeight="bold">
+                      Issues:{" "}
+                    </Text>
+                    {item.issues}
+                  </Text>
+                )}
+                {item.age && (
+                  <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text as="span" fontWeight="bold">
+                      Age:{" "}
+                    </Text>
+                    {item.age}
+                  </Text>
+                )}
+              </Box>
+            )}
+          </Box>
         </Box>
       </HStack>
     );
@@ -387,7 +417,7 @@ export default function EquipmentTileList({
             {item.energy && (
               <Text fontSize="sm" color="gray.500" mt={1}>
                 <Text as="span" fontWeight="bold">
-                  Energy:{" "}
+                  Power:{" "}
                 </Text>
                 {item.energy}
               </Text>
