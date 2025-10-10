@@ -21,6 +21,7 @@ export type AdminUserHolding = {
   userId: string;
   equipmentId: string;
   shortDesc: string;
+  qrSlug: string;
   state: "RESERVED" | "CHECKED_OUT";
   reservedAt: Date;
   checkedOutAt: Date | null;

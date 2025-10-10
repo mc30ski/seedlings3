@@ -159,6 +159,7 @@ function buildEventDetails(
   eqMap: Record<
     string,
     {
+      qrSlug: string | null;
       shortDesc: string | null;
       longDesc: string | null;
       brand: string | null;
@@ -186,6 +187,10 @@ function buildEventDetails(
     md.longDesc ??
     (equipmentId ? eqMap[equipmentId!]?.longDesc : null);
 
+  const qrSlug =
+    mdEq.qrSlug ??
+    md.qrSlug ??
+    (equipmentId ? eqMap[equipmentId!]?.qrSlug : null);
   const brand =
     mdEq.brand ?? md.brand ?? (equipmentId ? eqMap[equipmentId!]?.brand : null);
   const model =
@@ -213,6 +218,7 @@ function buildEventDetails(
 
   if (equipmentName) out.equipmentName = equipmentName;
   if (equipmentDesc) out.equipmentDesc = equipmentDesc;
+  if (qrSlug) out.qrSlug = qrSlug;
   if (brand) out.brand = brand;
   if (model) out.model = model;
   if (type) out.type = type;
@@ -223,7 +229,6 @@ function buildEventDetails(
   if (age) out.age = age;
 
   // Other common bits you already record
-  if (md?.qrSlug) out.qrSlug = md.qrSlug;
   if (md?.role) out.role = md.role;
   if (md?.reason) out.reason = md.reason;
   if (md?.notes) out.notes = md.notes;
@@ -946,6 +951,7 @@ export const services: Services = {
             select: {
               id: true,
               shortDesc: true,
+              qrSlug: true,
               brand: true,
               model: true,
               type: true,
@@ -964,6 +970,7 @@ export const services: Services = {
         userId: r.userId,
         equipmentId: r.equipmentId,
         shortDesc: r.equipment?.shortDesc ?? "",
+        qrSlug: r.equipment?.qrSlug ?? "",
         brand: r.equipment?.brand ?? null,
         model: r.equipment?.model ?? null,
         type: r.equipment?.type ?? null,
@@ -1402,6 +1409,7 @@ export const services: Services = {
             where: { id: { in: eqIds } },
             select: {
               id: true,
+              qrSlug: true,
               shortDesc: true,
               longDesc: true,
               brand: true,
@@ -1419,6 +1427,7 @@ export const services: Services = {
         eqRows.map((e) => [
           e.id,
           {
+            qrSlug: e.qrSlug,
             shortDesc: e.shortDesc,
             longDesc: e.longDesc,
             brand: e.brand,

@@ -13,6 +13,7 @@ import {
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
+import { actionStatusColor } from "../../lib/lib";
 
 type ActivityEvent = {
   id: string;
@@ -35,28 +36,18 @@ function prettyDate(iso?: string | null) {
   if (!iso) return "—";
   try {
     const d = new Date(iso);
-    return d.toLocaleString();
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(d);
   } catch {
     return iso || "—";
   }
 }
 
-// Match Audit Log colors
-function actionBadgePalette(actRaw: string): string {
-  const act = (actRaw || "").toUpperCase();
-  if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
-  if (act.includes("CHECKED_OUT") || act.includes("MAINTENANCE_START"))
-    return "red";
-  if (act.includes("MAINTENANCE_END")) return "yellow";
-  if (act.includes("UPDATED") || act.includes("RESERVED")) return "orange";
-  if (act.includes("APPROVED") || act.includes("ROLE_ASSIGNED"))
-    return "purple";
-  if (act.includes("RELEASED") || act.includes("FORCE_RELEASED")) return "blue";
-  return "teal";
-}
-
-// Render a compact key → value list like the Equipment tab style.
-// Shows recognized fields first; falls back to pretty JSON for unknown shapes.
 function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   if (
     !details ||
@@ -65,90 +56,28 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
     return null;
   }
 
-  const name = details.equipmentName as string | undefined;
-  const desc = details.equipmentDesc as string | undefined;
-
-  const brand =
-    (details.brand as string | undefined) ??
-    (details.equipmentBrand as string | undefined) ??
-    (details.input?.brand as string | undefined) ??
-    (details.patch?.brand as string | undefined);
-
-  const model =
-    (details.model as string | undefined) ??
-    (details.equipmentModel as string | undefined) ??
-    (details.input?.model as string | undefined) ??
-    (details.patch?.model as string | undefined);
-
-  // Known keys to show as key/value rows AFTER the name/desc block
-  const knownOrder: Array<[string, string]> = [
-    ["role", "Role"],
-    ["qrSlug", "QR"],
-    ["fromStatus", "From"],
-    ["toStatus", "To"],
-    ["notes", "Notes"],
-    ["reason", "Reason"],
-  ];
-
-  const extras: Array<[string, any]> = [];
-  const d = details as Record<string, any>;
-
-  for (const [k, label] of knownOrder) {
-    if (d[k] != null && d[k] !== "") extras.push([label, d[k]]);
-  }
-
-  // Gather any other primitive keys not yet shown (excluding equipmentName/Desc & brand/model keys)
-  Object.keys(d).forEach((k) => {
-    if (
-      k === "equipmentName" ||
-      k === "equipmentDesc" ||
-      k === "brand" ||
-      k === "model" ||
-      k === "equipmentBrand" ||
-      k === "equipmentModel"
-    )
-      return;
-    if (knownOrder.find(([kk]) => kk === k)) return;
-    const v = d[k];
-    if (v == null) return;
-    const t = typeof v;
-    if (t === "string" || t === "number" || t === "boolean") {
-      extras.push([k, v]);
-    }
-  });
-
-  const brandModelLine = [brand, model].filter(Boolean).join(" ");
-
   return (
     <Box mt="8px">
-      {(name || desc || brandModelLine) && (
-        <Box mb={extras.length ? "6px" : "0"}>
-          {name && (
-            <Text fontWeight="semibold" lineHeight="1.2">
-              {brandModelLine} ({name})
-            </Text>
+      {details.role && <Heading size="sm">{details.role}</Heading>}
+
+      {(details.equipmentName || details.qrSlug) && (
+        <Box>
+          {details.equipmentName && (
+            <Heading size="md">{details.equipmentName}</Heading>
           )}
-          {desc && (
-            <Text fontSize="sm" color="gray.700" lineHeight="1.2" mt="2px">
-              {desc}
+          <Heading size="sm">
+            {details.brand ? `${details.brand} ` : ""}
+            {details.model ? `${details.model} ` : ""}
+          </Heading>
+          {details.qrSlug && (
+            <Text fontSize="sm" color="gray.500" mt={1}>
+              <Text as="span" fontWeight="bold">
+                ID:{" "}
+              </Text>
+              {details.qrSlug}
             </Text>
           )}
         </Box>
-      )}
-
-      {extras.length > 0 && (
-        <Stack gap="4px" fontSize="xs" color="gray.700">
-          {extras.map(([label, value]) => (
-            <HStack key={label} align="start" gap="6px">
-              <Text as="span" color="gray.500" minW="92px">
-                {label}:
-              </Text>
-              <Text as="span" flex="1" wordBreak="break-word">
-                {String(value)}
-              </Text>
-            </HStack>
-          ))}
-        </Stack>
       )}
     </Box>
   );
@@ -271,7 +200,7 @@ export default function AdminActivity() {
           }
         >
           {sortedRows.map((u) => {
-            const title = u.displayName || u.email || u.userId.slice(0, 8);
+            const displayName = u.displayName || u.email;
             return (
               <Accordion.Item
                 key={u.userId}
@@ -301,13 +230,14 @@ export default function AdminActivity() {
                   >
                     <HStack gap="8px" minW="0">
                       <Text
+                        fontSize="sm"
                         fontWeight="semibold"
                         overflow="hidden"
                         textOverflow="ellipsis"
                       >
-                        {title}
+                        {displayName || "(no name)"}
                       </Text>
-                      {u.email && u.email !== title && <Badge>{u.email}</Badge>}
+                      {displayName !== u.email && <Badge>{u.email}</Badge>}
                     </HStack>
                     <HStack gap="8px">
                       <Badge colorPalette="gray">
@@ -340,21 +270,19 @@ export default function AdminActivity() {
                           wrap="wrap"
                           gap="6px"
                         >
-                          {/* Left: ONLY the colored status bubble */}
                           <Badge
-                            colorPalette={actionBadgePalette(e.type)}
+                            fontSize="xs"
+                            colorPalette={actionStatusColor(e.type)}
                             title={e.summary || undefined}
                           >
                             {e.type}
                           </Badge>
 
-                          {/* Right: timestamp */}
-                          <Text fontSize="sm" color="gray.600">
+                          <Text fontSize="xs" color="gray.600">
                             {prettyDate(e.at)}
                           </Text>
                         </HStack>
 
-                        {/* Details, if present */}
                         <DetailsBlock details={e.details} />
                       </Box>
                     ))}

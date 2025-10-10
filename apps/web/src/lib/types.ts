@@ -76,11 +76,3 @@ export type Me = {
   email?: string | null;
   displayName?: string | null;
 };
-
-export const StatusColor: Record<EquipmentStatus, any> = {
-  AVAILABLE: { colorPalette: "green" },
-  RESERVED: { colorPalette: "orange" },
-  CHECKED_OUT: { colorPalette: "red" },
-  MAINTENANCE: { colorPalette: "yellow" },
-  RETIRED: { colorPalette: "gray" },
-};
