@@ -18,7 +18,7 @@ import {
   notifyEquipmentUpdated,
   prettyStatus,
   extractSlug,
-  statusColor,
+  equipmentStatusColor,
 } from "../../lib/lib";
 import QRScannerDialog from "./QRScannerDialog";
 
@@ -386,7 +386,7 @@ export default function EquipmentTileList({
               <Heading size="md" color="gray.400">
                 {item.type ?? ""}
               </Heading>
-              <Badge colorPalette={statusColor(item.status)}>
+              <Badge colorPalette={equipmentStatusColor(item.status)}>
                 {prettyStatus(item.status)}
                 {isMine &&
                 (item.status === "RESERVED" || item.status === "CHECKED_OUT")
