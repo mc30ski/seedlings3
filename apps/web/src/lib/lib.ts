@@ -44,6 +44,7 @@ export function equipmentStatusColor(value: string): string {
   const act = (value || "").toUpperCase();
   if (
     act.includes("AVAILABLE") ||
+    act.includes("CREATED") ||
     act.includes("MAINTENANCE_END") ||
     act.includes("RETURNED") ||
     act.includes("CANCELLED") ||
@@ -58,7 +59,7 @@ export function equipmentStatusColor(value: string): string {
     return "purple";
   if (act.includes("UPDATED")) return "teal";
   if (act.includes("RELEASED") || act.includes("FORCE_RELEASED")) return "blue";
-  if (act.includes("RETIRED")) return "red";
+  if (act.includes("RETIRED") || act.includes("DELETED")) return "red";
   //if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
   return "gray";
 }
