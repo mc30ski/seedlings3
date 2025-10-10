@@ -16,9 +16,14 @@ export function errorMessage(err: any): string {
 }
 
 // Pretty-print status like other tabs: "Available", "Checked out", etc.
-export function prettyStatus(s: EquipmentStatus): string {
-  const lower = s.toLowerCase().replace(/_/g, " ");
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
+export function prettyStatus(s: string): string {
+  if (!s) return "—";
+  return s
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export function extractSlug(value: string): string {
@@ -35,31 +40,26 @@ export function extractSlug(value: string): string {
   }
 }
 
-export function statusColor(value: string): string {
-  switch (value) {
-    case "AVAILABLE":
-      return "green";
-    case "RESERVED":
-      return "orange";
-    case "CHECKED_OUT":
-      return "cyan";
-    case "MAINTENANCE":
-      return "yellow";
-    case "RETIRED":
-      return "red";
-  }
-  return "gray";
-}
-
-export function actionStatusColor(value: string): string {
+export function equipmentStatusColor(value: string): string {
   const act = (value || "").toUpperCase();
-  if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
-  if (act.includes("CHECKED_OUT") || act.includes("MAINTENANCE_START"))
-    return "red";
-  if (act.includes("MAINTENANCE_END")) return "yellow";
-  if (act.includes("UPDATED") || act.includes("RESERVED")) return "orange";
+  if (
+    act.includes("AVAILABLE") ||
+    act.includes("CREATED") ||
+    act.includes("MAINTENANCE_END") ||
+    act.includes("RETURNED") ||
+    act.includes("CANCELLED") ||
+    act.includes("RELEASED")
+  )
+    return "green";
+  if (act.includes("RESERVED")) return "orange";
+  if (act.includes("CHECKED_OUT")) return "cyan";
+  if (act.includes("MAINTENANCE_START") || act === "MAINTENANCE")
+    return "yellow";
   if (act.includes("APPROVED") || act.includes("ROLE_ASSIGNED"))
     return "purple";
+  if (act.includes("UPDATED")) return "teal";
   if (act.includes("RELEASED") || act.includes("FORCE_RELEASED")) return "blue";
-  return "teal";
+  if (act.includes("RETIRED") || act.includes("DELETED")) return "red";
+  //if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
+  return "gray";
 }

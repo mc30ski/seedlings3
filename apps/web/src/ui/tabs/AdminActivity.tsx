@@ -13,7 +13,7 @@ import {
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
-import { actionStatusColor } from "../../lib/lib";
+import { equipmentStatusColor, prettyStatus } from "../../lib/lib";
 
 type ActivityEvent = {
   id: string;
@@ -272,10 +272,10 @@ export default function AdminActivity() {
                         >
                           <Badge
                             fontSize="xs"
-                            colorPalette={actionStatusColor(e.type)}
+                            colorPalette={equipmentStatusColor(e.type)}
                             title={e.summary || undefined}
                           >
-                            {e.type}
+                            {prettyStatus(e.type)}
                           </Badge>
 
                           <Text fontSize="xs" color="gray.600">

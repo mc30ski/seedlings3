@@ -81,6 +81,20 @@ export default function AdminEquipment() {
     void load();
   }, [load]);
 
+  function clearForm() {
+    setNewShort("");
+    setNewLong("");
+    setNewQr("");
+    setNewBrand("");
+    setNewModel("");
+    setNewType("");
+    setNewEnergy("");
+    setNewFeatures("");
+    setNewCondition("");
+    setNewIssues("");
+    setNewAge("");
+  }
+
   const filtered = useMemo(() => {
     let rows = items;
 
@@ -176,30 +190,31 @@ export default function AdminEquipment() {
         issues,
         age,
       });
-      setNewShort("");
-      setNewLong("");
-      setNewQr("");
-      setNewBrand("");
-      setNewModel("");
-      setNewType("");
-      setNewEnergy("");
-      setNewFeatures("");
-      setNewCondition("");
-      setNewIssues("");
-      setNewAge("");
+      clearForm();
       await load();
       setInlineMsg({
         msg: "Equipment created",
         type: InlineMessageType.SUCCESS,
       });
+      setOpen(false);
     } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "Unknown error";
       setInlineMsg({
-        msg: "Equipment create failed",
-        type: InlineMessageType.SUCCESS,
+        msg: "Equipment create failed: " + message,
+        type: InlineMessageType.ERROR,
       });
     } finally {
       setCreating(false);
     }
+  }
+
+  function onCancel() {
+    clearForm();
   }
 
   if (loading) return <LoadingCenter />;
@@ -319,6 +334,7 @@ export default function AdminEquipment() {
               _dark={{ bg: "gray.800" }}
             >
               <Stack gap="3">
+                {/* --- your existing form fields --- */}
                 <NativeSelectRoot size="sm">
                   <NativeSelectField
                     value={newType}
@@ -368,12 +384,12 @@ export default function AdminEquipment() {
                     ))}
                   </NativeSelectField>
                 </NativeSelectRoot>
+
                 <Input
                   placeholder="Details (optional)"
                   value={newLong}
                   onChange={(e) => setNewLong(e.target.value)}
                 />
-
                 <Input
                   placeholder="Features (optional)"
                   value={newFeatures}
@@ -398,11 +414,18 @@ export default function AdminEquipment() {
                 <Separator my="2" />
 
                 <HStack justify="flex-end" gap="2">
-                  <Collapsible.Trigger asChild>
-                    <Button variant="ghost" size="sm">
-                      Cancel
-                    </Button>
-                  </Collapsible.Trigger>
+                  {/* IMPORTANT: this is NOT a Trigger */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setOpen(false); // close the section
+                      onCancel(); // run your cancel side-effects
+                    }}
+                  >
+                    Cancel
+                  </Button>
+
                   <Button
                     size="sm"
                     onClick={createEquipment}

@@ -12,7 +12,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
-import { prettyStatus, statusColor } from "../../lib/lib";
+import { prettyStatus, equipmentStatusColor } from "../../lib/lib";
 import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
@@ -627,7 +627,7 @@ export default function AdminUsers() {
                     <Badge
                       key={h.equipmentId}
                       variant="subtle"
-                      colorPalette={statusColor(h.state)}
+                      colorPalette={equipmentStatusColor(h.state)}
                     >{`${h.shortDesc} (${h.qrSlug}) - ${prettyStatus(h.state)}`}</Badge>
                   ))}
                 </Stack>

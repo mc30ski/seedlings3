@@ -16,6 +16,7 @@ import {
 import { apiGet } from "../../lib/api";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
+import { equipmentStatusColor } from "../../lib/lib";
 
 type AuditItem = {
   id: string;
@@ -204,18 +205,6 @@ export default function AdminAuditLog() {
   const toggleDetails = (id: string) =>
     setOpen((m) => ({ ...m, [id]: !m[id] }));
 
-  const actionBadgePalette = (act: string) => {
-    const t = act.toUpperCase();
-    if (t.includes("RETIRED") || t.includes("DELETED")) return "gray";
-    if (t.includes("CHECKED_OUT") || t.includes("MAINTENANCE_START"))
-      return "red";
-    if (t.includes("MAINTENANCE_END")) return "yellow";
-    if (t.includes("UPDATED") || t.includes("RESERVED")) return "orange";
-    if (t.includes("APPROVED") || t.includes("ROLE_ASSIGNED")) return "purple";
-    if (t.includes("RELEASED") || t.includes("FORCE_RELEASED")) return "blue";
-    return "teal";
-  };
-
   // client-side Activity-like search over loaded rows
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -387,7 +376,7 @@ export default function AdminAuditLog() {
                     </Table.Cell>
 
                     <Table.Cell>
-                      <Badge colorPalette={actionBadgePalette(row.action)}>
+                      <Badge colorPalette={equipmentStatusColor(row.action)}>
                         {row.action}
                       </Badge>
                     </Table.Cell>
