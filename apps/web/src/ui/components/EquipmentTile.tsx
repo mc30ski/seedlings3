@@ -249,89 +249,95 @@ export default function EquipmentTileList({
 
     return (
       <HStack justify="space-between" alignItems="flex-start" w="full">
-        <Box flex="1" w="full">
-          <Box mt={1}>
-            <Button
-              onClick={onToggle}
-              size="xs"
-              variant="ghost"
-              px={1}
-              mb={1}
-              h="20px"
-              fontWeight="semibold"
-              color="gray.600"
-              aria-expanded={open}
-              aria-controls="item-details"
-            >
-              <HStack gap={1} alignItems="center">
-                <Box as="span">Details</Box>
-                <Box
-                  as="span"
-                  aria-hidden
-                  display="inline-block"
-                  transition="transform 0.2s"
-                  style={{
-                    transform: open ? "rotate(180deg)" : "rotate(0deg)",
-                  }}
-                >
-                  ▼{/* Or: <ChevronDownIcon /> */}
-                </Box>
-              </HStack>
-            </Button>
-
-            {open && (
-              <Box
-                id="item-details"
-                pl={2}
-                pt={1}
-                // Create vertical rhythm without `spacing` by using row gap
-                display="grid"
-                style={{ rowGap: "0.25rem" }}
+        {(item.longDesc ||
+          item.features ||
+          item.condition ||
+          item.issues ||
+          item.age) && (
+          <Box flex="1" w="full">
+            <Box mt={1}>
+              <Button
+                onClick={onToggle}
+                size="xs"
+                variant="ghost"
+                px={1}
+                mb={1}
+                h="20px"
+                fontWeight="semibold"
+                color="gray.600"
+                aria-expanded={open}
+                aria-controls="item-details"
               >
-                {item.longDesc && (
-                  <Text fontSize="sm" color="gray.500" mt={1}>
-                    <Text as="span" fontWeight="bold">
-                      Description:{" "}
+                <HStack gap={1} alignItems="center">
+                  <Box as="span">Details</Box>
+                  <Box
+                    as="span"
+                    aria-hidden
+                    display="inline-block"
+                    transition="transform 0.2s"
+                    style={{
+                      transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                    }}
+                  >
+                    ▼{/* Or: <ChevronDownIcon /> */}
+                  </Box>
+                </HStack>
+              </Button>
+
+              {open && (
+                <Box
+                  id="item-details"
+                  pl={2}
+                  pt={1}
+                  // Create vertical rhythm without `spacing` by using row gap
+                  display="grid"
+                  style={{ rowGap: "0.25rem" }}
+                >
+                  {item.longDesc && (
+                    <Text fontSize="sm" color="gray.500" mt={1}>
+                      <Text as="span" fontWeight="bold">
+                        Description:{" "}
+                      </Text>
+                      {item.longDesc}
                     </Text>
-                    {item.longDesc}
-                  </Text>
-                )}
-                {item.features && (
-                  <Text fontSize="sm" color="gray.500" mt={1}>
-                    <Text as="span" fontWeight="bold">
-                      Features:{" "}
+                  )}
+                  {item.features && (
+                    <Text fontSize="sm" color="gray.500" mt={1}>
+                      <Text as="span" fontWeight="bold">
+                        Features:{" "}
+                      </Text>
+                      {item.features}
                     </Text>
-                    {item.features}
-                  </Text>
-                )}
-                {item.condition && (
-                  <Text fontSize="sm" color="gray.500" mt={1}>
-                    <Text as="span" fontWeight="bold">
-                      Condition:{" "}
+                  )}
+                  {item.condition && (
+                    <Text fontSize="sm" color="gray.500" mt={1}>
+                      <Text as="span" fontWeight="bold">
+                        Condition:{" "}
+                      </Text>
+                      {item.condition}
                     </Text>
-                    {item.condition}
-                  </Text>
-                )}
-                {item.issues && (
-                  <Text fontSize="sm" color="gray.500" mt={1}>
-                    <Text as="span" fontWeight="bold">
-                      Issues:{" "}
+                  )}
+                  {item.issues && (
+                    <Text fontSize="sm" color="gray.500" mt={1}>
+                      <Text as="span" fontWeight="bold">
+                        Issues:{" "}
+                      </Text>
+                      {item.issues}
                     </Text>
-                    {item.issues}
-                  </Text>
-                )}
-                {item.age && (
-                  <Text fontSize="sm" color="gray.500" mt={1}>
-                    <Text as="span" fontWeight="bold">
-                      Age:{" "}
+                  )}
+                  {item.age && (
+                    <Text fontSize="sm" color="gray.500" mt={1}>
+                      <Text as="span" fontWeight="bold">
+                        Age:{" "}
+                      </Text>
+                      {item.age}
                     </Text>
-                    {item.age}
-                  </Text>
-                )}
-              </Box>
-            )}
+                  )}
+                </Box>
+              )}
+            </Box>
           </Box>
-        </Box>
+        )}
       </HStack>
     );
   }

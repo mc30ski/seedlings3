@@ -29,8 +29,15 @@ export default function InlineMessage({
       bg={`${color}.50`}
       mb={2}
     >
-      <Box flex="1">
-        <Text fontSize="sm" color={`${color}.900`}>
+      <Box flex="1" minW={0}>
+        <Text
+          fontSize="sm"
+          color={`${color}.900`}
+          whiteSpace="normal"
+          overflowWrap="anywhere"
+          wordBreak="break-word"
+          hyphens="auto"
+        >
           {msg}
         </Text>
       </Box>
