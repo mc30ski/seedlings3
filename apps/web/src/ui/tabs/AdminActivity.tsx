@@ -14,6 +14,7 @@ import {
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
 import { equipmentStatusColor, prettyStatus } from "../../lib/lib";
+import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 
 type ActivityEvent = {
   id: string;
@@ -74,7 +75,16 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
               <Text as="span" fontWeight="bold">
                 ID:{" "}
               </Text>
-              {details.qrSlug}
+              <Text
+                as="button"
+                onClick={() => openAdminEquipmentSearchOnce(details.qrSlug)}
+                color="blue.600"
+                textDecoration="underline"
+                _hover={{ color: "blue.700" }}
+                p={0}
+              >
+                {details.qrSlug}
+              </Text>
             </Text>
           )}
         </Box>

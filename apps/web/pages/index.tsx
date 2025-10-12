@@ -61,6 +61,32 @@ export default function HomePage() {
     "equipment" | "users" | "activity" | "audit"
   >("equipment");
 
+  useEffect(() => {
+    // guard: only run in the browser
+    if (typeof window === "undefined") return;
+
+    function onOpenEquipmentSearch(e: Event) {
+      const { q } = (e as CustomEvent).detail || {};
+      if (!q) return;
+
+      setTopTab("admin");
+      setAdminInnerTab("equipment");
+
+      // one-shot handoff; no import needed, it's window.sessionStorage
+      window.sessionStorage.setItem("admin:equipmentSearchOnce", String(q));
+    }
+
+    window.addEventListener(
+      "admin:openEquipmentSearch",
+      onOpenEquipmentSearch as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        "admin:openEquipmentSearch",
+        onOpenEquipmentSearch as EventListener
+      );
+  }, []);
+
   const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!router.isReady || !isAdmin) return;

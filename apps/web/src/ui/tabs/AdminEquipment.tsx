@@ -25,6 +25,7 @@ import {
   EQUIPMENT_ENERGY,
 } from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
+import SearchWithClear from "../components/SearchWithClear";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
 
@@ -80,6 +81,20 @@ export default function AdminEquipment() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const once = window.sessionStorage.getItem("admin:equipmentSearchOnce");
+    if (!once) return;
+
+    window.sessionStorage.removeItem("admin:equipmentSearchOnce");
+    setSearch(once);
+
+    requestAnimationFrame(() => {
+      document.getElementById("equipment-search")?.focus();
+    });
+  }, []);
 
   function clearForm() {
     setNewShort("");
@@ -138,6 +153,7 @@ export default function AdminEquipment() {
         const s9 = (r.condition || "").toLowerCase();
         const s10 = (r.issues || "").toLowerCase();
         const s11 = (r.age || "").toLowerCase();
+        const s12 = (r.qrSlug || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -154,6 +170,7 @@ export default function AdminEquipment() {
           s9.includes(qlc) ||
           s10.includes(qlc) ||
           s11.includes(qlc) ||
+          s12.includes(qlc) ||
           who.includes(qlc)
         );
       });
@@ -275,11 +292,11 @@ export default function AdminEquipment() {
           </NativeSelectRoot>
         </Box>
         <Box display="flex" flexWrap="wrap" gap="6px">
-          <Input
-            placeholder="Search description / holder…"
+          <SearchWithClear
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            w={{ base: "100%", md: "320px" }}
+            onChange={setSearch}
+            inputId="equipment-search"
+            placeholder="Search equipment…"
           />
         </Box>
       </Stack>
