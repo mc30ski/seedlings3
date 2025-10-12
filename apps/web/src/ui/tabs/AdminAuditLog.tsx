@@ -253,7 +253,7 @@ export default function AdminAuditLog() {
       console.log("HERE2", eq);
 
       const qrSlug = (eq?.qrSlug ?? md?.qrSlug) as string;
-      const desc = (eq.desc ?? md?.desc) as string;
+      const desc = (eq?.desc ?? md?.desc) as string;
 
       return `${qrSlug} - ${desc}`;
     }
