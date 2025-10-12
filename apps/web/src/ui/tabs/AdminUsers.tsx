@@ -16,6 +16,7 @@ import { prettyStatus, equipmentStatusColor } from "../../lib/lib";
 import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
+import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 
 type ApiUser = {
   id: string;
@@ -626,6 +627,9 @@ export default function AdminUsers() {
                   {holdingsByUser[u.id].map((h) => (
                     <Badge
                       key={h.equipmentId}
+                      onClick={() =>
+                        openAdminEquipmentSearchOnce(h.qrSlug || "")
+                      }
                       variant="subtle"
                       colorPalette={equipmentStatusColor(h.state)}
                     >{`${h.shortDesc} (${h.qrSlug}) - ${prettyStatus(h.state)}`}</Badge>

@@ -19,6 +19,7 @@ import {
   EQUIPMENT_TYPES,
 } from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
+import SearchWithClear from "../components/SearchWithClear";
 import LoadingCenter from "../helpers/LoadingCenter";
 import InlineMessage from "../helpers/InlineMessage";
 
@@ -103,6 +104,7 @@ export default function WorkerEquipment() {
         const s9 = (r.condition || "").toLowerCase();
         const s10 = (r.issues || "").toLowerCase();
         const s11 = (r.age || "").toLowerCase();
+        const s12 = (r.qrSlug || "").toLowerCase();
         const who =
           r.holder?.displayName?.toLowerCase() ||
           r.holder?.email?.toLowerCase() ||
@@ -119,6 +121,7 @@ export default function WorkerEquipment() {
           s9.includes(qlc) ||
           s10.includes(qlc) ||
           s11.includes(qlc) ||
+          s12.includes(qlc) ||
           who.includes(qlc)
         );
       });
@@ -183,11 +186,11 @@ export default function WorkerEquipment() {
           </NativeSelectRoot>
         </Box>
         <Box display="flex" flexWrap="wrap" gap="6px">
-          <Input
-            placeholder="Search description / holder…"
+          <SearchWithClear
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            w={{ base: "100%", md: "320px" }}
+            onChange={setSearch}
+            inputId="equipment-search"
+            placeholder="Search equipment…"
           />
         </Box>
       </Stack>
