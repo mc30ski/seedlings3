@@ -32,6 +32,7 @@ type AuditResp = { items: AuditItem[]; total: number };
 // minimal shapes for lookups
 type EqRow = {
   id: string;
+  qrSlug: string;
   shortDesc: string;
   longDesc?: string | null;
   brand?: string | null;
@@ -88,10 +89,8 @@ export default function AdminAuditLog() {
     Record<
       string,
       {
-        name: string;
+        qrSlug: string;
         desc: string;
-        brand?: string | null;
-        model?: string | null;
       }
     >
   >({});
@@ -115,20 +114,18 @@ export default function AdminAuditLog() {
       const eqIndex: Record<
         string,
         {
-          name: string;
+          qrSlug: string;
           desc: string;
-          brand?: string | null;
-          model?: string | null;
         }
       > = {};
       for (const e of eq) {
         eqIndex[e.id] = {
-          name: e.shortDesc || e.id,
-          desc: e.longDesc ?? "",
-          brand: e.brand ?? null,
-          model: e.model ?? null,
+          qrSlug: e.qrSlug || "",
+          desc: e.shortDesc ?? "",
         };
       }
+
+      console.log("HERE", eqIndex);
       setEqMap(eqIndex);
     } catch {
       setEqMap({});
@@ -212,7 +209,6 @@ export default function AdminAuditLog() {
     return items.filter((row) => {
       const action = row.action.toLowerCase();
       const eq = row.equipmentId ? eqMap[row.equipmentId] : undefined;
-      const eqName = (eq?.name ?? "").toLowerCase();
       const eqDesc = (eq?.desc ?? "").toLowerCase();
       const actorEmail = (row.actorUserId && userMap[row.actorUserId]) || "";
       const actorL = actorEmail.toLowerCase();
@@ -226,7 +222,6 @@ export default function AdminAuditLog() {
         (row.actorUserId?.slice(0, 8) ?? "");
       return (
         action.includes(ql) ||
-        eqName.includes(ql) ||
         eqDesc.includes(ql) ||
         actorL.includes(ql) ||
         md.includes(ql) ||
@@ -255,25 +250,12 @@ export default function AdminAuditLog() {
     // Equipment-centric
     if (row.equipmentId) {
       const eq = eqMap[row.equipmentId];
-      const name = (md?.equipment?.shortDesc ??
-        md?.shortDesc ??
-        eq?.name ??
-        row.equipmentId) as string;
-      const desc = (md?.equipment?.longDesc ??
-        md?.longDesc ??
-        eq?.desc ??
-        "") as string;
-      const brand = (md?.equipment?.brand ??
-        md?.brand ??
-        eq?.brand ??
-        "") as string;
-      const model = (md?.equipment?.model ??
-        md?.model ??
-        eq?.model ??
-        "") as string;
-      const label = [brand, model].filter(Boolean).join(" ");
-      const head = label ? `${label} — ${name}` : name;
-      return desc ? `${head} — ${desc}` : head;
+      console.log("HERE2", eq);
+
+      const qrSlug = (eq?.qrSlug ?? md?.qrSlug) as string;
+      const desc = (eq.desc ?? md?.desc) as string;
+
+      return `${qrSlug} - ${desc}`;
     }
 
     // Other bits
@@ -302,7 +284,7 @@ export default function AdminAuditLog() {
         align="center"
       >
         <Input
-          placeholder="Search (status, equipment, actor, details)"
+          placeholder="Search…"
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
           maxW={{ base: "100%", md: "360px" }}
