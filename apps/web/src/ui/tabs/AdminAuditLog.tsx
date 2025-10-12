@@ -125,7 +125,6 @@ export default function AdminAuditLog() {
         };
       }
 
-      console.log("HERE", eqIndex);
       setEqMap(eqIndex);
     } catch {
       setEqMap({});
@@ -250,7 +249,6 @@ export default function AdminAuditLog() {
     // Equipment-centric
     if (row.equipmentId) {
       const eq = eqMap[row.equipmentId];
-      console.log("HERE2", eq);
 
       const qrSlug = (eq?.qrSlug ?? md?.qrSlug) as string;
       const desc = (eq?.desc ?? md?.desc) as string;
