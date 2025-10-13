@@ -59,7 +59,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       page?: string;
       pageSize?: string;
       actorUserId?: string;
-      equipmentId?: string;
       action?: string;
       from?: string;
       to?: string;
@@ -69,7 +68,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     return services.audit.list({
       actorUserId: q.actorUserId || undefined,
-      equipmentId: q.equipmentId || undefined,
       action: q.action || undefined,
       from: q.from || undefined,
       to: q.to || undefined,
