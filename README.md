@@ -137,9 +137,9 @@ npm -w apps/api run prisma:migrate:deploy
 # Deploy API + Web via Vercel with prod env vars
 ```
 
-## Domain Model - Clients/Properties/Jobs
+# Domain Model - Clients/Properties/Jobs
 
-### Core Objects
+## Core Objects
 
 - Client — who we serve (individual, household, organization, community)
 - ClientContact — people we call/text/email for a Client
