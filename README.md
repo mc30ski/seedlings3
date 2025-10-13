@@ -149,13 +149,17 @@ npm -w apps/api run prisma:migrate:deploy
 
 - Client
 
-  - 1 ──< ClientContact
-  - 1 ──< Property 1 (attr:pointOfContactId ──► ClientContact) ──< PropertyUnit (optional, post-MVP)
+  - 1──< ClientContact
+  - 1──< Property (attr:pointOfContactId ──► ClientContact) 1──< PropertyUnit (optional, post-MVP)
 
 - Job ──► Property
 
   - ──< JobContact >──► ClientContact (decision_maker / on_site / notify_only)
   - ──< JobClient >──► Client (owner vs payer; multi-client)
+
+# Optional (only for aggregate sites if per-unit tracking is needed later)
+
+- Job 1──< JobUnit (per-home status/photos within an aggregate site)
 
 ## What Ships Now (Admin-Only)
 
