@@ -22,7 +22,6 @@ type AuditItem = {
   id: string;
   action: string;
   actorUserId?: string | null;
-  equipmentId?: string | null;
   metadata?: unknown;
   createdAt: string; // ISO
 };
@@ -421,8 +420,7 @@ function formatMetadata(row: AuditItem): string {
     const pretty = {
       id: row.id,
       action: row.action,
-      actorUserId: row.actorUserId ?? null, // kept in raw JSON
-      equipmentId: row.equipmentId ?? null,
+      actorUserId: row.actorUserId ?? null,
       metadata: row.metadata ?? null,
       createdAt: row.createdAt,
     };

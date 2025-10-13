@@ -90,7 +90,6 @@ model Equipment {
   age        String?
 
   checkouts    Checkout[]
-  auditEvents  AuditEvent[]     @relation("AuditEquipment")
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -118,20 +117,15 @@ model AuditEvent {
 
   scope        AuditScope
   verb         AuditVerb
-
-  // Optional convenience string (e.g., "EQUIPMENT_CREATED")
   action       String?      @db.VarChar(64)
 
   actorUserId  String?
-  equipmentId  String?
   metadata     Json?
 
   actor        User?        @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
-  equipment    Equipment?   @relation("AuditEquipment", fields: [equipmentId], references: [id], onDelete: SetNull)
 
   createdAt    DateTime     @default(now())
 
-  @@index([equipmentId, createdAt])
   @@index([actorUserId, createdAt])
   @@index([scope, createdAt])
   @@index([verb, createdAt])

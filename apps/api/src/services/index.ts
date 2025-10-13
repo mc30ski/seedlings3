@@ -114,100 +114,6 @@ function labelWithEq(base: string, metadata?: any) {
   return eq ? `${base} — ${eq}` : base;
 }
 
-/**
- * Build compact details for UI:
- *  - equipmentName / equipmentDesc (from metadata OR joined equipment)
- *  - common extras (role, notes, reason, from/to status, qrSlug)
- * No equipmentId is returned (not useful to users).
- */
-function buildEventDetails(
-  action: string,
-  metadata: any,
-  equipmentId: string | null | undefined,
-  eqMap: Record<
-    string,
-    {
-      qrSlug: string | null;
-      shortDesc: string | null;
-      longDesc: string | null;
-      brand: string | null;
-      model: string | null;
-      type: string | null;
-      energy: string | null;
-      features: string | null;
-      condition: string | null;
-      issues: string | null;
-      age: string | null;
-    }
-  >
-) {
-  const out: Record<string, any> = {};
-  const md = (metadata ?? {}) as any;
-  const mdEq = (md?.equipment ?? {}) as any;
-
-  // Prefer metadata, then DB join
-  const equipmentName =
-    mdEq.shortDesc ??
-    md.shortDesc ??
-    (equipmentId ? eqMap[equipmentId!]?.shortDesc : null);
-  const equipmentDesc =
-    mdEq.longDesc ??
-    md.longDesc ??
-    (equipmentId ? eqMap[equipmentId!]?.longDesc : null);
-
-  const qrSlug =
-    mdEq.qrSlug ??
-    md.qrSlug ??
-    (equipmentId ? eqMap[equipmentId!]?.qrSlug : null);
-  const brand =
-    mdEq.brand ?? md.brand ?? (equipmentId ? eqMap[equipmentId!]?.brand : null);
-  const model =
-    mdEq.model ?? md.model ?? (equipmentId ? eqMap[equipmentId!]?.model : null);
-  const type =
-    mdEq.type ?? md.type ?? (equipmentId ? eqMap[equipmentId!]?.type : null);
-  const energy =
-    mdEq.energy ??
-    md.energy ??
-    (equipmentId ? eqMap[equipmentId!]?.energy : null);
-  const features =
-    mdEq.features ??
-    md.features ??
-    (equipmentId ? eqMap[equipmentId!]?.features : null);
-  const condition =
-    mdEq.condition ??
-    md.condition ??
-    (equipmentId ? eqMap[equipmentId!]?.condition : null);
-  const issues =
-    mdEq.issues ??
-    md.issues ??
-    (equipmentId ? eqMap[equipmentId!]?.issues : null);
-  const age =
-    mdEq.age ?? md.age ?? (equipmentId ? eqMap[equipmentId!]?.age : null);
-
-  if (equipmentName) out.equipmentName = equipmentName;
-  if (equipmentDesc) out.equipmentDesc = equipmentDesc;
-  if (qrSlug) out.qrSlug = qrSlug;
-  if (brand) out.brand = brand;
-  if (model) out.model = model;
-  if (type) out.type = type;
-  if (energy) out.energy = energy;
-  if (features) out.features = features;
-  if (condition) out.condition = condition;
-  if (issues) out.issues = issues;
-  if (age) out.age = age;
-
-  // Other common bits you already record
-  if (md?.role) out.role = md.role;
-  if (md?.reason) out.reason = md.reason;
-  if (md?.notes) out.notes = md.notes;
-  if (md?.fromStatus) out.fromStatus = md.fromStatus;
-  if (md?.toStatus) out.toStatus = md.toStatus;
-
-  return Object.keys(out).length ? out : null;
-}
-
-// ---------------------------------------------------------------------------
-
 export const services: Services = {
   equipment: {
     async listAvailable() {
@@ -326,7 +232,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.CREATED,
           (await services.currentUser.me(clerkUserId)).id,
-          created.id,
           { equipmentRecord: { id: created.id, ...input } }
         );
 
@@ -398,7 +303,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.RETIRED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: { ...updated } }
         );
 
@@ -418,7 +322,7 @@ export const services: Services = {
         }
 
         const updated = await tx.equipment.update({
-          where: { id }, // ← fixed: use id, not equipmentId
+          where: { id },
           data: { status: EquipmentStatus.AVAILABLE, retiredAt: null },
         });
 
@@ -426,7 +330,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.UPDATED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: { ...updated } }
         );
 
@@ -460,7 +363,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.DELETED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: { ...eq } }
         );
 
@@ -487,7 +389,6 @@ export const services: Services = {
             tx,
             AUDIT.EQUIPMENT.FORCE_RELEASED,
             (await services.currentUser.me(clerkUserId)).id,
-            id,
             { equipmentRecord: updated, checkoutRecord: checkout }
           );
         }
@@ -529,7 +430,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.RESERVED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           {
             equipmentRecord: { ...eq },
             checkoutRecord: { ...reserve },
@@ -566,7 +466,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.RESERVATION_CANCELLED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           {
             equipmentRecord: { ...eq },
             checkoutRecord: { ...unreserved },
@@ -671,7 +570,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.CHECKED_OUT,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: { ...updated }, checkoutRecord: { ...checkout } }
         );
 
@@ -738,7 +636,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.RETURNED,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: { ...updated }, checkoutRecord: { ...returned } }
         );
 
@@ -775,7 +672,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.MAINTENANCE_START,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: updated }
         );
 
@@ -795,7 +691,6 @@ export const services: Services = {
           tx,
           AUDIT.EQUIPMENT.MAINTENANCE_END,
           (await services.currentUser.me(clerkUserId)).id,
-          id,
           { equipmentRecord: updated }
         );
 
@@ -867,8 +762,6 @@ export const services: Services = {
           tx,
           AUDIT.USER.APPROVED,
           (await services.currentUser.me(clerkUserId)).id,
-          //TODO; ONCE equipmentId is changed
-          undefined,
           { userRecord: { ...updated } }
         );
 
@@ -893,8 +786,6 @@ export const services: Services = {
           tx,
           AUDIT.USER.ROLE_ASSIGNED,
           (await services.currentUser.me(clerkUserId)).id,
-          //TODO; ONCE equipmentId is changed
-          undefined,
           { userRecord: { ...user }, roleRecord: { ...roleRow } }
         );
 
@@ -1161,7 +1052,6 @@ export const services: Services = {
     async list(params) {
       const where: any = {};
       if (params.actorUserId) where.actorUserId = params.actorUserId;
-      if (params.equipmentId) where.equipmentId = params.equipmentId;
       if (params.action) where.action = params.action;
       if (params.from || params.to) {
         where.createdAt = {

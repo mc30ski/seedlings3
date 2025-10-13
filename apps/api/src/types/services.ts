@@ -186,7 +186,6 @@ export type Services = {
   audit: {
     list(params: {
       actorUserId?: string;
-      equipmentId?: string;
       action?: string;
       from?: string;
       to?: string;
