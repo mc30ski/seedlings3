@@ -59,8 +59,12 @@ export function equipmentStatusColor(value: string): string {
     return "purple";
   if (act.includes("UPDATED")) return "teal";
   if (act.includes("RELEASED") || act.includes("FORCE_RELEASED")) return "blue";
-  if (act.includes("RETIRED") || act.includes("DELETED")) return "red";
-  //if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
+  if (
+    act.includes("RETIRED") ||
+    act.includes("DELETED") ||
+    act.includes("REMOVED")
+  )
+    return "red";
   return "gray";
 }
 

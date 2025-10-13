@@ -211,7 +211,12 @@ export default function AdminAuditLog() {
       return `${short} (${qrSlug})`;
     }
 
-    if (row.action === "USER_APPROVED" || row.action === "USER_ROLE_ASSIGNED") {
+    if (
+      row.action === "USER_APPROVED" ||
+      row.action === "USER_ROLE_ASSIGNED" ||
+      row.action === "USER_ROLE_REMOVED" ||
+      row.action === "USER_DELETED"
+    ) {
       const email = md.userRecord.email;
       const role = md.roleRecord?.role;
       return `${role ? role + " - " : ""}${email}`;

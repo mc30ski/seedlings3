@@ -6,10 +6,8 @@ import auth from "./plugins/auth";
 import rbac from "./plugins/rbac";
 import errorMapper from "./plugins/errorMapper";
 import adminRoutes from "./routes/admin";
-import auditRoutes from "./routes/audit";
 import systemRoutes from "./routes/system";
 import meRoutes from "./routes/me";
-import usersRoutes from "./routes/users";
 import workerRoutes from "./routes/worker";
 
 // ---------- CORS Helpers
@@ -150,8 +148,6 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(systemRoutes);
       await api.register(meRoutes);
       await api.register(adminRoutes);
-      await api.register(auditRoutes);
-      await app.register(usersRoutes);
       await app.register(workerRoutes);
     },
     { prefix: "/api" }
