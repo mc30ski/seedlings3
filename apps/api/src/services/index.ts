@@ -1,15 +1,18 @@
 import { prisma } from "../db/prisma";
 import type { Services, EquipmentWithHolder } from "../types/services";
-import { Role } from "../types/services";
+import { Role, AdminActivityEvent, AdminActivityUser } from "../types/services";
 import {
   Prisma,
   PrismaClient,
-  AuditAction,
   Role as RoleVal,
   EquipmentStatus,
+  AuditScope,
+  AuditVerb,
 } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
 import { ServiceError } from "../lib/errors";
+import { AUDIT, toActionString, AuditTuple } from "../lib/auditActions";
+import { writeAudit } from "../lib/auditLogger";
 
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
@@ -82,41 +85,6 @@ async function recomputeStatus(tx: Tx, equipmentId: string) {
     });
   }
   return eq;
-}
-
-// Write audit with FK-safe fallback
-async function writeAudit(
-  db: Db,
-  action: AuditAction,
-  actorUserId?: string,
-  equipmentId?: string,
-  metadata?: unknown
-) {
-  try {
-    await db.auditEvent.create({
-      data: { action, actorUserId, equipmentId, metadata: metadata as any },
-    });
-  } catch (e) {
-    if (
-      e instanceof Prisma.PrismaClientKnownRequestError &&
-      e.code === "P2003"
-    ) {
-      await db.auditEvent.create({
-        data: {
-          action,
-          actorUserId,
-          equipmentId: null,
-          metadata: {
-            ...(metadata as any),
-            deletedEquipmentId: equipmentId,
-            note: "FK missing → set null",
-          },
-        },
-      });
-      return;
-    }
-    throw e;
-  }
 }
 
 function summarizeEvent(action: string, metadata?: any): string {
@@ -334,7 +302,7 @@ export const services: Services = {
       });
     },
 
-    async create(input) {
+    async create(clerkUserId, input) {
       return prisma.$transaction(async (tx) => {
         const data: Prisma.EquipmentCreateInput = {
           shortDesc: input.shortDesc,
@@ -356,16 +324,17 @@ export const services: Services = {
 
         await writeAudit(
           tx,
-          AuditAction.EQUIPMENT_CREATED,
-          undefined,
+          AUDIT.EQUIPMENT.CREATED,
+          (await services.currentUser.me(clerkUserId)).id,
           created.id,
-          { input }
+          { equipmentRecord: { id: created.id, ...input } }
         );
 
         return created;
       });
     },
 
+    /*
     async update(id, patch) {
       return prisma.$transaction(async (tx) => {
         const before = await tx.equipment.findUnique({ where: { id } });
@@ -387,16 +356,14 @@ export const services: Services = {
 
         const updated = await tx.equipment.update({ where: { id }, data });
 
-        await writeAudit(tx, AuditAction.EQUIPMENT_UPDATED, undefined, id, {
-          before,
-          patch,
-        });
+        //await writeAUdit
 
         return updated;
       });
     },
+    */
 
-    async retire(id: string) {
+    async retire(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({ where: { id } });
@@ -426,12 +393,20 @@ export const services: Services = {
           where: { id },
           data: { status: EquipmentStatus.RETIRED, retiredAt: now() },
         });
-        await writeAudit(tx, AuditAction.EQUIPMENT_RETIRED, undefined, id, {});
+
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.RETIRED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: { ...updated } }
+        );
+
         return updated;
       });
     },
 
-    async unretire(id: string) {
+    async unretire(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({ where: { id } });
@@ -442,19 +417,24 @@ export const services: Services = {
           return recomputeStatus(tx, id);
         }
 
-        await tx.equipment.update({
+        const updated = await tx.equipment.update({
           where: { id }, // ← fixed: use id, not equipmentId
           data: { status: EquipmentStatus.AVAILABLE, retiredAt: null },
         });
 
-        await writeAudit(tx, AuditAction.EQUIPMENT_UPDATED, undefined, id, {
-          unretired: true,
-        });
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.UPDATED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: { ...updated } }
+        );
+
         return recomputeStatus(tx, id);
       });
     },
 
-    async hardDelete(id: string) {
+    async hardDelete(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({ where: { id } });
@@ -475,84 +455,47 @@ export const services: Services = {
           );
 
         await tx.checkout.deleteMany({ where: { equipmentId: id } });
-        await writeAudit(tx, AuditAction.EQUIPMENT_DELETED, undefined, id, {});
+
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.DELETED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: { ...eq } }
+        );
+
         await tx.equipment.delete({ where: { id } });
         return { deleted: true };
       });
     },
 
-    async assign(id: string, userId: string) {
-      return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, id);
-
-        const eq = await tx.equipment.findUnique({ where: { id } });
-        if (!eq)
-          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status === EquipmentStatus.RETIRED)
-          throw new ServiceError("RETIRED", "Equipment retired", 409);
-        if (eq.status === EquipmentStatus.MAINTENANCE)
-          throw new ServiceError(
-            "IN_MAINTENANCE",
-            "Equipment in maintenance",
-            409
-          );
-
-        const user = await tx.user.findUnique({ where: { id: userId } });
-        if (!user)
-          throw new ServiceError("USER_NOT_FOUND", "User not found", 404);
-
-        if (await hasActiveCheckout(tx, id))
-          throw new ServiceError(
-            "ALREADY_IN_USE",
-            "Equipment already reserved/checked out",
-            409
-          );
-
-        await tx.checkout.create({
-          data: {
-            equipmentId: id,
-            userId,
-            checkedOutAt: now(),
-          },
-        });
-        await tx.equipment.update({
-          where: { id },
-          data: { status: EquipmentStatus.CHECKED_OUT },
-        });
-
-        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {
-          via: "assign",
-        });
-        return { id, userId };
-      });
-    },
-
-    async release(id: string) {
+    async release(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const active = await getActiveCheckout(tx, id);
         if (active) {
-          await tx.checkout.update({
+          const checkout = await tx.checkout.update({
             where: { id: active.id },
             data: { releasedAt: now() },
           });
-          await tx.equipment.update({
+          const updated = await tx.equipment.update({
             where: { id },
             data: { status: EquipmentStatus.AVAILABLE },
           });
+
           await writeAudit(
             tx,
-            AuditAction.FORCE_RELEASED,
-            active.userId,
+            AUDIT.EQUIPMENT.FORCE_RELEASED,
+            (await services.currentUser.me(clerkUserId)).id,
             id,
-            {}
+            { equipmentRecord: updated, checkoutRecord: checkout }
           );
         }
         return { released: true };
       });
     },
 
-    async reserve(id: string, userId: string) {
+    async reserve(clerkUserId, id, userId) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({ where: { id } });
@@ -574,7 +517,7 @@ export const services: Services = {
             409
           );
 
-        await tx.checkout.create({
+        const reserve = await tx.checkout.create({
           data: { equipmentId: id, userId },
         });
         await tx.equipment.update({
@@ -582,12 +525,22 @@ export const services: Services = {
           data: { status: EquipmentStatus.RESERVED },
         });
 
-        await writeAudit(tx, AuditAction.EQUIPMENT_RESERVED, userId, id, {});
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.RESERVED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          {
+            equipmentRecord: { ...eq },
+            checkoutRecord: { ...reserve },
+          }
+        );
+
         return { id, userId };
       });
     },
 
-    async cancelReservation(id: string, userId: string) {
+    async cancelReservation(clerkUserId, id, userId) {
       return prisma.$transaction(async (tx) => {
         await lockEquipment(tx, id);
         const active = await getActiveCheckout(tx, id);
@@ -600,121 +553,27 @@ export const services: Services = {
         if (active.userId !== userId)
           throw new ServiceError("NOT_OWNER", "Not your reservation", 403);
 
-        await tx.checkout.update({
+        const unreserved = await tx.checkout.update({
           where: { id: active.id },
           data: { releasedAt: now() },
         });
-        await tx.equipment.update({
+        const eq = await tx.equipment.update({
           where: { id },
           data: { status: EquipmentStatus.AVAILABLE },
         });
 
-        await writeAudit(tx, AuditAction.RESERVATION_CANCELLED, userId, id, {});
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.RESERVATION_CANCELLED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          {
+            equipmentRecord: { ...eq },
+            checkoutRecord: { ...unreserved },
+          }
+        );
+
         return { cancelled: true };
-      });
-    },
-
-    async checkout(id: string, userId: string) {
-      return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, id);
-        const eq = await tx.equipment.findUnique({ where: { id } });
-        if (!eq)
-          throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
-        if (eq.status !== EquipmentStatus.RESERVED)
-          throw new ServiceError(
-            "NOT_RESERVED",
-            "Must reserve before checkout",
-            409
-          );
-
-        const active = await getActiveCheckout(tx, id);
-        if (!active || active.userId !== userId || active.checkedOutAt)
-          throw new ServiceError(
-            "NOT_ALLOWED",
-            "Reservation not owned or already checked out",
-            403
-          );
-
-        await tx.checkout.update({
-          where: { id: active.id },
-          data: { checkedOutAt: now() },
-        });
-        await tx.equipment.update({
-          where: { id },
-          data: { status: EquipmentStatus.CHECKED_OUT },
-        });
-
-        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {});
-        return { id, userId };
-      });
-    },
-
-    async returnByUser(id: string, userId: string) {
-      return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, id);
-        const active = await getActiveCheckout(tx, id);
-        if (!active || !active.checkedOutAt)
-          throw new ServiceError(
-            "NO_ACTIVE_CHECKOUT",
-            "No active checkout to return",
-            409
-          );
-        if (active.userId !== userId)
-          throw new ServiceError(
-            "NOT_OWNER",
-            "You did not check this out",
-            403
-          );
-
-        await tx.checkout.update({
-          where: { id: active.id },
-          data: { releasedAt: now() },
-        });
-        await tx.equipment.update({
-          where: { id },
-          data: { status: EquipmentStatus.AVAILABLE },
-        });
-
-        await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {});
-        return { released: true };
-      });
-    },
-
-    async releaseByUser(id: string, userId: string) {
-      return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, id);
-        const active = await getActiveCheckout(tx, id);
-        if (!active) return { released: true };
-
-        if (active.userId !== userId)
-          throw new ServiceError("NOT_OWNER", "Not yours", 403);
-
-        if (active.checkedOutAt) {
-          await tx.checkout.update({
-            where: { id: active.id },
-            data: { releasedAt: now() },
-          });
-          await tx.equipment.update({
-            where: { id },
-            data: { status: EquipmentStatus.AVAILABLE },
-          });
-          await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {
-            via: "legacy_release",
-          });
-        } else {
-          await tx.checkout.update({
-            where: { id: active.id },
-            data: { releasedAt: now() },
-          });
-          await tx.equipment.update({
-            where: { id },
-            data: { status: EquipmentStatus.AVAILABLE },
-          });
-          await writeAudit(tx, AuditAction.RESERVATION_CANCELLED, userId, id, {
-            via: "legacy_release",
-          });
-        }
-        return { released: true };
       });
     },
 
@@ -764,7 +623,7 @@ export const services: Services = {
       return mapped;
     },
 
-    async checkoutWithQr(id: string, userId: string, slug: string) {
+    async checkoutWithQr(clerkUserId, id, userId, slug) {
       if (!slug)
         throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
 
@@ -799,24 +658,28 @@ export const services: Services = {
             403
           );
 
-        await tx.checkout.update({
+        const checkout = await tx.checkout.update({
           where: { id: active.id },
           data: { checkedOutAt: new Date() },
         });
-        await tx.equipment.update({
+        const updated = await tx.equipment.update({
           where: { id },
           data: { status: EquipmentStatus.CHECKED_OUT },
         });
 
-        await writeAudit(tx, AuditAction.EQUIPMENT_CHECKED_OUT, userId, id, {
-          qrSlug: slug,
-          via: "qr",
-        });
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.CHECKED_OUT,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: { ...updated }, checkoutRecord: { ...checkout } }
+        );
+
         return { id, userId };
       });
     },
 
-    async returnWithQr(id: string, userId: string, slug: string) {
+    async returnWithQr(clerkUserId, id, userId, slug) {
       if (!slug)
         throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
 
@@ -860,22 +723,24 @@ export const services: Services = {
 
         // 3) Mark returned
         const now = new Date();
-        await tx.checkout.update({
+        const returned = await tx.checkout.update({
           where: { id: active.id },
           data: { releasedAt: now },
         });
 
         // 4) Flip equipment status back to AVAILABLE (adjust if your app uses a different state machine)
-        await tx.equipment.update({
+        const updated = await tx.equipment.update({
           where: { id },
           data: { status: EquipmentStatus.AVAILABLE },
         });
 
-        // 5) Audit
-        await writeAudit(tx, AuditAction.EQUIPMENT_RETURNED, userId, id, {
-          qrSlug: slug,
-          via: "qr",
-        });
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.RETURNED,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: { ...updated }, checkoutRecord: { ...returned } }
+        );
 
         return { released: true };
       });
@@ -883,18 +748,18 @@ export const services: Services = {
   },
 
   maintenance: {
-    async start(equipmentId: string) {
+    async start(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, equipmentId);
+        await lockEquipment(tx, id);
         const eq = await tx.equipment.findUnique({
-          where: { id: equipmentId },
+          where: { id: id },
         });
         if (!eq)
           throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
         if (eq.status === EquipmentStatus.RETIRED)
           throw new ServiceError("RETIRED", "Equipment retired", 409);
 
-        if (await hasActiveCheckout(tx, equipmentId))
+        if (await hasActiveCheckout(tx, id))
           throw new ServiceError(
             "ACTIVE_CHECKOUT_EXISTS",
             "Equipment has an active reservation/checkout",
@@ -902,35 +767,39 @@ export const services: Services = {
           );
 
         const updated = await tx.equipment.update({
-          where: { id: equipmentId },
+          where: { id: id },
           data: { status: EquipmentStatus.MAINTENANCE },
         });
+
         await writeAudit(
           tx,
-          AuditAction.MAINTENANCE_START,
-          undefined,
-          equipmentId,
-          {}
+          AUDIT.EQUIPMENT.MAINTENANCE_START,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: updated }
         );
+
         return updated;
       });
     },
 
-    async end(equipmentId: string) {
+    async end(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {
-        await lockEquipment(tx, equipmentId);
-        await tx.equipment.update({
-          where: { id: equipmentId },
+        await lockEquipment(tx, id);
+        const updated = await tx.equipment.update({
+          where: { id: id },
           data: { status: EquipmentStatus.AVAILABLE },
         });
+
         await writeAudit(
           tx,
-          AuditAction.MAINTENANCE_END,
-          undefined,
-          equipmentId,
-          {}
+          AUDIT.EQUIPMENT.MAINTENANCE_END,
+          (await services.currentUser.me(clerkUserId)).id,
+          id,
+          { equipmentRecord: updated }
         );
-        return recomputeStatus(tx, equipmentId);
+
+        return recomputeStatus(tx, id);
       });
     },
   },
@@ -987,29 +856,50 @@ export const services: Services = {
       }));
     },
 
-    async approve(userId: string) {
-      const updated = await prisma.user.update({
-        where: { id: userId },
-        data: { isApproved: true },
+    async approve(clerkUserId, userId) {
+      return prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: { isApproved: true },
+        });
+
+        await writeAudit(
+          tx,
+          AUDIT.USER.APPROVED,
+          (await services.currentUser.me(clerkUserId)).id,
+          //TODO; ONCE equipmentId is changed
+          undefined,
+          { userRecord: { ...updated } }
+        );
+
+        return updated;
       });
-      await writeAudit(
-        prisma,
-        AuditAction.USER_APPROVED,
-        userId,
-        undefined,
-        {}
-      );
-      return updated;
     },
 
-    async addRole(userId: string, role: "ADMIN" | "WORKER") {
-      const roleRow = await prisma.userRole.create({
-        data: { userId, role: role as any },
+    async addRole(clerkUserId, userId, role) {
+      console.log("HERE userId", userId);
+
+      return prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: userId } });
+        if (!user) {
+          throw new ServiceError("NOT_FOUND", "User not found", 404);
+        }
+
+        const roleRow = await prisma.userRole.create({
+          data: { userId, role: role as any },
+        });
+
+        await writeAudit(
+          tx,
+          AUDIT.USER.ROLE_ASSIGNED,
+          (await services.currentUser.me(clerkUserId)).id,
+          //TODO; ONCE equipmentId is changed
+          undefined,
+          { userRecord: { ...user }, roleRecord: { ...roleRow } }
+        );
+
+        return roleRow;
       });
-      await writeAudit(prisma, AuditAction.ROLE_ASSIGNED, userId, undefined, {
-        role,
-      });
-      return roleRow;
     },
 
     async removeRole(userId: string, role: "ADMIN" | "WORKER") {
@@ -1295,225 +1185,74 @@ export const services: Services = {
   },
 
   admin: {
-    async listUserActivity({
-      q,
-      limitPerUser,
-    }: {
-      q?: string;
-      limitPerUser: number;
-    }) {
-      const qStr = (q ?? "").trim();
-      const qLower = qStr.toLowerCase();
+    async listUserActivity() {
+      const results: AdminActivityUser[] = [];
 
-      // --- 1) Find candidate users by identity (name/email) ---
-      const usersByIdentity = await prisma.user.findMany({
-        where: qStr
-          ? {
-              OR: [
-                { displayName: { contains: qStr, mode: "insensitive" } },
-                { email: { contains: qStr, mode: "insensitive" } },
-              ],
-            }
-          : {},
-        orderBy: [{ createdAt: "asc" }],
-        select: { id: true, displayName: true, email: true },
+      const usersById = await prisma.user.findMany({
+        where: {
+          isApproved: true,
+        },
+        orderBy: { createdAt: "desc" },
       });
 
-      const userIdSet = new Set<string>(usersByIdentity.map((u) => u.id));
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
 
-      // --- 2) If searching, expand candidates by matching EVENTS too ---
-      // 2a) Equipment hits by name/description
-      let equipmentHits: { id: string }[] = [];
-      if (qStr) {
-        equipmentHits = await prisma.equipment.findMany({
+      for (const user of usersById) {
+        const userEvents = await prisma.auditEvent.findMany({
           where: {
-            OR: [
-              { shortDesc: { contains: qStr, mode: "insensitive" } },
-              { longDesc: { contains: qStr, mode: "insensitive" } },
-            ],
+            actorUserId: user.id,
+            createdAt: { gte: since },
           },
-          select: { id: true },
+          orderBy: { createdAt: "desc" },
+        });
+
+        const latest =
+          userEvents.length === 0
+            ? null
+            : new Date(
+                Math.max(...userEvents.map((e) => e.createdAt.getTime()))
+              );
+
+        function convert([scope, verb]: AuditTuple, json: any) {
+          const out: any = {};
+          // Special case because there is no role record yet for an approved user.
+          if (scope === AuditScope.USER && verb === AuditVerb.APPROVED) {
+            out.role = "APPROVED";
+          }
+          if (json.roleRecord) {
+            out.role = json.roleRecord.role;
+          }
+          if (json.userRecord) {
+            out.email = json.userRecord.email;
+          }
+          if (json.equipmentRecord) {
+            out.qrSlug = json.equipmentRecord.qrSlug;
+            out.type = json.equipmentRecord.type;
+            out.equipmentName = json.equipmentRecord.shortDesc;
+            out.brand = json.equipmentRecord.brand;
+            out.model = json.equipmentRecord.model;
+          }
+          return out;
+        }
+
+        const output: AdminActivityEvent[] = userEvents.map((e) => ({
+          id: e.id,
+          at: e.createdAt,
+          type: toActionString([e.scope, e.verb]),
+          details: convert([e.scope, e.verb], e.metadata),
+        }));
+
+        results.push({
+          userId: user.id,
+          displayName: user.displayName || undefined,
+          email: user.email || undefined,
+          lastActivityAt: latest,
+          count: userEvents.length,
+          events: output,
         });
       }
-      const equipmentHitIds: string[] = equipmentHits.map((e) => e.id);
 
-      // 2b) Actor userIds for events matching action (enum) or equipment
-      if (qStr) {
-        // Map text → matching enum values (case-insensitive)
-        const matchedActions = (
-          Object.values(AuditAction) as AuditAction[]
-        ).filter((a) => a.toLowerCase().includes(qLower));
-
-        const evAction =
-          matchedActions.length > 0
-            ? await prisma.auditEvent.findMany({
-                where: {
-                  actorUserId: { not: null },
-                  action: { in: matchedActions },
-                },
-                select: { actorUserId: true },
-              })
-            : [];
-
-        const evEquip =
-          equipmentHitIds.length > 0
-            ? await prisma.auditEvent.findMany({
-                where: {
-                  actorUserId: { not: null },
-                  equipmentId: { in: equipmentHitIds },
-                },
-                select: { actorUserId: true },
-              })
-            : [];
-
-        for (const r of [...evAction, ...evEquip]) {
-          if (r.actorUserId) userIdSet.add(r.actorUserId);
-        }
-      }
-
-      const userIds: string[] = Array.from(userIdSet);
-      if (userIds.length === 0) return [];
-
-      // Re-fetch full user rows (union of identity + event-based)
-      const users = await prisma.user.findMany({
-        where: { id: { in: userIds } },
-        select: { id: true, displayName: true, email: true },
-      });
-
-      // --- 3) Fetch events for those users (desc by time) ---
-      const events = await prisma.auditEvent.findMany({
-        where: { actorUserId: { in: userIds } },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          actorUserId: true,
-          createdAt: true,
-          action: true,
-          metadata: true,
-          equipmentId: true,
-        },
-      });
-
-      // --- 4) Join equipment once for all referenced ids ---
-      const eqIds: string[] = Array.from(
-        new Set(
-          events
-            .map((e) => e.equipmentId)
-            .filter(
-              (id): id is string => typeof id === "string" && id.length > 0
-            )
-        )
-      );
-      const eqRows = eqIds.length
-        ? await prisma.equipment.findMany({
-            where: { id: { in: eqIds } },
-            select: {
-              id: true,
-              qrSlug: true,
-              shortDesc: true,
-              longDesc: true,
-              brand: true,
-              model: true,
-              type: true,
-              energy: true,
-              features: true,
-              condition: true,
-              issues: true,
-              age: true,
-            },
-          })
-        : [];
-      const eqMap = Object.fromEntries(
-        eqRows.map((e) => [
-          e.id,
-          {
-            qrSlug: e.qrSlug,
-            shortDesc: e.shortDesc,
-            longDesc: e.longDesc,
-            brand: e.brand,
-            model: e.model,
-            type: e.type,
-            energy: e.energy,
-            features: e.features,
-            condition: e.condition,
-            issues: e.issues,
-            age: e.age,
-          },
-        ])
-      );
-
-      // Helper: does an event match q (by action, equipment names, or metadata text)?
-      const eventMatchesQuery = (ev: {
-        action: string;
-        metadata: any;
-        equipmentId: string | null;
-      }) => {
-        if (!qStr) return true;
-        // action
-        if (String(ev.action).toLowerCase().includes(qLower)) return true;
-        // equipment name/desc via join
-        if (ev.equipmentId) {
-          const eq = eqMap[ev.equipmentId];
-          if (
-            (eq?.shortDesc && eq.shortDesc.toLowerCase().includes(qLower)) ||
-            (eq?.longDesc && (eq.longDesc ?? "").toLowerCase().includes(qLower))
-          ) {
-            return true;
-          }
-        }
-        // metadata (best-effort text search)
-        try {
-          const s = JSON.stringify(ev.metadata ?? {}).toLowerCase();
-          if (s.includes(qLower)) return true;
-        } catch {}
-        return false;
-      };
-
-      // --- 5) Bucket events per user (apply query filter + per-user limit) ---
-      const byUser: Record<
-        string,
-        { events: typeof events; lastActivityAt: Date | null }
-      > = {};
-      for (const u of users)
-        byUser[u.id] = { events: [], lastActivityAt: null };
-
-      for (const ev of events) {
-        const uid = ev.actorUserId!;
-        const bucket = byUser[uid];
-        if (!bucket) continue;
-
-        // filter by event query when q is set
-        if (!eventMatchesQuery(ev)) continue;
-
-        if (bucket.events.length < limitPerUser) bucket.events.push(ev);
-        if (!bucket.lastActivityAt) bucket.lastActivityAt = ev.createdAt;
-      }
-
-      // --- 6) Map to API shape (NEWEST FIRST per user) ---
-      return users.map((u) => {
-        const bucket = byUser[u.id] ?? { events: [], lastActivityAt: null };
-        const evs = bucket.events; // already newest-first from DB
-
-        return {
-          userId: u.id,
-          displayName: u.displayName ?? null,
-          email: u.email ?? null,
-          lastActivityAt: bucket.lastActivityAt,
-          count: evs.length,
-          events: evs.map((e) => ({
-            id: e.id,
-            at: e.createdAt,
-            type: e.action, // expose action as 'type' for the UI
-            summary: summarizeEvent(e.action, e.metadata),
-            details: buildEventDetails(
-              e.action,
-              e.metadata,
-              e.equipmentId,
-              eqMap
-            ),
-          })),
-        };
-      });
+      return results;
     },
   },
 };

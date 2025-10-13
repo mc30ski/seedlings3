@@ -31,39 +31,23 @@ export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
 
 /** ------------------ Admin → Activity (types) ------------------ **/
 
-/** Query params for GET /api/admin/activity */
-export type AdminListUserActivityParams = {
-  /** Optional free-text search (matches displayName/email). */
-  q?: string;
-  /**
-   * Limit of events to return per user.
-   * Server defaults to 25 and caps at 100 if omitted/out of range.
-   */
-  limitPerUser?: number;
-};
-
-/** A single activity event associated with a user. */
 export type AdminActivityEvent = {
-  /** Event id (from audit log). */
-  id: string;
-  /** Timestamp of the event. */
-  at: Date;
-  /** Backend event type (e.g., "RESERVE", "CHECKOUT", "RETURN", "SIGN_IN"). */
-  type: string;
-  /** Human-readable summary generated on the server (optional). */
-  summary?: string;
+  // ---- Equipment details
+  equipmentName?: string;
+  qrSlug?: string;
+  brand?: string;
+  model?: string;
+  type?: string;
+  // ---- Role details
+  role?: string;
 };
 
-/** Aggregated activity for a single user. */
 export type AdminActivityUser = {
   userId: string;
-  displayName: string | null;
-  email: string | null;
-  /** Timestamp of the most recent event for this user (or null). */
+  displayName?: string;
+  email?: string;
   lastActivityAt: Date | null;
-  /** Number of events included in `events` for this response. */
   count: number;
-  /** Chronological list of events (oldest → newest). */
   events: AdminActivityEvent[];
 };
 
@@ -83,19 +67,24 @@ export type Services = {
     listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
 
     // -------- CRUD --------
-    create(input: {
-      shortDesc: string;
-      longDesc?: string;
-      brand?: string;
-      model?: string;
-      type?: string;
-      energy?: string;
-      features?: string;
-      condition?: string;
-      issues?: string;
-      age?: string;
-      qrSlug?: string | null;
-    }): Promise<Equipment>;
+    create(
+      clerkUserId: string,
+      input: {
+        shortDesc: string;
+        longDesc?: string;
+        brand?: string;
+        model?: string;
+        type?: string;
+        energy?: string;
+        features?: string;
+        condition?: string;
+        issues?: string;
+        age?: string;
+        qrSlug?: string | null;
+      }
+    ): Promise<Equipment>;
+
+    /*
     update(
       id: string,
       patch: Partial<
@@ -115,31 +104,35 @@ export type Services = {
         >
       >
     ): Promise<Equipment>;
-    // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
-    retire(id: string): Promise<Equipment>;
-    unretire(id: string): Promise<Equipment>;
-    hardDelete(id: string): Promise<{ deleted: true }>;
+    */
 
-    // -------- ADMIN ACTIONS --------
-    // Direct checkout to user (bypasses reserve step)
-    assign(id: string, userId: string): Promise<{ id: string; userId: string }>;
+    // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
+    retire(clerkUserId: string, id: string): Promise<Equipment>;
+    unretire(clerkUserId: string, id: string): Promise<Equipment>;
+    hardDelete(clerkUserId: string, id: string): Promise<{ deleted: true }>;
+
     // Force release (from RESERVED or CHECKED_OUT)
-    release(id: string): Promise<ReleaseResult>;
+    release(clerkUserId: string, id: string): Promise<ReleaseResult>;
 
     // Worker lifecycle (RESERVE → CHECKOUT → RETURN)
-    reserve(id: string, userId: string): Promise<ReserveResult>;
-    cancelReservation(id: string, userId: string): Promise<CancelResult>;
-    checkout(id: string, userId: string): Promise<CheckoutResult>;
+    reserve(
+      clerkUserId: string,
+      id: string,
+      userId: string
+    ): Promise<ReserveResult>;
+    cancelReservation(
+      clerkUserId: string,
+      id: string,
+      userId: string
+    ): Promise<CancelResult>;
     checkoutWithQr(
+      clerkUserId: string,
       id: string,
       userId: string,
       slug: string
     ): Promise<CheckoutResult>;
-    returnByUser(id: string, userId: string): Promise<ReleaseResult>;
-
-    releaseByUser(id: string, userId: string): Promise<ReleaseResult>;
-
     returnWithQr(
+      clerkUserId: string,
       id: string,
       userId: string,
       slug: string
@@ -147,8 +140,8 @@ export type Services = {
   };
 
   maintenance: {
-    start(equipmentId: string): Promise<Equipment>;
-    end(equipmentId: string): Promise<Equipment>;
+    start(clerkUserId: string, id: string): Promise<Equipment>;
+    end(clerkUserId: string, id: string): Promise<Equipment>;
   };
 
   users: {
@@ -159,8 +152,8 @@ export type Services = {
     // Reserved + checked-out items (flat list used by AdminUsers UI)
     listHoldings(): Promise<AdminUserHolding[]>;
 
-    approve(userId: string): Promise<User>;
-    addRole(userId: string, role: Role): Promise<UserRole>;
+    approve(clerkUserId: string, userId: string): Promise<User>;
+    addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
     removeRole(userId: string, role: Role): Promise<{ deleted: boolean }>;
 
     // Hard-delete user (Clerk + DB)
@@ -202,15 +195,7 @@ export type Services = {
     }): Promise<{ items: AuditEvent[]; total: number }>;
   };
 
-  /** Admin-only helpers */
   admin: {
-    /**
-     * List recent activity per user (schema-safe; uses existing audit data).
-     * - GET /api/admin/activity?q={q}&limitPerUser={n}
-     * - Returns one entry per user that matches the query.
-     */
-    listUserActivity(
-      params?: AdminListUserActivityParams
-    ): Promise<AdminActivityUser[]>;
+    listUserActivity(): Promise<AdminActivityUser[]>;
   };
 };

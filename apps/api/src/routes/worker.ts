@@ -24,41 +24,33 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {
     const id = req.params.id as string;
-    return services.equipment.reserve(id, req.user.id);
+    return services.equipment.reserve(req.auth?.clerkUserId, id, req.user.id);
   });
 
   app.post("/equipment/:id/reserve/cancel", workerGuard, async (req: any) => {
     const id = req.params.id as string;
-    return services.equipment.cancelReservation(id, req.user.id);
+    return services.equipment.cancelReservation(
+      req.auth?.clerkUserId,
+      id,
+      req.user.id
+    );
   });
 
-  app.post("/equipment/:id/checkout", workerGuard, async (req: any) => {
-    const id = req.params.id as string;
-    return services.equipment.checkout(id, req.user.id);
-  });
+  //app.post("/equipment/:id/checkout", workerGuard, async (req: any) => {
+  //  const id = req.params.id as string;
+  //  return services.equipment.checkout(id, req.user.id);
+  //});
 
   // Enforce QR slug verification before finishing checkout
   app.post("/equipment/:id/checkout/verify", workerGuard, async (req: any) => {
     const id = req.params.id as string;
     const slug = String(req.body?.slug ?? "").trim();
-    return services.equipment.checkoutWithQr(id, req.user.id, slug);
-  });
-
-  app.post("/equipment/:id/return", workerGuard, async (req: any) => {
-    const id = req.params.id as string;
-    return services.equipment.returnByUser(id, req.user.id);
-  });
-
-  // Claim (only if AVAILABLE and not in maintenance/retired)
-  app.post("/equipment/:id/claim", workerGuard, async (req: any) => {
-    const id = req.params.id as string;
-    return services.equipment.reserve(id, req.user.id);
-  });
-
-  // Release (only works if THIS user has the active checkout)
-  app.post("/equipment/:id/release", workerGuard, async (req: any) => {
-    const id = req.params.id as string;
-    return services.equipment.releaseByUser(id, req.user.id);
+    return services.equipment.checkoutWithQr(
+      req.auth?.clerkUserId,
+      id,
+      req.user.id,
+      slug
+    );
   });
 
   // Legacy “available” list (still fine to keep)
@@ -74,6 +66,11 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/equipment/:id/return/verify", workerGuard, async (req: any) => {
     const id = req.params.id as string;
     const slug = String(req.body?.slug ?? "").trim();
-    return services.equipment.returnWithQr(id, req.user.id, slug);
+    return services.equipment.returnWithQr(
+      req.auth?.clerkUserId,
+      id,
+      req.user.id,
+      slug
+    );
   });
 }

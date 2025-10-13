@@ -1,4 +1,3 @@
-// apps/web/src/components/AdminAuditLog.tsx
 import { useEffect, useMemo, useState, Fragment } from "react";
 import {
   Box,
@@ -17,6 +16,7 @@ import { apiGet } from "../../lib/api";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 import { equipmentStatusColor } from "../../lib/lib";
+import SearchWithClear from "../components/SearchWithClear";
 
 type AuditItem = {
   id: string;
@@ -85,15 +85,6 @@ export default function AdminAuditLog() {
   const [to, setTo] = useState("");
 
   // lookups
-  const [eqMap, setEqMap] = useState<
-    Record<
-      string,
-      {
-        qrSlug: string;
-        desc: string;
-      }
-    >
-  >({});
   const [userMap, setUserMap] = useState<Record<string, string>>({}); // id -> email
 
   // open details per row id
@@ -109,27 +100,6 @@ export default function AdminAuditLog() {
   }
 
   async function loadLookups() {
-    try {
-      const eq = await apiGet<EqRow[]>(`/api/admin/equipment`);
-      const eqIndex: Record<
-        string,
-        {
-          qrSlug: string;
-          desc: string;
-        }
-      > = {};
-      for (const e of eq) {
-        eqIndex[e.id] = {
-          qrSlug: e.qrSlug || "",
-          desc: e.shortDesc ?? "",
-        };
-      }
-
-      setEqMap(eqIndex);
-    } catch {
-      setEqMap({});
-    }
-
     try {
       const users = await apiGet<UserRow[]>(`/api/admin/users`);
       const uIndex: Record<string, string> = {};
@@ -201,67 +171,56 @@ export default function AdminAuditLog() {
   const toggleDetails = (id: string) =>
     setOpen((m) => ({ ...m, [id]: !m[id] }));
 
-  // client-side Activity-like search over loaded rows
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase();
     if (!ql) return items;
     return items.filter((row) => {
       const action = row.action.toLowerCase();
-      const eq = row.equipmentId ? eqMap[row.equipmentId] : undefined;
-      const eqDesc = (eq?.desc ?? "").toLowerCase();
       const actorEmail = (row.actorUserId && userMap[row.actorUserId]) || "";
       const actorL = actorEmail.toLowerCase();
-      let md = "";
-      try {
-        md = JSON.stringify(row.metadata ?? {}).toLowerCase();
-      } catch {}
-      const idBits =
-        (row.id?.slice(0, 8) ?? "") +
-        (row.equipmentId?.slice(0, 8) ?? "") +
-        (row.actorUserId?.slice(0, 8) ?? "");
       return (
         action.includes(ql) ||
-        eqDesc.includes(ql) ||
         actorL.includes(ql) ||
-        md.includes(ql) ||
-        idBits.includes(ql)
+        summaryCellText(row).toLowerCase().includes(ql)
       );
     });
-  }, [items, q, eqMap, userMap]);
+  }, [items, q, userMap]);
 
-  // widths / colspans
   const truncW = useBreakpointValue({ base: "160px", md: "260px" }) ?? "260px";
-  // Now: 4 columns on mobile (Time, Action, Details, Actor) and also 4 on md+
   const colSpan = 4;
 
   // Text for the Details column (equipment OR role)
-  function detailsCellText(row: AuditItem): string {
+  function summaryCellText(row: AuditItem): string {
     const md = (row.metadata ?? {}) as any;
 
-    // Role-centric events
-    if (row.action === "ROLE_ASSIGNED" && md?.role) {
-      return `Role: ${String(md.role)}`;
+    if (
+      row.action === "EQUIPMENT_CREATED" ||
+      row.action === "EQUIPMENT_RESERVED" ||
+      row.action === "EQUIPMENT_RESERVATION_CANCELLED" ||
+      row.action === "EQUIPMENT_CHECKED_OUT" ||
+      row.action === "EQUIPMENT_RETURNED" ||
+      row.action === "EQUIPMENT_FORCE_RELEASED" ||
+      row.action === "EQUIPMENT_MAINTENANCE_START" ||
+      row.action === "EQUIPMENT_MAINTENANCE_END" ||
+      row.action === "EQUIPMENT_RETIRED" ||
+      // TODO: THIS REALLY SHOULD BE 'EQUIPMENT_UNRETIRED'
+      row.action === "EQUIPMENT_UPDATED" ||
+      row.action === "EQUIPMENT_DELETED"
+    ) {
+      const short = md.equipmentRecord.shortDesc;
+      const qrSlug = md.equipmentRecord.qrSlug;
+      return `${short} (${qrSlug})`;
     }
-    if (row.action === "USER_APPROVED") {
-      return "User approved";
+
+    if (row.action === "USER_APPROVED" || row.action === "USER_ROLE_ASSIGNED") {
+      const email = md.userRecord.email;
+      const role = md.roleRecord?.role;
+      return `${role ? role + " - " : ""}${email}`;
     }
 
-    // Equipment-centric
-    if (row.equipmentId) {
-      const eq = eqMap[row.equipmentId];
-
-      const qrSlug = (eq?.qrSlug ?? md?.qrSlug) as string;
-      const desc = (eq?.desc ?? md?.desc) as string;
-
-      return `${qrSlug} - ${desc}`;
-    }
-
-    // Other bits
-    const extras = md?.reason || md?.notes || md?.via || "";
-    return extras ? String(extras) : "—";
+    return "";
   }
 
-  // handler to auto-apply page size change (footer selector)
   const onChangePageSize = (n: number) => {
     setPageSize(n);
     setPage(1);
@@ -281,12 +240,11 @@ export default function AdminAuditLog() {
         mb={3}
         align="center"
       >
-        <Input
-          placeholder="Search…"
+        <SearchWithClear
           value={q}
-          onChange={(e) => setQ(e.currentTarget.value)}
-          maxW={{ base: "100%", md: "360px" }}
-          flex="0 0 auto"
+          onChange={setQ}
+          inputId="audit-search"
+          placeholder="Search…"
         />
         <Input
           type="date"
@@ -330,9 +288,8 @@ export default function AdminAuditLog() {
             <Table.Row>
               <Table.ColumnHeader>Time</Table.ColumnHeader>
               <Table.ColumnHeader>Action</Table.ColumnHeader>
-              <Table.ColumnHeader>Details</Table.ColumnHeader>
-              {/* NEW trailing Actor column */}
-              <Table.ColumnHeader>Actor</Table.ColumnHeader>
+              <Table.ColumnHeader>Summary</Table.ColumnHeader>
+              <Table.ColumnHeader>Initiator</Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
 
@@ -340,7 +297,7 @@ export default function AdminAuditLog() {
             {filtered.map((row) => {
               const actorEmail =
                 (row.actorUserId && userMap[row.actorUserId]) || "—";
-              const details = detailsCellText(row);
+              const details = summaryCellText(row);
 
               return (
                 <Fragment key={row.id}>
@@ -351,6 +308,7 @@ export default function AdminAuditLog() {
                   >
                     <Table.Cell
                       title={new Date(row.createdAt).toLocaleString()}
+                      whiteSpace="nowrap"
                     >
                       {new Date(row.createdAt).toLocaleString()}
                     </Table.Cell>
@@ -385,9 +343,6 @@ export default function AdminAuditLog() {
                           maxW="100%"
                           style={{ WebkitOverflowScrolling: "touch" }}
                         >
-                          <Text fontSize="sm" mb={1} color="gray.700">
-                            Raw event data
-                          </Text>
                           <Box
                             as="pre"
                             fontSize="xs"

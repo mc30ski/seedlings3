@@ -584,11 +584,11 @@ export default function EquipmentTileList({
               <Dialog.Header>Delete equipment?</Dialog.Header>
               <Dialog.Body>
                 <Text mb="2">
-                  This will <b>permanently delete</b> the equipment record.
+                  This will <b>permanently delete</b> the equipment record:
                 </Text>
                 {toDelete?.label ? (
                   <Text mb="2" color="gray.600">
-                    Item: {toDelete.label}
+                    {toDelete.label}
                   </Text>
                 ) : null}
                 {!isSuper && (
