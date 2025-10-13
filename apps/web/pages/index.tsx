@@ -8,12 +8,13 @@ import { UserButton } from "@clerk/clerk-react";
 
 import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
 import WorkerJobs from "@/src/ui/tabs/WorkerJobs";
-import WorkerClients from "@/src/ui/tabs/WorkerClients";
 
 import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
 import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import AdminActivity from "@/src/ui/tabs/AdminActivity";
 import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
+
+import Clients from "@/src/ui/tabs/Clients";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -57,9 +58,8 @@ export default function HomePage() {
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
-  const [adminInnerTab, setAdminInnerTab] = useState<
-    "equipment" | "users" | "activity" | "audit"
-  >("equipment");
+  type AdminTabs = "equipment" | "users" | "activity" | "clients" | "audit";
+  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
 
   useEffect(() => {
     // guard: only run in the browser
@@ -333,7 +333,7 @@ export default function HomePage() {
                   <WorkerJobs />
                 </Tabs.Content>
                 <Tabs.Content value="clients">
-                  <WorkerClients />
+                  <Clients />
                 </Tabs.Content>
               </Tabs.Root>
             </Tabs.Content>
@@ -343,11 +343,7 @@ export default function HomePage() {
             <Tabs.Content value="admin">
               <Tabs.Root
                 value={adminInnerTab}
-                onValueChange={(d) =>
-                  setAdminInnerTab(
-                    d.value as "equipment" | "users" | "activity" | "audit"
-                  )
-                }
+                onValueChange={(d) => setAdminInnerTab(d.value as AdminTabs)}
                 lazyMount
                 unmountOnExit
               >
@@ -355,6 +351,8 @@ export default function HomePage() {
                   <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
                   <Tabs.Trigger value="users">Users</Tabs.Trigger>
                   <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
+                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
+                  <Tabs.Trigger value="properties">Properties</Tabs.Trigger>
                   <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
                 </Tabs.List>
                 <Tabs.Content value="equipment">
@@ -365,6 +363,12 @@ export default function HomePage() {
                 </Tabs.Content>
                 <Tabs.Content value="activity">
                   <AdminActivity />
+                </Tabs.Content>
+                <Tabs.Content value="clients">
+                  <Clients />
+                </Tabs.Content>
+                <Tabs.Content value="properties">
+                  <Clients />
                 </Tabs.Content>
                 <Tabs.Content value="audit">
                   <AdminAuditLog />

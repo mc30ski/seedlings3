@@ -8,7 +8,6 @@ import {
   Stack,
   Text,
   Badge,
-  Input,
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
@@ -17,6 +16,7 @@ import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
+import SearchWithClear from "../components/SearchWithClear";
 
 type ApiUser = {
   id: string;
@@ -361,13 +361,11 @@ export default function AdminUsers() {
               </Button>
             </HStack>
           </HStack>
-
-          <Input
-            placeholder="Search name or email…"
+          <SearchWithClear
             value={q}
-            onChange={(e) => setQ(e.target.value)}
-            maxW="320px"
-            ml="auto"
+            onChange={setQ}
+            inputId="user-search"
+            placeholder="Search name or email…"
           />
         </HStack>
       </Stack>

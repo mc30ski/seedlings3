@@ -145,3 +145,59 @@ This expanded README now captures:
 - Prisma/Neon branching model,
 - Exact commands for development vs. production,
 - Best practices for safe schema evolution.
+
+## Domain Model - Clients/Properties/Jobs
+
+### Core Objects
+
+- Client — who we serve (individual, household, organization, community)
+- ClientContact — people we call/text/email for a Client
+- Property — where we serve (single address or aggregate site/community)
+- PropertyUnit (optional, post-MVP) — sub-locations inside an aggregate site
+- Job (post-MVP) — work performed at a Property
+
+Client 1 ────< ClientContact
+...│
+...└── 1 ────< Property 1 ────< PropertyUnit (optional, post-MVP)
+...................│
+...................└── pointOfContactId ──► ClientContact (default POC for this Property)
+
+Job ──► Property
+.│
+.├─< JobContact >─► ClientContact (decision_maker / on_site / notify_only)
+.└─< JobClient >─► Client (owner vs payer; multi-client)
+
+## - What Ships Now (Admin-Only)
+
+- Admins create/edit Clients, Contacts, and Properties.
+- No prospect/approval states in MVP; keep soft delete via archivedAt.
+- Default comms routing: use `Property.pointOfContactId` → else Client’s `isPrimary contact` → else lowest contactPriority.
+
+## Entity Notes
+
+- Client
+  - Types: `individual | household | organization | community`
+  - Has many **ClientContacts** and **Properties**
+  - Keep `notesInternal`, optional `tags`, `archivedAt` for soft delete
+- ClientContact
+  - `isPrimary` (prefer exactly one), `contactPriority` (lower = contact first)
+  - Optional `role` (`primary | spouse | community_manager | property_manager`)
+  - `normalizedPhone` + unique `email` for dedupe
+- Property
+  - `kind`: `single | aggregate_site`
+  - Aggregate site extras: `siteName`, `unitLabel` (e.g., “home”), `unitCount` (rough OK), optional `siteBoundaryGeo`
+  - `pointOfContactId` → **ClientContact** (default POC)
+- PropertyUnit (post-MVP)
+  - Optional sub-locations for aggregate sites (only if you need per-unit notes/codes/photos)
+- Job (post-MVP)
+  - `Job.propertyId` (each job at one Property)
+  - **JobContact** (join to ClientContact) for notifications/roles
+  - **JobClient** (join to Client) for owner vs payer / multi-client
+  - Optional `JobUnit` for per-home progress/photos within aggregate sites
+
+## Post-MVP Plug-Ins (drop-in later)
+
+- **Worker submissions & approvals**: add `reviewStatus` to Client (`PENDING | APPROVED | REJECTED`), optional `Property.status` (`PENDING | ACTIVE`)
+- **Jobs**: add `Job`, `JobContact`, `JobClient`, optional `Job.scope` (`entire_site | single_address`) and `JobUnit`
+- **Granularity** for sites: add `PropertyUnit` when per-unit state is needed
+- **Security/PII**: encrypt sensitive `accessNotes` if you store codes; audit reads
