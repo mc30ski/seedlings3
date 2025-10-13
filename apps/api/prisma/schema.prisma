@@ -23,36 +23,45 @@ enum EquipmentStatus {
   RETIRED
 }
 
-enum AuditAction {
-  USER_APPROVED
+enum AuditScope {
+  USER
+  EQUIPMENT
+  CLIENT
+  JOB
+  // add more scopes as you expand the schema
+}
+
+enum AuditVerb {
+  APPROVED
   ROLE_ASSIGNED
-  EQUIPMENT_CREATED
-  EQUIPMENT_UPDATED
-  EQUIPMENT_RETIRED
-  EQUIPMENT_DELETED
-  EQUIPMENT_CHECKED_OUT
-  EQUIPMENT_RELEASED
+  CREATED
+  UPDATED
+  RETIRED
+  DELETED
+  CHECKED_OUT
+  RELEASED
   MAINTENANCE_START
   MAINTENANCE_END
-  EQUIPMENT_RESERVED
+  RESERVED
   RESERVATION_CANCELLED
-  EQUIPMENT_RETURNED
+  RETURNED
   FORCE_RELEASED
+  // add new verbs as needed
 }
 
 model User {
-  id           String      @id @default(cuid())
-  clerkUserId  String      @unique
+  id           String       @id @default(cuid())
+  clerkUserId  String       @unique
   email        String?
   displayName  String?
-  isApproved   Boolean     @default(false)
+  isApproved   Boolean      @default(false)
 
   roles        UserRole[]
   checkouts    Checkout[]
   auditEvents  AuditEvent[] @relation("AuditActor")
 
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 model UserRole {
@@ -66,7 +75,7 @@ model UserRole {
 }
 
 model Equipment {
-  id         String           @id @default(uuid()) // stable external ID for labels/QR
+  id         String           @id @default(uuid())
   qrSlug     String?          @unique
   status     EquipmentStatus  @default(AVAILABLE)
   type       String?
@@ -105,17 +114,26 @@ model Checkout {
 }
 
 model AuditEvent {
-  id           String      @id @default(cuid())
-  action       AuditAction
+  id           String       @id @default(cuid())
+
+  scope        AuditScope
+  verb         AuditVerb
+
+  // Optional convenience string (e.g., "EQUIPMENT_CREATED")
+  action       String?      @db.VarChar(64)
+
   actorUserId  String?
   equipmentId  String?
   metadata     Json?
 
-  actor        User?       @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
-  equipment    Equipment?  @relation("AuditEquipment", fields: [equipmentId], references: [id], onDelete: SetNull)
+  actor        User?        @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  equipment    Equipment?   @relation("AuditEquipment", fields: [equipmentId], references: [id], onDelete: SetNull)
 
-  createdAt    DateTime    @default(now())
+  createdAt    DateTime     @default(now())
 
   @@index([equipmentId, createdAt])
   @@index([actorUserId, createdAt])
+  @@index([scope, createdAt])
+  @@index([verb, createdAt])
+  @@index([scope, verb, createdAt])
 }

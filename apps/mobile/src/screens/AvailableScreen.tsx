@@ -39,7 +39,7 @@ export default function AvailableScreen() {
         <Card key={e.id} style={{ marginBottom: 12 }}>
           <Card.Title title={e.shortDesc} subtitle={e.longDesc} />
           <Card.Actions>
-            <Button onPress={() => claim(e.id)}>Claim</Button>
+            <Button onPress={() => claim(e.id)}>XXXXXXClaim</Button>
           </Card.Actions>
         </Card>
       ))}

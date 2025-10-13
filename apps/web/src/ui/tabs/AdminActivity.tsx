@@ -1,9 +1,7 @@
-// apps/web/src/components/AdminActivity.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Heading,
-  Input,
   HStack,
   Button,
   Stack,
@@ -13,14 +11,14 @@ import {
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
-import { equipmentStatusColor, prettyStatus } from "../../lib/lib";
+import { equipmentStatusColor, prettyStatus, prettyDate } from "../../lib/lib";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
+import SearchWithClear from "../components/SearchWithClear";
 
 type ActivityEvent = {
   id: string;
   at: string; // ISO
   type: string;
-  summary?: string;
   details?: Record<string, any>;
 };
 
@@ -30,24 +28,8 @@ type ActivityUser = {
   email: string | null;
   lastActivityAt: string | null; // ISO
   count: number;
-  events: ActivityEvent[]; // newest-first from the API
+  events: ActivityEvent[];
 };
-
-function prettyDate(iso?: string | null) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString([], {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso || "—";
-  }
-}
 
 function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   if (
@@ -59,7 +41,8 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
 
   return (
     <Box mt="8px">
-      {details.role && <Heading size="sm">{details.role}</Heading>}
+      {details.role && <Heading size="md">{details.role}</Heading>}
+      {details.email && <Heading size="sm">{details.email}</Heading>}
 
       {(details.equipmentName || details.qrSlug) && (
         <Box>
@@ -97,28 +80,21 @@ export default function AdminActivity() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ActivityUser[]>([]);
-  const [expanded, setExpanded] = useState<string[]>([]); // Chakra v3 namespaced Accordion
+  const [expanded, setExpanded] = useState<string[]>([]);
 
-  const load = useCallback(async (query: string) => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<ActivityUser[]>(
-        `/api/admin/activity${query ? `?q=${encodeURIComponent(query)}` : ""}`
-      );
+      const data = await apiGet<ActivityUser[]>(`/api/admin/activity`);
       setRows(data);
-      setExpanded([]); // collapse on new search
+      setExpanded([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const h = setTimeout(() => void load(q.trim()), 250);
-    return () => clearTimeout(h);
-  }, [q, load]);
-
-  useEffect(() => {
-    void load("");
+    void load();
   }, [load]);
 
   const hasRows = rows.length > 0;
@@ -128,19 +104,26 @@ export default function AdminActivity() {
     [rows]
   );
 
-  // --- NEW: sort users by most recent activity (latest first). Nulls go last.
   const sortedRows = useMemo(() => {
     const toTs = (iso: string | null) => (iso ? new Date(iso).getTime() : 0);
-    return [...rows].sort((a, b) => {
+    let filtered = [...rows].sort((a, b) => {
       const tb = toTs(b.lastActivityAt);
       const ta = toTs(a.lastActivityAt);
-      if (tb !== ta) return tb - ta; // desc
-      // stable-ish fallback by displayName/email
-      const an = (a.displayName || a.email || "").toLowerCase();
-      const bn = (b.displayName || b.email || "").toLowerCase();
-      return an.localeCompare(bn);
+      return tb - ta;
     });
-  }, [rows]);
+
+    const ql = q.trim().toLowerCase();
+    if (!ql) return filtered;
+
+    filtered = filtered.filter((row) => {
+      const displayName = row.displayName ? row.displayName.toLowerCase() : "";
+      const email = row.email ? row.email.toLowerCase() : "";
+
+      return displayName.includes(ql) || email.includes(ql);
+    });
+
+    return filtered;
+  }, [rows, q]);
 
   const expandAll = () => setExpanded(sortedRows.map((u) => u.userId));
   const collapseAll = () => setExpanded([]);
@@ -148,16 +131,16 @@ export default function AdminActivity() {
   return (
     <Box>
       <Heading size="md" mb="3">
-        Activity
+        Activity by User (for last 30 days)
       </Heading>
 
       {/* Controls */}
       <HStack wrap="wrap" gap="6px" mb="3">
-        <Input
-          placeholder="Search users or activity…"
+        <SearchWithClear
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          w={{ base: "100%", md: "320px" }}
+          onChange={setQ}
+          inputId="user-search"
+          placeholder="Search users…"
         />
         <HStack ml="auto" gap="6px">
           <Button
@@ -179,7 +162,6 @@ export default function AdminActivity() {
         </HStack>
       </HStack>
 
-      {/* Summary */}
       <HStack fontSize="sm" color="gray.600" mb="2">
         <Text>
           {rows.length} user{rows.length !== 1 ? "s" : ""}
@@ -190,7 +172,6 @@ export default function AdminActivity() {
         </Text>
       </HStack>
 
-      {/* Loading / Empty */}
       {loading && (
         <Box py="10" textAlign="center">
           <Spinner size="lg" />
@@ -200,7 +181,6 @@ export default function AdminActivity() {
         <Text color="gray.600">No matching activity.</Text>
       )}
 
-      {/* Results — Chakra v3 namespaced Accordion */}
       {!loading && sortedRows.length > 0 && (
         <Accordion.Root
           multiple
@@ -283,7 +263,6 @@ export default function AdminActivity() {
                           <Badge
                             fontSize="xs"
                             colorPalette={equipmentStatusColor(e.type)}
-                            title={e.summary || undefined}
                           >
                             {prettyStatus(e.type)}
                           </Badge>

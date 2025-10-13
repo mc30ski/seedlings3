@@ -8,53 +8,46 @@ export default async function adminRoutes(app: FastifyInstance) {
       app.requireRole(req, reply, RoleVal.ADMIN),
   };
 
-  //TODO: WHY DO WE NEED BOTH OF THESE?
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAllAdmin()
   );
 
-  app.get("/admin/equipment/with-holders", adminGuard, async () =>
-    services.equipment.listAllAdmin()
-  );
-
   app.post("/admin/equipment", adminGuard, async (req: any) =>
-    services.equipment.create(req.body)
+    services.equipment.create(req.auth?.clerkUserId, req.body)
   );
 
-  app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
-    services.equipment.update(req.params.id, req.body)
-  );
+  //app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
+  //  services.equipment.update(req.params.id, req.body)
+  //);
 
   app.post("/admin/equipment/:id/retire", adminGuard, async (req: any) =>
-    services.equipment.retire(req.params.id)
+    services.equipment.retire(req.auth?.clerkUserId, req.params.id)
   );
 
   app.post("/admin/equipment/:id/unretire", adminGuard, async (req: any) =>
-    services.equipment.unretire(req.params.id)
+    services.equipment.unretire(req.auth?.clerkUserId, req.params.id)
   );
 
   app.delete("/admin/equipment/:id", adminGuard, async (req: any) =>
-    services.equipment.hardDelete(req.params.id)
-  );
-
-  app.post("/admin/equipment/:id/assign", adminGuard, async (req: any) =>
-    services.equipment.assign(req.params.id, req.body.userId)
+    services.equipment.hardDelete(req.auth?.clerkUserId, req.params.id)
   );
 
   app.post("/admin/equipment/:id/release", adminGuard, async (req: any) =>
-    services.equipment.release(req.params.id)
+    services.equipment.release(req.auth?.clerkUserId, req.params.id)
   );
 
   app.post(
     "/admin/equipment/:id/maintenance/start",
     adminGuard,
-    async (req: any) => services.maintenance.start(req.params.id)
+    async (req: any) =>
+      services.maintenance.start(req.auth?.clerkUserId, req.params.id)
   );
 
   app.post(
     "/admin/equipment/:id/maintenance/end",
     adminGuard,
-    async (req: any) => services.maintenance.end(req.params.id)
+    async (req: any) =>
+      services.maintenance.end(req.auth?.clerkUserId, req.params.id)
   );
 
   app.get("/admin/holdings", adminGuard, async () => {
@@ -100,7 +93,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/admin/users/:id/approve", adminGuard, async (req: any) =>
-    services.users.approve(req.params.id)
+    services.users.approve(req.auth?.clerkUserId, req.params.id)
   );
 
   app.post("/admin/users/:id/roles", adminGuard, async (req: any) => {
@@ -109,7 +102,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (role !== "ADMIN" && role !== "WORKER") {
       throw app.httpErrors.badRequest("Invalid role");
     }
-    return services.users.addRole(id, role as "ADMIN" | "WORKER");
+    return services.users.addRole(
+      req.auth?.clerkUserId,
+      id,
+      role as "ADMIN" | "WORKER"
+    );
   });
 
   app.delete("/admin/users/:id/roles/:role", adminGuard, async (req: any) => {
@@ -133,11 +130,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/activity", adminGuard, async (req: any) => {
-    const q = (req.query?.q || "").toString().trim();
-    const limitPerUser = Math.min(
-      Math.max(parseInt(req.query?.limitPerUser as string) || 25, 1),
-      100
-    );
-    return services.admin.listUserActivity({ q, limitPerUser });
+    return services.admin.listUserActivity();
   });
 }

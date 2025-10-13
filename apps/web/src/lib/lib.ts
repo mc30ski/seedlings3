@@ -63,3 +63,19 @@ export function equipmentStatusColor(value: string): string {
   //if (act.includes("RETIRED") || act.includes("DELETED")) return "gray";
   return "gray";
 }
+
+export function prettyDate(iso?: string | null) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString([], {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso || "—";
+  }
+}
