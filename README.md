@@ -137,15 +137,6 @@ npm -w apps/api run prisma:migrate:deploy
 # Deploy API + Web via Vercel with prod env vars
 ```
 
----
-
-This expanded README now captures:
-
-- Existing project overview and Vercel wiring,
-- Prisma/Neon branching model,
-- Exact commands for development vs. production,
-- Best practices for safe schema evolution.
-
 ## Domain Model - Clients/Properties/Jobs
 
 ### Core Objects
@@ -156,18 +147,18 @@ This expanded README now captures:
 - PropertyUnit (optional, post-MVP) — sub-locations inside an aggregate site
 - Job (post-MVP) — work performed at a Property
 
-Client 1 ────< ClientContact
-...│
-...└── 1 ────< Property 1 ────< PropertyUnit (optional, post-MVP)
-...................│
-...................└── pointOfContactId ──► ClientContact (default POC for this Property)
+- Client 1 ─< ClientContact\\n
+  │
+  └── 1 ────< Property 1 ────< PropertyUnit (optional, post-MVP)
+  ...................│
+  ...................└── pointOfContactId ──► ClientContact (default POC for this Property)
 
 Job ──► Property
 .│
 .├─< JobContact >─► ClientContact (decision_maker / on_site / notify_only)
 .└─< JobClient >─► Client (owner vs payer; multi-client)
 
-## - What Ships Now (Admin-Only)
+## What Ships Now (Admin-Only)
 
 - Admins create/edit Clients, Contacts, and Properties.
 - No prospect/approval states in MVP; keep soft delete via archivedAt.
