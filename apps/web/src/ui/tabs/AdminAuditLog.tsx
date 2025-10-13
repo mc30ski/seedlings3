@@ -202,7 +202,7 @@ export default function AdminAuditLog() {
       row.action === "EQUIPMENT_MAINTENANCE_START" ||
       row.action === "EQUIPMENT_MAINTENANCE_END" ||
       row.action === "EQUIPMENT_RETIRED" ||
-      // TODO: THIS REALLY SHOULD BE 'EQUIPMENT_UNRETIRED'
+      row.action === "EQUIPMENT_UNRETIRED" ||
       row.action === "EQUIPMENT_UPDATED" ||
       row.action === "EQUIPMENT_DELETED"
     ) {

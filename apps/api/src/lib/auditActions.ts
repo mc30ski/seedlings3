@@ -11,6 +11,7 @@ export const AUDIT = {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.EQUIPMENT, AuditVerb.UPDATED] as const,
     RETIRED: [AuditScope.EQUIPMENT, AuditVerb.RETIRED] as const,
+    UNRETIRED: [AuditScope.EQUIPMENT, AuditVerb.UNRETIRED] as const,
     DELETED: [AuditScope.EQUIPMENT, AuditVerb.DELETED] as const,
     CHECKED_OUT: [AuditScope.EQUIPMENT, AuditVerb.CHECKED_OUT] as const,
     RELEASED: [AuditScope.EQUIPMENT, AuditVerb.RELEASED] as const,

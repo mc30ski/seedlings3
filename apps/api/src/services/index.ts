@@ -323,7 +323,7 @@ export const services: Services = {
 
         await writeAudit(
           tx,
-          AUDIT.EQUIPMENT.UPDATED,
+          AUDIT.EQUIPMENT.UNRETIRED,
           (await services.currentUser.me(clerkUserId)).id,
           { equipmentRecord: { ...updated } }
         );

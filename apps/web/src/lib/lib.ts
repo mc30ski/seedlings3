@@ -48,7 +48,8 @@ export function equipmentStatusColor(value: string): string {
     act.includes("MAINTENANCE_END") ||
     act.includes("RETURNED") ||
     act.includes("CANCELLED") ||
-    act.includes("RELEASED")
+    act.includes("RELEASED") ||
+    act.includes("UNRETIRED")
   )
     return "green";
   if (act.includes("RESERVED")) return "orange";
