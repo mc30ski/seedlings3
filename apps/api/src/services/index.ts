@@ -126,11 +126,6 @@ export const services: Services = {
       });
     },
 
-    //TODO: NOT USED ANYWHERE?
-    async listAll() {
-      return prisma.equipment.findMany({ orderBy: { createdAt: "desc" } });
-    },
-
     async listAllAdmin() {
       const rows = await prisma.equipment.findMany({
         orderBy: { createdAt: "desc" },
@@ -770,15 +765,13 @@ export const services: Services = {
     },
 
     async addRole(clerkUserId, userId, role) {
-      console.log("HERE userId", userId);
-
       return prisma.$transaction(async (tx) => {
         const user = await tx.user.findUnique({ where: { id: userId } });
         if (!user) {
           throw new ServiceError("NOT_FOUND", "User not found", 404);
         }
 
-        const roleRow = await prisma.userRole.create({
+        const roleRow = await tx.userRole.create({
           data: { userId, role: role as any },
         });
 
@@ -793,7 +786,7 @@ export const services: Services = {
       });
     },
 
-    async removeRole(userId: string, role: "ADMIN" | "WORKER") {
+    async removeRole(clerkUserId, userId, role) {
       if (role === "WORKER") {
         const active = await prisma.checkout.count({
           where: { userId, releasedAt: null },
@@ -807,16 +800,33 @@ export const services: Services = {
         }
       }
 
-      const toDelete = await prisma.userRole.findFirst({
-        where: { userId, role: role as any },
-      });
-      if (!toDelete) return { deleted: false };
+      return prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: userId } });
+        if (!user) {
+          throw new ServiceError("NOT_FOUND", "User not found", 404);
+        }
 
-      await prisma.userRole.delete({ where: { id: toDelete.id } });
-      return { deleted: true };
+        const toDelete = await tx.userRole.findFirst({
+          where: { userId, role: role as any },
+        });
+        if (!toDelete) return { deleted: false };
+
+        const roleRecord = await tx.userRole.delete({
+          where: { id: toDelete.id },
+        });
+
+        await writeAudit(
+          tx,
+          AUDIT.USER.ROLE_REMOVED,
+          (await services.currentUser.me(clerkUserId)).id,
+          { userRecord: { ...user }, roleRecord: { ...roleRecord } }
+        );
+
+        return { deleted: true };
+      });
     },
 
-    async remove(userId: string, actorUserId: string) {
+    async remove(clerkUserId, userId, actorUserId) {
       if (!actorUserId) {
         throw new ServiceError("UNAUTHORIZED", "Missing actor", 401);
       }
@@ -836,34 +846,43 @@ export const services: Services = {
         throw new ServiceError("NOT_FOUND", "User not found", 404);
       }
 
-      const isAdmin = user.roles.some((r) => r.role === "ADMIN");
-      if (isAdmin) {
-        const otherAdmins = await prisma.userRole.count({
-          where: { role: "ADMIN", userId: { not: userId } },
-        });
-        if (otherAdmins === 0) {
-          throw new ServiceError(
-            "LAST_ADMIN",
-            "Cannot delete the last remaining admin",
-            409
-          );
+      return prisma.$transaction(async (tx) => {
+        const isAdmin = user.roles.some((r) => r.role === "ADMIN");
+        if (isAdmin) {
+          const otherAdmins = await tx.userRole.count({
+            where: { role: "ADMIN", userId: { not: userId } },
+          });
+          if (otherAdmins === 0) {
+            throw new ServiceError(
+              "LAST_ADMIN",
+              "Cannot delete the last remaining admin",
+              409
+            );
+          }
         }
-      }
 
-      let clerkDeleted = false;
-      if (user.clerkUserId) {
-        try {
-          await clerk.users.deleteUser(user.clerkUserId);
-          clerkDeleted = true;
-        } catch (e: any) {
-          clerkDeleted =
-            typeof e?.status === "number" ? e.status === 404 : false;
+        let clerkDeleted = false;
+        if (user.clerkUserId) {
+          try {
+            await clerk.users.deleteUser(user.clerkUserId);
+            clerkDeleted = true;
+          } catch (e: any) {
+            clerkDeleted =
+              typeof e?.status === "number" ? e.status === 404 : false;
+          }
         }
-      }
 
-      await prisma.user.delete({ where: { id: userId } });
+        const userDelete = await tx.user.delete({ where: { id: userId } });
 
-      return { deleted: true as const, clerkDeleted };
+        await writeAudit(
+          tx,
+          AUDIT.USER.DELETED,
+          (await services.currentUser.me(clerkUserId)).id,
+          { userRecord: { ...userDelete } }
+        );
+
+        return { deleted: true as const, clerkDeleted };
+      });
     },
 
     async pendingApprovalCount(): Promise<{ pending: number }> {

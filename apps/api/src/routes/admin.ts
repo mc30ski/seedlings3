@@ -113,14 +113,18 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (role !== "ADMIN" && role !== "WORKER") {
       throw app.httpErrors.badRequest("Invalid role");
     }
-    return services.users.removeRole(id, role as "ADMIN" | "WORKER");
+    return services.users.removeRole(
+      req.auth?.clerkUserId,
+      id,
+      role as "ADMIN" | "WORKER"
+    );
   });
 
   app.delete("/admin/users/:id", adminGuard, async (req: any) => {
     // Hard delete a user (DB + Clerk)
     const targetId = String(req.params.id);
     const actorId = String(req.user?.id || "");
-    return services.users.remove(targetId, actorId);
+    return services.users.remove(req.auth?.clerkUserId, targetId, actorId);
   });
 
   app.get("/admin/users/pendingCount", adminGuard, async () => {

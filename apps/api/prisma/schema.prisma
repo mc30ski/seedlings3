@@ -34,6 +34,7 @@ enum AuditScope {
 enum AuditVerb {
   APPROVED
   ROLE_ASSIGNED
+  ROLE_REMOVED
   CREATED
   UPDATED
   RETIRED

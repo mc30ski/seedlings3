@@ -4,6 +4,8 @@ export const AUDIT = {
   USER: {
     APPROVED: [AuditScope.USER, AuditVerb.APPROVED] as const,
     ROLE_ASSIGNED: [AuditScope.USER, AuditVerb.ROLE_ASSIGNED] as const,
+    ROLE_REMOVED: [AuditScope.USER, AuditVerb.ROLE_REMOVED] as const,
+    DELETED: [AuditScope.USER, AuditVerb.DELETED] as const,
   },
   EQUIPMENT: {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,

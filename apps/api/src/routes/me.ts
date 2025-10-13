@@ -22,8 +22,6 @@ function readCookie(name: string, cookieHeader?: string): string | null {
   return null;
 }
 
-// TODO: Does this endpoint need an auth guard?
-
 export default async function meRoutes(app: FastifyInstance) {
   app.get("/me", async (req: FastifyRequest, reply: FastifyReply) => {
     // Acquire a token from header or cookie

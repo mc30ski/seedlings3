@@ -8,7 +8,6 @@ type CheckoutResult = { id: string; userId: string };
 type ReleaseResult = { released: true };
 type CancelResult = { cancelled: true };
 
-//TODO: WHY DO I NEED BOTH OF THESE?
 export type AdminHolder = {
   userId: string;
   displayName?: string | null;
@@ -55,7 +54,6 @@ export type Services = {
   equipment: {
     // -------- LISTS --------
     listAvailable(): Promise<Equipment[]>;
-    listAll(): Promise<Equipment[]>;
     // Admin view with current holder (if any)
     listAllAdmin(): Promise<EquipmentWithHolder[]>;
     // Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT
@@ -154,10 +152,14 @@ export type Services = {
 
     approve(clerkUserId: string, userId: string): Promise<User>;
     addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
-    removeRole(userId: string, role: Role): Promise<{ deleted: boolean }>;
-
+    removeRole(
+      clerkUserId: string,
+      userId: string,
+      role: Role
+    ): Promise<{ deleted: boolean }>;
     // Hard-delete user (Clerk + DB)
     remove(
+      clerkUserId: string,
       userId: string,
       actorUserId: string
     ): Promise<{ deleted: true; clerkDeleted: boolean }>;
