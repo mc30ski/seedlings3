@@ -157,7 +157,7 @@ npm -w apps/api run prisma:migrate:deploy
   - ──< JobContact >──► ClientContact (decision_maker / on_site / notify_only)
   - ──< JobClient >──► Client (owner vs payer; multi-client)
 
-# Optional (only for aggregate sites if per-unit tracking is needed later)
+Optional (only for aggregate sites if per-unit tracking is needed later)
 
 - Job 1──< JobUnit (per-home status/photos within an aggregate site)
 
