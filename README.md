@@ -147,16 +147,15 @@ npm -w apps/api run prisma:migrate:deploy
 - PropertyUnit (optional, post-MVP) — sub-locations inside an aggregate site
 - Job (post-MVP) — work performed at a Property
 
-- Client 1 ─< ClientContact\\n
-  │
-  └── 1 ────< Property 1 ────< PropertyUnit (optional, post-MVP)
-  ...................│
-  ...................└── pointOfContactId ──► ClientContact (default POC for this Property)
+- Client
 
-Job ──► Property
-.│
-.├─< JobContact >─► ClientContact (decision_maker / on_site / notify_only)
-.└─< JobClient >─► Client (owner vs payer; multi-client)
+  - 1 ──< ClientContact
+  - 1 ──< Property 1 (attr:pointOfContactId ──► ClientContact) ──< PropertyUnit (optional, post-MVP)
+
+- Job ──► Property
+
+  - ──< JobContact >──► ClientContact (decision_maker / on_site / notify_only)
+  - ──< JobClient >──► Client (owner vs payer; multi-client)
 
 ## What Ships Now (Admin-Only)
 
