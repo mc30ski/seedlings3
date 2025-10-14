@@ -8,15 +8,15 @@ import {
   Text,
   Badge,
   Table,
-  Spinner,
   HStack,
   useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
-import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 import { equipmentStatusColor } from "../../lib/lib";
 import SearchWithClear from "../components/SearchWithClear";
+import LoadingCenter from "../helpers/LoadingCenter";
+import { toaster } from "../old/toaster";
 
 type AuditItem = {
   id: string;
@@ -38,12 +38,6 @@ type EqRow = {
   model?: string | null;
 };
 type UserRow = { id: string; email: string | null; displayName: string | null };
-
-const LoadingCenter = () => (
-  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
-    <Spinner size="lg" />
-  </Box>
-);
 
 /** One-line, ellipsized text with native hover tooltip */
 function Trunc({
@@ -135,10 +129,12 @@ export default function AdminAuditLog() {
       if (reset) setPage(1);
       if (pageOverride) setPage(pageOverride);
     } catch (err) {
-      toaster.error({
-        title: "Failed to load audit log",
-        description: getErrorMessage(err),
-      });
+      {
+        toaster.error({
+          title: "Failed to load audit log",
+          description: getErrorMessage(err),
+        });
+      }
     } finally {
       setLoading(false);
     }

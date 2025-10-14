@@ -8,6 +8,7 @@ import {
   Stack,
   Text,
   Badge,
+  Input,
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
@@ -16,7 +17,7 @@ import { Role } from "../../lib/types";
 import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
-import SearchWithClear from "../components/SearchWithClear";
+import LoadingCenter from "../helpers/LoadingCenter";
 
 type ApiUser = {
   id: string;
@@ -45,12 +46,6 @@ type Holding = {
   reservedAt: string; // ISO
   checkedOutAt: string | null; // ISO
 };
-
-const LoadingCenter = () => (
-  <Box minH="160px" display="flex" alignItems="center" justifyContent="center">
-    <Spinner size="lg" />
-  </Box>
-);
 
 // Inline confirm state
 type ConfirmKind = "delete" | "decline";
@@ -361,11 +356,13 @@ export default function AdminUsers() {
               </Button>
             </HStack>
           </HStack>
-          <SearchWithClear
-            value={q}
-            onChange={setQ}
-            inputId="user-search"
+
+          <Input
             placeholder="Search name or email…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            maxW="320px"
+            ml="auto"
           />
         </HStack>
       </Stack>

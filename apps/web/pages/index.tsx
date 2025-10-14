@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState, useCallback, useRef } from "react";
-import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Box, Container, HStack } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -21,6 +21,18 @@ import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import { Me, Role } from "@/src/lib/types";
+import {
+  FiBriefcase,
+  FiMap,
+  FiSettings,
+  FiTool,
+  FiUser,
+  FiUsers,
+} from "react-icons/fi";
+
+import ScrollableUnderlineTabs, {
+  TabItem,
+} from "../src/ui/components/ScrollableUnderlineTabs";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
@@ -30,6 +42,112 @@ export default function HomePage() {
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
+
+  const workerTabs: TabItem[] = [
+    {
+      value: "equipment",
+      label: "Equipment",
+      icon: FiTool,
+      content: <WorkerEquipment />,
+    },
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: <WorkerJobs />,
+    },
+    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+  ];
+
+  const adminTabs: TabItem[] = [
+    {
+      value: "equipment",
+      label: "Equipment",
+      icon: FiTool,
+      content: <AdminEquipment />,
+    },
+    {
+      value: "users",
+      label: "Users",
+      icon: FiUsers,
+      content: <AdminUsers />,
+    },
+    {
+      value: "activity",
+      label: "Activity",
+      icon: FiMap,
+      content: <AdminActivity />,
+    },
+    {
+      value: "audit",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+    {
+      value: "audit0",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+    {
+      value: "audit1",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+    {
+      value: "audit2",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+    {
+      value: "audit3",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+    {
+      value: "audit4",
+      label: "Audit",
+      icon: FiTool,
+      content: <AdminAuditLog />,
+    },
+  ];
+
+  const outerTabs: TabItem[] = [
+    {
+      value: "worker",
+      label: "Worker",
+      icon: FiUser,
+      visible: true,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={workerTabs}
+          defaultValue="equipment"
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
+        />
+      ),
+    },
+    {
+      value: "admin",
+      label: "Admin",
+      icon: FiSettings,
+      visible: () => isAdmin,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={adminTabs}
+          defaultValue="clients"
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
+        />
+      ),
+    },
+  ];
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -301,83 +419,16 @@ export default function HomePage() {
           </HStack>
         </Box>
       </Box>
-
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
-
       {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
 
-      {!meLoading && me?.isApproved && hasAnyRole && (
-        <Tabs.Root
-          value={topTab}
-          onValueChange={(d) => setTopTab(d.value as "worker" | "admin")}
-          lazyMount
-          unmountOnExit
-        >
-          <Tabs.List mb={4}>
-            {isWorker && <Tabs.Trigger value="worker">Worker</Tabs.Trigger>}
-            {isAdmin && <Tabs.Trigger value="admin">Admin</Tabs.Trigger>}
-          </Tabs.List>
-
-          {isWorker && (
-            <Tabs.Content value="worker">
-              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
-                <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="jobs">Jobs</Tabs.Trigger>
-                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
-                </Tabs.List>
-                <Tabs.Content value="equipment">
-                  <WorkerEquipment />
-                </Tabs.Content>
-                <Tabs.Content value="jobs">
-                  <WorkerJobs />
-                </Tabs.Content>
-                <Tabs.Content value="clients">
-                  <Clients />
-                </Tabs.Content>
-              </Tabs.Root>
-            </Tabs.Content>
-          )}
-
-          {isAdmin && (
-            <Tabs.Content value="admin">
-              <Tabs.Root
-                value={adminInnerTab}
-                onValueChange={(d) => setAdminInnerTab(d.value as AdminTabs)}
-                lazyMount
-                unmountOnExit
-              >
-                <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="users">Users</Tabs.Trigger>
-                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
-                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
-                  <Tabs.Trigger value="properties">Properties</Tabs.Trigger>
-                  <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
-                </Tabs.List>
-                <Tabs.Content value="equipment">
-                  <AdminEquipment />
-                </Tabs.Content>
-                <Tabs.Content value="users">
-                  <AdminUsers />
-                </Tabs.Content>
-                <Tabs.Content value="activity">
-                  <AdminActivity />
-                </Tabs.Content>
-                <Tabs.Content value="clients">
-                  <Clients />
-                </Tabs.Content>
-                <Tabs.Content value="properties">
-                  <Clients />
-                </Tabs.Content>
-                <Tabs.Content value="audit">
-                  <AdminAuditLog />
-                </Tabs.Content>
-              </Tabs.Root>
-            </Tabs.Content>
-          )}
-        </Tabs.Root>
-      )}
+      <ScrollableUnderlineTabs
+        tabs={outerTabs}
+        defaultValue="worker"
+        edgeMode="overlay"
+        edgeSize={16}
+        headerPaddingY={2}
+      />
     </Container>
   );
 }

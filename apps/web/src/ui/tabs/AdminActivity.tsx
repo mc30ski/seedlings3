@@ -7,13 +7,13 @@ import {
   Stack,
   Badge,
   Text,
-  Spinner,
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
 import { equipmentStatusColor, prettyStatus, prettyDate } from "../../lib/lib";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 import SearchWithClear from "../components/SearchWithClear";
+import LoadingCenter from "../helpers/LoadingCenter";
 
 type ActivityEvent = {
   id: string;
@@ -172,11 +172,7 @@ export default function AdminActivity() {
         </Text>
       </HStack>
 
-      {loading && (
-        <Box py="10" textAlign="center">
-          <Spinner size="lg" />
-        </Box>
-      )}
+      {loading && <LoadingCenter />}
       {!loading && rows.length === 0 && (
         <Text color="gray.600">No matching activity.</Text>
       )}
