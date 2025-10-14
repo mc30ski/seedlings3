@@ -16,6 +16,7 @@ import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
 import Jobs from "@/src/ui/tabs/Jobs";
 import Clients from "@/src/ui/tabs/Clients";
 import Properties from "@/src/ui/tabs/Properties";
+import Payments from "@/src/ui/tabs/Payments";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -24,14 +25,16 @@ import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 import { Me, Role } from "@/src/lib/types";
 import {
   FiBriefcase,
-  FiMap,
-  FiSettings,
   FiTool,
   FiUser,
   FiUsers,
   FiFileText,
   FiMapPin,
+  FiActivity,
 } from "react-icons/fi";
+import { GrUserAdmin } from "react-icons/gr";
+import { AiOutlineTeam } from "react-icons/ai";
+import { TfiMoney } from "react-icons/tfi";
 
 import ScrollableUnderlineTabs, {
   TabItem,
@@ -90,7 +93,13 @@ export default function HomePage() {
       icon: FiBriefcase,
       content: <Jobs />,
     },
-    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: <Payments />,
+    },
+    { value: "clients", label: "Clients", icon: FiUsers, content: <Clients /> },
   ];
 
   const adminTabs: TabItem[] = [
@@ -103,16 +112,16 @@ export default function HomePage() {
     {
       value: "users",
       label: "Users",
-      icon: FiUsers,
+      icon: AiOutlineTeam,
       content: <AdminUsers />,
     },
     {
       value: "activity",
       label: "Activity",
-      icon: FiMap,
+      icon: FiActivity,
       content: <AdminActivity />,
     },
-    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+    { value: "clients", label: "Clients", icon: FiUsers, content: <Clients /> },
     {
       value: "properties",
       label: "Properties",
@@ -124,6 +133,12 @@ export default function HomePage() {
       label: "Jobs",
       icon: FiBriefcase,
       content: <Jobs />,
+    },
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: <Payments />,
     },
     {
       value: "audit",
@@ -153,7 +168,7 @@ export default function HomePage() {
     {
       value: "admin",
       label: "Admin",
-      icon: FiSettings,
+      icon: GrUserAdmin,
       visible: () => isAdmin,
       content: (
         <ScrollableUnderlineTabs
