@@ -16,7 +16,7 @@ import { getErrorMessage } from "../../lib/errors";
 import { equipmentStatusColor } from "../../lib/lib";
 import SearchWithClear from "../components/SearchWithClear";
 import LoadingCenter from "../helpers/LoadingCenter";
-import { toaster } from "../old/toaster";
+import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
 
 type AuditItem = {
   id: string;
@@ -69,6 +69,11 @@ export default function AdminAuditLog() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
+
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
 
   // simple, Activity-style text search (client-side)
   const [q, setQ] = useState("");
@@ -129,12 +134,10 @@ export default function AdminAuditLog() {
       if (reset) setPage(1);
       if (pageOverride) setPage(pageOverride);
     } catch (err) {
-      {
-        toaster.error({
-          title: "Failed to load audit log",
-          description: getErrorMessage(err),
-        });
-      }
+      setInlineMsg({
+        msg: "Failed to load audit log: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     } finally {
       setLoading(false);
     }
@@ -232,6 +235,8 @@ export default function AdminAuditLog() {
       <Heading size="md" mb={4}>
         Audit
       </Heading>
+
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {/* Filters */}
       <Stack

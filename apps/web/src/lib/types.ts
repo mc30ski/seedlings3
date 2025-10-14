@@ -1,10 +1,3 @@
-export enum InlineMessageType {
-  SUCCESS = "SUCCESS",
-  WARNING = "WARNING",
-  INFO = "INFO",
-  ERROR = "ERROR",
-}
-
 export type Role = "SUPER" | "ADMIN" | "WORKER";
 
 export const EQUIPMENT_TYPES = [

@@ -15,13 +15,12 @@ import {
   Me,
   EquipmentStatus,
   Equipment,
-  InlineMessageType,
   EQUIPMENT_TYPES,
 } from "../../lib/types";
 import EquipmentTile from "../components/EquipmentTile";
 import SearchWithClear from "../components/SearchWithClear";
 import LoadingCenter from "../helpers/LoadingCenter";
-import InlineMessage from "../helpers/InlineMessage";
+import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
 
 export default function WorkerEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
@@ -51,7 +50,7 @@ export default function WorkerEquipment() {
       setItems(data);
     } catch (err) {
       setInlineMsg({
-        msg: getErrorMessage(err),
+        msg: "Failed to load equipment: " + getErrorMessage(err),
         type: InlineMessageType.ERROR,
       });
     } finally {

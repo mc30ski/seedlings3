@@ -131,6 +131,7 @@ export default function HomePage() {
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={2}
+          unmountOnExit
         />
       ),
     },
@@ -147,6 +148,7 @@ export default function HomePage() {
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={2}
+          unmountOnExit
         />
       ),
     },
@@ -183,6 +185,28 @@ export default function HomePage() {
         new CustomEvent("equipmentSearch:run", { detail: { q } })
       );
       window.sessionStorage.removeItem(key);
+    });
+  }, [topTab, adminInnerTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (topTab !== "admin" || adminInnerTab !== "users") return;
+
+    const key = "admin:usersOpenOnce";
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return;
+
+    requestAnimationFrame(() => {
+      try {
+        const detail = JSON.parse(raw) as {
+          status: "pending" | "approved" | "all";
+        };
+        window.dispatchEvent(
+          new CustomEvent("seedlings3:open-users", { detail })
+        );
+      } finally {
+        window.sessionStorage.removeItem(key);
+      }
     });
   }, [topTab, adminInnerTab]);
 
@@ -247,6 +271,35 @@ export default function HomePage() {
   }, [loadPending]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onOpenUsers = (e: Event) => {
+      const { status } =
+        (e as CustomEvent<{ status?: "pending" | "approved" | "all" }>)
+          .detail || {};
+      // optional: validate
+      const ok =
+        status === "pending" || status === "approved" || status === "all";
+      if (!ok) return;
+
+      setTopTab("admin");
+      setAdminInnerTab("users");
+
+      window.sessionStorage.setItem(
+        "admin:usersOpenOnce",
+        JSON.stringify({ status })
+      );
+    };
+
+    window.addEventListener("admin:openUsers", onOpenUsers as EventListener);
+    return () =>
+      window.removeEventListener(
+        "admin:openUsers",
+        onOpenUsers as EventListener
+      );
+  }, []);
+
+  useEffect(() => {
     const onUsersChanged = () => void loadPending();
     window.addEventListener("seedlings3:users-changed", onUsersChanged);
     return () =>
@@ -254,21 +307,12 @@ export default function HomePage() {
   }, [loadPending]);
 
   const goToApprovals = useCallback(() => {
-    setTopTab("admin");
-    setAdminInnerTab("users");
-    router.push(
-      { pathname: "/", query: { adminTab: "users", status: "pending" } },
-      undefined,
-      { shallow: true }
+    window.dispatchEvent(
+      new CustomEvent("admin:openUsers", {
+        detail: { status: "pending" as const },
+      })
     );
-    try {
-      window.dispatchEvent(
-        new CustomEvent("seedlings3:open-users", {
-          detail: { status: "pending" },
-        })
-      );
-    } catch {}
-  }, [router]);
+  }, []);
 
   return (
     <Container maxW="5xl" py={8}>
@@ -374,6 +418,7 @@ export default function HomePage() {
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={2}
+          unmountOnExit
         />
       )}
     </Container>

@@ -1,5 +1,5 @@
 // apps/web/src/components/AdminUsers.tsx
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
   Button,
@@ -8,16 +8,15 @@ import {
   Stack,
   Text,
   Badge,
-  Input,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete } from "../../lib/api";
 import { prettyStatus, equipmentStatusColor } from "../../lib/lib";
 import { Role } from "../../lib/types";
-import { toaster } from "../old/toaster";
 import { getErrorMessage } from "../../lib/errors";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 import LoadingCenter from "../helpers/LoadingCenter";
 import SearchWithClear from "../components/SearchWithClear";
+import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
 
 type ApiUser = {
   id: string;
@@ -51,16 +50,8 @@ type Holding = {
 type ConfirmKind = "delete" | "decline";
 type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 
-// --- helper to read initial status from URL (so deep links work on first paint)
-function initialStatusFromUrl(): "all" | "pending" | "approved" {
-  if (typeof window === "undefined") return "all";
-  try {
-    const sp = new URLSearchParams(window.location.search);
-    const s = sp.get("status");
-    if (s === "pending" || s === "approved" || s === "all") return s;
-  } catch {}
-  return "all";
-}
+// Status filter type for this page
+type Status = "all" | "pending" | "approved";
 
 export default function AdminUsers() {
   const [items, setItems] = useState<ApiUser[]>([]);
@@ -72,38 +63,51 @@ export default function AdminUsers() {
 
   // simple filters
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<"all" | "pending" | "approved">(
-    initialStatusFromUrl
-  ); // <- init from URL
+  const [status, setStatus] = useState<Status>("all");
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
 
-  // inline warning by user id (shown under their info)
-  const [inlineErr, setInlineErr] = useState<Record<string, string>>({});
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
     Record<string, Holding[]>
   >({});
 
-  // NEW: confirm inline bar state (for Delete or Decline)
+  // confirm bar state (for Delete or Decline)
   const [confirm, setConfirm] = useState<ConfirmState>(null);
 
-  // react to request to open "pending" (from the header bell)
+  // Refs for focusing the status buttons when opened via event
+  const allBtnRef = useRef<HTMLButtonElement | null>(null);
+  const pendingBtnRef = useRef<HTMLButtonElement | null>(null);
+  const approvedBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Listen for programmatic open: set status and focus corresponding button
   useEffect(() => {
-    const onOpenUsers = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as
-        | { status?: "pending" | "approved" | "all" }
-        | undefined;
-      if (detail?.status) setStatus(detail.status);
+    const onOpen = (e: Event) => {
+      const { status } = (e as CustomEvent<{ status?: Status }>).detail || {};
+      if (status === "pending" || status === "approved" || status === "all") {
+        setStatus(status);
+        // focus the relevant button on the next frame
+        requestAnimationFrame(() => {
+          const target =
+            status === "pending"
+              ? pendingBtnRef.current
+              : status === "approved"
+                ? approvedBtnRef.current
+                : allBtnRef.current;
+          target?.focus();
+        });
+        // If you want to immediately reload here instead of waiting for the normal effect, you could call: void load();
+      }
     };
-    window.addEventListener(
-      "seedlings3:open-users",
-      onOpenUsers as EventListener
-    );
+    window.addEventListener("seedlings3:open-users", onOpen as EventListener);
     return () =>
       window.removeEventListener(
         "seedlings3:open-users",
-        onOpenUsers as EventListener
+        onOpen as EventListener
       );
   }, []);
 
@@ -171,12 +175,12 @@ export default function AdminUsers() {
       setHoldingsByUser(map);
 
       // clear any stale inline warnings + confirm bar after refresh
-      setInlineErr({});
+      setInlineMsg(null);
       setConfirm(null);
     } catch (err) {
-      toaster.error({
-        title: "Failed to load users",
-        description: getErrorMessage(err),
+      setInlineMsg({
+        msg: "Failed to load users: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
       });
     } finally {
       setLoading(false);
@@ -201,15 +205,18 @@ export default function AdminUsers() {
   async function approve(userId: string) {
     try {
       await apiPost(`/api/admin/users/${userId}/approve`);
-      toaster.success({ title: "User approved" });
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
       await load();
+      setInlineMsg({
+        msg: "User approved",
+        type: InlineMessageType.SUCCESS,
+      });
     } catch (err) {
-      toaster.error({
-        title: "Approve failed",
-        description: getErrorMessage(err),
+      setInlineMsg({
+        msg: "Approve failed: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
       });
     }
   }
@@ -224,18 +231,15 @@ export default function AdminUsers() {
           });
         } catch {}
       }
-      toaster.success({ title: `Added ${role}` });
-      // clear any warning for this user (role changed)
-      setInlineErr((m) => {
-        const n = { ...m };
-        delete n[userId];
-        return n;
-      });
       await load();
+      setInlineMsg({
+        msg: `Added ${role}`,
+        type: InlineMessageType.SUCCESS,
+      });
     } catch (err) {
-      toaster.error({
-        title: "Add role failed",
-        description: getErrorMessage(err),
+      setInlineMsg({
+        msg: "Add role failed: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
       });
     }
   }
@@ -243,14 +247,11 @@ export default function AdminUsers() {
   async function removeRole(userId: string, role: Role) {
     try {
       await apiDelete(`/api/admin/users/${userId}/roles/${role}`);
-      toaster.success({ title: `Removed ${role}` });
-      // clear any warning for this user on success
-      setInlineErr((m) => {
-        const n = { ...m };
-        delete n[userId];
-        return n;
-      });
       await load();
+      setInlineMsg({
+        msg: `Removed ${role}`,
+        type: InlineMessageType.SUCCESS,
+      });
     } catch (err: any) {
       // Detect a 409 regardless of fetch wrapper
       const status =
@@ -264,9 +265,10 @@ export default function AdminUsers() {
           ? "This user currently has reserved/checked-out equipment. Release all items before removing the Worker role."
           : getErrorMessage(err);
 
-      setInlineErr((prev) => ({ ...prev, [userId]: msg }));
-      // also toast (useful if the row is out of view)
-      toaster.error({ title: "Remove role failed", description: msg });
+      setInlineMsg({
+        msg: "Remove role failed: " + msg,
+        type: InlineMessageType.ERROR,
+      });
     }
   }
 
@@ -274,27 +276,30 @@ export default function AdminUsers() {
   async function deleteUser(userId: string) {
     try {
       await apiDelete(`/api/admin/users/${userId}`);
-      toaster.success({ title: "User removed" });
+      try {
+        window.dispatchEvent(new Event("seedlings3:users-changed"));
+      } catch {}
+      await load();
+      setInlineMsg({
+        msg: `User removed`,
+        type: InlineMessageType.SUCCESS,
+      });
       await load();
     } catch (err) {
-      const msg = getErrorMessage(err);
-      setInlineErr((prev) => ({ ...prev, [userId]: msg }));
-      toaster.error({ title: "Remove failed", description: msg });
+      setInlineMsg({
+        msg: "Remove failed: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     }
   }
-
-  const dismissInline = (userId: string) =>
-    setInlineErr((m) => {
-      const n = { ...m };
-      delete n[userId];
-      return n;
-    });
 
   return (
     <Box w="full">
       <Heading size="md" mb={4}>
         Users & Access
       </Heading>
+
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {/* Filters */}
       <Stack gap="3" mb={4}>
@@ -305,6 +310,7 @@ export default function AdminUsers() {
             </Text>
             <HStack gap="1">
               <Button
+                ref={allBtnRef}
                 size="sm"
                 variant={status === "all" ? "solid" : "outline"}
                 onClick={() => setStatus("all")}
@@ -312,6 +318,7 @@ export default function AdminUsers() {
                 All
               </Button>
               <Button
+                ref={pendingBtnRef}
                 size="sm"
                 variant={status === "pending" ? "solid" : "outline"}
                 onClick={() => setStatus("pending")}
@@ -319,6 +326,7 @@ export default function AdminUsers() {
                 Pending
               </Button>
               <Button
+                ref={approvedBtnRef}
                 size="sm"
                 variant={status === "approved" ? "solid" : "outline"}
                 onClick={() => setStatus("approved")}
@@ -356,6 +364,7 @@ export default function AdminUsers() {
               </Button>
             </HStack>
           </HStack>
+
           <SearchWithClear
             value={q}
             onChange={setQ}
@@ -388,7 +397,6 @@ export default function AdminUsers() {
           const isConfirming = confirm?.userId === u.id;
           const confirmKind = confirm?.kind;
 
-          // Copy per confirm kind
           const confirmCopy =
             confirmKind === "decline"
               ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
@@ -444,31 +452,6 @@ export default function AdminUsers() {
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                     {isSuper && <Badge colorPalette="yellow">Super</Badge>}
                   </HStack>
-
-                  {inlineErr[u.id] && (
-                    <HStack
-                      mt={3}
-                      align="start"
-                      p={3}
-                      borderRadius="md"
-                      borderWidth="1px"
-                      borderColor="orange.300"
-                      bg="orange.50"
-                    >
-                      <Box flex="1">
-                        <Text fontSize="sm" color="orange.900">
-                          {inlineErr[u.id]}
-                        </Text>
-                      </Box>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => dismissInline(u.id)}
-                      >
-                        Dismiss
-                      </Button>
-                    </HStack>
-                  )}
                 </Box>
 
                 {/* RIGHT: actions */}
@@ -590,9 +573,7 @@ export default function AdminUsers() {
                     flex="1 1 auto"
                     minW="220px"
                   >
-                    {confirmKind === "decline"
-                      ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
-                      : "Delete this user? This removes their account and Clerk entry. This action cannot be undone."}
+                    {confirmCopy}
                   </Text>
                   <HStack gap="2">
                     <Button
@@ -607,9 +588,7 @@ export default function AdminUsers() {
                       colorPalette="red"
                       onClick={() => deleteUser(u.id)}
                     >
-                      {confirmKind === "decline"
-                        ? "Confirm decline"
-                        : "Confirm delete"}
+                      {confirmCTA}
                     </Button>
                   </HStack>
                 </HStack>
