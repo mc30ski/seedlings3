@@ -7,14 +7,15 @@ import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
 
 import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
-import WorkerJobs from "@/src/ui/tabs/WorkerJobs";
 
 import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
 import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import AdminActivity from "@/src/ui/tabs/AdminActivity";
 import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
 
+import Jobs from "@/src/ui/tabs/Jobs";
 import Clients from "@/src/ui/tabs/Clients";
+import Properties from "@/src/ui/tabs/Properties";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -29,6 +30,7 @@ import {
   FiUser,
   FiUsers,
   FiFileText,
+  FiMapPin,
 } from "react-icons/fi";
 
 import ScrollableUnderlineTabs, {
@@ -86,7 +88,7 @@ export default function HomePage() {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
-      content: <WorkerJobs />,
+      content: <Jobs />,
     },
     { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
   ];
@@ -109,6 +111,19 @@ export default function HomePage() {
       label: "Activity",
       icon: FiMap,
       content: <AdminActivity />,
+    },
+    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: <Properties />,
+    },
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: <Jobs />,
     },
     {
       value: "audit",
