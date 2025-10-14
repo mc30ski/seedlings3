@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
   Heading,
@@ -43,6 +43,8 @@ export default function AdminEquipment() {
     type: InlineMessageType;
   } | null>(null);
 
+  const inputRef = useRef<HTMLInputElement>(null);
+
   // create form state
   const [creating, setCreating] = useState(false);
   const [newShort, setNewShort] = useState("");
@@ -83,17 +85,20 @@ export default function AdminEquipment() {
   }, [load]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const once = window.sessionStorage.getItem("admin:equipmentSearchOnce");
-    if (!once) return;
-
-    window.sessionStorage.removeItem("admin:equipmentSearchOnce");
-    setSearch(once);
-
-    requestAnimationFrame(() => {
-      document.getElementById("equipment-search")?.focus();
-    });
+    const onRun = (ev: Event) => {
+      const { q } = (ev as CustomEvent<{ q?: string }>).detail || {};
+      if (typeof q === "string") {
+        setSearch(q);
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        });
+        // optionally: runSearch(q)
+      }
+    };
+    window.addEventListener("equipmentSearch:run", onRun as EventListener);
+    return () =>
+      window.removeEventListener("equipmentSearch:run", onRun as EventListener);
   }, []);
 
   function clearForm() {
@@ -293,6 +298,7 @@ export default function AdminEquipment() {
         </Box>
         <Box display="flex" flexWrap="wrap" gap="6px">
           <SearchWithClear
+            ref={inputRef}
             value={search}
             onChange={setSearch}
             inputId="equipment-search"

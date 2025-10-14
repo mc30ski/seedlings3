@@ -28,6 +28,7 @@ import {
   FiTool,
   FiUser,
   FiUsers,
+  FiFileText,
 } from "react-icons/fi";
 
 import ScrollableUnderlineTabs, {
@@ -42,6 +43,37 @@ export default function HomePage() {
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
+
+  const isAdmin = hasRole(me?.roles, "ADMIN");
+  const isWorker = hasRole(me?.roles, "WORKER");
+  const hasAnyRole = (me?.roles?.length ?? 0) > 0;
+
+  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
+
+  type AdminTabs = "equipment" | "users" | "activity" | "clients" | "audit";
+  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
+
+  const loadMe = useCallback(async () => {
+    setMeLoading(true);
+    try {
+      const data = await apiGet<Me>("/api/me");
+      setMe(data);
+    } catch {
+      setMe(null);
+    } finally {
+      setMeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMe();
+  }, [loadMe]);
+
+  useEffect(() => {
+    if (topTab === "admin" && !isAdmin)
+      setTopTab(isWorker ? "worker" : "worker");
+    if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
+  }, [isAdmin, isWorker, topTab]);
 
   const workerTabs: TabItem[] = [
     {
@@ -81,37 +113,7 @@ export default function HomePage() {
     {
       value: "audit",
       label: "Audit",
-      icon: FiTool,
-      content: <AdminAuditLog />,
-    },
-    {
-      value: "audit0",
-      label: "Audit",
-      icon: FiTool,
-      content: <AdminAuditLog />,
-    },
-    {
-      value: "audit1",
-      label: "Audit",
-      icon: FiTool,
-      content: <AdminAuditLog />,
-    },
-    {
-      value: "audit2",
-      label: "Audit",
-      icon: FiTool,
-      content: <AdminAuditLog />,
-    },
-    {
-      value: "audit3",
-      label: "Audit",
-      icon: FiTool,
-      content: <AdminAuditLog />,
-    },
-    {
-      value: "audit4",
-      label: "Audit",
-      icon: FiTool,
+      icon: FiFileText,
       content: <AdminAuditLog />,
     },
   ];
@@ -140,7 +142,8 @@ export default function HomePage() {
       content: (
         <ScrollableUnderlineTabs
           tabs={adminTabs}
-          defaultValue="clients"
+          value={adminInnerTab}
+          onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={2}
@@ -149,51 +152,15 @@ export default function HomePage() {
     },
   ];
 
-  const loadMe = useCallback(async () => {
-    setMeLoading(true);
-    try {
-      const data = await apiGet<Me>("/api/me");
-      setMe(data);
-    } catch {
-      setMe(null);
-    } finally {
-      setMeLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadMe();
-  }, [loadMe]);
-
-  const isAdmin = hasRole(me?.roles, "ADMIN");
-  const isWorker = hasRole(me?.roles, "WORKER");
-  const hasAnyRole = (me?.roles?.length ?? 0) > 0;
-
-  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
-  useEffect(() => {
-    if (topTab === "admin" && !isAdmin)
-      setTopTab(isWorker ? "worker" : "worker");
-    if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
-  }, [isAdmin, isWorker, topTab]);
-
-  type AdminTabs = "equipment" | "users" | "activity" | "clients" | "audit";
-  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
-
-  useEffect(() => {
-    // guard: only run in the browser
     if (typeof window === "undefined") return;
-
-    function onOpenEquipmentSearch(e: Event) {
+    const onOpenEquipmentSearch = (e: Event) => {
       const { q } = (e as CustomEvent).detail || {};
       if (!q) return;
-
       setTopTab("admin");
       setAdminInnerTab("equipment");
-
-      // one-shot handoff; no import needed, it's window.sessionStorage
       window.sessionStorage.setItem("admin:equipmentSearchOnce", String(q));
-    }
-
+    };
     window.addEventListener(
       "admin:openEquipmentSearch",
       onOpenEquipmentSearch as EventListener
@@ -205,40 +172,19 @@ export default function HomePage() {
       );
   }, []);
 
-  const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!router.isReady || !isAdmin) return;
-
-    const qAdminTab = String(router.query.adminTab || "");
-    const qStatusRaw = String(router.query.status || "");
-    if (!qAdminTab) return;
-
-    const key = `${qAdminTab}|${qStatusRaw}`;
-    if (appliedKeyRef.current === key) return;
-
-    if (qAdminTab.toLowerCase() === "users") {
-      appliedKeyRef.current = key;
-      setTopTab("admin");
-      setAdminInnerTab("users");
-
-      const status =
-        qStatusRaw === "pending" ||
-        qStatusRaw === "approved" ||
-        qStatusRaw === "all"
-          ? (qStatusRaw as "pending" | "approved" | "all")
-          : undefined;
-
-      requestAnimationFrame(() => {
-        try {
-          window.dispatchEvent(
-            new CustomEvent("seedlings3:open-users", {
-              detail: status ? { status } : undefined,
-            })
-          );
-        } catch {}
-      });
-    }
-  }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
+    if (typeof window === "undefined") return;
+    if (topTab !== "admin" || adminInnerTab !== "equipment") return;
+    const key = "admin:equipmentSearchOnce";
+    const q = window.sessionStorage.getItem(key);
+    if (!q) return;
+    requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent("equipmentSearch:run", { detail: { q } })
+      );
+      window.sessionStorage.removeItem(key);
+    });
+  }, [topTab, adminInnerTab]);
 
   const BRAND_ICON_H = 26; // px
 
@@ -327,7 +273,6 @@ export default function HomePage() {
   return (
     <Container maxW="5xl" py={8}>
       <AppSplash show={meLoading} />
-
       <Box
         as="header"
         bg="green.50"
@@ -421,14 +366,16 @@ export default function HomePage() {
       </Box>
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
-
-      <ScrollableUnderlineTabs
-        tabs={outerTabs}
-        defaultValue="worker"
-        edgeMode="overlay"
-        edgeSize={16}
-        headerPaddingY={2}
-      />
+      {me?.isApproved && hasAnyRole && (
+        <ScrollableUnderlineTabs
+          tabs={outerTabs}
+          value={topTab}
+          onValueChange={(v) => setTopTab(v as typeof topTab)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
+        />
+      )}
     </Container>
   );
 }
