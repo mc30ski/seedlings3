@@ -12,7 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { useState, useRef } from "react";
 import { apiPost, apiDelete } from "../../lib/api";
-import { Role, Equipment, InlineMessageType } from "../../lib/types";
+import { Role, Equipment } from "../../lib/types";
 import {
   errorMessage,
   notifyEquipmentUpdated,
@@ -21,6 +21,7 @@ import {
   equipmentStatusColor,
 } from "../../lib/lib";
 import QRScannerDialog from "./QRScannerDialog";
+import { InlineMessageType } from "../helpers/InlineMessage";
 
 type EquipmentTileListProps = {
   item: Equipment;
