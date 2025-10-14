@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box, Portal } from "@chakra-ui/react";
 import { keyframes } from "@emotion/react";
 
 const dropIn = keyframes`
@@ -64,33 +64,35 @@ export default function AppSplash({
   if (!shouldRender) return null;
 
   return (
-    <Box
-      position="fixed"
-      inset="0"
-      bg="white"
-      zIndex={2000}
-      display="grid"
-      placeItems="center"
-      pointerEvents="none"
-      animation={fading ? `${fadeOut} ${fadeMs}ms ease forwards` : undefined}
-    >
+    <Portal>
       <Box
-        w="96px"
-        h="96px"
-        borderRadius="24px"
-        boxShadow="0 8px 32px rgba(0,0,0,0.12)"
+        position="fixed"
+        inset="0"
+        bg="white"
+        zIndex={20000}
         display="grid"
         placeItems="center"
-        animation={`${dropIn} 520ms cubic-bezier(.17,.84,.44,1) both`}
+        pointerEvents="none"
+        animation={fading ? `${fadeOut} ${fadeMs}ms ease forwards` : undefined}
       >
-        <img
-          src="/seedlings-icon.png"
-          alt="Seedlings"
-          width={84}
-          height={84}
-          style={{ borderRadius: 20 }}
-        />
+        <Box
+          w="96px"
+          h="96px"
+          borderRadius="24px"
+          boxShadow="0 8px 32px rgba(0,0,0,0.12)"
+          display="grid"
+          placeItems="center"
+          animation={`${dropIn} 520ms cubic-bezier(.17,.84,.44,1) both`}
+        >
+          <img
+            src="/seedlings-icon.png"
+            alt="Seedlings"
+            width={84}
+            height={84}
+            style={{ borderRadius: 20 }}
+          />
+        </Box>
       </Box>
-    </Box>
+    </Portal>
   );
 }

@@ -133,3 +133,202 @@ model AuditEvent {
   @@index([verb, createdAt])
   @@index([scope, verb, createdAt])
 }
+
+enum ClientType {
+  INDIVIDUAL
+  HOUSEHOLD
+  ORGANIZATION
+  COMMUNITY
+}
+
+enum ClientStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum PropertyKind {
+  SINGLE
+  AGGREGATE_SITE
+}
+
+enum ContactRole {
+  PRIMARY
+  SPOUSE
+  COMMUNITY_MANAGER
+  PROPERTY_MANAGER
+}
+
+// ----- Post-MVP (uncomment when you add worker submissions/approvals) -----
+// enum ReviewStatus {
+//   PENDING
+//   APPROVED
+//   REJECTED
+// }
+// enum PropertyStatus {
+//   PENDING
+//   ACTIVE
+//   ARCHIVED
+// }
+// enum JobScope {
+//   ENTIRE_SITE
+//   SINGLE_ADDRESS
+// }
+
+model Client {
+  id            String       @id @default(cuid())
+  type          ClientType
+  displayName   String
+
+  status        ClientStatus @default(ACTIVE)
+
+  // MVP: Admin-only creation; approvals removed.
+  // ----- Post-MVP approvals (uncomment to re-enable) -----
+  // reviewStatus         ReviewStatus?
+  // reviewReason         String?
+  // createdByUserId      String?       // who created (worker/admin user id)
+  // lastReviewedByUserId String?
+  // lastReviewedAt       DateTime?
+
+  // Lightweight meta
+  notesInternal String?
+  tags          Json?
+
+  // Relations
+  contacts      ClientContact[]
+  properties    Property[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  archivedAt    DateTime?
+
+  @@index([status])
+  @@index([displayName])
+}
+
+model ClientContact {
+  id               String      @id @default(cuid())
+
+  // Belongs to Client
+  clientId         String
+  client           Client      @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Identity
+  firstName        String
+  lastName         String
+  email            String?
+  phone            String?                 // raw as entered
+  normalizedPhone  String?     @db.VarChar(20) // E.164 for dedupe/lookup
+
+  role             ContactRole?
+  isPrimary        Boolean     @default(false)
+  contactPriority  Int         @default(100)   // lower => contact first
+  active           Boolean     @default(true)
+
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  propertiesAsPOC  Property[]  @relation("PropertyPOC")
+
+  // Backref from Property.pointOfContactId targets this model
+
+  @@index([clientId, active])
+  // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
+  @@unique([email])
+  @@unique([normalizedPhone])
+}
+
+model Property {
+  id                 String         @id @default(cuid())
+
+  // Belongs to Client
+  clientId           String
+  client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  kind               PropertyKind   @default(SINGLE)
+
+  // Labels & addressing
+  label              String
+  line1              String
+  line2              String?
+  city               String
+  state              String
+  postalCode         String
+  country            String
+
+  // Optional geo
+  lat                Float?
+  lng                Float?
+
+  // Aggregate-site (community) fields (optional)
+  unitLabel          String?        // e.g., "home", "lot", "unit"
+  unitCount          Int?
+  siteName           String?
+  siteBoundaryGeo    Json?          // polygon/bbox later if needed
+
+  // Default point of contact for this property
+  pointOfContactId   String?
+  pointOfContact     ClientContact? @relation("PropertyPOC", fields: [pointOfContactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // Light ops
+  accessNotes        String?
+  photos             Json?
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  // ----- Post-MVP property-level approvals (optional) -----
+  // status           PropertyStatus @default(PENDING)
+
+  @@index([clientId])
+  @@index([kind])
+}
+
+// ----- Post-MVP: per-unit granularity inside aggregate-site Properties -----
+// model PropertyUnit {
+//   id            String   @id @default(cuid())
+//   propertyId    String
+//   property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+//   label         String   // or unitNumber
+//   entranceNotes String?
+//   gateCode      String?
+//   active        Boolean  @default(true)
+//   createdAt     DateTime @default(now())
+//   updatedAt     DateTime @updatedAt
+//   @@index([propertyId, active])
+// }
+
+// ----- Post-MVP: Jobs & related joins (designed to drop in later) -----
+// model Job {
+//   id          String    @id @default(cuid())
+//   propertyId  String
+//   property    Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+//   scope       JobScope? // ENTIRE_SITE | SINGLE_ADDRESS (optional)
+//   // add scheduling, pricing, status fields as needed
+//   createdAt   DateTime  @default(now())
+//   updatedAt   DateTime  @updatedAt
+//   contacts    JobContact[]
+//   clients     JobClient[]
+// }
+// model JobContact {
+//   id              String         @id @default(cuid())
+//   jobId           String
+//   job             Job            @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+//   clientContactId String
+//   clientContact   ClientContact  @relation(fields: [clientContactId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+//   role            String         // e.g., "decision_maker" | "on_site" | "notify_only"
+//   notify          Boolean        @default(true)
+//   @@index([jobId])
+//   @@index([clientContactId])
+// }
+// model JobClient {
+//   id        String   @id @default(cuid())
+//   jobId     String
+//   job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+//   clientId  String
+//   client    Client   @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+//   role      String   // e.g., "owner" | "payer" | "point_of_contact"
+//   share     Float?   // optional split % if you ever need it
+//   @@index([jobId])
+//   @@index([clientId])
+// }

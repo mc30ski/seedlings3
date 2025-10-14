@@ -1,10 +1,8 @@
-import StatusPanel from "../helpers/StatusPanel";
+import ComingSoonNotice from "../notices/ComingSoonNotice";
 
-export default function ClientsComingSoonNotice() {
+export default function Clients() {
   return (
-    <StatusPanel
-      badge="Coming soon"
-      tone="gray"
+    <ComingSoonNotice
       title="Clients"
       description="We’re building this soon. You’ll be able to view client info and manage client interactions here."
     />

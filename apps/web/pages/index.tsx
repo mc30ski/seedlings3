@@ -1,25 +1,41 @@
 "use client";
-import { useEffect, useState, useCallback, useRef } from "react";
-import { Box, Container, Text, Spinner, Tabs, HStack } from "@chakra-ui/react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Box, Container, HStack } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
 
 import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
-import WorkerJobs from "@/src/ui/tabs/WorkerJobs";
-import WorkerClients from "@/src/ui/tabs/WorkerClients";
 
 import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
 import AdminUsers from "@/src/ui/tabs/AdminUsers";
 import AdminActivity from "@/src/ui/tabs/AdminActivity";
 import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
 
+import Jobs from "@/src/ui/tabs/Jobs";
+import Clients from "@/src/ui/tabs/Clients";
+import Properties from "@/src/ui/tabs/Properties";
+
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import { Me, Role } from "@/src/lib/types";
+import {
+  FiBriefcase,
+  FiMap,
+  FiSettings,
+  FiTool,
+  FiUser,
+  FiUsers,
+  FiFileText,
+  FiMapPin,
+} from "react-icons/fi";
+
+import ScrollableUnderlineTabs, {
+  TabItem,
+} from "../src/ui/components/ScrollableUnderlineTabs";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
@@ -29,6 +45,15 @@ export default function HomePage() {
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
+
+  const isAdmin = hasRole(me?.roles, "ADMIN");
+  const isWorker = hasRole(me?.roles, "WORKER");
+  const hasAnyRole = (me?.roles?.length ?? 0) > 0;
+
+  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
+
+  type AdminTabs = "equipment" | "users" | "activity" | "clients" | "audit";
+  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -46,36 +71,113 @@ export default function HomePage() {
     void loadMe();
   }, [loadMe]);
 
-  const isAdmin = hasRole(me?.roles, "ADMIN");
-  const isWorker = hasRole(me?.roles, "WORKER");
-  const hasAnyRole = (me?.roles?.length ?? 0) > 0;
-
-  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
   useEffect(() => {
     if (topTab === "admin" && !isAdmin)
       setTopTab(isWorker ? "worker" : "worker");
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
-  const [adminInnerTab, setAdminInnerTab] = useState<
-    "equipment" | "users" | "activity" | "audit"
-  >("equipment");
+  const workerTabs: TabItem[] = [
+    {
+      value: "equipment",
+      label: "Equipment",
+      icon: FiTool,
+      content: <WorkerEquipment />,
+    },
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: <Jobs />,
+    },
+    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+  ];
+
+  const adminTabs: TabItem[] = [
+    {
+      value: "equipment",
+      label: "Equipment",
+      icon: FiTool,
+      content: <AdminEquipment />,
+    },
+    {
+      value: "users",
+      label: "Users",
+      icon: FiUsers,
+      content: <AdminUsers />,
+    },
+    {
+      value: "activity",
+      label: "Activity",
+      icon: FiMap,
+      content: <AdminActivity />,
+    },
+    { value: "clients", label: "Clients", icon: FiUser, content: <Clients /> },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: <Properties />,
+    },
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: <Jobs />,
+    },
+    {
+      value: "audit",
+      label: "Audit",
+      icon: FiFileText,
+      content: <AdminAuditLog />,
+    },
+  ];
+
+  const outerTabs: TabItem[] = [
+    {
+      value: "worker",
+      label: "Worker",
+      icon: FiUser,
+      visible: true,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={workerTabs}
+          defaultValue="equipment"
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
+          unmountOnExit
+        />
+      ),
+    },
+    {
+      value: "admin",
+      label: "Admin",
+      icon: FiSettings,
+      visible: () => isAdmin,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={adminTabs}
+          value={adminInnerTab}
+          onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
+          unmountOnExit
+        />
+      ),
+    },
+  ];
 
   useEffect(() => {
-    // guard: only run in the browser
     if (typeof window === "undefined") return;
-
-    function onOpenEquipmentSearch(e: Event) {
+    const onOpenEquipmentSearch = (e: Event) => {
       const { q } = (e as CustomEvent).detail || {};
       if (!q) return;
-
       setTopTab("admin");
       setAdminInnerTab("equipment");
-
-      // one-shot handoff; no import needed, it's window.sessionStorage
       window.sessionStorage.setItem("admin:equipmentSearchOnce", String(q));
-    }
-
+    };
     window.addEventListener(
       "admin:openEquipmentSearch",
       onOpenEquipmentSearch as EventListener
@@ -87,40 +189,41 @@ export default function HomePage() {
       );
   }, []);
 
-  const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!router.isReady || !isAdmin) return;
+    if (typeof window === "undefined") return;
+    if (topTab !== "admin" || adminInnerTab !== "equipment") return;
+    const key = "admin:equipmentSearchOnce";
+    const q = window.sessionStorage.getItem(key);
+    if (!q) return;
+    requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent("equipmentSearch:run", { detail: { q } })
+      );
+      window.sessionStorage.removeItem(key);
+    });
+  }, [topTab, adminInnerTab]);
 
-    const qAdminTab = String(router.query.adminTab || "");
-    const qStatusRaw = String(router.query.status || "");
-    if (!qAdminTab) return;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (topTab !== "admin" || adminInnerTab !== "users") return;
 
-    const key = `${qAdminTab}|${qStatusRaw}`;
-    if (appliedKeyRef.current === key) return;
+    const key = "admin:usersOpenOnce";
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return;
 
-    if (qAdminTab.toLowerCase() === "users") {
-      appliedKeyRef.current = key;
-      setTopTab("admin");
-      setAdminInnerTab("users");
-
-      const status =
-        qStatusRaw === "pending" ||
-        qStatusRaw === "approved" ||
-        qStatusRaw === "all"
-          ? (qStatusRaw as "pending" | "approved" | "all")
-          : undefined;
-
-      requestAnimationFrame(() => {
-        try {
-          window.dispatchEvent(
-            new CustomEvent("seedlings3:open-users", {
-              detail: status ? { status } : undefined,
-            })
-          );
-        } catch {}
-      });
-    }
-  }, [router.isReady, router.query.adminTab, router.query.status, isAdmin]);
+    requestAnimationFrame(() => {
+      try {
+        const detail = JSON.parse(raw) as {
+          status: "pending" | "approved" | "all";
+        };
+        window.dispatchEvent(
+          new CustomEvent("seedlings3:open-users", { detail })
+        );
+      } finally {
+        window.sessionStorage.removeItem(key);
+      }
+    });
+  }, [topTab, adminInnerTab]);
 
   const BRAND_ICON_H = 26; // px
 
@@ -183,6 +286,35 @@ export default function HomePage() {
   }, [loadPending]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onOpenUsers = (e: Event) => {
+      const { status } =
+        (e as CustomEvent<{ status?: "pending" | "approved" | "all" }>)
+          .detail || {};
+      // optional: validate
+      const ok =
+        status === "pending" || status === "approved" || status === "all";
+      if (!ok) return;
+
+      setTopTab("admin");
+      setAdminInnerTab("users");
+
+      window.sessionStorage.setItem(
+        "admin:usersOpenOnce",
+        JSON.stringify({ status })
+      );
+    };
+
+    window.addEventListener("admin:openUsers", onOpenUsers as EventListener);
+    return () =>
+      window.removeEventListener(
+        "admin:openUsers",
+        onOpenUsers as EventListener
+      );
+  }, []);
+
+  useEffect(() => {
     const onUsersChanged = () => void loadPending();
     window.addEventListener("seedlings3:users-changed", onUsersChanged);
     return () =>
@@ -190,26 +322,16 @@ export default function HomePage() {
   }, [loadPending]);
 
   const goToApprovals = useCallback(() => {
-    setTopTab("admin");
-    setAdminInnerTab("users");
-    router.push(
-      { pathname: "/", query: { adminTab: "users", status: "pending" } },
-      undefined,
-      { shallow: true }
+    window.dispatchEvent(
+      new CustomEvent("admin:openUsers", {
+        detail: { status: "pending" as const },
+      })
     );
-    try {
-      window.dispatchEvent(
-        new CustomEvent("seedlings3:open-users", {
-          detail: { status: "pending" },
-        })
-      );
-    } catch {}
-  }, [router]);
+  }, []);
 
   return (
     <Container maxW="5xl" py={8}>
       <AppSplash show={meLoading} />
-
       <Box
         as="header"
         bg="green.50"
@@ -301,78 +423,18 @@ export default function HomePage() {
           </HStack>
         </Box>
       </Box>
-
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
-
       {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
-
-      {!meLoading && me?.isApproved && hasAnyRole && (
-        <Tabs.Root
+      {me?.isApproved && hasAnyRole && (
+        <ScrollableUnderlineTabs
+          tabs={outerTabs}
           value={topTab}
-          onValueChange={(d) => setTopTab(d.value as "worker" | "admin")}
-          lazyMount
+          onValueChange={(v) => setTopTab(v as typeof topTab)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={2}
           unmountOnExit
-        >
-          <Tabs.List mb={4}>
-            {isWorker && <Tabs.Trigger value="worker">Worker</Tabs.Trigger>}
-            {isAdmin && <Tabs.Trigger value="admin">Admin</Tabs.Trigger>}
-          </Tabs.List>
-
-          {isWorker && (
-            <Tabs.Content value="worker">
-              <Tabs.Root defaultValue="equipment" lazyMount unmountOnExit>
-                <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="jobs">Jobs</Tabs.Trigger>
-                  <Tabs.Trigger value="clients">Clients</Tabs.Trigger>
-                </Tabs.List>
-                <Tabs.Content value="equipment">
-                  <WorkerEquipment />
-                </Tabs.Content>
-                <Tabs.Content value="jobs">
-                  <WorkerJobs />
-                </Tabs.Content>
-                <Tabs.Content value="clients">
-                  <WorkerClients />
-                </Tabs.Content>
-              </Tabs.Root>
-            </Tabs.Content>
-          )}
-
-          {isAdmin && (
-            <Tabs.Content value="admin">
-              <Tabs.Root
-                value={adminInnerTab}
-                onValueChange={(d) =>
-                  setAdminInnerTab(
-                    d.value as "equipment" | "users" | "activity" | "audit"
-                  )
-                }
-                lazyMount
-                unmountOnExit
-              >
-                <Tabs.List mb={4}>
-                  <Tabs.Trigger value="equipment">Equipment</Tabs.Trigger>
-                  <Tabs.Trigger value="users">Users</Tabs.Trigger>
-                  <Tabs.Trigger value="activity">Activity</Tabs.Trigger>
-                  <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
-                </Tabs.List>
-                <Tabs.Content value="equipment">
-                  <AdminEquipment />
-                </Tabs.Content>
-                <Tabs.Content value="users">
-                  <AdminUsers />
-                </Tabs.Content>
-                <Tabs.Content value="activity">
-                  <AdminActivity />
-                </Tabs.Content>
-                <Tabs.Content value="audit">
-                  <AdminAuditLog />
-                </Tabs.Content>
-              </Tabs.Root>
-            </Tabs.Content>
-          )}
-        </Tabs.Root>
+        />
       )}
     </Container>
   );

@@ -7,13 +7,15 @@ import {
   Stack,
   Badge,
   Text,
-  Spinner,
   Accordion,
 } from "@chakra-ui/react";
 import { apiGet } from "../../lib/api";
 import { equipmentStatusColor, prettyStatus, prettyDate } from "../../lib/lib";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
+import { getErrorMessage } from "../../lib/errors";
 import SearchWithClear from "../components/SearchWithClear";
+import LoadingCenter from "../helpers/LoadingCenter";
+import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
 
 type ActivityEvent = {
   id: string;
@@ -82,12 +84,22 @@ export default function AdminActivity() {
   const [rows, setRows] = useState<ActivityUser[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
 
+  const [inlineMsg, setInlineMsg] = useState<{
+    msg: string;
+    type: InlineMessageType;
+  } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await apiGet<ActivityUser[]>(`/api/admin/activity`);
       setRows(data);
       setExpanded([]);
+    } catch (err) {
+      setInlineMsg({
+        msg: "Failed to load activity: " + getErrorMessage(err),
+        type: InlineMessageType.ERROR,
+      });
     } finally {
       setLoading(false);
     }
@@ -134,6 +146,8 @@ export default function AdminActivity() {
         Activity by User (for last 30 days)
       </Heading>
 
+      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
+
       {/* Controls */}
       <HStack wrap="wrap" gap="6px" mb="3">
         <SearchWithClear
@@ -172,11 +186,7 @@ export default function AdminActivity() {
         </Text>
       </HStack>
 
-      {loading && (
-        <Box py="10" textAlign="center">
-          <Spinner size="lg" />
-        </Box>
-      )}
+      {loading && <LoadingCenter />}
       {!loading && rows.length === 0 && (
         <Text color="gray.600">No matching activity.</Text>
       )}

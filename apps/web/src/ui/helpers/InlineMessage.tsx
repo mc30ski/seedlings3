@@ -1,5 +1,11 @@
 import { HStack, Box, Text } from "@chakra-ui/react";
-import { InlineMessageType } from "../../lib/types";
+
+export enum InlineMessageType {
+  SUCCESS = "SUCCESS",
+  WARNING = "WARNING",
+  INFO = "INFO",
+  ERROR = "ERROR",
+}
 
 export default function InlineMessage({
   type,
