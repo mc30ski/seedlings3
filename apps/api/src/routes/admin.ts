@@ -16,9 +16,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     services.equipment.create(req.auth?.clerkUserId, req.body)
   );
 
-  //app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
-  //  services.equipment.update(req.params.id, req.body)
-  //);
+  app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
+    services.equipment.update(req.auth?.clerkUserId, req.params.id, req.body)
+  );
 
   app.post("/admin/equipment/:id/retire", adminGuard, async (req: any) =>
     services.equipment.retire(req.auth?.clerkUserId, req.params.id)

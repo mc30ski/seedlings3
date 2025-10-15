@@ -234,8 +234,7 @@ export const services: Services = {
       });
     },
 
-    /*
-    async update(id, patch) {
+    async update(clerkUserId, id, patch) {
       return prisma.$transaction(async (tx) => {
         const before = await tx.equipment.findUnique({ where: { id } });
         if (!before)
@@ -256,12 +255,16 @@ export const services: Services = {
 
         const updated = await tx.equipment.update({ where: { id }, data });
 
-        //await writeAUdit
+        await writeAudit(
+          tx,
+          AUDIT.EQUIPMENT.UPDATED,
+          (await services.currentUser.me(clerkUserId)).id,
+          { equipmentRecord: { ...updated } }
+        );
 
         return updated;
       });
     },
-    */
 
     async retire(clerkUserId, id) {
       return prisma.$transaction(async (tx) => {

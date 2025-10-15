@@ -82,8 +82,8 @@ export type Services = {
       }
     ): Promise<Equipment>;
 
-    /*
     update(
+      clerkUserId: string,
       id: string,
       patch: Partial<
         Pick<
@@ -102,7 +102,6 @@ export type Services = {
         >
       >
     ): Promise<Equipment>;
-    */
 
     // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
     retire(clerkUserId: string, id: string): Promise<Equipment>;
