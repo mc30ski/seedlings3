@@ -9,13 +9,17 @@ import {
   Text,
   Accordion,
 } from "@chakra-ui/react";
-import { apiGet } from "../../lib/api";
-import { equipmentStatusColor, prettyStatus, prettyDate } from "../../lib/lib";
+import { apiGet } from "@/src/lib/api";
+import { equipmentStatusColor, prettyStatus, prettyDate } from "@/src/lib/lib";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
-import { getErrorMessage } from "../../lib/errors";
-import SearchWithClear from "../components/SearchWithClear";
-import LoadingCenter from "../helpers/LoadingCenter";
-import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type ActivityEvent = {
   id: string;
@@ -78,16 +82,13 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   );
 }
 
-export default function AdminActivity() {
+export default function ActivityTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ActivityUser[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
-
-  const [inlineMsg, setInlineMsg] = useState<{
-    msg: string;
-    type: InlineMessageType;
-  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,9 +97,9 @@ export default function AdminActivity() {
       setRows(data);
       setExpanded([]);
     } catch (err) {
-      setInlineMsg({
-        msg: "Failed to load activity: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load activity", err),
       });
     } finally {
       setLoading(false);
@@ -145,8 +146,6 @@ export default function AdminActivity() {
       <Heading size="md" mb="3">
         Activity by User (for last 30 days)
       </Heading>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {/* Controls */}
       <HStack wrap="wrap" gap="6px" mb="3">

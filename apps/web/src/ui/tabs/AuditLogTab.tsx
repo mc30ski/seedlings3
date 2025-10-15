@@ -11,12 +11,16 @@ import {
   HStack,
   useBreakpointValue,
 } from "@chakra-ui/react";
-import { apiGet } from "../../lib/api";
-import { getErrorMessage } from "../../lib/errors";
-import { equipmentStatusColor } from "../../lib/lib";
-import SearchWithClear from "../components/SearchWithClear";
-import LoadingCenter from "../helpers/LoadingCenter";
-import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
+import { apiGet } from "@/src/lib/api";
+import { equipmentStatusColor } from "@/src/lib/lib";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type AuditItem = {
   id: string;
@@ -63,17 +67,14 @@ function Trunc({
   );
 }
 
-export default function AdminAuditLog() {
+export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [items, setItems] = useState<AuditItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
-
-  const [inlineMsg, setInlineMsg] = useState<{
-    msg: string;
-    type: InlineMessageType;
-  } | null>(null);
 
   // simple, Activity-style text search (client-side)
   const [q, setQ] = useState("");
@@ -134,9 +135,9 @@ export default function AdminAuditLog() {
       if (reset) setPage(1);
       if (pageOverride) setPage(pageOverride);
     } catch (err) {
-      setInlineMsg({
-        msg: "Failed to load audit log: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load audit log", err),
       });
     } finally {
       setLoading(false);
@@ -235,8 +236,6 @@ export default function AdminAuditLog() {
       <Heading size="md" mb={4}>
         Audit
       </Heading>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
 
       {/* Filters */}
       <Stack

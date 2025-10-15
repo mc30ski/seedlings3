@@ -151,7 +151,6 @@ export default function ScrollableUnderlineTabs({
       className={className}
     >
       <Box
-        borderBottom="1px solid"
         borderColor="gray.200"
         bg="white"
         position="relative"

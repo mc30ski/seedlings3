@@ -9,14 +9,18 @@ import {
   Text,
   Badge,
 } from "@chakra-ui/react";
-import { apiGet, apiPost, apiDelete } from "../../lib/api";
-import { prettyStatus, equipmentStatusColor } from "../../lib/lib";
-import { Role } from "../../lib/types";
-import { getErrorMessage } from "../../lib/errors";
+import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
+import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
+import { Role } from "@/src/lib/types";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
-import LoadingCenter from "../helpers/LoadingCenter";
-import SearchWithClear from "../components/SearchWithClear";
-import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type ApiUser = {
   id: string;
@@ -53,7 +57,9 @@ type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 // Status filter type for this page
 type Status = "all" | "pending" | "approved";
 
-export default function AdminUsers() {
+export default function UsersTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -64,12 +70,9 @@ export default function AdminUsers() {
   // simple filters
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Status>("all");
-  const [role, setRole] = useState<"all" | "worker" | "admin">("all");
-
-  const [inlineMsg, setInlineMsg] = useState<{
-    msg: string;
-    type: InlineMessageType;
-  } | null>(null);
+  const [accessRole, setAccessRole] = useState<"all" | "worker" | "admin">(
+    "all"
+  );
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
@@ -153,8 +156,8 @@ export default function AdminUsers() {
       const params = new URLSearchParams();
       if (status === "pending") params.set("approved", "false");
       if (status === "approved") params.set("approved", "true");
-      if (role === "worker") params.set("role", "WORKER");
-      if (role === "admin") params.set("role", "ADMIN");
+      if (accessRole === "worker") params.set("role", "WORKER");
+      if (accessRole === "admin") params.set("role", "ADMIN");
 
       // Load users + holdings together (holdings is a separate endpoint)
       const [users, holdings] = await Promise.all([
@@ -173,19 +176,16 @@ export default function AdminUsers() {
         map[h.userId].push(h);
       }
       setHoldingsByUser(map);
-
-      // clear any stale inline warnings + confirm bar after refresh
-      setInlineMsg(null);
       setConfirm(null);
     } catch (err) {
-      setInlineMsg({
-        msg: "Failed to load users: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load users", err),
       });
     } finally {
       setLoading(false);
     }
-  }, [status, role]);
+  }, [status, accessRole]);
 
   useEffect(() => {
     void load();
@@ -208,50 +208,50 @@ export default function AdminUsers() {
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
-      await load();
-      setInlineMsg({
-        msg: "User approved",
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "User approved",
       });
+      load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Approve failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Approve failed", err),
       });
     }
   }
 
-  async function addRole(userId: string, role: Role) {
+  async function addRole(userId: string, accessRole: Role) {
     try {
-      await apiPost(`/api/admin/users/${userId}/roles`, { role });
-      if (role === "ADMIN") {
+      await apiPost(`/api/admin/users/${userId}/roles`, { role: accessRole });
+      if (accessRole === "ADMIN") {
         try {
           await apiPost(`/api/admin/users/${userId}/roles`, {
             role: "WORKER",
           });
         } catch {}
       }
-      await load();
-      setInlineMsg({
-        msg: `Added ${role}`,
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Added ${accessRole}`,
       });
+      load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Add role failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Add role failed", err),
       });
     }
   }
 
-  async function removeRole(userId: string, role: Role) {
+  async function removeRole(userId: string, accessRole: Role) {
     try {
-      await apiDelete(`/api/admin/users/${userId}/roles/${role}`);
-      await load();
-      setInlineMsg({
-        msg: `Removed ${role}`,
-        type: InlineMessageType.SUCCESS,
+      await apiDelete(`/api/admin/users/${userId}/roles/${accessRole}`);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Removed ${accessRole}`,
       });
+      load();
     } catch (err: any) {
       // Detect a 409 regardless of fetch wrapper
       const status =
@@ -263,11 +263,11 @@ export default function AdminUsers() {
       const msg =
         status === 409
           ? "This user currently has reserved/checked-out equipment. Release all items before removing the Worker role."
-          : getErrorMessage(err);
+          : getErrorMessage("Remove role failed", err);
 
-      setInlineMsg({
-        msg: "Remove role failed: " + msg,
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: msg,
       });
     }
   }
@@ -279,16 +279,16 @@ export default function AdminUsers() {
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
-      await load();
-      setInlineMsg({
-        msg: `User removed`,
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `User removed`,
       });
+      load();
       await load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Remove failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Remove failed", err),
       });
     }
   }
@@ -298,9 +298,6 @@ export default function AdminUsers() {
       <Heading size="md" mb={4}>
         Users & Access
       </Heading>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
-
       {/* Filters */}
       <Stack gap="3" mb={4}>
         <HStack gap="3" wrap="wrap">
@@ -343,22 +340,22 @@ export default function AdminUsers() {
             <HStack gap="1">
               <Button
                 size="sm"
-                variant={role === "all" ? "solid" : "outline"}
-                onClick={() => setRole("all")}
+                variant={accessRole === "all" ? "solid" : "outline"}
+                onClick={() => setAccessRole("all")}
               >
                 All
               </Button>
               <Button
                 size="sm"
-                variant={role === "worker" ? "solid" : "outline"}
-                onClick={() => setRole("worker")}
+                variant={accessRole === "worker" ? "solid" : "outline"}
+                onClick={() => setAccessRole("worker")}
               >
                 Worker
               </Button>
               <Button
                 size="sm"
-                variant={role === "admin" ? "solid" : "outline"}
-                onClick={() => setRole("admin")}
+                variant={accessRole === "admin" ? "solid" : "outline"}
+                onClick={() => setAccessRole("admin")}
               >
                 Admin
               </Button>
@@ -373,14 +370,11 @@ export default function AdminUsers() {
           />
         </HStack>
       </Stack>
-
       {/* List */}
       {loading && <LoadingCenter />}
-
       {!loading && filtered.length === 0 && (
         <Text>No users match the current filters.</Text>
       )}
-
       {!loading &&
         filtered.map((u) => {
           const s = rolesSet(u);

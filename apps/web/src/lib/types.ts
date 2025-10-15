@@ -69,3 +69,5 @@ export type Me = {
   email?: string | null;
   displayName?: string | null;
 };
+
+export type TabRolePropType = { role: "worker" | "admin" };

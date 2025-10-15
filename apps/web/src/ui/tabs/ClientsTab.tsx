@@ -1,6 +1,7 @@
-import ComingSoonNotice from "../notices/ComingSoonNotice";
+import ComingSoonNotice from "@/src/ui/notices/ComingSoonNotice";
+import { TabRolePropType } from "@/src/lib/types";
 
-export default function Clients() {
+export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   return (
     <ComingSoonNotice
       title="Clients"
