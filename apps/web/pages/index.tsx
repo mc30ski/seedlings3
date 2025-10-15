@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { Box, Container, HStack } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
@@ -21,6 +21,8 @@ import Payments from "@/src/ui/tabs/Payments";
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
+
+import InlineMessage from "@/src/ui/components/InlineMessage";
 
 import { Me, Role } from "@/src/lib/types";
 import {
@@ -85,66 +87,80 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: <WorkerEquipment />,
+      content: addInlineMessage(<WorkerEquipment />),
     },
     {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
-      content: <Jobs />,
+      content: addInlineMessage(<Jobs />),
     },
     {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: <Payments />,
+      content: addInlineMessage(<Payments />),
     },
     { value: "clients", label: "Clients", icon: FiUsers, content: <Clients /> },
   ];
+
+  function addInlineMessage(tab: ReactNode) {
+    return (
+      <>
+        <InlineMessage />
+        {tab}
+      </>
+    );
+  }
 
   const adminTabs: TabItem[] = [
     {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: <AdminEquipment />,
+      content: addInlineMessage(<AdminEquipment />),
     },
     {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
-      content: <AdminUsers />,
+      content: addInlineMessage(<AdminUsers />),
     },
     {
       value: "activity",
       label: "Activity",
       icon: FiActivity,
-      content: <AdminActivity />,
+      content: addInlineMessage(<AdminActivity />),
     },
-    { value: "clients", label: "Clients", icon: FiUsers, content: <Clients /> },
+    {
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: addInlineMessage(<Clients />),
+    },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      content: <Properties />,
+      content: addInlineMessage(<Properties />),
     },
     {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
-      content: <Jobs />,
+      content: addInlineMessage(<Jobs />),
     },
     {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: <Payments />,
+      content: addInlineMessage(<Payments />),
     },
     {
       value: "audit",
       label: "Audit",
       icon: FiFileText,
-      content: <AdminAuditLog />,
+      content: addInlineMessage(<AdminAuditLog />),
     },
   ];
 
