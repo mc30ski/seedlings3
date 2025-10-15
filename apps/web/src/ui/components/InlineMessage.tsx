@@ -169,6 +169,9 @@ export function publishInlineMessage(detail: InlineMessageEventDetail) {
   window.dispatchEvent(
     new CustomEvent<InlineMessageEventDetail>(EVENT_NAME, { detail })
   );
+  if (detail.type === "WARNING" || detail.type === "ERROR") {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 }
 
 export function getErrorMessage(message: string, err: unknown): string {

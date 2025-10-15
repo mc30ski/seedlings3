@@ -12,7 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { useState, useRef } from "react";
 import { apiPost, apiDelete } from "@/src/lib/api";
-import { Role, Equipment } from "@/src/lib/types";
+import { Equipment } from "@/src/lib/types";
 import {
   errorMessage,
   notifyEquipmentUpdated,
@@ -409,8 +409,8 @@ export default function EquipmentTileList({
               <Heading size="md" color="gray.400">
                 {item.type ?? ""}
               </Heading>
-              <Badge colorPalette={equipmentStatusColor(item.status)}>
-                {prettyStatus(item.status)}
+              <Badge colorPalette={equipmentStatusColor(item.status ?? "")}>
+                {prettyStatus(item.status ?? "")}
                 {isMine &&
                 (item.status === "RESERVED" || item.status === "CHECKED_OUT")
                   ? " (You)"
@@ -569,17 +569,12 @@ export default function EquipmentTileList({
                     variant="danger-outline"
                   />
                 )}
-                {isAdmin() && (
+                {isAdmin() && filter === "all" && (
                   <Box flexBasis="100%" w="full" minW={0}>
                     <EquipmentEditor
                       mode="update"
-                      // defaults={{ status: "AVAILABLE" }} // optional
-                      onSuccess={() => {
-                        // After creating, reload the list
-                        // Option A: if AdminEquipment already listens for 'equipment-changed', do nothing.
-                        // Option B: call your local load() or set a flag to refetch:
-                        // void load();
-                      }}
+                      defaults={{ ...item }}
+                      onSuccess={() => void refresh()}
                       onCancel={() => {}}
                       compact={true}
                     />

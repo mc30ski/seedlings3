@@ -20,23 +20,8 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, Plus } from "lucide-react";
 import { apiPost, apiPatch } from "@/src/lib/api";
-import { EQUIPMENT_TYPES, EQUIPMENT_ENERGY } from "@/src/lib/types";
+import { EQUIPMENT_TYPES, EQUIPMENT_ENERGY, Equipment } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
-
-export type Equipment = {
-  id: string;
-  type: string;
-  qrSlug: string;
-  shortDesc: string;
-  brand: string;
-  model: string;
-  energy: string;
-  longDesc?: string | null;
-  features?: string | null;
-  condition?: string | null;
-  issues?: string | null;
-  age?: string | null;
-};
 
 export type EquipmentUpsert = Omit<Equipment, "id"> & { id?: string };
 
@@ -46,7 +31,7 @@ type Props = {
   mode: Mode;
   /** For update mode, pass the record to edit. For create, this is ignored. */
   item?: Equipment | null;
-  /** Initial defaults for create mode (optional) */
+  /** Initial defaults for update mode (optional) */
   defaults?: Partial<EquipmentUpsert>;
   /** Called after successful submit with the saved record (server response) */
   onSuccess?: (saved: Equipment) => void;
@@ -79,6 +64,7 @@ export default function EquipmentEditor({
     if (mode === "update" && item) {
       // convert nullable fields to empty strings for inputs
       return {
+        id: item.id,
         type: item.type ?? "",
         qrSlug: item.type ?? "",
         shortDesc: item.shortDesc ?? "",
@@ -93,6 +79,7 @@ export default function EquipmentEditor({
       };
     }
     return {
+      id: defaults?.id,
       type: "",
       qrSlug: "",
       shortDesc: "",
@@ -127,10 +114,12 @@ export default function EquipmentEditor({
     (form.shortDesc ?? "").trim().length > 0 &&
     (form.brand ?? "").trim().length > 0 &&
     (form.model ?? "").trim().length > 0 &&
-    (form.energy ?? "").trim().length > 0;
+    (form.energy ?? "").trim().length > 0 &&
+    (mode === "create" || !!(form.id ?? item?.id));
 
   const doSubmit = async () => {
     if (!canSubmit) return;
+
     setSaving(true);
     try {
       const payload: any = {
@@ -155,11 +144,10 @@ export default function EquipmentEditor({
           text: "Equipment created successfully.",
         });
       } else {
-        if (!item?.id) throw new Error("Missing equipment id");
-        res = await apiPatch<Equipment>(
-          `/api/admin/equipment/${item.id}`,
-          payload
-        );
+        const id = form.id ?? item?.id;
+        if (!id) throw new Error("Missing equipment id");
+
+        res = await apiPatch<Equipment>(`/api/admin/equipment/${id}`, payload);
         publishInlineMessage({
           type: "SUCCESS",
           text: "Equipment updated successfully.",

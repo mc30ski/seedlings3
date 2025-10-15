@@ -176,7 +176,7 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
             break;
         }
       }
-      if (want) rows = rows.filter((r) => want!.includes(r.status));
+      if (want) rows = rows.filter((r) => r.status && want!.includes(r.status));
 
       if (status === "claimed") {
         rows = rows.filter((r) => r.holder?.userId === me?.id);

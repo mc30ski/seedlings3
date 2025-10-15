@@ -44,22 +44,26 @@ export type EquipmentHolder = {
 
 export type Equipment = {
   id: string;
+  type: string;
+  qrSlug: string;
   shortDesc: string;
-  longDesc: string | null;
-  qrSlug: string | null;
-  status: EquipmentStatus;
-  createdAt: string;
-  updatedAt: string;
-  retiredAt: string | null;
-  brand: string | null;
-  model: string | null;
-  type: EquipmentType | null;
-  energy: EquipmentEnergy | null;
-  features: string | null;
-  condition: string | null;
-  issues: string | null;
-  age: string | null;
-  holder: EquipmentHolder | null;
+  brand: string;
+  model: string;
+  energy: string;
+
+  longDesc?: string | null;
+  features?: string | null;
+  condition?: string | null;
+  issues?: string | null;
+  age?: string | null;
+
+  status?: EquipmentStatus | null;
+
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  retiredAt?: string | null;
+
+  holder?: EquipmentHolder | null;
 };
 
 export type Me = {
