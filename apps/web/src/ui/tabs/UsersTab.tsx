@@ -14,11 +14,13 @@ import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type ApiUser = {
   id: string;
@@ -55,7 +57,9 @@ type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 // Status filter type for this page
 type Status = "all" | "pending" | "approved";
 
-export default function AdminUsers() {
+export default function UsersTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [items, setItems] = useState<ApiUser[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -66,7 +70,9 @@ export default function AdminUsers() {
   // simple filters
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Status>("all");
-  const [role, setRole] = useState<"all" | "worker" | "admin">("all");
+  const [accessRole, setAccessRole] = useState<"all" | "worker" | "admin">(
+    "all"
+  );
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
@@ -150,8 +156,8 @@ export default function AdminUsers() {
       const params = new URLSearchParams();
       if (status === "pending") params.set("approved", "false");
       if (status === "approved") params.set("approved", "true");
-      if (role === "worker") params.set("role", "WORKER");
-      if (role === "admin") params.set("role", "ADMIN");
+      if (accessRole === "worker") params.set("role", "WORKER");
+      if (accessRole === "admin") params.set("role", "ADMIN");
 
       // Load users + holdings together (holdings is a separate endpoint)
       const [users, holdings] = await Promise.all([
@@ -179,7 +185,7 @@ export default function AdminUsers() {
     } finally {
       setLoading(false);
     }
-  }, [status, role]);
+  }, [status, accessRole]);
 
   useEffect(() => {
     void load();
@@ -215,10 +221,10 @@ export default function AdminUsers() {
     }
   }
 
-  async function addRole(userId: string, role: Role) {
+  async function addRole(userId: string, accessRole: Role) {
     try {
-      await apiPost(`/api/admin/users/${userId}/roles`, { role });
-      if (role === "ADMIN") {
+      await apiPost(`/api/admin/users/${userId}/roles`, { role: accessRole });
+      if (accessRole === "ADMIN") {
         try {
           await apiPost(`/api/admin/users/${userId}/roles`, {
             role: "WORKER",
@@ -227,7 +233,7 @@ export default function AdminUsers() {
       }
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Added ${role}`,
+        text: `Added ${accessRole}`,
       });
       load();
     } catch (err) {
@@ -238,12 +244,12 @@ export default function AdminUsers() {
     }
   }
 
-  async function removeRole(userId: string, role: Role) {
+  async function removeRole(userId: string, accessRole: Role) {
     try {
-      await apiDelete(`/api/admin/users/${userId}/roles/${role}`);
+      await apiDelete(`/api/admin/users/${userId}/roles/${accessRole}`);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Removed ${role}`,
+        text: `Removed ${accessRole}`,
       });
       load();
     } catch (err: any) {
@@ -292,7 +298,7 @@ export default function AdminUsers() {
       <Heading size="md" mb={4}>
         Users & Access
       </Heading>
-      *{/* Filters */}
+      {/* Filters */}
       <Stack gap="3" mb={4}>
         <HStack gap="3" wrap="wrap">
           <HStack gap="2">
@@ -334,22 +340,22 @@ export default function AdminUsers() {
             <HStack gap="1">
               <Button
                 size="sm"
-                variant={role === "all" ? "solid" : "outline"}
-                onClick={() => setRole("all")}
+                variant={accessRole === "all" ? "solid" : "outline"}
+                onClick={() => setAccessRole("all")}
               >
                 All
               </Button>
               <Button
                 size="sm"
-                variant={role === "worker" ? "solid" : "outline"}
-                onClick={() => setRole("worker")}
+                variant={accessRole === "worker" ? "solid" : "outline"}
+                onClick={() => setAccessRole("worker")}
               >
                 Worker
               </Button>
               <Button
                 size="sm"
-                variant={role === "admin" ? "solid" : "outline"}
-                onClick={() => setRole("admin")}
+                variant={accessRole === "admin" ? "solid" : "outline"}
+                onClick={() => setAccessRole("admin")}
               >
                 Admin
               </Button>

@@ -5,10 +5,15 @@ import {
   Text,
   Stack,
   Button,
-  NativeSelectField,
-  NativeSelectRoot,
+  SelectRoot,
+  SelectTrigger,
+  SelectValueText,
+  SelectContent,
+  SelectItem,
+  createListCollection,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
+import { TabRolePropType } from "@/src/lib/types";
 import {
   Me,
   EquipmentStatus,
@@ -24,17 +29,71 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-export default function AdminEquipment() {
+type WorkerEquipmentStatusType =
+  | "claimed"
+  | "available"
+  | "unavailable"
+  | "all";
+type AdminEquipmentStatusType =
+  | "all"
+  | "available"
+  | "reserved"
+  | "checked_out"
+  | "maintenance"
+  | "retired";
+
+function tabTitle(role: string, status: string) {
+  if (role === "admin") {
+    return status === "available"
+      ? "Equipment Available to Reserve"
+      : status === "reserved"
+        ? "Equipment Already Reserved"
+        : status === "checked_out"
+          ? "Equipment Already Checked Out"
+          : status === "maintenance"
+            ? "Equipment in Maintenance"
+            : status === "retired"
+              ? "Equipment in Retired"
+              : "All Equipment";
+  } else {
+    return status === "claimed"
+      ? "Equipment I've Claimed"
+      : status === "available"
+        ? "Equipment Available to Reserve"
+        : status === "unavailable"
+          ? "Equipment Already Claimed or Unavailable"
+          : "All Equipment";
+  }
+}
+
+export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
+  const [tabRole, _setTabRole] = useState(role);
   const [loading, setLoading] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [items, setItems] = useState<Equipment[]>([]);
   const [status, setStatus] = useState<
-    "all" | "available" | "reserved" | "checked_out" | "maintenance" | "retired"
-  >("all");
+    WorkerEquipmentStatusType | AdminEquipmentStatusType
+  >(tabRole === "worker" ? "claimed" : "all");
   const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState("");
+  const [filterType, setFilterType] = useState<EquipmentType | "">("");
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const workerStates = [
+    ["claimed", "Claimed"],
+    ["available", "Available"],
+    ["unavailable", "Unavailable"],
+    ["all", "All"],
+  ] as const;
+
+  const adminStates = [
+    ["all", "All"],
+    ["available", "Available"],
+    ["reserved", "Reserved"],
+    ["checked_out", "Checked out"],
+    ["maintenance", "Maintenance"],
+    ["retired", "Retired"],
+  ] as const;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,6 +102,11 @@ export default function AdminEquipment() {
         apiGet<Equipment[]>("/api/equipment/all"),
         apiGet<Me>("/api/me"),
       ]);
+      if (tabRole === "worker") {
+        const anyClaimed =
+          data.filter((i) => i.holder?.userId === meResp?.id).length > 0;
+        setStatus(anyClaimed ? "claimed" : "available");
+      }
       setMe(meResp);
       setItems(data);
     } catch (err) {
@@ -81,24 +145,42 @@ export default function AdminEquipment() {
 
     if (status !== "all") {
       let want: EquipmentStatus[] | null = null;
-      switch (status) {
-        case "available":
-          want = ["AVAILABLE"];
-          break;
-        case "reserved":
-          want = ["RESERVED"];
-          break;
-        case "checked_out":
-          want = ["CHECKED_OUT"];
-          break;
-        case "maintenance":
-          want = ["MAINTENANCE"];
-          break;
-        case "retired":
-          want = ["RETIRED"];
-          break;
+      if (tabRole === "admin") {
+        switch (status) {
+          case "available":
+            want = ["AVAILABLE"];
+            break;
+          case "reserved":
+            want = ["RESERVED"];
+            break;
+          case "checked_out":
+            want = ["CHECKED_OUT"];
+            break;
+          case "maintenance":
+            want = ["MAINTENANCE"];
+            break;
+          case "retired":
+            want = ["RETIRED"];
+            break;
+        }
+      } else {
+        switch (status) {
+          case "claimed":
+            want = ["RESERVED", "CHECKED_OUT"];
+            break;
+          case "available":
+            want = ["AVAILABLE"];
+            break;
+          case "unavailable":
+            want = ["RESERVED", "CHECKED_OUT", "MAINTENANCE"];
+            break;
+        }
       }
       if (want) rows = rows.filter((r) => want!.includes(r.status));
+
+      if (status === "claimed") {
+        rows = rows.filter((r) => r.holder?.userId === me?.id);
+      }
     }
 
     if (filterType) {
@@ -145,6 +227,27 @@ export default function AdminEquipment() {
     return rows;
   }, [items, status, search, filterType]);
 
+  const NONE = "__none__" as const;
+
+  type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
+
+  const EQUIPMENT_TYPE_OPTIONS = EQUIPMENT_TYPES.map((t) => ({
+    label: t,
+    value: t,
+  }));
+
+  const equipmentTypeCollection = createListCollection({
+    items: [
+      { id: NONE, label: "—" },
+      ...EQUIPMENT_TYPE_OPTIONS.map((opt) => ({
+        id: opt.value,
+        label: opt.label,
+      })),
+    ],
+    itemToValue: (item) => item.id,
+    itemToString: (item) => item.label,
+  });
+
   if (loading) return <LoadingCenter />;
 
   return (
@@ -156,27 +259,20 @@ export default function AdminEquipment() {
         mb={3}
       >
         <Box display="flex" flexWrap="wrap" gap="6px">
-          {(
-            [
-              ["all", "All"],
-              ["available", "Available"],
-              ["reserved", "Reserved"],
-              ["checked_out", "Checked out"],
-              ["maintenance", "Maintenance"],
-              ["retired", "Retired"],
-            ] as const
-          ).map(([val, label]) => (
-            <Button
-              key={val}
-              size="sm"
-              variant={status === val ? "solid" : "outline"}
-              onClick={() => {
-                setStatus(val);
-              }}
-            >
-              {label}
-            </Button>
-          ))}
+          {(tabRole === "admin" ? adminStates : workerStates).map(
+            ([val, label]) => (
+              <Button
+                key={val}
+                size="sm"
+                variant={status === val ? "solid" : "outline"}
+                onClick={() => {
+                  setStatus(val);
+                }}
+              >
+                {label}
+              </Button>
+            )
+          )}
         </Box>
       </Stack>
 
@@ -187,20 +283,32 @@ export default function AdminEquipment() {
         mb={3}
       >
         <Box display="flex" flexWrap="wrap" gap="6px">
-          <NativeSelectRoot size="sm">
-            <NativeSelectField
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              placeholder="Select Type"
-            >
-              <option value="" />
-              {EQUIPMENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+          <SelectRoot
+            collection={equipmentTypeCollection}
+            multiple={false}
+            value={filterType ? [filterType] : []} // pass [] when empty
+            onValueChange={({ value }) => {
+              const v = (value as string[] | undefined)?.[0];
+              setFilterType(
+                v === NONE || v == null ? "" : (v as EquipmentType)
+              );
+            }}
+            aria-label="Select Type"
+          >
+            <SelectTrigger>
+              <SelectValueText placeholder="Select Type" />
+            </SelectTrigger>
+
+            <SelectContent>
+              {/* ids must exist in the collection and match itemToValue */}
+              <SelectItem item={NONE}>—</SelectItem>
+              {EQUIPMENT_TYPE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} item={opt.value}>
+                  {opt.label}
+                </SelectItem>
               ))}
-            </NativeSelectField>
-          </NativeSelectRoot>
+            </SelectContent>
+          </SelectRoot>
         </Box>
         <Box display="flex" flexWrap="wrap" gap="6px">
           <SearchWithClear
@@ -217,17 +325,7 @@ export default function AdminEquipment() {
       <Box h="1px" bg="gray.200" mb={3} />
 
       <Heading size="md" mb={3}>
-        {status === "available"
-          ? "Equipment Available to Reserve"
-          : status === "reserved"
-            ? "Equipment Already Reserved"
-            : status === "checked_out"
-              ? "Equipment Already Checked Out"
-              : status === "maintenance"
-                ? "Equipment in Maintenance"
-                : status === "retired"
-                  ? "Equipment in Retired"
-                  : "All Equipment"}
+        {tabTitle(tabRole, status)}
       </Heading>
 
       {status === "all" && (
@@ -248,7 +346,7 @@ export default function AdminEquipment() {
             item={item}
             isMine={isMine}
             isSuper={me?.roles?.includes("SUPER") ? true : false}
-            role={"ADMIN"}
+            role={tabRole}
             filter={status}
             refresh={load}
           />

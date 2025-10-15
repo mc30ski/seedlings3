@@ -28,7 +28,7 @@ type EquipmentTileListProps = {
   item: Equipment;
   isMine: boolean;
   isSuper: boolean;
-  role: Role;
+  role: "worker" | "admin";
   filter: string;
   refresh: any;
 };
@@ -231,35 +231,35 @@ export default function EquipmentTileList({
     }
   }
 
-  const isAdmin = () => role === "ADMIN";
+  const isAdmin = () => role === "admin";
 
   const canWorkerCheckout = (e: Equipment) =>
-    role === "WORKER" && filter === "claimed" && item.status === "RESERVED";
+    role === "worker" && filter === "claimed" && item.status === "RESERVED";
   const canWorkerCancel = (e: Equipment) =>
-    role === "WORKER" && filter === "claimed" && item.status === "RESERVED";
+    role === "worker" && filter === "claimed" && item.status === "RESERVED";
   const canWorkerReturn = (e: Equipment) =>
-    role === "WORKER" && filter === "claimed" && item.status === "CHECKED_OUT";
+    role === "worker" && filter === "claimed" && item.status === "CHECKED_OUT";
   const canWorkerReserve = (e: Equipment) =>
-    role === "WORKER" && filter === "available" && item.status === "AVAILABLE";
+    role === "worker" && filter === "available" && item.status === "AVAILABLE";
 
-  const canAdminForceRelease = (e: Equipment) => role === "ADMIN" && !!e.holder;
+  const canAdminForceRelease = (e: Equipment) => role === "admin" && !!e.holder;
   const canAdminStartMaintenance = (e: Equipment) =>
-    role === "ADMIN" &&
+    role === "admin" &&
     e.status !== "RETIRED" &&
     e.status !== "MAINTENANCE" &&
     !e.holder;
   const canAdminEndMaintenance = (e: Equipment) =>
-    role === "ADMIN" && e.status === "MAINTENANCE";
+    role === "admin" && e.status === "MAINTENANCE";
   const canAdminRetire = (e: Equipment) =>
-    role === "ADMIN" &&
+    role === "admin" &&
     e.status !== "RETIRED" &&
     !e.holder &&
     e.status !== "RESERVED" &&
     e.status !== "CHECKED_OUT";
   const canAdminUnretire = (e: Equipment) =>
-    role === "ADMIN" && e.status === "RETIRED";
+    role === "admin" && e.status === "RETIRED";
   const canAdminHardDelete = (e: Equipment) =>
-    role === "ADMIN" && e.status === "RETIRED";
+    role === "admin" && e.status === "RETIRED";
 
   function ItemTile({ item, isMine }: { item: any; isMine?: boolean }) {
     const { open, onToggle } = useDisclosure();

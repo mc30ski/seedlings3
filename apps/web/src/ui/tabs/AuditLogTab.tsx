@@ -15,10 +15,12 @@ import { apiGet } from "@/src/lib/api";
 import { equipmentStatusColor } from "@/src/lib/lib";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type AuditItem = {
   id: string;
@@ -65,7 +67,9 @@ function Trunc({
   );
 }
 
-export default function AdminAuditLog() {
+export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [items, setItems] = useState<AuditItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);

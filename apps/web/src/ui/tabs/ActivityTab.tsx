@@ -13,11 +13,13 @@ import { apiGet } from "@/src/lib/api";
 import { equipmentStatusColor, prettyStatus, prettyDate } from "@/src/lib/lib";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { TabRolePropType } from "@/src/lib/types";
 
 type ActivityEvent = {
   id: string;
@@ -80,7 +82,9 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
   );
 }
 
-export default function AdminActivity() {
+export default function ActivityTab({ role = "worker" }: TabRolePropType) {
+  if (role !== "admin") return <UnavailableNotice />;
+
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ActivityUser[]>([]);

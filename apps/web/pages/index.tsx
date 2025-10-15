@@ -6,17 +6,14 @@ import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton } from "@clerk/clerk-react";
 
-import WorkerEquipment from "@/src/ui/tabs/WorkerEquipment";
-
-import AdminEquipment from "@/src/ui/tabs/AdminEquipment";
-import AdminUsers from "@/src/ui/tabs/AdminUsers";
-import AdminActivity from "@/src/ui/tabs/AdminActivity";
-import AdminAuditLog from "@/src/ui/tabs/AdminAuditLog";
-
-import Jobs from "@/src/ui/tabs/Jobs";
-import Clients from "@/src/ui/tabs/Clients";
-import Properties from "@/src/ui/tabs/Properties";
-import Payments from "@/src/ui/tabs/Payments";
+import UsersTab from "@/src/ui/tabs/UsersTab";
+import ActivityTab from "@/src/ui/tabs/ActivityTab";
+import AuditLogTab from "@/src/ui/tabs/AuditLogTab";
+import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
+import JobsTab from "@/src/ui/tabs/JobsTab";
+import ClientsTab from "@/src/ui/tabs/ClientsTab";
+import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
+import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -82,29 +79,7 @@ export default function HomePage() {
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
 
-  const workerTabs: TabItem[] = [
-    {
-      value: "equipment",
-      label: "Equipment",
-      icon: FiTool,
-      content: addInlineMessage(<WorkerEquipment />),
-    },
-    {
-      value: "jobs",
-      label: "Jobs",
-      icon: FiBriefcase,
-      content: addInlineMessage(<Jobs />),
-    },
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: addInlineMessage(<Payments />),
-    },
-    { value: "clients", label: "Clients", icon: FiUsers, content: <Clients /> },
-  ];
-
-  function addInlineMessage(tab: ReactNode) {
+  function wrapWithInlineMessage(tab: ReactNode) {
     return (
       <>
         <InlineMessage />
@@ -113,54 +88,81 @@ export default function HomePage() {
     );
   }
 
-  const adminTabs: TabItem[] = [
+  const workerTabs: TabItem[] = [
     {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: addInlineMessage(<AdminEquipment />),
-    },
-    {
-      value: "users",
-      label: "Users",
-      icon: AiOutlineTeam,
-      content: addInlineMessage(<AdminUsers />),
-    },
-    {
-      value: "activity",
-      label: "Activity",
-      icon: FiActivity,
-      content: addInlineMessage(<AdminActivity />),
-    },
-    {
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-      content: addInlineMessage(<Clients />),
-    },
-    {
-      value: "properties",
-      label: "Properties",
-      icon: FiMapPin,
-      content: addInlineMessage(<Properties />),
+      content: wrapWithInlineMessage(<EquipmentTab role="worker" />),
     },
     {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
-      content: addInlineMessage(<Jobs />),
+      content: wrapWithInlineMessage(<JobsTab role="worker" />),
     },
     {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: addInlineMessage(<Payments />),
+      content: wrapWithInlineMessage(<PaymentsTab role="worker" />),
+    },
+    {
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: wrapWithInlineMessage(<ClientsTab role="worker" />),
+    },
+  ];
+
+  const adminTabs: TabItem[] = [
+    {
+      value: "equipment",
+      label: "Equipment",
+      icon: FiTool,
+      content: wrapWithInlineMessage(<EquipmentTab role="admin" />),
+    },
+    {
+      value: "users",
+      label: "Users",
+      icon: AiOutlineTeam,
+      content: wrapWithInlineMessage(<UsersTab role="admin" />),
+    },
+    {
+      value: "activity",
+      label: "Activity",
+      icon: FiActivity,
+      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
+    },
+    {
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: wrapWithInlineMessage(<ClientsTab role="admin" />),
+    },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: wrapWithInlineMessage(<PropertiesTab role="admin" />),
+    },
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: wrapWithInlineMessage(<JobsTab role="admin" />),
+    },
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PaymentsTab role="admin" />),
     },
     {
       value: "audit",
       label: "Audit",
       icon: FiFileText,
-      content: addInlineMessage(<AdminAuditLog />),
+      content: wrapWithInlineMessage(<AuditLogTab role="admin" />),
     },
   ];
 
