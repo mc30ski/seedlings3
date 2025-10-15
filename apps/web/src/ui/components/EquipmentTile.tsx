@@ -11,17 +11,18 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import { useState, useRef } from "react";
-import { apiPost, apiDelete } from "../../lib/api";
-import { Role, Equipment } from "../../lib/types";
+import { apiPost, apiDelete } from "@/src/lib/api";
+import { Role, Equipment } from "@/src/lib/types";
 import {
   errorMessage,
   notifyEquipmentUpdated,
   prettyStatus,
   extractSlug,
   equipmentStatusColor,
-} from "../../lib/lib";
-import QRScannerDialog from "./QRScannerDialog";
-import { InlineMessageType } from "../helpers/InlineMessage";
+} from "@/src/lib/lib";
+import QRScannerDialog from "@/src/ui/components/QRScannerDialog";
+import EquipmentEditor from "@/src/ui/components/EquipmentEditor";
+import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 type EquipmentTileListProps = {
   item: Equipment;
@@ -30,7 +31,6 @@ type EquipmentTileListProps = {
   role: Role;
   filter: string;
   refresh: any;
-  setMessage: (msg: string, type: InlineMessageType) => void;
 };
 
 export default function EquipmentTileList({
@@ -40,7 +40,6 @@ export default function EquipmentTileList({
   role,
   filter,
   refresh,
-  setMessage,
 }: EquipmentTileListProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   // Inline warning per equipment id
@@ -138,58 +137,73 @@ export default function EquipmentTileList({
 
   async function workerReserve(id: string) {
     if (await service(id, `/api/equipment/${id}/reserve`)) {
-      setMessage("Equipment successfully reserved", InlineMessageType.SUCCESS);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment successfully reserved",
+      });
     }
   }
 
   async function workerCancel(id: string) {
     if (await service(id, `/api/equipment/${id}/reserve/cancel`)) {
-      setMessage(
-        "Equipment reservation successully canceled",
-        InlineMessageType.SUCCESS
-      );
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment reservation successully canceled",
+      });
     }
   }
 
   async function adminForceRelease(id: string) {
     if (await service(id, `/api/admin/equipment/${id}/release`)) {
-      setMessage("Equipment successfully released", InlineMessageType.SUCCESS);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment successfully released",
+      });
     }
   }
 
   async function adminStartMaintainence(id: string) {
     if (await service(id, `/api/admin/equipment/${id}/maintenance/start`)) {
-      setMessage(
-        "Equipment maintenance successfully started",
-        InlineMessageType.SUCCESS
-      );
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment maintenance successfully started",
+      });
     }
   }
 
   async function adminEndMaintainence(id: string) {
     if (await service(id, `/api/admin/equipment/${id}/maintenance/end`)) {
-      setMessage(
-        "Equipment maintenance successfully ended",
-        InlineMessageType.SUCCESS
-      );
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment maintenance successfully ended",
+      });
     }
   }
 
   async function adminRetire(id: string) {
     if (await service(id, `/api/admin/equipment/${id}/retire`)) {
-      setMessage("Equipment successfully retired", InlineMessageType.SUCCESS);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment successfully retired",
+      });
     }
   }
 
   async function adminUnretire(id: string) {
     if (await service(id, `/api/admin/equipment/${id}/unretire`)) {
-      setMessage("Equipment successfully unretired", InlineMessageType.SUCCESS);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment successfully unretired",
+      });
     }
   }
 
   async function adminHardDelete(id: string) {
     if (await service(id, `/api/admin/equipment/${id}`, true)) {
-      setMessage("Equipment successfully deleted", InlineMessageType.SUCCESS);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Equipment successfully deleted",
+      });
     }
   }
 
@@ -216,6 +230,8 @@ export default function EquipmentTileList({
       return null;
     }
   }
+
+  const isAdmin = () => role === "ADMIN";
 
   const canWorkerCheckout = (e: Equipment) =>
     role === "WORKER" && filter === "claimed" && item.status === "RESERVED";
@@ -355,10 +371,10 @@ export default function EquipmentTileList({
           const id = scanFor!;
           setScanFor(null);
           workerCheckoutVerifiedWithSlug(id, slug);
-          setMessage(
-            "Equipment successfully checked in",
-            InlineMessageType.SUCCESS
-          );
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: "Equipment successfully checked in",
+          });
         }}
       />
 
@@ -367,10 +383,10 @@ export default function EquipmentTileList({
         label="Scan QR Code to Return"
         onClose={() => {
           setScanReturnFor(null);
-          setMessage(
-            "Equipment successfully returned",
-            InlineMessageType.SUCCESS
-          );
+          publishInlineMessage({
+            type: "SUCCESS",
+            text: "Equipment successfully returned",
+          });
         }}
         onDetected={(slug) => {
           const id = scanReturnFor!;
@@ -460,8 +476,12 @@ export default function EquipmentTileList({
               </HStack>
             )}
 
-            <Stack direction={{ base: "column", sm: "row" }} gap="2" mt={2}>
-              {" "}
+            <Stack
+              direction={{ base: "column", sm: "row" }}
+              gap="2"
+              mt={2}
+              wrap="wrap"
+            >
               <>
                 {canWorkerCheckout(item) && (
                   <ActionButton
@@ -548,6 +568,22 @@ export default function EquipmentTileList({
                     }
                     variant="danger-outline"
                   />
+                )}
+                {isAdmin() && (
+                  <Box flexBasis="100%" w="full" minW={0}>
+                    <EquipmentEditor
+                      mode="update"
+                      // defaults={{ status: "AVAILABLE" }} // optional
+                      onSuccess={() => {
+                        // After creating, reload the list
+                        // Option A: if AdminEquipment already listens for 'equipment-changed', do nothing.
+                        // Option B: call your local load() or set a flag to refetch:
+                        // void load();
+                      }}
+                      onCancel={() => {}}
+                      compact={true}
+                    />
+                  </Box>
                 )}
               </>
             </Stack>

@@ -9,14 +9,16 @@ import {
   Text,
   Badge,
 } from "@chakra-ui/react";
-import { apiGet, apiPost, apiDelete } from "../../lib/api";
-import { prettyStatus, equipmentStatusColor } from "../../lib/lib";
-import { Role } from "../../lib/types";
-import { getErrorMessage } from "../../lib/errors";
+import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
+import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
+import { Role } from "@/src/lib/types";
 import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
-import LoadingCenter from "../helpers/LoadingCenter";
-import SearchWithClear from "../components/SearchWithClear";
-import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
 
 type ApiUser = {
   id: string;
@@ -65,11 +67,6 @@ export default function AdminUsers() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Status>("all");
   const [role, setRole] = useState<"all" | "worker" | "admin">("all");
-
-  const [inlineMsg, setInlineMsg] = useState<{
-    msg: string;
-    type: InlineMessageType;
-  } | null>(null);
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
@@ -173,14 +170,11 @@ export default function AdminUsers() {
         map[h.userId].push(h);
       }
       setHoldingsByUser(map);
-
-      // clear any stale inline warnings + confirm bar after refresh
-      setInlineMsg(null);
       setConfirm(null);
     } catch (err) {
-      setInlineMsg({
-        msg: "Failed to load users: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load users", err),
       });
     } finally {
       setLoading(false);
@@ -208,15 +202,15 @@ export default function AdminUsers() {
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
-      await load();
-      setInlineMsg({
-        msg: "User approved",
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "User approved",
       });
+      load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Approve failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Approve failed", err),
       });
     }
   }
@@ -231,15 +225,15 @@ export default function AdminUsers() {
           });
         } catch {}
       }
-      await load();
-      setInlineMsg({
-        msg: `Added ${role}`,
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Added ${role}`,
       });
+      load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Add role failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Add role failed", err),
       });
     }
   }
@@ -247,11 +241,11 @@ export default function AdminUsers() {
   async function removeRole(userId: string, role: Role) {
     try {
       await apiDelete(`/api/admin/users/${userId}/roles/${role}`);
-      await load();
-      setInlineMsg({
-        msg: `Removed ${role}`,
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Removed ${role}`,
       });
+      load();
     } catch (err: any) {
       // Detect a 409 regardless of fetch wrapper
       const status =
@@ -263,11 +257,11 @@ export default function AdminUsers() {
       const msg =
         status === 409
           ? "This user currently has reserved/checked-out equipment. Release all items before removing the Worker role."
-          : getErrorMessage(err);
+          : getErrorMessage("Remove role failed", err);
 
-      setInlineMsg({
-        msg: "Remove role failed: " + msg,
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: msg,
       });
     }
   }
@@ -279,16 +273,16 @@ export default function AdminUsers() {
       try {
         window.dispatchEvent(new Event("seedlings3:users-changed"));
       } catch {}
-      await load();
-      setInlineMsg({
-        msg: `User removed`,
-        type: InlineMessageType.SUCCESS,
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `User removed`,
       });
+      load();
       await load();
     } catch (err) {
-      setInlineMsg({
-        msg: "Remove failed: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Remove failed", err),
       });
     }
   }
@@ -298,10 +292,7 @@ export default function AdminUsers() {
       <Heading size="md" mb={4}>
         Users & Access
       </Heading>
-
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
-
-      {/* Filters */}
+      *{/* Filters */}
       <Stack gap="3" mb={4}>
         <HStack gap="3" wrap="wrap">
           <HStack gap="2">
@@ -373,14 +364,11 @@ export default function AdminUsers() {
           />
         </HStack>
       </Stack>
-
       {/* List */}
       {loading && <LoadingCenter />}
-
       {!loading && filtered.length === 0 && (
         <Text>No users match the current filters.</Text>
       )}
-
       {!loading &&
         filtered.map((u) => {
           const s = rolesSet(u);

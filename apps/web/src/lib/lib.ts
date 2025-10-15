@@ -1,5 +1,3 @@
-import { EquipmentStatus } from "./types";
-
 export function notifyEquipmentUpdated() {
   try {
     window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));

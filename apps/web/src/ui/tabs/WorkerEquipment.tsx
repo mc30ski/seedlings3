@@ -5,22 +5,23 @@ import {
   Text,
   Stack,
   Button,
-  Input,
   NativeSelectField,
   NativeSelectRoot,
 } from "@chakra-ui/react";
-import { apiGet } from "../../lib/api";
-import { getErrorMessage } from "../../lib/errors";
+import { apiGet } from "@/src/lib/api";
 import {
   Me,
   EquipmentStatus,
   Equipment,
   EQUIPMENT_TYPES,
-} from "../../lib/types";
-import EquipmentTile from "../components/EquipmentTile";
-import SearchWithClear from "../components/SearchWithClear";
-import LoadingCenter from "../helpers/LoadingCenter";
-import InlineMessage, { InlineMessageType } from "../helpers/InlineMessage";
+} from "@/src/lib/types";
+import EquipmentTile from "@/src/ui/components/EquipmentTile";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
 
 export default function WorkerEquipment() {
   const [items, setItems] = useState<Equipment[]>([]);
@@ -31,10 +32,6 @@ export default function WorkerEquipment() {
   >("claimed");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [inlineMsg, setInlineMsg] = useState<{
-    msg: string;
-    type: InlineMessageType;
-  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,9 +46,9 @@ export default function WorkerEquipment() {
       setMe(meResp);
       setItems(data);
     } catch (err) {
-      setInlineMsg({
-        msg: "Failed to load equipment: " + getErrorMessage(err),
-        type: InlineMessageType.ERROR,
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load equipment", err),
       });
     } finally {
       setLoading(false);
@@ -153,7 +150,7 @@ export default function WorkerEquipment() {
               size="sm"
               variant={status === val ? "solid" : "outline"}
               onClick={() => {
-                setStatus(val), setInlineMsg(null);
+                setStatus(val);
               }}
             >
               {label}
@@ -197,8 +194,6 @@ export default function WorkerEquipment() {
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
 
-      {inlineMsg && <InlineMessage type={inlineMsg.type} msg={inlineMsg.msg} />}
-
       <Heading size="md" mb={3}>
         {status === "claimed"
           ? "Equipment I've Claimed"
@@ -222,9 +217,6 @@ export default function WorkerEquipment() {
             role={"WORKER"}
             filter={status}
             refresh={load}
-            setMessage={(msg: string, type: InlineMessageType) => {
-              setInlineMsg({ msg: msg, type: type });
-            }}
           />
         );
       })}

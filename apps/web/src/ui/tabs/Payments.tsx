@@ -1,4 +1,4 @@
-import ComingSoonNotice from "../notices/ComingSoonNotice";
+import ComingSoonNotice from "@/src/ui/notices/ComingSoonNotice";
 
 export default function Payments() {
   return (
