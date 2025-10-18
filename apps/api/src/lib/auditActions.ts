@@ -28,6 +28,17 @@ export const AUDIT = {
     RETURNED: [AuditScope.EQUIPMENT, AuditVerb.RETURNED] as const,
     FORCE_RELEASED: [AuditScope.EQUIPMENT, AuditVerb.FORCE_RELEASED] as const,
   },
+  CLIENT: {
+    CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.CLIENT, AuditVerb.RETIRED] as const, // using RETIRED to mean archived
+    UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const, // if you add verb later swap this
+    DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
+
+    CONTACT_CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
+    CONTACT_UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    CONTACT_DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
+  },
 } as const;
 
 // Useful types

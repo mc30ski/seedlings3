@@ -2,6 +2,10 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { Role as RoleVal } from "@prisma/client";
 
+async function actorId(req: any) {
+  return (await services.currentUser.me(req.auth?.clerkUserId)).id;
+}
+
 export default async function adminRoutes(app: FastifyInstance) {
   const adminGuard = {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -134,4 +138,97 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/activity", adminGuard, async (req: any) => {
     return services.admin.listUserActivity();
   });
+
+  app.get("/admin/clients", adminGuard, async (req: any) => {
+    const { q, status, limit } = (req.query || {}) as {
+      q?: string;
+      status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
+      limit?: string;
+    };
+    return services.clients.list({
+      q,
+      status: status as any,
+      limit: limit ? Number(limit) : undefined,
+    });
+  });
+
+  app.get("/admin/clients/:id", adminGuard, async (req: any) => {
+    return services.clients.get(String(req.params.id));
+  });
+
+  app.post("/admin/clients", adminGuard, async (req: any) => {
+    return services.clients.create(await actorId(req), req.body);
+  });
+
+  app.patch("/admin/clients/:id", adminGuard, async (req: any) => {
+    return services.clients.update(
+      await actorId(req),
+      String(req.params.id),
+      req.body
+    );
+  });
+
+  app.post("/admin/clients/:id/archive", adminGuard, async (req: any) => {
+    return services.clients.archive(await actorId(req), String(req.params.id));
+  });
+
+  app.post("/admin/clients/:id/unarchive", adminGuard, async (req: any) => {
+    return services.clients.unarchive(
+      await actorId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.delete("/admin/clients/:id", adminGuard, async (req: any) => {
+    return services.clients.hardDelete(
+      await actorId(req),
+      String(req.params.id)
+    );
+  });
+
+  // ---- Contacts (nested under a client) ----
+  app.post("/admin/clients/:id/contacts", adminGuard, async (req: any) => {
+    return services.clients.addContact(
+      await actorId(req),
+      String(req.params.id),
+      req.body
+    );
+  });
+
+  app.patch(
+    "/admin/clients/:id/contacts/:contactId",
+    adminGuard,
+    async (req: any) => {
+      return services.clients.updateContact(
+        await actorId(req),
+        String(req.params.id),
+        String(req.params.contactId),
+        req.body
+      );
+    }
+  );
+
+  app.delete(
+    "/admin/clients/:id/contacts/:contactId",
+    adminGuard,
+    async (req: any) => {
+      return services.clients.deleteContact(
+        await actorId(req),
+        String(req.params.id),
+        String(req.params.contactId)
+      );
+    }
+  );
+
+  app.post(
+    "/admin/clients/:id/contacts/:contactId/primary",
+    adminGuard,
+    async (req: any) => {
+      return services.clients.setPrimaryContact(
+        await actorId(req),
+        String(req.params.id),
+        String(req.params.contactId)
+      );
+    }
+  );
 }
