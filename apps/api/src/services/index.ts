@@ -8,6 +8,9 @@ import {
   EquipmentStatus,
   AuditScope,
   AuditVerb,
+  ClientStatus,
+  ClientType,
+  ContactRole,
 } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
 import { ServiceError } from "../lib/errors";
@@ -87,32 +90,329 @@ async function recomputeStatus(tx: Tx, equipmentId: string) {
   return eq;
 }
 
-function summarizeEvent(action: string, metadata?: any): string {
-  const t = String(action).toUpperCase();
-  if (t === "EQUIPMENT_RESERVED")
-    return labelWithEq("Reserved equipment", metadata);
-  if (t === "RESERVATION_CANCELLED")
-    return labelWithEq("Canceled reservation", metadata);
-  if (t === "EQUIPMENT_CHECKED_OUT")
-    return labelWithEq("Checked out equipment", metadata);
-  if (t === "EQUIPMENT_RETURNED")
-    return labelWithEq("Returned equipment", metadata);
-  if (t === "FORCE_RELEASED")
-    return labelWithEq("Force released equipment", metadata);
-  if (t === "USER_APPROVED") return "User approved";
-  if (t === "ROLE_ASSIGNED")
-    return `Role assigned${metadata?.role ? `: ${metadata.role}` : ""}`;
-  if (t === "MAINTENANCE_START")
-    return labelWithEq("Maintenance started", metadata);
-  if (t === "MAINTENANCE_END")
-    return labelWithEq("Maintenance ended", metadata);
-  return action;
+function normalizePhone(raw?: string | null): string | null {
+  const s = (raw ?? "").replace(/[^\d+]/g, "");
+  if (!s) return null;
+  if (s.startsWith("+")) return s;
+  return "+1" + s;
 }
 
-function labelWithEq(base: string, metadata?: any) {
-  const eq = metadata?.equipment?.shortDesc || metadata?.shortDesc;
-  return eq ? `${base} — ${eq}` : base;
+/**
+ * Accept either { firstName,lastName } or a single { name } and split it.
+ */
+function normalizeContactPayload(payload: any): {
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  normalizedPhone: string | null;
+  role: ContactRole | null;
+  isPrimary: boolean;
+  active: boolean;
+  contactPriority: number;
+} {
+  let first = (payload.firstName ?? "").trim();
+  let last = (payload.lastName ?? "").trim();
+
+  if (!first && !last && payload.name) {
+    const n = String(payload.name).trim();
+    const parts = n.split(/\s+/);
+    first = (parts.shift() ?? "").trim();
+    last = (parts.join(" ") ?? "").trim();
+  }
+
+  const phone = payload.phone ?? null;
+  const normalizedPhone = normalizePhone(phone);
+
+  // role → enum or null
+  let role: ContactRole | null = null;
+  if (payload.role) {
+    const r = String(payload.role);
+    const key = r in ContactRole ? r : r.toUpperCase();
+    if (key in ContactRole) role = (ContactRole as any)[key] as ContactRole;
+  }
+
+  return {
+    firstName: first, // ← string (not null)
+    lastName: last, // ← string (not null)
+    email: payload.email ?? null,
+    phone,
+    normalizedPhone,
+    role, // ← ContactRole | null
+    isPrimary: !!payload.isPrimary,
+    active: payload.active ?? true,
+    contactPriority: payload.contactPriority ?? 100,
+  };
 }
+
+// ---------- CLIENTS ----------------------------------------------------------
+const clients = {
+  async list(params?: {
+    q?: string;
+    status?: ClientStatus | "ALL";
+    limit?: number;
+  }) {
+    const q = (params?.q ?? "").trim();
+    const status =
+      params?.status && params.status !== "ALL" ? params.status : undefined;
+    const limit = Math.min(Math.max(params?.limit ?? 100, 1), 500);
+
+    const where: Prisma.ClientWhereInput = {};
+    if (status) where.status = status;
+    if (q) {
+      where.OR = [
+        { displayName: { contains: q, mode: "insensitive" } },
+        {
+          contacts: {
+            some: {
+              OR: [
+                { firstName: { contains: q, mode: "insensitive" } },
+                { lastName: { contains: q, mode: "insensitive" } },
+                { email: { contains: q, mode: "insensitive" } },
+                { phone: { contains: q, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    const rows = await prisma.client.findMany({
+      where,
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: limit,
+      include: {
+        contacts: {
+          where: { active: true },
+          orderBy: [
+            { isPrimary: "desc" },
+            { contactPriority: "asc" },
+            { createdAt: "asc" },
+          ],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            isPrimary: true,
+          },
+        },
+      },
+    });
+
+    return rows.map((c) => ({
+      ...c,
+      contactCount: c.contacts.length,
+      primaryContact:
+        c.contacts.find((x) => x.isPrimary) ?? c.contacts[0] ?? null,
+    }));
+  },
+
+  async get(id: string) {
+    return prisma.client.findUniqueOrThrow({
+      where: { id },
+      include: {
+        contacts: {
+          orderBy: [
+            { isPrimary: "desc" },
+            { contactPriority: "asc" },
+            { createdAt: "asc" },
+          ],
+        },
+      },
+    });
+  },
+
+  async create(actorId: string, payload: any) {
+    console.log("PAYLOAD", payload);
+
+    return prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: {
+          type: payload.type,
+          displayName: payload.displayName,
+          status: payload.status ?? "ACTIVE",
+          notesInternal: payload.notesInternal,
+          ...(typeof payload.tags !== "undefined"
+            ? { tags: payload.tags }
+            : {}), // only set if present
+        },
+      });
+
+      await writeAudit(tx, AUDIT.CLIENT.CREATED, actorId, {
+        clientId: created.id,
+        displayName: created.displayName,
+        type: created.type,
+      });
+
+      return created;
+    });
+  },
+
+  async update(actorId: string, id: string, payload: any) {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.client.update({
+        where: { id },
+        data: {
+          type: payload.type,
+          displayName: payload.displayName,
+          status: payload.status,
+          notesInternal: payload.notesInternal,
+          tags: payload.tags,
+        },
+      });
+
+      await writeAudit(tx, AUDIT.CLIENT.UPDATED, actorId, {
+        clientId: id,
+        displayName: updated.displayName,
+      });
+
+      return updated;
+    });
+  },
+
+  async archive(actorId: string, id: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.client.update({
+        where: { id },
+        data: { status: "ARCHIVED", archivedAt: new Date() },
+      });
+      await writeAudit(tx, AUDIT.CLIENT.ARCHIVED, actorId, { clientId: id });
+    });
+    return { archived: true as const };
+  },
+
+  async unarchive(actorId: string, id: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.client.update({
+        where: { id },
+        data: { status: "ACTIVE", archivedAt: null },
+      });
+      await writeAudit(tx, AUDIT.CLIENT.UNARCHIVED, actorId, { clientId: id });
+    });
+    return { unarchived: true as const };
+  },
+
+  async hardDelete(actorId: string, id: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.client.delete({ where: { id } });
+      await writeAudit(tx, AUDIT.CLIENT.DELETED, actorId, { clientId: id });
+    });
+    return { deleted: true as const };
+  },
+
+  async addContact(actorId: string, clientId: string, payload: any) {
+    const cp = normalizeContactPayload(payload);
+
+    return prisma.$transaction(async (tx) => {
+      const c = await tx.clientContact.create({
+        data: {
+          clientId,
+          firstName: cp.firstName,
+          lastName: cp.lastName,
+          email: cp.email,
+          phone: cp.phone,
+          normalizedPhone: cp.normalizedPhone,
+          role: cp.role,
+          isPrimary: cp.isPrimary,
+          active: cp.active,
+          contactPriority: cp.contactPriority,
+        },
+      });
+
+      if (cp.isPrimary) {
+        await tx.clientContact.updateMany({
+          where: { clientId, NOT: { id: c.id } },
+          data: { isPrimary: false },
+        });
+      }
+
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_CREATED, actorId, {
+        clientId,
+        contactId: c.id,
+        name: `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim(),
+      });
+
+      return c;
+    });
+  },
+
+  async updateContact(
+    actorId: string,
+    clientId: string,
+    contactId: string,
+    payload: any
+  ) {
+    const cp = normalizeContactPayload(payload);
+
+    return prisma.$transaction(async (tx) => {
+      const u = await tx.clientContact.update({
+        where: { id: contactId },
+        data: {
+          firstName: cp.firstName,
+          lastName: cp.lastName,
+          email: cp.email,
+          phone: cp.phone,
+          normalizedPhone: cp.normalizedPhone,
+          role: cp.role,
+          isPrimary: cp.isPrimary,
+          active: cp.active,
+          contactPriority: cp.contactPriority,
+        },
+      });
+
+      if (cp.isPrimary) {
+        await tx.clientContact.updateMany({
+          where: { clientId, NOT: { id: contactId } },
+          data: { isPrimary: false },
+        });
+      }
+
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_UPDATED, actorId, {
+        clientId,
+        contactId,
+        name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
+      });
+
+      return u;
+    });
+  },
+
+  async deleteContact(actorId: string, clientId: string, contactId: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.clientContact.delete({ where: { id: contactId } });
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_DELETED, actorId, {
+        clientId,
+        contactId,
+      });
+    });
+    return { deleted: true as const };
+  },
+
+  async setPrimaryContact(
+    actorId: string,
+    clientId: string,
+    contactId: string
+  ) {
+    await prisma.$transaction(async (tx) => {
+      await tx.clientContact.updateMany({
+        where: { clientId },
+        data: { isPrimary: false },
+      });
+      await tx.clientContact.update({
+        where: { id: contactId },
+        data: { isPrimary: true },
+      });
+      await writeAudit(tx, AUDIT.CLIENT.UPDATED, actorId, {
+        clientId,
+        contactId,
+        primary: true,
+      });
+    });
+    return { primarySet: true as const };
+  },
+};
 
 export const services: Services = {
   equipment: {
@@ -1167,4 +1467,6 @@ export const services: Services = {
       return results;
     },
   },
+
+  clients,
 };

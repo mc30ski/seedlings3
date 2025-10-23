@@ -1,5 +1,41 @@
 // apps/web/src/types/services.ts
 import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
+import type {
+  Client,
+  ClientContact,
+  ClientStatus,
+  ClientType,
+  ContactRole,
+} from "@prisma/client";
+
+export type ClientWithContacts = Client & { contacts: ClientContact[] };
+
+export type ClientListItem = Client & {
+  contactCount: number;
+  primaryContact?: Pick<
+    ClientContact,
+    "id" | "firstName" | "lastName" | "email" | "phone"
+  > | null;
+};
+
+export type ClientUpsert = Pick<
+  Client,
+  "type" | "displayName" | "status" | "notesInternal" | "tags"
+> & {
+  id?: string;
+};
+
+export type ContactUpsert = Pick<
+  ClientContact,
+  | "firstName"
+  | "lastName"
+  | "email"
+  | "phone"
+  | "role"
+  | "isPrimary"
+  | "active"
+  | "contactPriority"
+> & { id?: string };
 
 export type Role = "SUPER" | "ADMIN" | "WORKER";
 
@@ -197,5 +233,45 @@ export type Services = {
 
   admin: {
     listUserActivity(): Promise<AdminActivityUser[]>;
+  };
+
+  clients: {
+    // Worker
+    list(params?: {
+      q?: string;
+      status?: ClientStatus | "ALL";
+      limit?: number;
+    }): Promise<ClientListItem[]>;
+    get(id: string): Promise<ClientWithContacts>;
+
+    // Admin
+    create(actorId: string, payload: ClientUpsert): Promise<Client>;
+    update(actorId: string, id: string, payload: ClientUpsert): Promise<Client>;
+    archive(actorId: string, id: string): Promise<{ archived: true }>;
+    unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
+    hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+
+    // Contacts (admin only)
+    addContact(
+      actorId: string,
+      clientId: string,
+      payload: ContactUpsert
+    ): Promise<ClientContact>;
+    updateContact(
+      actorId: string,
+      clientId: string,
+      contactId: string,
+      payload: ContactUpsert
+    ): Promise<ClientContact>;
+    deleteContact(
+      actorId: string,
+      clientId: string,
+      contactId: string
+    ): Promise<{ deleted: true }>;
+    setPrimaryContact(
+      actorId: string,
+      clientId: string,
+      contactId: string
+    ): Promise<{ primarySet: true }>;
   };
 };
