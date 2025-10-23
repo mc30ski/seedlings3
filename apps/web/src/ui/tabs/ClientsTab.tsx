@@ -25,10 +25,13 @@ import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import type { TabRolePropType } from "@/src/lib/types";
 
-import ClientDialog from "@/src/ui/components/ClientDialog";
+//TODO:
+import ClientDialog /*{ type Client, type ClientType } */ from "@/src/ui/components/ClientDialog";
+import ContactDialog, { type Contact } from "@/src/ui/components/ContactDialog";
 
 type ClientKind = "INDIVIDUAL" | "HOUSEHOLD" | "ORGANIZATION" | "COMMUNITY";
 
+/*
 type ClientContact = {
   id: string;
   clientId: string;
@@ -43,6 +46,7 @@ type ClientContact = {
   contactPriority?: number | null;
   archivedAt?: string | null;
 };
+*/
 
 type Client = {
   id: string;
@@ -50,7 +54,7 @@ type Client = {
   type: ClientKind;
   notesInternal?: string | null;
   archivedAt?: string | null;
-  contacts?: ClientContact[];
+  contacts?: Contact[];
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -68,6 +72,11 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
 
   const [items, setItems] = useState<Client[]>([]);
   const [q, setQ] = useState("");
+
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [contactMode, setContactMode] = useState<"create" | "update">("create");
+  const [contactClientId, setContactClientId] = useState<string>("");
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,7 +126,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       const name = (c.displayName ?? "").toLowerCase();
       const notes = (c.notesInternal ?? "").toLowerCase();
       const anyContact = (c.contacts ?? []).some((ct) =>
-        [ct.name, ct.preferredName, ct.email, ct.phone, ct.role]
+        //TODO:
+        //[ct.name, ct.preferredName, ct.email, ct.phone, ct.role]
+        [ct.firstName, ct.email, ct.phone, ct.role]
           .filter(Boolean)
           .some((v) => (v as string).toLowerCase().includes(t))
       );
@@ -143,9 +154,35 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
+  function openAddContact(clientId: string) {
+    setContactClientId(clientId);
+    setEditingContact(null);
+    setContactMode("create");
+    setContactDialogOpen(true);
+  }
+
+  function openEditContact(clientId: string, ct: any) {
+    const uiContact: Contact = {
+      id: ct.id,
+      clientId,
+      firstName: ct.firstName ?? "",
+      lastName: ct.lastName ?? "",
+      email: ct.email ?? "",
+      phone: ct.phone ?? "",
+      role: ct.role ?? null, // must match your enum on the API
+      isPrimary: !!ct.isPrimary,
+      active: ct.active ?? true,
+      contactPriority: ct.contactPriority ?? null,
+    };
+    setContactClientId(clientId);
+    setEditingContact(uiContact);
+    setContactMode("update");
+    setContactDialogOpen(true);
+  }
+
   async function upsertContact(
     clientId: string,
-    contact: Partial<ClientContact> & { id?: string }
+    contact: Partial<Contact> & { id?: string }
   ) {
     try {
       if (contact.id) {
@@ -259,6 +296,17 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
               )}
             </HStack>
 
+            {isAdmin && (
+              <Button
+                mt={2}
+                size="sm"
+                variant="subtle"
+                onClick={() => openAddContact(c.id)}
+              >
+                Add contact
+              </Button>
+            )}
+
             {/* Contacts */}
             {(c.contacts ?? []).length > 0 && <Separator my={3} />}
 
@@ -274,11 +322,8 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                 >
                   <Box>
                     <Text fontWeight="medium">
-                      {ct.preferredName ||
-                        ct.name ||
-                        ct.email ||
-                        ct.phone ||
-                        "Unnamed"}
+                      {/* TODO: ct.preferredName || */}
+                      {ct.firstName || ct.email || ct.phone || "Unnamed"}
                     </Text>
                     <Text fontSize="sm" color="fg.muted">
                       {[ct.role, ct.email, ct.phone]
@@ -292,27 +337,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() =>
-                          upsertContact(c.id, {
-                            id: ct.id,
-                            name:
-                              window.prompt("Name", ct.name ?? "") ??
-                              ct.name ??
-                              "",
-                            email:
-                              window.prompt("Email", ct.email ?? "") ??
-                              ct.email ??
-                              "",
-                            phone:
-                              window.prompt("Phone", ct.phone ?? "") ??
-                              ct.phone ??
-                              "",
-                            role:
-                              window.prompt("Role", ct.role ?? "") ??
-                              ct.role ??
-                              "",
-                          })
-                        }
+                        onClick={() => openEditContact(c.id, ct)}
                       >
                         Edit
                       </Button>
@@ -330,7 +355,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
               ))}
             </Stack>
 
-            {/* Add contact (admin only) */}
             {isAdmin && (
               <ClientDialog
                 open={dialogOpen}
@@ -340,6 +364,19 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                 scope="clients"
                 onSaved={() => load()}
                 actionLabel={editing ? "Save" : "Create"}
+              />
+            )}
+
+            {isAdmin && (
+              <ContactDialog
+                open={contactDialogOpen}
+                onOpenChange={setContactDialogOpen}
+                mode={contactMode}
+                clientId={contactClientId}
+                initialContact={editingContact ?? undefined}
+                scope="clients"
+                onSaved={() => load()}
+                actionLabel={contactMode === "create" ? "Create" : "Save"}
               />
             )}
           </Box>

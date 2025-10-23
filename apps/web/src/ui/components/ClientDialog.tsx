@@ -19,13 +19,17 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-type ClientType = "INDIVIDUAL" | "HOUSEHOLD" | "ORGANIZATION" | "COMMUNITY";
+export type ClientType =
+  | "INDIVIDUAL"
+  | "HOUSEHOLD"
+  | "ORGANIZATION"
+  | "COMMUNITY";
 
-type Client = {
+export type Client = {
   id: string;
   displayName: string;
   type: ClientType;
-  internalNotes?: string | null;
+  notesInternal?: string | null;
 };
 
 type Mode = "create" | "update";
@@ -65,7 +69,7 @@ export default function ClientDialog({
   // --- Form state
   const [displayName, setDisplayName] = useState("");
   const [typeValue, setTypeValue] = useState<string[]>(["INDIVIDUAL"]);
-  const [internalNotes, setInternalNotes] = useState("");
+  const [notesInternal, setNotesInternal] = useState("");
 
   // Seed form when opened or when switching clients
   useEffect(() => {
@@ -73,11 +77,11 @@ export default function ClientDialog({
     if (mode === "update" && initialClient) {
       setDisplayName(initialClient.displayName ?? "");
       setTypeValue([initialClient.type ?? "INDIVIDUAL"]);
-      setInternalNotes(initialClient.internalNotes ?? "");
+      setNotesInternal(initialClient.notesInternal ?? "");
     } else {
       setDisplayName("");
       setTypeValue(["INDIVIDUAL"]);
-      setInternalNotes("");
+      setNotesInternal("");
     }
   }, [open, mode, initialClient]);
 
@@ -110,7 +114,7 @@ export default function ClientDialog({
     const payload = {
       displayName: displayName.trim(),
       type: (typeValue[0] as ClientType) ?? "INDIVIDUAL",
-      notes: internalNotes.trim() || null,
+      notesInternal: notesInternal.trim() || null,
     };
 
     setBusy(true);
@@ -160,7 +164,14 @@ export default function ClientDialog({
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content>
+          <Dialog.Content
+            mx="4" // ~16px left/right margin at small breakpoints
+            maxW="lg" // cap width (try "md"/"lg"/"xl")
+            w="full"
+            rounded="2xl"
+            p="4" // inner padding
+            shadow="lg"
+          >
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
@@ -209,8 +220,8 @@ export default function ClientDialog({
                 <div>
                   <Text mb="1">Internal notes (optional)</Text>
                   <Textarea
-                    value={internalNotes}
-                    onChange={(e) => setInternalNotes(e.target.value)}
+                    value={notesInternal}
+                    onChange={(e) => setNotesInternal(e.target.value)}
                     placeholder="Notes visible to admins"
                     rows={3}
                   />

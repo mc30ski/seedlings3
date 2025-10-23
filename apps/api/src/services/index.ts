@@ -225,6 +225,8 @@ const clients = {
   },
 
   async create(actorId: string, payload: any) {
+    console.log("PAYLOAD", payload);
+
     return prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
