@@ -20,21 +20,14 @@ export type ClientListItem = Client & {
 
 export type ClientUpsert = Pick<
   Client,
-  "type" | "displayName" | "status" | "notesInternal" | "tags"
+  "type" | "displayName" | "status" | "notesInternal"
 > & {
   id?: string;
 };
 
 export type ContactUpsert = Pick<
   ClientContact,
-  | "firstName"
-  | "lastName"
-  | "email"
-  | "phone"
-  | "role"
-  | "isPrimary"
-  | "active"
-  | "contactPriority"
+  "firstName" | "lastName" | "email" | "phone" | "role" | "isPrimary" | "active"
 > & { id?: string };
 
 export type Role = "SUPER" | "ADMIN" | "WORKER";

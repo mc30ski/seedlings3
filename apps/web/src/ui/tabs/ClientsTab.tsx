@@ -25,42 +25,8 @@ import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import type { TabRolePropType } from "@/src/lib/types";
 
-//TODO:
-import ClientDialog /*{ type Client, type ClientType } */ from "@/src/ui/components/ClientDialog";
+import ClientDialog, { type Client } from "@/src/ui/components/ClientDialog";
 import ContactDialog, { type Contact } from "@/src/ui/components/ContactDialog";
-
-type ClientKind = "INDIVIDUAL" | "HOUSEHOLD" | "ORGANIZATION" | "COMMUNITY";
-
-/*
-type ClientContact = {
-  id: string;
-  clientId: string;
-  name: string;
-  preferredName?: string | null;
-  role?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  normalizedPhone?: string | null;
-  isPrimary?: boolean;
-  isBilling?: boolean;
-  contactPriority?: number | null;
-  archivedAt?: string | null;
-};
-*/
-
-type Client = {
-  id: string;
-  displayName: string;
-  type: ClientKind;
-  notesInternal?: string | null;
-  archivedAt?: string | null;
-  contacts?: Contact[];
-  createdAt?: string | null;
-  updatedAt?: string | null;
-};
-
-//TODO:
-const SCOPE = "clients";
 
 export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   const isAdmin = role === "admin";
@@ -90,7 +56,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       setItems(list);
     } catch (err) {
       publishInlineMessage({
-        scope: SCOPE,
         type: "ERROR",
         text: getErrorMessage("Failed to load clients", err),
       });
@@ -111,8 +76,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   function openEdit(c: any) {
     const uiClient: Client = {
       id: c.id,
+      status: c.status ?? "ACTIVE",
       displayName: c.displayName ?? "",
-      type: (c.type ?? "INDIVIDUAL") as any,
+      type: c.type ?? "INDIVIDUAL",
       notesInternal: c.notesInternal ?? "",
     };
     setEditing(uiClient);
@@ -140,14 +106,12 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     try {
       await apiDelete(`/api/admin/clients/${id}`);
       publishInlineMessage({
-        scope: SCOPE,
         type: "SUCCESS",
         text: "Client deleted.",
       });
       await load();
     } catch (err) {
       publishInlineMessage({
-        scope: SCOPE,
         type: "ERROR",
         text: getErrorMessage("Delete client failed", err),
       });
@@ -172,7 +136,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       role: ct.role ?? null, // must match your enum on the API
       isPrimary: !!ct.isPrimary,
       active: ct.active ?? true,
-      contactPriority: ct.contactPriority ?? null,
     };
     setContactClientId(clientId);
     setEditingContact(uiContact);
@@ -191,14 +154,12 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
           contact
         );
         publishInlineMessage({
-          scope: SCOPE,
           type: "SUCCESS",
           text: "Contact updated.",
         });
       } else {
         await apiPost(`/api/admin/clients/${clientId}/contacts`, contact);
         publishInlineMessage({
-          scope: SCOPE,
           type: "SUCCESS",
           text: "Contact created.",
         });
@@ -206,7 +167,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       await load();
     } catch (err) {
       publishInlineMessage({
-        scope: SCOPE,
         type: "ERROR",
         text: getErrorMessage("Save contact failed", err),
       });
@@ -217,14 +177,12 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     try {
       await apiDelete(`/api/admin/clients/${clientId}/contacts/${contactId}`);
       publishInlineMessage({
-        scope: SCOPE,
         type: "SUCCESS",
         text: "Contact deleted.",
       });
       await load();
     } catch (err) {
       publishInlineMessage({
-        scope: SCOPE,
         type: "ERROR",
         text: getErrorMessage("Delete contact failed", err),
       });
@@ -237,7 +195,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box w="full">
-      <InlineMessage scope={SCOPE} />
+      <InlineMessage />
 
       <HStack mb={3}>
         <Input

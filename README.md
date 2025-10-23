@@ -165,16 +165,16 @@ Optional (only for aggregate sites if per-unit tracking is needed later)
 
 - Admins create/edit Clients, Contacts, and Properties.
 - No prospect/approval states in MVP; keep soft delete via archivedAt.
-- Default comms routing: use `Property.pointOfContactId` → else Client’s `isPrimary contact` → else lowest contactPriority.
+- Default comms routing: use `Property.pointOfContactId`.
 
 ## Entity Notes
 
 - Client
   - Types: `individual | household | organization | community`
   - Has many **ClientContacts** and **Properties**
-  - Keep `notesInternal`, optional `tags`, `archivedAt` for soft delete
+  - Keep `notesInternal`,`archivedAt` for soft delete
 - ClientContact
-  - `isPrimary` (prefer exactly one), `contactPriority` (lower = contact first)
+  - `isPrimary` (prefer exactly one)
   - Optional `role` (`primary | spouse | community_manager | property_manager`)
   - `normalizedPhone` + unique `email` for dedupe
 - Property

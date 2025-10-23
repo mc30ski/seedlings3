@@ -157,6 +157,11 @@ enum ContactRole {
   SPOUSE
   COMMUNITY_MANAGER
   PROPERTY_MANAGER
+  BILLING
+  TECHNICAL
+  OPERATIONS
+  LEGAL
+  OTHER
 }
 
 // ----- Post-MVP (uncomment when you add worker submissions/approvals) -----
@@ -192,7 +197,6 @@ model Client {
 
   // Lightweight meta
   notesInternal String?
-  tags          Json?
 
   // Relations
   contacts      ClientContact[]
@@ -222,7 +226,6 @@ model ClientContact {
 
   role             ContactRole?
   isPrimary        Boolean     @default(false)
-  contactPriority  Int         @default(100)   // lower => contact first
   active           Boolean     @default(true)
 
   createdAt        DateTime    @default(now())
