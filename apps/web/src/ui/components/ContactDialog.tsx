@@ -34,39 +34,24 @@ const CONTACT_ROLE_ITEMS = [
   { label: "OTHER", value: "OTHER" },
 ];
 
-/* TODO:
 export type Contact = {
   id: string;
   clientId: string;
+  role: string | null;
+  active: boolean;
   firstName: string;
   lastName: string;
-  email?: string | null;
+  email: string | null;
   phone?: string | null;
-  role?: string | null;
   isPrimary?: boolean;
-  active?: boolean;
-};
-*/
 
-export type Contact = {
-  id: string;
-  clientId: string;
-  firstName: string;
-  lastName: string;
-  email?: string | null;
-  phone?: string | null;
-  role?: string | null;
-  isPrimary?: boolean;
-  active?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+
   //TODO:
   //preferredName?: string | null;
   //normalizedPhone?: string | null;
   //isBilling?: boolean;
-
-  createdAt?: string | null;
-  updatedAt?: string | null;
-  //TODO: Doesn't exist in schema
-  //archivedAt?: string | null;
 };
 
 type Props = {

@@ -231,7 +231,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                     </Text>
                   )}
                 </HStack>
-                {c.notesInternal && (
+                {isAdmin && c.notesInternal && (
                   <Text mt={1} fontSize="sm" color="fg.muted">
                     {c.notesInternal}
                   </Text>
