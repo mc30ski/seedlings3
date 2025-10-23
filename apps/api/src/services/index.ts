@@ -109,7 +109,6 @@ function normalizeContactPayload(payload: any): {
   role: ContactRole | null;
   isPrimary: boolean;
   active: boolean;
-  contactPriority: number;
 } {
   let first = (payload.firstName ?? "").trim();
   let last = (payload.lastName ?? "").trim();
@@ -141,7 +140,6 @@ function normalizeContactPayload(payload: any): {
     role, // ← ContactRole | null
     isPrimary: !!payload.isPrimary,
     active: payload.active ?? true,
-    contactPriority: payload.contactPriority ?? 100,
   };
 }
 
@@ -184,11 +182,7 @@ const clients = {
       include: {
         contacts: {
           where: { active: true },
-          orderBy: [
-            { isPrimary: "desc" },
-            { contactPriority: "asc" },
-            { createdAt: "asc" },
-          ],
+          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           select: {
             id: true,
             firstName: true,
@@ -214,11 +208,7 @@ const clients = {
       where: { id },
       include: {
         contacts: {
-          orderBy: [
-            { isPrimary: "desc" },
-            { contactPriority: "asc" },
-            { createdAt: "asc" },
-          ],
+          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
         },
       },
     });
@@ -234,9 +224,6 @@ const clients = {
           displayName: payload.displayName,
           status: payload.status ?? "ACTIVE",
           notesInternal: payload.notesInternal,
-          ...(typeof payload.tags !== "undefined"
-            ? { tags: payload.tags }
-            : {}), // only set if present
         },
       });
 
@@ -259,7 +246,6 @@ const clients = {
           displayName: payload.displayName,
           status: payload.status,
           notesInternal: payload.notesInternal,
-          tags: payload.tags,
         },
       });
 
@@ -317,7 +303,6 @@ const clients = {
           role: cp.role,
           isPrimary: cp.isPrimary,
           active: cp.active,
-          contactPriority: cp.contactPriority,
         },
       });
 
@@ -358,7 +343,6 @@ const clients = {
           role: cp.role,
           isPrimary: cp.isPrimary,
           active: cp.active,
-          contactPriority: cp.contactPriority,
         },
       });
 

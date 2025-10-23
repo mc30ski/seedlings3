@@ -12,6 +12,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
+import { type Contact } from "@/src/ui/components/ContactDialog";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
 import {
@@ -25,11 +26,20 @@ export type ClientType =
   | "ORGANIZATION"
   | "COMMUNITY";
 
+export type ClientStatus = "ACTIVE" | "PAUSED" | "ARCHIVED";
+
 export type Client = {
   id: string;
-  displayName: string;
   type: ClientType;
+  displayName: string;
+  status: ClientStatus;
   notesInternal?: string | null;
+
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  archivedAt?: string | null;
+
+  contacts?: Contact[];
 };
 
 type Mode = "create" | "update";

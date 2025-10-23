@@ -27,14 +27,11 @@ const CONTACT_ROLE_ITEMS = [
   { label: "SPOUSE", value: "SPOUSE" },
   { label: "COMMUNITY_MANAGER", value: "COMMUNITY_MANAGER" },
   { label: "PROPERTY_MANAGER", value: "PROPERTY_MANAGER" },
-  //TODO:
-  /*
   { label: "BILLING", value: "BILLING" },
   { label: "TECHNICAL", value: "TECHNICAL" },
   { label: "OPERATIONS", value: "OPERATIONS" },
   { label: "LEGAL", value: "LEGAL" },
   { label: "OTHER", value: "OTHER" },
-*/
 ];
 
 /* TODO:
@@ -48,7 +45,6 @@ export type Contact = {
   role?: string | null;
   isPrimary?: boolean;
   active?: boolean;
-  contactPriority?: number | null;
 };
 */
 
@@ -62,7 +58,6 @@ export type Contact = {
   role?: string | null;
   isPrimary?: boolean;
   active?: boolean;
-  contactPriority?: number | null;
   //TODO:
   //preferredName?: string | null;
   //normalizedPhone?: string | null;
@@ -115,7 +110,6 @@ export default function ContactDialog({
   const [phone, setPhone] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
   const [active, setActive] = useState(true);
-  const [contactPriority, setContactPriority] = useState<number | "">("");
 
   // role select
   const [roleValue, setRoleValue] = useState<string[]>(["UNSPECIFIED"]);
@@ -134,11 +128,6 @@ export default function ContactDialog({
       setPhone(initialContact.phone ?? "");
       setIsPrimary(!!initialContact.isPrimary);
       setActive(initialContact.active ?? true);
-      setContactPriority(
-        typeof initialContact.contactPriority === "number"
-          ? initialContact.contactPriority
-          : ""
-      );
       setRoleValue([initialContact.role ?? "UNSPECIFIED"]);
     } else {
       setFirstName("");
@@ -147,7 +136,6 @@ export default function ContactDialog({
       setPhone("");
       setIsPrimary(false);
       setActive(true);
-      setContactPriority("");
       setRoleValue(["UNSPECIFIED"]);
     }
   }, [open, mode, initialContact]);
@@ -171,7 +159,6 @@ export default function ContactDialog({
       phone: phone.trim() || null,
       isPrimary,
       active,
-      contactPriority: contactPriority === "" ? null : Number(contactPriority),
     };
 
     // Only include role if not UNSPECIFIED (prevents enum mismatch server-side)
@@ -315,19 +302,6 @@ export default function ContactDialog({
                         </Select.Content>
                       </Select.Positioner>
                     </Select.Root>
-                  </div>
-
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Priority</Text>
-                    <Input
-                      type="number"
-                      value={contactPriority}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setContactPriority(val === "" ? "" : Number(val));
-                      }}
-                      placeholder="e.g. 100"
-                    />
                   </div>
                 </HStack>
 
