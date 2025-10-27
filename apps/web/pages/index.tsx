@@ -96,6 +96,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<EquipmentTab role="worker" />),
     },
     {
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: wrapWithInlineMessage(<ClientsTab role="worker" />),
+    },
+    {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
@@ -106,12 +112,6 @@ export default function HomePage() {
       label: "Payments",
       icon: TfiMoney,
       content: wrapWithInlineMessage(<PaymentsTab role="worker" />),
-    },
-    {
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-      content: wrapWithInlineMessage(<ClientsTab role="worker" />),
     },
   ];
 

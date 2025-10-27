@@ -223,7 +223,15 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   }
 
   function tabTitle(role: string, status: string) {
-    return "All Clients";
+    return filterType === "individual"
+      ? "Individial Clients"
+      : filterType === "household"
+        ? "Household Clients"
+        : filterType === "organization"
+          ? "Organizational Clients"
+          : filterType === "community"
+            ? "Community Clients"
+            : "All Clients";
   }
 
   if (role !== "admin" && role !== "worker") {
