@@ -67,6 +67,15 @@ export function equipmentStatusColor(value: string): string {
   return "gray";
 }
 
+export function clientStatusColor(value: string): string {
+  const t = (value || "").toUpperCase();
+  if (t.includes("INDIVIDUAL")) return "blue";
+  if (t.includes("HOUSEHOLD")) return "green";
+  if (t.includes("COMMUNITY")) return "purple";
+  if (t.includes("ORGANIZATION")) return "yellow";
+  return "gray";
+}
+
 export function prettyDate(iso?: string | null) {
   if (!iso) return "—";
   try {
