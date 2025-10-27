@@ -3,7 +3,7 @@
 Monorepo managed with Turborepo.
 
 - **Web**: Next.js + Chakra UI (deployed on Vercel)
-- **API**: Fastify (TypeScript) + Prisma + Neon (deploy on Vercel using Serverless Functions)
+- **API**: Fastify (TypeScript) + Prisma + Neon (deployed on Vercel using Serverless Functions)
 - **Mobile**: Expo (React Native) + React Native Paper
 
 ## Quickstart
@@ -175,7 +175,7 @@ Optional (only for aggregate sites if per-unit tracking is needed later)
   - Keep `notesInternal`
 - ClientContact
   - `isPrimary` (prefer exactly one)
-  - Optional `role` (`primary | spouse | community_manager | property_manager`)
+  - Optional `role` (`owner | spouse | community_manager | property_manager | billing | technical | operations | legal | other`)
   - `normalizedPhone` + unique `email` for dedupe
 - Property
   - `kind`: `single | aggregate_site`
