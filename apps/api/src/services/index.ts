@@ -216,45 +216,38 @@ const clients = {
   },
 
   async create(actorId: string, payload: any) {
-    console.log("PAYLOAD", payload);
-
     return prisma.$transaction(async (tx) => {
+      const data = {
+        type: payload.type,
+        displayName: payload.displayName,
+        status: payload.status ?? "ACTIVE",
+        notesInternal: payload.notesInternal,
+      };
       const created = await tx.client.create({
-        data: {
-          type: payload.type,
-          displayName: payload.displayName,
-          status: payload.status ?? "ACTIVE",
-          notesInternal: payload.notesInternal,
-        },
+        data: data,
       });
-
       await writeAudit(tx, AUDIT.CLIENT.CREATED, actorId, {
-        clientId: created.id,
-        displayName: created.displayName,
-        type: created.type,
+        clientRecord: { ...created },
       });
-
       return created;
     });
   },
 
   async update(actorId: string, id: string, payload: any) {
     return prisma.$transaction(async (tx) => {
+      const data = {
+        type: payload.type,
+        displayName: payload.displayName,
+        status: payload.status,
+        notesInternal: payload.notesInternal,
+      };
       const updated = await tx.client.update({
         where: { id },
-        data: {
-          type: payload.type,
-          displayName: payload.displayName,
-          status: payload.status,
-          notesInternal: payload.notesInternal,
-        },
+        data: data,
       });
-
       await writeAudit(tx, AUDIT.CLIENT.UPDATED, actorId, {
-        clientId: id,
-        displayName: updated.displayName,
+        clientRecord: { ...updated },
       });
-
       return updated;
     });
   },
@@ -262,43 +255,38 @@ const clients = {
   async hardDelete(actorId: string, id: string) {
     await prisma.$transaction(async (tx) => {
       await tx.client.delete({ where: { id } });
-      await writeAudit(tx, AUDIT.CLIENT.DELETED, actorId, { clientId: id });
+      await writeAudit(tx, AUDIT.CLIENT.DELETED, actorId, { id: id });
     });
     return { deleted: true as const };
   },
 
   async addContact(actorId: string, clientId: string, payload: any) {
     const cp = normalizeContactPayload(payload);
-
+    const data = {
+      clientId,
+      firstName: cp.firstName,
+      lastName: cp.lastName,
+      email: cp.email,
+      phone: cp.phone,
+      normalizedPhone: cp.normalizedPhone,
+      role: cp.role,
+      isPrimary: cp.isPrimary,
+      active: cp.active,
+    };
     return prisma.$transaction(async (tx) => {
-      const c = await tx.clientContact.create({
-        data: {
-          clientId,
-          firstName: cp.firstName,
-          lastName: cp.lastName,
-          email: cp.email,
-          phone: cp.phone,
-          normalizedPhone: cp.normalizedPhone,
-          role: cp.role,
-          isPrimary: cp.isPrimary,
-          active: cp.active,
-        },
+      const contact = await tx.clientContact.create({
+        data: data,
       });
-
       if (cp.isPrimary) {
-        await tx.clientContact.updateMany({
-          where: { clientId, NOT: { id: c.id } },
+        const client = await tx.clientContact.updateMany({
+          where: { clientId, NOT: { id: contact.id } },
           data: { isPrimary: false },
         });
       }
-
       await writeAudit(tx, AUDIT.CLIENT.CONTACT_CREATED, actorId, {
-        clientId,
-        contactId: c.id,
-        name: `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim(),
+        contactRecord: { ...contact },
       });
-
-      return c;
+      return contact;
     });
   },
 
@@ -309,36 +297,34 @@ const clients = {
     payload: any
   ) {
     const cp = normalizeContactPayload(payload);
-
+    const data = {
+      firstName: cp.firstName,
+      lastName: cp.lastName,
+      email: cp.email,
+      phone: cp.phone,
+      normalizedPhone: cp.normalizedPhone,
+      role: cp.role,
+      isPrimary: cp.isPrimary,
+      active: cp.active,
+    };
     return prisma.$transaction(async (tx) => {
-      const u = await tx.clientContact.update({
+      const updated = await tx.clientContact.update({
         where: { id: contactId },
-        data: {
-          firstName: cp.firstName,
-          lastName: cp.lastName,
-          email: cp.email,
-          phone: cp.phone,
-          normalizedPhone: cp.normalizedPhone,
-          role: cp.role,
-          isPrimary: cp.isPrimary,
-          active: cp.active,
-        },
+        data: data,
       });
-
       if (cp.isPrimary) {
         await tx.clientContact.updateMany({
           where: { clientId, NOT: { id: contactId } },
           data: { isPrimary: false },
         });
       }
-
       await writeAudit(tx, AUDIT.CLIENT.CONTACT_UPDATED, actorId, {
         clientId,
         contactId,
-        name: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
+        contactRecord: { ...updated },
       });
 
-      return u;
+      return updated;
     });
   },
 

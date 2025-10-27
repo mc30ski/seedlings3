@@ -222,6 +222,17 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
       return `${role ? role + " - " : ""}${email}`;
     }
 
+    if (row.action === "CLIENT_CREATED" || row.action === "CLIENT_UPDATED") {
+      let summary = "";
+      if (md.clientRecord) {
+        summary = md.clientRecord.displayName;
+      }
+      if (!summary && md.contactRecord) {
+        summary = `${md.contactRecord.firstName} ${md.contactRecord.lastName}`;
+      }
+      return summary;
+    }
+
     return "";
   }
 
