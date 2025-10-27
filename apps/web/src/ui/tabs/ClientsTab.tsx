@@ -20,8 +20,12 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { prettyStatus, clientStatusColor } from "@/src/lib/lib";
+import { apiGet, apiDelete } from "@/src/lib/api";
+import {
+  prettyStatus,
+  clientStatusColor,
+  contactStatusColor,
+} from "@/src/lib/lib";
 import type { Me, TabRolePropType } from "@/src/lib/types";
 import ClientDialog, { type Client } from "@/src/ui/dialogs/ClientDialog";
 import ContactDialog, { type Contact } from "@/src/ui/dialogs/ContactDialog";
@@ -192,7 +196,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       lastName: ct.lastName ?? "",
       email: ct.email ?? "",
       phone: ct.phone ?? "",
-      role: ct.role ?? null,
+      role: ct.role ?? "",
       isPrimary: !!ct.isPrimary,
       active: ct.active ?? true,
     };
@@ -385,9 +389,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                         {`${ct.firstName} ${ct.lastName}`}
                       </Text>
                     )}
-                    <Text fontSize="sm" color="fg.muted">
-                      {ct.role}
-                    </Text>
+                    <Badge colorPalette={contactStatusColor(ct.role)}>
+                      {prettyStatus(ct.role)}
+                    </Badge>
                     <Text fontSize="sm" color="fg.muted">
                       {mailLink(ct.email ?? "", "", "")}
                     </Text>
