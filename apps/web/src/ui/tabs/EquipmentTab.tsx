@@ -1,3 +1,5 @@
+"use client";
+
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
@@ -9,7 +11,10 @@ import {
   SelectTrigger,
   SelectValueText,
   SelectContent,
+  SelectPositioner,
   SelectItem,
+  HStack,
+  Portal,
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
@@ -20,6 +25,7 @@ import {
   Equipment,
   EQUIPMENT_TYPES,
 } from "@/src/ui/dialogs/EquipmentDialog";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import EquipmentTile from "@/src/ui/components/EquipmentTile";
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
@@ -67,6 +73,7 @@ function tabTitle(role: string, status: string) {
 }
 
 export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
+  const isAdmin = role === "admin";
   const [tabRole, _setTabRole] = useState(role);
   const [loading, setLoading] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
@@ -249,10 +256,54 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
     itemToString: (item) => item.label,
   });
 
-  if (loading) return <LoadingCenter />;
+  if (role !== "admin" && role !== "worker") {
+    return <UnavailableNotice />;
+  }
 
   return (
-    <Box>
+    <Box w="full">
+      {loading && <LoadingCenter />}
+      <HStack mb={3}>
+        <SearchWithClear
+          ref={inputRef}
+          value={search}
+          onChange={setSearch}
+          inputId="equipment-search"
+          placeholder="Search…"
+        />
+        <SelectRoot
+          collection={equipmentTypeCollection}
+          multiple={false}
+          value={filterType ? [filterType] : []} // pass [] when empty
+          onValueChange={({ value }) => {
+            const v = (value as string[] | undefined)?.[0];
+            setFilterType(v === NONE || v == null ? "" : (v as EquipmentType));
+          }}
+          aria-label="Filter"
+        >
+          <SelectTrigger>
+            <SelectValueText placeholder="Filter…" />
+          </SelectTrigger>
+          <Portal>
+            <SelectPositioner>
+              <SelectContent>
+                {/* ids must exist in the collection and match itemToValue */}
+                <SelectItem item={NONE}>—</SelectItem>
+                {EQUIPMENT_TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} item={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectPositioner>
+          </Portal>
+        </SelectRoot>
+        {isAdmin && status === "all" && (
+          <Button onClick={() => void setDialogCreateOpen(true)}>
+            New Equipment
+          </Button>
+        )}
+      </HStack>
       <Stack
         direction={{ base: "column", md: "row" }}
         gap="2"
@@ -281,55 +332,12 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
         gap="2"
         align={{ base: "stretch", md: "center" }}
         mb={3}
-      >
-        <Box display="flex" flexWrap="wrap" gap="6px">
-          <SelectRoot
-            collection={equipmentTypeCollection}
-            multiple={false}
-            value={filterType ? [filterType] : []} // pass [] when empty
-            onValueChange={({ value }) => {
-              const v = (value as string[] | undefined)?.[0];
-              setFilterType(
-                v === NONE || v == null ? "" : (v as EquipmentType)
-              );
-            }}
-            aria-label="Select Type"
-          >
-            <SelectTrigger>
-              <SelectValueText placeholder="Select Type" />
-            </SelectTrigger>
-
-            <SelectContent>
-              {/* ids must exist in the collection and match itemToValue */}
-              <SelectItem item={NONE}>—</SelectItem>
-              {EQUIPMENT_TYPE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} item={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </SelectRoot>
-        </Box>
-        <Box display="flex" flexWrap="wrap" gap="6px">
-          <SearchWithClear
-            ref={inputRef}
-            value={search}
-            onChange={setSearch}
-            inputId="equipment-search"
-            placeholder="Search equipment…"
-          />
-        </Box>
-      </Stack>
+      ></Stack>
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
       <Heading size="md" mb={3}>
         {tabTitle(tabRole, status)}
       </Heading>
-      {status === "all" && (
-        <Button mb={4} onClick={() => void setDialogCreateOpen(true)}>
-          New Equipment
-        </Button>
-      )}
       {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
