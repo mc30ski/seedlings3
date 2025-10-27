@@ -37,7 +37,7 @@ const CONTACT_ROLE_ITEMS = [
 export type Contact = {
   id: string;
   clientId: string;
-  role: string | null;
+  role: string;
   active: boolean;
   firstName: string;
   lastName: string;

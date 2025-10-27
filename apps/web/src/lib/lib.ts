@@ -76,6 +76,10 @@ export function clientStatusColor(value: string): string {
   return "gray";
 }
 
+export function contactStatusColor(value: string): string {
+  return "teal";
+}
+
 export function prettyDate(iso?: string | null) {
   if (!iso) return "—";
   try {

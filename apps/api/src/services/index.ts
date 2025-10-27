@@ -186,6 +186,7 @@ const clients = {
             id: true,
             firstName: true,
             lastName: true,
+            role: true,
             email: true,
             phone: true,
             normalizedPhone: true,
