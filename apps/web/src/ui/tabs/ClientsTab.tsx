@@ -11,7 +11,9 @@ import {
   Stack,
   Text,
   VStack,
+  Icon,
 } from "@chakra-ui/react";
+import { FiStar } from "react-icons/fi";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -27,6 +29,14 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
+
+// Filter type for this page
+type FilterType =
+  | "all"
+  | "individual"
+  | "household"
+  | "organization"
+  | "community";
 
 function mailLink(to: string, subject: string, body: string) {
   return (
@@ -74,6 +84,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [items, setItems] = useState<Client[]>([]);
   const [filter, setFilter] = useState("");
+  const [filterType, setFilterType] = useState<FilterType>("all");
 
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
   const [toDeleteContact, setToDeleteContact] = useState<ToDeleteProps | null>(
@@ -84,7 +95,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     setLoading(true);
     try {
       const [data, meResp] = await Promise.all([
-        await apiGet<Client[]>("/api/clients"),
+        await (isAdmin
+          ? apiGet<Client[]>("/api/admin/clients")
+          : apiGet<Client[]>("/api/clients")),
         apiGet<Me>("/api/me"),
       ]);
 
@@ -122,21 +135,33 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   }
 
   const filtered = useMemo(() => {
-    const t = filter.trim().toLowerCase();
-    if (!t) return items;
-    return items.filter((c) => {
-      const name = (c.displayName ?? "").toLowerCase();
-      const notes = (c.notesInternal ?? "").toLowerCase();
-      const anyContact = (c.contacts ?? []).some((ct) =>
-        //TODO:
-        //[ct.name, ct.preferredName, ct.email, ct.phone, ct.role]
-        [ct.firstName, ct.email, ct.phone, ct.role]
-          .filter(Boolean)
-          .some((v) => (v as string).toLowerCase().includes(t))
-      );
-      return name.includes(t) || (notes.includes(t) && isAdmin) || anyContact;
-    });
-  }, [items, filter]);
+    const t1 = filter.trim().toLowerCase();
+    const t2 = filterType.trim().toUpperCase();
+    if (!t1 && !t2) return items;
+    let filteredItems = [...items];
+    if (t2) {
+      filteredItems = filteredItems.filter((c) => {
+        return t2 === "ALL" || c.type === t2;
+      });
+    }
+    if (t1) {
+      filteredItems = filteredItems.filter((c) => {
+        const name = (c.displayName ?? "").toLowerCase();
+        const notes = (c.notesInternal ?? "").toLowerCase();
+        const anyContact = (c.contacts ?? []).some((ct) =>
+          //TODO:
+          //[ct.name, ct.preferredName, ct.email, ct.phone, ct.role]
+          [ct.firstName, ct.email, ct.phone, ct.role]
+            .filter(Boolean)
+            .some((v) => (v as string).toLowerCase().includes(t1))
+        );
+        return (
+          name.includes(t1) || (notes.includes(t1) && isAdmin) || anyContact
+        );
+      });
+    }
+    return filteredItems;
+  }, [items, filter, filterType]);
 
   async function deleteClient(id: string) {
     try {
@@ -169,7 +194,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
       lastName: ct.lastName ?? "",
       email: ct.email ?? "",
       phone: ct.phone ?? "",
-      role: ct.role ?? null, // must match your enum on the API
+      role: ct.role ?? null,
       isPrimary: !!ct.isPrimary,
       active: ct.active ?? true,
     };
@@ -177,36 +202,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     setEditingContact(uiContact);
     setContactMode("update");
     setContactDialogOpen(true);
-  }
-
-  async function upsertContact(
-    clientId: string,
-    contact: Partial<Contact> & { id?: string }
-  ) {
-    try {
-      if (contact.id) {
-        await apiPatch(
-          `/api/admin/clients/${clientId}/contacts/${contact.id}`,
-          contact
-        );
-        publishInlineMessage({
-          type: "SUCCESS",
-          text: "Contact updated.",
-        });
-      } else {
-        await apiPost(`/api/admin/clients/${clientId}/contacts`, contact);
-        publishInlineMessage({
-          type: "SUCCESS",
-          text: "Contact created.",
-        });
-      }
-      await load();
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Save contact failed", err),
-      });
-    }
   }
 
   async function deleteContact(clientId: string, contactId: string) {
@@ -243,41 +238,74 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
           inputId="clients-search"
           placeholder="Search…"
         />
-        {isAdmin && <Button onClick={openCreate}>New Client</Button>}
+        {isAdmin && <Button onClick={openCreate}>New</Button>}
       </HStack>
+      <Stack mb={4}>
+        <HStack gap={2} wrap="wrap">
+          <Button
+            size="sm"
+            variant={filterType === "all" ? "solid" : "outline"}
+            onClick={() => setFilterType("all")}
+          >
+            All
+          </Button>
+          <Button
+            size="sm"
+            variant={filterType === "individual" ? "solid" : "outline"}
+            onClick={() => setFilterType("individual")}
+          >
+            Individual
+          </Button>
+          <Button
+            size="sm"
+            variant={filterType === "household" ? "solid" : "outline"}
+            onClick={() => setFilterType("household")}
+          >
+            Household
+          </Button>
+          <Button
+            size="sm"
+            variant={filterType === "community" ? "solid" : "outline"}
+            onClick={() => setFilterType("community")}
+          >
+            Community
+          </Button>
+          <Button
+            size="sm"
+            variant={filterType === "organization" ? "solid" : "outline"}
+            onClick={() => setFilterType("organization")}
+          >
+            Organization
+          </Button>
+        </HStack>
+      </Stack>
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
       <Heading size="md" mb={3}>
         {tabTitle(tabRole, "")}
       </Heading>
-      {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <Text>No clients or contacts match the current filters.</Text>
       )}
-      {filtered.map((c) => (
-        <Box key={c.id} borderWidth="1px" borderRadius="lg" p={3} mb={3}>
+      {filtered.map((item) => (
+        <Box key={item.id} borderWidth="1px" borderRadius="lg" p={3} mb={3}>
           <HStack align="start" gap="2">
             <VStack alignItems="start" gap={1} flex="1">
-              <Heading size="sm">{c.displayName}</Heading>
+              <Heading size="sm">{item.displayName}</Heading>
               <HStack gap="2" wrap="wrap">
-                <Badge colorPalette={clientStatusColor(c.type)}>
-                  {prettyStatus(c.type)}
+                <Badge colorPalette={clientStatusColor(item.type)}>
+                  {prettyStatus(item.type)}
                 </Badge>
-                {c.archivedAt && (
-                  <Text fontSize="sm" color="fg.muted">
-                    · archived
-                  </Text>
-                )}
               </HStack>
-              {isAdmin && c.notesInternal && (
+              {isAdmin && item.notesInternal && (
                 <Text mt={1} fontSize="sm" color="fg.muted">
-                  {c.notesInternal}
+                  {item.notesInternal}
                 </Text>
               )}
             </VStack>
-
             {isAdmin && (
               <HStack gap="2">
-                <Button variant="outline" onClick={() => openEdit(c)}>
+                <Button variant="outline" onClick={() => openEdit(item)}>
                   Edit
                 </Button>
                 <Button
@@ -285,9 +313,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                   colorPalette="red"
                   onClick={() =>
                     void setToDelete({
-                      id: c.id,
+                      id: item.id,
                       title: "Delete client and contacts?",
-                      summary: c.displayName,
+                      summary: item.displayName,
                       disabled: me?.roles?.includes("SUPER") ? false : true,
                       details: (
                         <Text color="red.500">
@@ -302,86 +330,110 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
               </HStack>
             )}
           </HStack>
-
           {isAdmin && (
-            <Button
-              mt={2}
-              size="sm"
-              variant="subtle"
-              onClick={() => openAddContact(c.id)}
-            >
-              Add contact
-            </Button>
+            <HStack gap={2}>
+              <Button
+                mt={2}
+                size="sm"
+                variant="subtle"
+                onClick={() => openAddContact(item.id)}
+              >
+                Add contact
+              </Button>
+            </HStack>
           )}
-
           <Separator my={3} />
-
           <Stack gap="2" mt={2}>
-            {(c.contacts ?? []).length === 0 && (
+            {(item.contacts ?? []).length === 0 && (
               <Text fontSize="sm" color="fg.muted">
                 No contacts added.
               </Text>
             )}
-            {(c.contacts ?? []).map((ct) => (
-              <HStack
-                key={ct.id}
-                justify="space-between"
-                align="start"
-                borderWidth="1px"
-                borderRadius="md"
-                bg="gray.100"
-                p={2}
-              >
-                <Box>
-                  <Text fontWeight="medium">
-                    {/* TODO: ct.preferredName || */}
-                    {`${ct.firstName} ${ct.lastName}`}
-                  </Text>
-                  <Text fontSize="sm" color="fg.muted">
-                    {ct.role}
-                  </Text>
-                  <Text fontSize="sm" color="fg.muted">
-                    {mailLink(ct.email ?? "", "", "")}
-                  </Text>
-                  <Text fontSize="sm" color="fg.muted">
-                    {callLink(ct.phone ?? "")}
-                  </Text>
-                </Box>
+            {(item.contacts ?? [])
+              .toSorted(
+                (a, b) =>
+                  +(b.isPrimary ?? false) - +(a.isPrimary ?? false) ||
+                  +(b.active ?? false) - +(a.active ?? false)
+              )
+              .filter((ct) => {
+                return isAdmin || ct.active;
+              })
+              .map((ct) => (
+                <HStack
+                  key={ct.id}
+                  opacity={ct.active ? 1.0 : 0.5}
+                  justify="space-between"
+                  align="start"
+                  borderWidth="1px"
+                  borderRadius="md"
+                  bg="gray.100"
+                  p={2}
+                >
+                  <Box>
+                    {!ct.active && (
+                      <Text fontSize="sm" color="fg.muted">
+                        INACTIVE
+                      </Text>
+                    )}
+                    {ct.isPrimary ? (
+                      <HStack gap="2">
+                        <Icon as={FiStar} boxSize="4" />
+                        <Text fontWeight="medium">
+                          {`${ct.firstName} ${ct.lastName}`}
+                        </Text>
+                      </HStack>
+                    ) : (
+                      <Text fontWeight="medium">
+                        {`${ct.firstName} ${ct.lastName}`}
+                      </Text>
+                    )}
+                    <Text fontSize="sm" color="fg.muted">
+                      {ct.role}
+                    </Text>
+                    <Text fontSize="sm" color="fg.muted">
+                      {mailLink(ct.email ?? "", "", "")}
+                    </Text>
+                    <Text fontSize="sm" color="fg.muted">
+                      {callLink(ct.phone ?? "")}
+                    </Text>
+                  </Box>
 
-                {isAdmin && (
-                  <HStack gap="2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openEditContact(c.id, ct)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      colorPalette="red"
-                      onClick={() =>
-                        void setToDeleteContact({
-                          id: c.id,
-                          child: ct.id,
-                          title: "Delete contact from client?",
-                          summary: `${ct.firstName} ${ct.lastName}`,
-                          disabled: me?.roles?.includes("SUPER") ? false : true,
-                          details: (
-                            <Text color="red.500">
-                              You must be a Super Admin to delete.
-                            </Text>
-                          ),
-                        })
-                      }
-                    >
-                      Delete
-                    </Button>
-                  </HStack>
-                )}
-              </HStack>
-            ))}
+                  {isAdmin && (
+                    <HStack gap="2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEditContact(item.id, ct)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        colorPalette="red"
+                        onClick={() =>
+                          void setToDeleteContact({
+                            id: item.id,
+                            child: ct.id,
+                            title: "Delete contact from client?",
+                            summary: `${ct.firstName} ${ct.lastName}`,
+                            disabled: me?.roles?.includes("SUPER")
+                              ? false
+                              : true,
+                            details: (
+                              <Text color="red.500">
+                                You must be a Super Admin to delete.
+                              </Text>
+                            ),
+                          })
+                        }
+                      >
+                        Delete
+                      </Button>
+                    </HStack>
+                  )}
+                </HStack>
+              ))}
           </Stack>
         </Box>
       ))}

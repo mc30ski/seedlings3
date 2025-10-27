@@ -298,19 +298,12 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
             </SelectPositioner>
           </Portal>
         </SelectRoot>
-        {isAdmin && status === "all" && (
-          <Button onClick={() => void setDialogCreateOpen(true)}>
-            New Equipment
-          </Button>
+        {isAdmin && (
+          <Button onClick={() => void setDialogCreateOpen(true)}>New</Button>
         )}
       </HStack>
-      <Stack
-        direction={{ base: "column", md: "row" }}
-        gap="2"
-        align={{ base: "stretch", md: "center" }}
-        mb={3}
-      >
-        <Box display="flex" flexWrap="wrap" gap="6px">
+      <Stack mb={4}>
+        <HStack gap={2} wrap="wrap">
           {(tabRole === "admin" ? adminStates : workerStates).map(
             ([val, label]) => (
               <Button
@@ -325,7 +318,7 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
               </Button>
             )
           )}
-        </Box>
+        </HStack>
       </Stack>
       <Stack
         direction={{ base: "column", md: "row" }}
@@ -338,9 +331,24 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
       <Heading size="md" mb={3}>
         {tabTitle(tabRole, status)}
       </Heading>
-      {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
+
+      {filtered.map((item) => {
+        const isMine = !!me && !!item.holder && item.holder.userId === me.id;
+        return (
+          <EquipmentTile
+            item={item}
+            isMine={isMine}
+            isSuper={me?.roles?.includes("SUPER") ? true : false}
+            role={tabRole}
+            filter={status}
+            refresh={load}
+          />
+        );
+      })}
+
       {filtered.map((item) => {
         const isMine = !!me && !!item.holder && item.holder.userId === me.id;
         return (

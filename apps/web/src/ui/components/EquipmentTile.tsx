@@ -4,8 +4,10 @@ import {
   Text,
   HStack,
   Stack,
+  VStack,
   Badge,
   Button,
+  Spacer,
   useDisclosure,
 } from "@chakra-ui/react";
 import { useState } from "react";
@@ -42,6 +44,7 @@ export default function EquipmentTileList({
   filter,
   refresh,
 }: EquipmentTileListProps) {
+  const isAdmin = role === "admin";
   const [busyId, setBusyId] = useState<string | null>(null);
   // Inline warning per equipment id
   const [inlineWarn, setInlineWarn] = useState<Record<string, string>>({});
@@ -203,8 +206,6 @@ export default function EquipmentTileList({
     }
   }
 
-  const isAdmin = () => role === "admin";
-
   const canWorkerCheckout = (e: Equipment) =>
     role === "worker" && filter === "claimed" && item.status === "RESERVED";
   const canWorkerCancel = (e: Equipment) =>
@@ -333,6 +334,235 @@ export default function EquipmentTileList({
 
   return (
     <>
+      <Box
+        key={item.id}
+        p={4}
+        borderWidth="1px"
+        borderRadius="lg"
+        mb={3}
+        w="full"
+      >
+        <HStack align="start" gap="2">
+          <VStack alignItems="start" gap={1} flex="1">
+            <Heading size="sm" color="gray.400">
+              {item.type ?? ""}
+            </Heading>
+            <HStack gap="2" wrap="wrap">
+              <Badge colorPalette={equipmentStatusColor(item.status ?? "")}>
+                {prettyStatus(item.status ?? "")}
+              </Badge>
+            </HStack>
+          </VStack>
+          {isAdmin && (
+            <HStack gap="2">
+              <Button
+                variant="outline"
+                onClick={() => void setDialogEditOpen(true)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                colorPalette="red"
+                onClick={() =>
+                  void setToDelete({
+                    id: item.id,
+                    title: "Delete client and contacts?",
+                    summary: item.brand,
+                    disabled: !isSuper,
+                    details: (
+                      <Text color="red.500">
+                        You must be a Super Admin to delete.
+                      </Text>
+                    ),
+                  })
+                }
+              >
+                Delete
+              </Button>
+            </HStack>
+          )}
+        </HStack>
+
+        {item.shortDesc && <Heading size="md">{item.shortDesc}</Heading>}
+
+        <Heading size="sm">
+          {item.brand ? `${item.brand} ` : ""}
+          {item.model ? `${item.model} ` : ""}
+        </Heading>
+
+        {item.qrSlug && (
+          <Text fontSize="sm" color="gray.500" mt={1}>
+            <Text as="span" fontWeight="bold">
+              ID:{" "}
+            </Text>
+            {item.qrSlug}
+          </Text>
+        )}
+
+        {item.energy && (
+          <Text fontSize="sm" color="gray.500" mt={1}>
+            <Text as="span" fontWeight="bold">
+              Power:{" "}
+            </Text>
+            {item.energy}
+          </Text>
+        )}
+
+        {/* Minimal collapsible for details */}
+        <ItemTile item={item} isMine={isMine} />
+
+        {unavailableMessage(item)}
+
+        {/* Inline warning banner for this item */}
+        {inlineWarn[item.id] && (
+          <HStack
+            w="full"
+            mt={2}
+            align="start"
+            p={2.5}
+            borderRadius="md"
+            borderWidth="1px"
+            borderColor="orange.300"
+            bg="orange.50"
+          >
+            <Box flex="1">
+              <Text fontSize="sm" color="orange.900">
+                {inlineWarn[item.id]}
+              </Text>
+            </Box>
+            <Button
+              size="xs"
+              variant="ghost"
+              ml="auto"
+              onClick={() => dismissInline(item.id)}
+            >
+              Dismiss
+            </Button>
+          </HStack>
+        )}
+
+        <Stack
+          direction={{ base: "column", sm: "row" }}
+          gap="2"
+          mt={2}
+          wrap="wrap"
+        >
+          <Box flexBasis="100%" w="full" minW={0}>
+            <HStack gap={2}>
+              {canWorkerCheckout(item) && (
+                <ActionButton
+                  key="worker_checkout"
+                  label="Check Out"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => setScanFor(item.id)}
+                />
+              )}
+              {canWorkerCancel(item) && (
+                <ActionButton
+                  key="worker_cancel"
+                  label="Cancel Reservation"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void workerCancel(item.id)}
+                  variant="outline"
+                />
+              )}
+              {canWorkerReturn(item) && (
+                <ActionButton
+                  key="worker_return"
+                  label="Return"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => setScanReturnFor(item.id)}
+                />
+              )}
+              {canWorkerReserve(item) && (
+                <ActionButton
+                  key="worker_reserve"
+                  label="Reserve"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void workerReserve(item.id)}
+                />
+              )}
+              {canAdminForceRelease(item) && (
+                <ActionButton
+                  key="admin_forceRelease"
+                  label="Force release"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void adminForceRelease(item.id)}
+                />
+              )}
+              {canAdminStartMaintenance(item) && (
+                <ActionButton
+                  key="admin_startMaintenance"
+                  label="Start maintenance"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void adminStartMaintainence(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminEndMaintenance(item) && (
+                <ActionButton
+                  key="admin_endMaintenance"
+                  label="End maintenance"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void adminEndMaintainence(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminRetire(item) && (
+                <ActionButton
+                  key="admin_retire"
+                  label="Retire"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void adminRetire(item.id)}
+                  variant="outline"
+                />
+              )}
+              {canAdminUnretire(item) && (
+                <ActionButton
+                  key="admin_unretire"
+                  label="Unretire"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() => void adminUnretire(item.id)}
+                  variant="subtle"
+                />
+              )}
+              {canAdminHardDelete(item) && (
+                <ActionButton
+                  key="admin_hardDelete"
+                  label="Delete"
+                  itemId={item.id}
+                  busyId={busyId ?? ""}
+                  action={() =>
+                    void setToDelete({
+                      id: item.id,
+                      title: "Delete equipment?",
+                      summary: item.shortDesc,
+                      disabled: !isSuper,
+                      details: (
+                        <Text color="red.500">
+                          You must be a Super Admin to delete.
+                        </Text>
+                      ),
+                    })
+                  }
+                  variant="danger-outline"
+                />
+              )}
+            </HStack>
+          </Box>
+        </Stack>
+      </Box>
+
       <QRScannerDialog
         open={!!scanFor}
         label="Scan QR Code to Check Out"
@@ -367,215 +597,6 @@ export default function EquipmentTileList({
         }}
       />
 
-      <Box
-        key={item.id}
-        p={4}
-        borderWidth="1px"
-        borderRadius="lg"
-        mb={3}
-        w="full"
-      >
-        <HStack justify="space-between" align="start" w="full">
-          <Box flex="1" w="full">
-            <HStack w="full" justify="space-between" align="center">
-              <Heading size="md" color="gray.400">
-                {item.type ?? ""}
-              </Heading>
-              <Badge colorPalette={equipmentStatusColor(item.status ?? "")}>
-                {prettyStatus(item.status ?? "")}
-                {isMine &&
-                (item.status === "RESERVED" || item.status === "CHECKED_OUT")
-                  ? " (You)"
-                  : ""}
-              </Badge>
-            </HStack>
-
-            {item.shortDesc && <Heading size="md">{item.shortDesc}</Heading>}
-
-            <Heading size="sm">
-              {item.brand ? `${item.brand} ` : ""}
-              {item.model ? `${item.model} ` : ""}
-            </Heading>
-
-            {item.qrSlug && (
-              <Text fontSize="sm" color="gray.500" mt={1}>
-                <Text as="span" fontWeight="bold">
-                  ID:{" "}
-                </Text>
-                {item.qrSlug}
-              </Text>
-            )}
-
-            {item.energy && (
-              <Text fontSize="sm" color="gray.500" mt={1}>
-                <Text as="span" fontWeight="bold">
-                  Power:{" "}
-                </Text>
-                {item.energy}
-              </Text>
-            )}
-
-            {/* Minimal collapsible for details */}
-            <ItemTile item={item} isMine={isMine} />
-
-            {unavailableMessage(item)}
-
-            {/* Inline warning banner for this item */}
-            {inlineWarn[item.id] && (
-              <HStack
-                w="full"
-                mt={2}
-                align="start"
-                p={2.5}
-                borderRadius="md"
-                borderWidth="1px"
-                borderColor="orange.300"
-                bg="orange.50"
-              >
-                <Box flex="1">
-                  <Text fontSize="sm" color="orange.900">
-                    {inlineWarn[item.id]}
-                  </Text>
-                </Box>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  ml="auto"
-                  onClick={() => dismissInline(item.id)}
-                >
-                  Dismiss
-                </Button>
-              </HStack>
-            )}
-
-            <Stack
-              direction={{ base: "column", sm: "row" }}
-              gap="2"
-              mt={2}
-              wrap="wrap"
-            >
-              <>
-                {canWorkerCheckout(item) && (
-                  <ActionButton
-                    key="worker_checkout"
-                    label="Check Out"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => setScanFor(item.id)}
-                  />
-                )}
-                {canWorkerCancel(item) && (
-                  <ActionButton
-                    key="worker_cancel"
-                    label="Cancel Reservation"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void workerCancel(item.id)}
-                    variant="outline"
-                  />
-                )}
-                {canWorkerReturn(item) && (
-                  <ActionButton
-                    key="worker_return"
-                    label="Return"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => setScanReturnFor(item.id)}
-                  />
-                )}
-                {canWorkerReserve(item) && (
-                  <ActionButton
-                    key="worker_reserve"
-                    label="Reserve"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void workerReserve(item.id)}
-                  />
-                )}
-                {canAdminForceRelease(item) && (
-                  <ActionButton
-                    key="admin_forceRelease"
-                    label="Force release"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void adminForceRelease(item.id)}
-                  />
-                )}
-                {canAdminStartMaintenance(item) && (
-                  <ActionButton
-                    key="admin_startMaintenance"
-                    label="Start maintenance"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void adminStartMaintainence(item.id)}
-                    variant="subtle"
-                  />
-                )}
-                {canAdminEndMaintenance(item) && (
-                  <ActionButton
-                    key="admin_endMaintenance"
-                    label="End maintenance"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void adminEndMaintainence(item.id)}
-                    variant="subtle"
-                  />
-                )}
-                {canAdminRetire(item) && (
-                  <ActionButton
-                    key="admin_retire"
-                    label="Retire"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void adminRetire(item.id)}
-                    variant="outline"
-                  />
-                )}
-                {canAdminUnretire(item) && (
-                  <ActionButton
-                    key="admin_unretire"
-                    label="Unretire"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() => void adminUnretire(item.id)}
-                    variant="subtle"
-                  />
-                )}
-                {canAdminHardDelete(item) && (
-                  <ActionButton
-                    key="admin_hardDelete"
-                    label="Delete"
-                    itemId={item.id}
-                    busyId={busyId ?? ""}
-                    action={() =>
-                      void setToDelete({
-                        id: item.id,
-                        title: "Delete equipment?",
-                        summary: item.shortDesc,
-                        disabled: !isSuper,
-                        details: (
-                          <Text color="red.500">
-                            You must be a Super Admin to delete.
-                          </Text>
-                        ),
-                      })
-                    }
-                    variant="danger-outline"
-                  />
-                )}
-                {isAdmin() && filter === "all" && (
-                  <Box flexBasis="100%" w="full" minW={0}>
-                    <Button mb={4} onClick={() => void setDialogEditOpen(true)}>
-                      Update
-                    </Button>
-                  </Box>
-                )}
-              </>
-            </Stack>
-          </Box>
-        </HStack>
-      </Box>
-
       <DeleteDialog
         toDelete={toDelete}
         cancel={() => setToDelete(null)}
@@ -593,6 +614,7 @@ export default function EquipmentTileList({
           }
         }}
       />
+
       <EquipmentDialog
         open={dialogEditOpen}
         onOpenChange={setDialogEditOpen}

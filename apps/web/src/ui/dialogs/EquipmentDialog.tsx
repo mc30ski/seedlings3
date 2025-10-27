@@ -247,7 +247,7 @@ export default function EquipmentDialog({
     >
       <Portal>
         <Dialog.Backdrop zIndex={1500} />
-        <Dialog.Positioner zIndex={1600}>
+        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
           <Dialog.Content>
             <Dialog.Header>
               <Dialog.Title>

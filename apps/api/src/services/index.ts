@@ -181,7 +181,7 @@ const clients = {
       take: limit,
       include: {
         contacts: {
-          where: { active: true },
+          //where: { active: true },
           orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           select: {
             id: true,
@@ -190,6 +190,7 @@ const clients = {
             email: true,
             phone: true,
             isPrimary: true,
+            active: true,
           },
         },
       },
@@ -256,28 +257,6 @@ const clients = {
 
       return updated;
     });
-  },
-
-  async archive(actorId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
-      await tx.client.update({
-        where: { id },
-        data: { status: "ARCHIVED", archivedAt: new Date() },
-      });
-      await writeAudit(tx, AUDIT.CLIENT.ARCHIVED, actorId, { clientId: id });
-    });
-    return { archived: true as const };
-  },
-
-  async unarchive(actorId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
-      await tx.client.update({
-        where: { id },
-        data: { status: "ACTIVE", archivedAt: null },
-      });
-      await writeAudit(tx, AUDIT.CLIENT.UNARCHIVED, actorId, { clientId: id });
-    });
-    return { unarchived: true as const };
   },
 
   async hardDelete(actorId: string, id: string) {

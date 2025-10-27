@@ -299,67 +299,61 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
         Users & Access
       </Heading>
       {/* Filters */}
-      <Stack gap="3" mb={4}>
-        <HStack gap="3" wrap="wrap">
-          <HStack gap="2">
-            <Text fontSize="sm" color="gray.600">
-              Status:
-            </Text>
-            <HStack gap="1">
-              <Button
-                ref={allBtnRef}
-                size="sm"
-                variant={status === "all" ? "solid" : "outline"}
-                onClick={() => setStatus("all")}
-              >
-                All
-              </Button>
-              <Button
-                ref={pendingBtnRef}
-                size="sm"
-                variant={status === "pending" ? "solid" : "outline"}
-                onClick={() => setStatus("pending")}
-              >
-                Pending
-              </Button>
-              <Button
-                ref={approvedBtnRef}
-                size="sm"
-                variant={status === "approved" ? "solid" : "outline"}
-                onClick={() => setStatus("approved")}
-              >
-                Approved
-              </Button>
-            </HStack>
-          </HStack>
+      <Stack mb={4}>
+        <HStack gap={2} wrap="wrap">
+          <Text fontSize="sm" color="gray.600">
+            Status:
+          </Text>
+          <Button
+            ref={allBtnRef}
+            size="sm"
+            variant={status === "all" ? "solid" : "outline"}
+            onClick={() => setStatus("all")}
+          >
+            All
+          </Button>
+          <Button
+            ref={pendingBtnRef}
+            size="sm"
+            variant={status === "pending" ? "solid" : "outline"}
+            onClick={() => setStatus("pending")}
+          >
+            Pending
+          </Button>
+          <Button
+            ref={approvedBtnRef}
+            size="sm"
+            variant={status === "approved" ? "solid" : "outline"}
+            onClick={() => setStatus("approved")}
+          >
+            Approved
+          </Button>
 
-          <HStack gap="2">
+          <HStack gap={2} wrap="wrap">
             <Text fontSize="sm" color="gray.600">
               Role:
             </Text>
-            <HStack gap="1">
-              <Button
-                size="sm"
-                variant={accessRole === "all" ? "solid" : "outline"}
-                onClick={() => setAccessRole("all")}
-              >
-                All
-              </Button>
-              <Button
-                size="sm"
-                variant={accessRole === "worker" ? "solid" : "outline"}
-                onClick={() => setAccessRole("worker")}
-              >
-                Worker
-              </Button>
-              <Button
-                size="sm"
-                variant={accessRole === "admin" ? "solid" : "outline"}
-                onClick={() => setAccessRole("admin")}
-              >
-                Admin
-              </Button>
-            </HStack>
+            <Button
+              size="sm"
+              variant={accessRole === "all" ? "solid" : "outline"}
+              onClick={() => setAccessRole("all")}
+            >
+              All
+            </Button>
+            <Button
+              size="sm"
+              variant={accessRole === "worker" ? "solid" : "outline"}
+              onClick={() => setAccessRole("worker")}
+            >
+              Worker
+            </Button>
+            <Button
+              size="sm"
+              variant={accessRole === "admin" ? "solid" : "outline"}
+              onClick={() => setAccessRole("admin")}
+            >
+              Admin
+            </Button>
           </HStack>
 
           <SearchWithClear

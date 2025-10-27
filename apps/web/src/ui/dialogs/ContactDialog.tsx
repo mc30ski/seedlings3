@@ -131,7 +131,6 @@ export default function ContactDialog({
       publishInlineMessage({
         type: "WARNING",
         text: "Enter at least a first or last name for the contact.",
-        autoHideMs: 3000,
       });
       return;
     }
@@ -162,7 +161,6 @@ export default function ContactDialog({
         publishInlineMessage({
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” created.`,
-          autoHideMs: 3000,
         });
       } else {
         if (!initialContact?.id) {
@@ -175,7 +173,6 @@ export default function ContactDialog({
         publishInlineMessage({
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” updated.`,
-          autoHideMs: 3000,
         });
       }
 
@@ -189,6 +186,7 @@ export default function ContactDialog({
           err
         ),
       });
+      onOpenChange(false);
     } finally {
       setBusy(false);
     }
@@ -203,7 +201,7 @@ export default function ContactDialog({
     >
       <Portal>
         <Dialog.Backdrop />
-        <Dialog.Positioner>
+        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
           <Dialog.Content>
             <Dialog.CloseTrigger />
             <Dialog.Header>
@@ -275,25 +273,30 @@ export default function ContactDialog({
                     </Select.Positioner>
                   </Select.Root>
                 </div>
-                {/* 
                 <Switch.Root
                   checked={isPrimary}
-                  onCheckedChange={(e) => setIsPrimary(e.checked)}
+                  onCheckedChange={({ checked }) => setIsPrimary(checked)}
                 >
-                  <Switch.Control />
-                  <Switch.Thumb />
+                  <HStack gap="3" align="center">
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                    <Switch.Label>Primary contact</Switch.Label>
+                  </HStack>
+                  <Switch.HiddenInput name="isPrimary" />
                 </Switch.Root>
-                <Text>Primary contact</Text>
-
                 <Switch.Root
                   checked={active}
-                  onCheckedChange={(e) => setActive(e.checked)}
+                  onCheckedChange={({ checked }) => setActive(checked)}
                 >
-                  <Switch.Control />
-                  <Switch.Thumb />
+                  <HStack gap="3" align="center">
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                    <Switch.Label>Is Active</Switch.Label>
+                  </HStack>
+                  <Switch.HiddenInput name="isActive" />
                 </Switch.Root>
-                <Text>Active</Text>
-                */}
               </VStack>
             </Dialog.Body>
 

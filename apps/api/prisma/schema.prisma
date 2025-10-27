@@ -204,7 +204,6 @@ model Client {
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
-  archivedAt    DateTime?
 
   @@index([status])
   @@index([displayName])
