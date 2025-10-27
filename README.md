@@ -164,7 +164,7 @@ Optional (only for aggregate sites if per-unit tracking is needed later)
 ## What Ships Now (Admin-Only)
 
 - Admins create/edit Clients, Contacts, and Properties.
-- No prospect/approval states in MVP; keep soft delete via archivedAt.
+- No prospect/approval states in MVP.
 - Default comms routing: use `Property.pointOfContactId`.
 
 ## Entity Notes
@@ -172,7 +172,7 @@ Optional (only for aggregate sites if per-unit tracking is needed later)
 - Client
   - Types: `individual | household | organization | community`
   - Has many **ClientContacts** and **Properties**
-  - Keep `notesInternal`,`archivedAt` for soft delete
+  - Keep `notesInternal`
 - ClientContact
   - `isPrimary` (prefer exactly one)
   - Optional `role` (`primary | spouse | community_manager | property_manager`)

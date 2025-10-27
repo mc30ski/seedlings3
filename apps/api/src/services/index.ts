@@ -9,7 +9,6 @@ import {
   AuditScope,
   AuditVerb,
   ClientStatus,
-  ClientType,
   ContactRole,
 } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
@@ -132,12 +131,12 @@ function normalizeContactPayload(payload: any): {
   }
 
   return {
-    firstName: first, // ← string (not null)
-    lastName: last, // ← string (not null)
+    firstName: first,
+    lastName: last,
     email: payload.email ?? null,
     phone,
     normalizedPhone,
-    role, // ← ContactRole | null
+    role,
     isPrimary: !!payload.isPrimary,
     active: payload.active ?? true,
   };
@@ -181,7 +180,7 @@ const clients = {
       take: limit,
       include: {
         contacts: {
-          where: { active: true },
+          //where: { active: true },
           orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           select: {
             id: true,
@@ -189,7 +188,9 @@ const clients = {
             lastName: true,
             email: true,
             phone: true,
+            normalizedPhone: true,
             isPrimary: true,
+            active: true,
           },
         },
       },
@@ -256,28 +257,6 @@ const clients = {
 
       return updated;
     });
-  },
-
-  async archive(actorId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
-      await tx.client.update({
-        where: { id },
-        data: { status: "ARCHIVED", archivedAt: new Date() },
-      });
-      await writeAudit(tx, AUDIT.CLIENT.ARCHIVED, actorId, { clientId: id });
-    });
-    return { archived: true as const };
-  },
-
-  async unarchive(actorId: string, id: string) {
-    await prisma.$transaction(async (tx) => {
-      await tx.client.update({
-        where: { id },
-        data: { status: "ACTIVE", archivedAt: null },
-      });
-      await writeAudit(tx, AUDIT.CLIENT.UNARCHIVED, actorId, { clientId: id });
-    });
-    return { unarchived: true as const };
   },
 
   async hardDelete(actorId: string, id: string) {

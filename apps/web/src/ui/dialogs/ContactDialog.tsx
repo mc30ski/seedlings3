@@ -23,7 +23,7 @@ type Mode = "create" | "update";
 
 // If your enum differs, adjust these to match your Prisma `ContactRole`
 const CONTACT_ROLE_ITEMS = [
-  { label: "Unspecified", value: "UNSPECIFIED" }, // we'll omit from payload if chosen
+  { label: "OWNER", value: "OWNER" },
   { label: "SPOUSE", value: "SPOUSE" },
   { label: "COMMUNITY_MANAGER", value: "COMMUNITY_MANAGER" },
   { label: "PROPERTY_MANAGER", value: "PROPERTY_MANAGER" },
@@ -43,33 +43,19 @@ export type Contact = {
   lastName: string;
   email: string | null;
   phone?: string | null;
+  normalizedPhone?: string | null;
   isPrimary?: boolean;
-
   createdAt?: string | null;
   updatedAt?: string | null;
-
-  //TODO:
-  //preferredName?: string | null;
-  //normalizedPhone?: string | null;
-  //isBilling?: boolean;
 };
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-
   mode: Mode;
-
-  /** Required: The parent client id */
   clientId: string;
-
-  /** For update mode */
   initialContact?: Contact | null;
-
-  /** Called after successful save with the server payload */
   onSaved?: (saved: any) => void;
-
-  /** Optional primary button label override */
   actionLabel?: string;
 };
 
@@ -98,7 +84,7 @@ export default function ContactDialog({
   const [active, setActive] = useState(true);
 
   // role select
-  const [roleValue, setRoleValue] = useState<string[]>(["UNSPECIFIED"]);
+  const [roleValue, setRoleValue] = useState<string[]>(["OWNER"]);
   const roleCollection = useMemo(
     () => createListCollection({ items: CONTACT_ROLE_ITEMS }),
     []
@@ -114,7 +100,7 @@ export default function ContactDialog({
       setPhone(initialContact.phone ?? "");
       setIsPrimary(!!initialContact.isPrimary);
       setActive(initialContact.active ?? true);
-      setRoleValue([initialContact.role ?? "UNSPECIFIED"]);
+      setRoleValue([initialContact.role ?? "OWNER"]);
     } else {
       setFirstName("");
       setLastName("");
@@ -122,7 +108,7 @@ export default function ContactDialog({
       setPhone("");
       setIsPrimary(false);
       setActive(true);
-      setRoleValue(["UNSPECIFIED"]);
+      setRoleValue(["OWNER"]);
     }
   }, [open, mode, initialContact]);
 
@@ -131,7 +117,6 @@ export default function ContactDialog({
       publishInlineMessage({
         type: "WARNING",
         text: "Enter at least a first or last name for the contact.",
-        autoHideMs: 3000,
       });
       return;
     }
@@ -142,14 +127,10 @@ export default function ContactDialog({
       lastName: lastName.trim(),
       email: email.trim() || null,
       phone: phone.trim() || null,
+      role,
       isPrimary,
       active,
     };
-
-    // Only include role if not UNSPECIFIED (prevents enum mismatch server-side)
-    if (role && role !== "UNSPECIFIED") {
-      payload.role = role;
-    }
 
     setBusy(true);
     try {
@@ -162,7 +143,6 @@ export default function ContactDialog({
         publishInlineMessage({
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” created.`,
-          autoHideMs: 3000,
         });
       } else {
         if (!initialContact?.id) {
@@ -175,7 +155,6 @@ export default function ContactDialog({
         publishInlineMessage({
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” updated.`,
-          autoHideMs: 3000,
         });
       }
 
@@ -189,6 +168,7 @@ export default function ContactDialog({
           err
         ),
       });
+      onOpenChange(false);
     } finally {
       setBusy(false);
     }
@@ -203,7 +183,7 @@ export default function ContactDialog({
     >
       <Portal>
         <Dialog.Backdrop />
-        <Dialog.Positioner>
+        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
           <Dialog.Content>
             <Dialog.CloseTrigger />
             <Dialog.Header>
@@ -275,25 +255,32 @@ export default function ContactDialog({
                     </Select.Positioner>
                   </Select.Root>
                 </div>
-                {/* 
                 <Switch.Root
                   checked={isPrimary}
-                  onCheckedChange={(e) => setIsPrimary(e.checked)}
+                  onCheckedChange={({ checked }) => setIsPrimary(checked)}
                 >
-                  <Switch.Control />
-                  <Switch.Thumb />
+                  <HStack gap="3" align="center">
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                    <Switch.Label>Primary contact</Switch.Label>
+                  </HStack>
+                  <Switch.HiddenInput name="isPrimary" />
                 </Switch.Root>
-                <Text>Primary contact</Text>
-
-                <Switch.Root
-                  checked={active}
-                  onCheckedChange={(e) => setActive(e.checked)}
-                >
-                  <Switch.Control />
-                  <Switch.Thumb />
-                </Switch.Root>
-                <Text>Active</Text>
-                */}
+                {mode === "update" && (
+                  <Switch.Root
+                    checked={active}
+                    onCheckedChange={({ checked }) => setActive(checked)}
+                  >
+                    <HStack gap="3" align="center">
+                      <Switch.Control>
+                        <Switch.Thumb />
+                      </Switch.Control>
+                      <Switch.Label>Is Active</Switch.Label>
+                    </HStack>
+                    <Switch.HiddenInput name="isActive" />
+                  </Switch.Root>
+                )}
               </VStack>
             </Dialog.Body>
 

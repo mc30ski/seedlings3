@@ -168,17 +168,6 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
-  app.post("/admin/clients/:id/archive", adminGuard, async (req: any) => {
-    return services.clients.archive(await actorId(req), String(req.params.id));
-  });
-
-  app.post("/admin/clients/:id/unarchive", adminGuard, async (req: any) => {
-    return services.clients.unarchive(
-      await actorId(req),
-      String(req.params.id)
-    );
-  });
-
   app.delete("/admin/clients/:id", adminGuard, async (req: any) => {
     return services.clients.hardDelete(
       await actorId(req),

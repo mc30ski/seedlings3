@@ -37,7 +37,6 @@ export type Client = {
 
   createdAt?: string | null;
   updatedAt?: string | null;
-  archivedAt?: string | null;
 
   contacts?: Contact[];
 };
@@ -172,7 +171,7 @@ export default function ClientDialog({
     >
       <Portal>
         <Dialog.Backdrop zIndex={1500} />
-        <Dialog.Positioner zIndex={1600}>
+        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
           <Dialog.Content>
             <Dialog.Header>
               <Dialog.Title>

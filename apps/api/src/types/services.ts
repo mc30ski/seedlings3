@@ -240,8 +240,6 @@ export type Services = {
     // Admin
     create(actorId: string, payload: ClientUpsert): Promise<Client>;
     update(actorId: string, id: string, payload: ClientUpsert): Promise<Client>;
-    archive(actorId: string, id: string): Promise<{ archived: true }>;
-    unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
     hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
 
     // Contacts (admin only)
