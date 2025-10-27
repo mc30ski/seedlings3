@@ -9,7 +9,6 @@ import {
   AuditScope,
   AuditVerb,
   ClientStatus,
-  ClientType,
   ContactRole,
 } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
@@ -132,12 +131,12 @@ function normalizeContactPayload(payload: any): {
   }
 
   return {
-    firstName: first, // ← string (not null)
-    lastName: last, // ← string (not null)
+    firstName: first,
+    lastName: last,
     email: payload.email ?? null,
     phone,
     normalizedPhone,
-    role, // ← ContactRole | null
+    role,
     isPrimary: !!payload.isPrimary,
     active: payload.active ?? true,
   };
@@ -189,6 +188,7 @@ const clients = {
             lastName: true,
             email: true,
             phone: true,
+            normalizedPhone: true,
             isPrimary: true,
             active: true,
           },

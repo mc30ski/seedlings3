@@ -149,8 +149,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
         const name = (c.displayName ?? "").toLowerCase();
         const notes = (c.notesInternal ?? "").toLowerCase();
         const anyContact = (c.contacts ?? []).some((ct) =>
-          //TODO:
-          //[ct.name, ct.preferredName, ct.email, ct.phone, ct.role]
           [ct.firstName, ct.email, ct.phone, ct.role]
             .filter(Boolean)
             .some((v) => (v as string).toLowerCase().includes(t1))
@@ -394,7 +392,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
                       {mailLink(ct.email ?? "", "", "")}
                     </Text>
                     <Text fontSize="sm" color="fg.muted">
-                      {callLink(ct.phone ?? "")}
+                      {callLink(ct.normalizedPhone ?? ct.phone ?? "")}
                     </Text>
                   </Box>
 
