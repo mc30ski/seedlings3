@@ -6,13 +6,11 @@ import {
   Stack,
   Badge,
   Button,
-  Dialog,
-  Portal,
   useDisclosure,
 } from "@chakra-ui/react";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { apiPost, apiDelete } from "@/src/lib/api";
-import { Equipment } from "@/src/lib/types";
+import EquipmentDialog, { Equipment } from "@/src/ui/dialogs/EquipmentDialog";
 import {
   errorMessage,
   notifyEquipmentUpdated,
@@ -20,9 +18,12 @@ import {
   extractSlug,
   equipmentStatusColor,
 } from "@/src/lib/lib";
-import QRScannerDialog from "@/src/ui/components/QRScannerDialog";
-import EquipmentEditor from "@/src/ui/components/EquipmentEditor";
+import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import DeleteDialog, {
+  type ToDeleteProps,
+} from "@/src/ui/dialogs/DeleteDialog";
+import ActionButton from "@/src/ui/components/ActionButton";
 
 type EquipmentTileListProps = {
   item: Equipment;
@@ -44,13 +45,10 @@ export default function EquipmentTileList({
   const [busyId, setBusyId] = useState<string | null>(null);
   // Inline warning per equipment id
   const [inlineWarn, setInlineWarn] = useState<Record<string, string>>({});
-  const [toDelete, setToDelete] = useState<null | {
-    id: string;
-    label: string;
-  }>(null);
-  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
   const [scanFor, setScanFor] = useState<string | null>(null);
   const [scanReturnFor, setScanReturnFor] = useState<string | null>(null);
+  const [dialogEditOpen, setDialogEditOpen] = useState(false);
 
   const dismissInline = (id: string) =>
     setInlineWarn((m) => {
@@ -66,32 +64,6 @@ export default function EquipmentTileList({
       ...m,
       [id]: errorMessage(err),
     }));
-  }
-
-  function ActionButton({
-    key,
-    label,
-    action,
-    variant = "solid",
-    disabled = false,
-  }: {
-    key: string;
-    label: string;
-    action: any;
-    variant?: any;
-    disabled?: boolean;
-  }) {
-    return (
-      <Button
-        key={key}
-        variant={variant}
-        onClick={action}
-        disabled={!!busyId || disabled}
-        loading={busyId === item.id}
-      >
-        {label}
-      </Button>
-    );
   }
 
   async function service(
@@ -487,6 +459,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="worker_checkout"
                     label="Check Out"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => setScanFor(item.id)}
                   />
                 )}
@@ -494,6 +468,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="worker_cancel"
                     label="Cancel Reservation"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void workerCancel(item.id)}
                     variant="outline"
                   />
@@ -502,6 +478,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="worker_return"
                     label="Return"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => setScanReturnFor(item.id)}
                   />
                 )}
@@ -509,6 +487,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="worker_reserve"
                     label="Reserve"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void workerReserve(item.id)}
                   />
                 )}
@@ -516,6 +496,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_forceRelease"
                     label="Force release"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void adminForceRelease(item.id)}
                   />
                 )}
@@ -523,6 +505,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_startMaintenance"
                     label="Start maintenance"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void adminStartMaintainence(item.id)}
                     variant="subtle"
                   />
@@ -531,6 +515,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_endMaintenance"
                     label="End maintenance"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void adminEndMaintainence(item.id)}
                     variant="subtle"
                   />
@@ -539,6 +525,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_retire"
                     label="Retire"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void adminRetire(item.id)}
                     variant="outline"
                   />
@@ -547,6 +535,8 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_unretire"
                     label="Unretire"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() => void adminUnretire(item.id)}
                     variant="subtle"
                   />
@@ -555,15 +545,19 @@ export default function EquipmentTileList({
                   <ActionButton
                     key="admin_hardDelete"
                     label="Delete"
+                    itemId={item.id}
+                    busyId={busyId ?? ""}
                     action={() =>
-                      setToDelete({
+                      void setToDelete({
                         id: item.id,
-                        label:
-                          [item.brand, item.model, item.shortDesc]
-                            .filter(Boolean)
-                            .join(" ") ||
-                          item.shortDesc ||
-                          item.id,
+                        title: "Delete equipment?",
+                        summary: item.shortDesc,
+                        disabled: !isSuper,
+                        details: (
+                          <Text color="red.500">
+                            You must be a Super Admin to delete.
+                          </Text>
+                        ),
                       })
                     }
                     variant="danger-outline"
@@ -571,13 +565,9 @@ export default function EquipmentTileList({
                 )}
                 {isAdmin() && filter === "all" && (
                   <Box flexBasis="100%" w="full" minW={0}>
-                    <EquipmentEditor
-                      mode="update"
-                      defaults={{ ...item }}
-                      onSuccess={() => void refresh()}
-                      onCancel={() => {}}
-                      compact={true}
-                    />
+                    <Button mb={4} onClick={() => void setDialogEditOpen(true)}>
+                      Update
+                    </Button>
                   </Box>
                 )}
               </>
@@ -586,76 +576,31 @@ export default function EquipmentTileList({
         </HStack>
       </Box>
 
-      <Dialog.Root
-        role="alertdialog"
-        open={!!toDelete}
-        onOpenChange={(e) => !e.open && setToDelete(null)}
-        initialFocusEl={() => cancelRef.current}
-        placement="center"
-      >
-        <Portal>
-          {/* Backdrop below */}
-          <Dialog.Backdrop zIndex={1500} />
-
-          {/* Positioner + Content above */}
-          <Dialog.Positioner zIndex={1600}>
-            <Dialog.Content
-              maxW={{ base: "calc(100vw - 2rem)", sm: "420px" }}
-              w="full"
-              mx="auto"
-              my={{ base: "1rem", sm: "10vh" }}
-              maxH="80vh"
-              overflowY="auto"
-              // Make sure the panel isn't transparent
-              bg="white"
-              _dark={{ bg: "gray.800" }}
-              // optional niceties
-              borderRadius="lg"
-              boxShadow="lg"
-            >
-              <Dialog.Header>Delete equipment?</Dialog.Header>
-              <Dialog.Body>
-                <Text mb="2">
-                  This will <b>permanently delete</b> the equipment record:
-                </Text>
-                {toDelete?.label ? (
-                  <Text mb="2" color="gray.600">
-                    {toDelete.label}
-                  </Text>
-                ) : null}
-                {!isSuper && (
-                  <Text color="red.500">
-                    You must be a Super Admin to delete.
-                  </Text>
-                )}
-              </Dialog.Body>
-              <Dialog.Footer>
-                <HStack justify="flex-end" w="full" gap="2">
-                  <Dialog.CloseTrigger asChild>
-                    <Button ref={cancelRef} variant="outline">
-                      Cancel
-                    </Button>
-                  </Dialog.CloseTrigger>
-                  <Button
-                    variant={"danger" as any}
-                    onClick={async () => {
-                      if (!toDelete) return;
-                      try {
-                        await adminHardDelete(toDelete.id);
-                      } finally {
-                        setToDelete(null);
-                      }
-                    }}
-                    disabled={!isSuper}
-                  >
-                    Delete
-                  </Button>
-                </HStack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
+      <DeleteDialog
+        toDelete={toDelete}
+        cancel={() => setToDelete(null)}
+        complete={async () => {
+          if (!toDelete) return;
+          try {
+            await adminHardDelete(toDelete.id);
+          } catch (err) {
+            publishInlineMessage({
+              type: "ERROR",
+              text: `Delete error occurred: ${errorMessage(err)}`,
+            });
+          } finally {
+            setToDelete(null);
+          }
+        }}
+      />
+      <EquipmentDialog
+        open={dialogEditOpen}
+        onOpenChange={setDialogEditOpen}
+        mode="update"
+        initial={{ ...item }}
+        onSaved={() => void refresh()}
+        actionLabel={"Update"}
+      />
     </>
   );
 }

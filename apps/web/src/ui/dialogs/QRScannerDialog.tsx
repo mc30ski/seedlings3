@@ -1,5 +1,3 @@
-// apps/web/src/ui/components/QRScannerDialog.tsx
-
 import { useEffect, useRef, useState } from "react";
 import {
   Dialog,

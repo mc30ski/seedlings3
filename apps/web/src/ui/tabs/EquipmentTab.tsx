@@ -14,14 +14,14 @@ import {
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import { TabRolePropType } from "@/src/lib/types";
+import { Me } from "@/src/lib/types";
 import {
-  Me,
   EquipmentStatus,
   Equipment,
   EQUIPMENT_TYPES,
-} from "@/src/lib/types";
+} from "@/src/ui/dialogs/EquipmentDialog";
 import EquipmentTile from "@/src/ui/components/EquipmentTile";
-import EquipmentEditor from "@/src/ui/components/EquipmentEditor";
+import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import {
@@ -76,7 +76,7 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
   >(tabRole === "worker" ? "claimed" : "all");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<EquipmentType | "">("");
-
+  const [dialogCreateOpen, setDialogCreateOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const workerStates = [
@@ -104,7 +104,8 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
       ]);
       if (tabRole === "worker") {
         const anyClaimed =
-          data.filter((i) => i.holder?.userId === meResp?.id).length > 0;
+          data.filter((i: Equipment) => i.holder?.userId === meResp?.id)
+            .length > 0;
         setStatus(anyClaimed ? "claimed" : "available");
       }
       setMe(meResp);
@@ -275,7 +276,6 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
           )}
         </Box>
       </Stack>
-
       <Stack
         direction={{ base: "column", md: "row" }}
         gap="2"
@@ -320,22 +320,16 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
           />
         </Box>
       </Stack>
-
       {/* Separator */}
       <Box h="1px" bg="gray.200" mb={3} />
-
       <Heading size="md" mb={3}>
         {tabTitle(tabRole, status)}
       </Heading>
-
       {status === "all" && (
-        <EquipmentEditor
-          mode="create"
-          onSuccess={() => void load()}
-          onCancel={() => {}}
-        />
+        <Button mb={4} onClick={() => void setDialogCreateOpen(true)}>
+          New Equipment
+        </Button>
       )}
-
       {filtered.length === 0 && (
         <Text>No equipment matches the current filters.</Text>
       )}
@@ -352,6 +346,13 @@ export default function EquipmenTab({ role = "worker" }: TabRolePropType) {
           />
         );
       })}
+      <EquipmentDialog
+        open={dialogCreateOpen}
+        onOpenChange={setDialogCreateOpen}
+        mode="create"
+        onSaved={() => void load()}
+        actionLabel={"Create"}
+      />
     </Box>
   );
 }

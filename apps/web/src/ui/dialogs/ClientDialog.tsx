@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Button,
   Dialog,
@@ -12,7 +12,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { type Contact } from "@/src/ui/components/ContactDialog";
+import { type Contact } from "@/src/ui/dialogs/ContactDialog";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
 import {
@@ -55,9 +55,6 @@ type Props = {
   /** When mode = "update", pass the existing client */
   initialClient?: Client | null;
 
-  /** InlineMessage scope; mount <InlineMessage scope="clients" /> in the tab */
-  scope?: string;
-
   /** Called after successful save with the server payload */
   onSaved?: (saved: any) => void;
 
@@ -70,10 +67,11 @@ export default function ClientDialog({
   onOpenChange,
   mode,
   initialClient,
-  scope = "clients",
   onSaved,
   actionLabel,
 }: Props) {
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+
   const [busy, setBusy] = useState(false);
 
   // --- Form state
@@ -113,7 +111,6 @@ export default function ClientDialog({
   async function handleSave() {
     if (!displayName.trim()) {
       publishInlineMessage({
-        scope,
         type: "WARNING",
         text: "Please enter a client name.",
         autoHideMs: 3000,
@@ -133,7 +130,6 @@ export default function ClientDialog({
       if (mode === "create") {
         saved = await apiPost("/api/admin/clients", payload);
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Client “${payload.displayName}” created.`,
           autoHideMs: 3500,
@@ -147,7 +143,6 @@ export default function ClientDialog({
           payload
         );
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Client “${payload.displayName}” updated.`,
           autoHideMs: 3500,
@@ -157,7 +152,6 @@ export default function ClientDialog({
       onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
-        scope,
         type: "ERROR",
         text: getErrorMessage(
           mode === "create" ? "Create client failed" : "Update client failed",
@@ -170,29 +164,25 @@ export default function ClientDialog({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={(e) => onOpenChange(e.open)}>
+    <Dialog.Root
+      role="dialog"
+      open={open}
+      initialFocusEl={() => cancelRef.current}
+      onOpenChange={(e) => onOpenChange(e.open)}
+    >
       <Portal>
-        <Dialog.Backdrop />
-        <Dialog.Positioner>
-          <Dialog.Content
-            mx="4" // ~16px left/right margin at small breakpoints
-            maxW="lg" // cap width (try "md"/"lg"/"xl")
-            w="full"
-            rounded="2xl"
-            p="4" // inner padding
-            shadow="lg"
-          >
-            <Dialog.CloseTrigger />
+        <Dialog.Backdrop zIndex={1500} />
+        <Dialog.Positioner zIndex={1600}>
+          <Dialog.Content>
             <Dialog.Header>
               <Dialog.Title>
                 {mode === "create" ? "Create Client" : "Update Client"}
               </Dialog.Title>
             </Dialog.Header>
-
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 <div>
-                  <Text mb="1">Name</Text>
+                  <Text mb="1">Name*</Text>
                   <Input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
@@ -200,7 +190,6 @@ export default function ClientDialog({
                     autoFocus
                   />
                 </div>
-
                 <div>
                   <Text mb="1">Type</Text>
                   <Select.Root
@@ -226,7 +215,6 @@ export default function ClientDialog({
                     </Select.Positioner>
                   </Select.Root>
                 </div>
-
                 <div>
                   <Text mb="1">Internal notes (optional)</Text>
                   <Textarea
@@ -238,17 +226,21 @@ export default function ClientDialog({
                 </div>
               </VStack>
             </Dialog.Body>
-
             <Dialog.Footer>
-              <HStack justify="flex-end" w="full">
+              <HStack justify="flex-end" w="full" gap="2">
                 <Button
                   variant="ghost"
+                  ref={cancelRef}
                   onClick={() => onOpenChange(false)}
                   disabled={busy}
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy}>
+                <Button
+                  onClick={handleSave}
+                  loading={busy}
+                  disabled={!!displayName === false}
+                >
                   {actionLabel ?? (mode === "create" ? "Create" : "Save")}
                 </Button>
               </HStack>

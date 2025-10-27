@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Button,
   Dialog,
@@ -66,9 +66,6 @@ type Props = {
   /** For update mode */
   initialContact?: Contact | null;
 
-  /** InlineMessage scope; mount <InlineMessage scope="clients" /> */
-  scope?: string;
-
   /** Called after successful save with the server payload */
   onSaved?: (saved: any) => void;
 
@@ -76,16 +73,20 @@ type Props = {
   actionLabel?: string;
 };
 
+const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const E164 = /^\+?[1-9]\d{7,14}$/;
+
 export default function ContactDialog({
   open,
   onOpenChange,
   mode,
   clientId,
   initialContact,
-  scope = "clients",
   onSaved,
   actionLabel,
 }: Props) {
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+
   const [busy, setBusy] = useState(false);
 
   // --- Form state ---
@@ -128,7 +129,6 @@ export default function ContactDialog({
   async function handleSave() {
     if (!firstName.trim() && !lastName.trim()) {
       publishInlineMessage({
-        scope,
         type: "WARNING",
         text: "Enter at least a first or last name for the contact.",
         autoHideMs: 3000,
@@ -160,7 +160,6 @@ export default function ContactDialog({
           payload
         );
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” created.`,
           autoHideMs: 3000,
@@ -174,7 +173,6 @@ export default function ContactDialog({
           payload
         );
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Contact “${payload.firstName} ${payload.lastName}” updated.`,
           autoHideMs: 3000,
@@ -185,7 +183,6 @@ export default function ContactDialog({
       onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
-        scope,
         type: "ERROR",
         text: getErrorMessage(
           mode === "create" ? "Create contact failed" : "Update contact failed",
@@ -198,121 +195,105 @@ export default function ContactDialog({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={(e) => onOpenChange(e.open)}>
+    <Dialog.Root
+      role="dialog"
+      open={open}
+      initialFocusEl={() => cancelRef.current}
+      onOpenChange={(e) => onOpenChange(e.open)}
+    >
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content
-            mx="4" // ~16px left/right margin at small breakpoints
-            maxW="lg" // cap width (try "md"/"lg"/"xl")
-            w="full"
-            rounded="2xl"
-            p="4" // inner padding
-            shadow="lg"
-          >
+          <Dialog.Content>
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
                 {mode === "create" ? "Add Contact" : "Update Contact"}
               </Dialog.Title>
             </Dialog.Header>
-
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <HStack gap={3}>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">First name</Text>
-                    <Input
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="First name"
-                      autoFocus
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Last name</Text>
-                    <Input
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      placeholder="Last name"
-                    />
-                  </div>
-                </HStack>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">First name</Text>
+                  <Input
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="First name"
+                    autoFocus
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">Last name</Text>
+                  <Input
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Last name"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">Email</Text>
+                  <Input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@example.com"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">Phone</Text>
+                  <Input
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+1 555 555 5555"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">Role</Text>
+                  <Select.Root
+                    collection={roleCollection}
+                    value={roleValue}
+                    onValueChange={(e) => setRoleValue(e.value)}
+                    size="sm"
+                    positioning={{
+                      strategy: "fixed",
+                      hideWhenDetached: true,
+                    }}
+                  >
+                    <Select.Control>
+                      <Select.Trigger>
+                        <Select.ValueText placeholder="Select role" />
+                      </Select.Trigger>
+                    </Select.Control>
+                    <Select.Positioner>
+                      <Select.Content>
+                        {CONTACT_ROLE_ITEMS.map((it) => (
+                          <Select.Item key={it.value} item={it.value}>
+                            <Select.ItemText>{it.label}</Select.ItemText>
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Select.Root>
+                </div>
+                {/* 
+                <Switch.Root
+                  checked={isPrimary}
+                  onCheckedChange={(e) => setIsPrimary(e.checked)}
+                >
+                  <Switch.Control />
+                  <Switch.Thumb />
+                </Switch.Root>
+                <Text>Primary contact</Text>
 
-                <HStack gap={3}>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Email</Text>
-                    <Input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="name@example.com"
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Phone</Text>
-                    <Input
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+1 555 555 5555"
-                    />
-                  </div>
-                </HStack>
-
-                <HStack gap={3}>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Role</Text>
-                    <Select.Root
-                      collection={roleCollection}
-                      value={roleValue}
-                      onValueChange={(e) => setRoleValue(e.value)}
-                      size="sm"
-                      positioning={{
-                        strategy: "fixed",
-                        hideWhenDetached: true,
-                      }}
-                    >
-                      <Select.Control>
-                        <Select.Trigger>
-                          <Select.ValueText placeholder="Select role" />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {CONTACT_ROLE_ITEMS.map((it) => (
-                            <Select.Item key={it.value} item={it.value}>
-                              <Select.ItemText>{it.label}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Select.Root>
-                  </div>
-                </HStack>
-
-                <HStack gap={6} mt={2}>
-                  <HStack gap={2} align="center">
-                    <Switch.Root
-                      checked={isPrimary}
-                      onCheckedChange={(e) => setIsPrimary(e.checked)}
-                    >
-                      <Switch.Control />
-                      <Switch.Thumb />
-                    </Switch.Root>
-                    <Text>Primary contact</Text>
-                  </HStack>
-
-                  <HStack gap={2} align="center">
-                    <Switch.Root
-                      checked={active}
-                      onCheckedChange={(e) => setActive(e.checked)}
-                    >
-                      <Switch.Control />
-                      <Switch.Thumb />
-                    </Switch.Root>
-                    <Text>Active</Text>
-                  </HStack>
-                </HStack>
+                <Switch.Root
+                  checked={active}
+                  onCheckedChange={(e) => setActive(e.checked)}
+                >
+                  <Switch.Control />
+                  <Switch.Thumb />
+                </Switch.Root>
+                <Text>Active</Text>
+                */}
               </VStack>
             </Dialog.Body>
 
@@ -320,12 +301,22 @@ export default function ContactDialog({
               <HStack justify="flex-end" w="full">
                 <Button
                   variant="ghost"
+                  ref={cancelRef}
                   onClick={() => onOpenChange(false)}
                   disabled={busy}
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy}>
+                <Button
+                  onClick={handleSave}
+                  loading={busy}
+                  disabled={
+                    !!firstName === false ||
+                    !!lastName === false ||
+                    !EMAIL_RE.test(email) ||
+                    !E164.test(phone)
+                  }
+                >
                   {actionLabel ?? (mode === "create" ? "Create" : "Save")}
                 </Button>
               </HStack>
