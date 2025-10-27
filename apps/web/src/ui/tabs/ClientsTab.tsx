@@ -397,7 +397,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
         onOpenChange={setDialogOpen}
         mode={editing ? "update" : "create"}
         initialClient={editing ?? undefined}
-        scope="clients"
         onSaved={() => void load()}
         actionLabel={editing ? "Save" : "Create"}
       />
@@ -408,8 +407,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
         mode={contactMode}
         clientId={contactClientId}
         initialContact={editingContact ?? undefined}
-        scope="clients"
-        onSaved={() => load()}
+        onSaved={() => void load()}
         actionLabel={contactMode === "create" ? "Create" : "Save"}
       />
 
