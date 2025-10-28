@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { Role as RoleVal } from "@prisma/client";
 
-async function actorId(req: any) {
+async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
 }
 
@@ -17,41 +17,44 @@ export default async function adminRoutes(app: FastifyInstance) {
   );
 
   app.post("/admin/equipment", adminGuard, async (req: any) =>
-    services.equipment.create(req.auth?.clerkUserId, req.body)
+    services.equipment.create(await currentUserId(req), req.body)
   );
 
   app.patch("/admin/equipment/:id", adminGuard, async (req: any) =>
-    services.equipment.update(req.auth?.clerkUserId, req.params.id, req.body)
+    services.equipment.update(await currentUserId(req), req.params.id, req.body)
   );
 
   app.post("/admin/equipment/:id/retire", adminGuard, async (req: any) =>
-    services.equipment.retire(req.auth?.clerkUserId, req.params.id)
+    services.equipment.retire(await currentUserId(req), req.params.id)
   );
 
   app.post("/admin/equipment/:id/unretire", adminGuard, async (req: any) =>
-    services.equipment.unretire(req.auth?.clerkUserId, req.params.id)
+    services.equipment.unretire(await currentUserId(req), req.params.id)
   );
 
   app.delete("/admin/equipment/:id", adminGuard, async (req: any) =>
-    services.equipment.hardDelete(req.auth?.clerkUserId, req.params.id)
+    services.equipment.hardDelete(await currentUserId(req), req.params.id)
   );
 
   app.post("/admin/equipment/:id/release", adminGuard, async (req: any) =>
-    services.equipment.release(req.auth?.clerkUserId, req.params.id)
+    services.equipment.release(await currentUserId(req), req.params.id)
   );
 
   app.post(
     "/admin/equipment/:id/maintenance/start",
     adminGuard,
     async (req: any) =>
-      services.maintenance.start(req.auth?.clerkUserId, req.params.id)
+      services.equipment.maintenanceStart(
+        await currentUserId(req),
+        req.params.id
+      )
   );
 
   app.post(
     "/admin/equipment/:id/maintenance/end",
     adminGuard,
     async (req: any) =>
-      services.maintenance.end(req.auth?.clerkUserId, req.params.id)
+      services.equipment.maintenanceEnd(await currentUserId(req), req.params.id)
   );
 
   app.get("/admin/holdings", adminGuard, async () => {
@@ -95,7 +98,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/admin/users/:id/approve", adminGuard, async (req: any) =>
-    services.users.approve(req.auth?.clerkUserId, req.params.id)
+    services.users.approve(await currentUserId(req), req.params.id)
   );
 
   app.post("/admin/users/:id/roles", adminGuard, async (req: any) => {
@@ -105,7 +108,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Invalid role");
     }
     return services.users.addRole(
-      req.auth?.clerkUserId,
+      await currentUserId(req),
       id,
       role as "ADMIN" | "WORKER"
     );
@@ -118,7 +121,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Invalid role");
     }
     return services.users.removeRole(
-      req.auth?.clerkUserId,
+      await currentUserId(req),
       id,
       role as "ADMIN" | "WORKER"
     );
@@ -128,7 +131,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     // Hard delete a user (DB + Clerk)
     const targetId = String(req.params.id);
     const actorId = String(req.user?.id || "");
-    return services.users.remove(req.auth?.clerkUserId, targetId, actorId);
+    return services.users.remove(await currentUserId(req), targetId, actorId);
   });
 
   app.get("/admin/users/pendingCount", adminGuard, async () => {
@@ -136,7 +139,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/activity", adminGuard, async (req: any) => {
-    return services.admin.listUserActivity();
+    return services.activity.listUserActivity();
   });
 
   app.get("/admin/clients", adminGuard, async (req: any) => {
@@ -157,12 +160,12 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/admin/clients", adminGuard, async (req: any) => {
-    return services.clients.create(await actorId(req), req.body);
+    return services.clients.create(await currentUserId(req), req.body);
   });
 
   app.patch("/admin/clients/:id", adminGuard, async (req: any) => {
     return services.clients.update(
-      await actorId(req),
+      await currentUserId(req),
       String(req.params.id),
       req.body
     );
@@ -170,15 +173,14 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete("/admin/clients/:id", adminGuard, async (req: any) => {
     return services.clients.hardDelete(
-      await actorId(req),
+      await currentUserId(req),
       String(req.params.id)
     );
   });
 
-  // ---- Contacts (nested under a client) ----
   app.post("/admin/clients/:id/contacts", adminGuard, async (req: any) => {
     return services.clients.addContact(
-      await actorId(req),
+      await currentUserId(req),
       String(req.params.id),
       req.body
     );
@@ -189,7 +191,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     adminGuard,
     async (req: any) => {
       return services.clients.updateContact(
-        await actorId(req),
+        await currentUserId(req),
         String(req.params.id),
         String(req.params.contactId),
         req.body
@@ -202,7 +204,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     adminGuard,
     async (req: any) => {
       return services.clients.deleteContact(
-        await actorId(req),
+        await currentUserId(req),
         String(req.params.id),
         String(req.params.contactId)
       );
@@ -214,7 +216,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     adminGuard,
     async (req: any) => {
       return services.clients.setPrimaryContact(
-        await actorId(req),
+        await currentUserId(req),
         String(req.params.id),
         String(req.params.contactId)
       );

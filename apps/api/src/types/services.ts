@@ -1,12 +1,5 @@
-// apps/web/src/types/services.ts
 import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
-import type {
-  Client,
-  ClientContact,
-  ClientStatus,
-  ClientType,
-  ContactRole,
-} from "@prisma/client";
+import type { Client, ClientContact, ClientStatus } from "@prisma/client";
 
 export type ClientWithContacts = Client & { contacts: ClientContact[] };
 
@@ -45,6 +38,7 @@ export type AdminHolder = {
   checkedOutAt?: Date | null;
   state: "RESERVED" | "CHECKED_OUT";
 };
+
 export type AdminUserHolding = {
   userId: string;
   equipmentId: string;
@@ -57,16 +51,12 @@ export type AdminUserHolding = {
 
 export type EquipmentWithHolder = Equipment & { holder: AdminHolder | null };
 
-/** ------------------ Admin → Activity (types) ------------------ **/
-
 export type AdminActivityEvent = {
-  // ---- Equipment details
   equipmentName?: string;
   qrSlug?: string;
   brand?: string;
   model?: string;
   type?: string;
-  // ---- Role details
   role?: string;
 };
 
@@ -79,190 +69,189 @@ export type AdminActivityUser = {
   events: AdminActivityEvent[];
 };
 
-export type Services = {
-  equipment: {
-    // -------- LISTS --------
-    listAvailable(): Promise<Equipment[]>;
-    // Admin view with current holder (if any)
-    listAllAdmin(): Promise<EquipmentWithHolder[]>;
-    // Non-retired; includes MAINTENANCE/RESERVED/CHECKED_OUT
-    listForWorkers(): Promise<Equipment[]>;
-    // Items workers cannot reserve RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED
-    listUnavailableForWorkers(): Promise<Equipment[]>;
-    // Items I currently hold (reserved or checked out)
-    listMine(userId: string): Promise<Equipment[]>;
-    listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
+export type ServicesEquipment = {
+  listAvailable(): Promise<Equipment[]>;
+  listAllAdmin(): Promise<EquipmentWithHolder[]>;
+  listForWorkers(): Promise<Equipment[]>; // includes MAINTENANCE/RESERVED/CHECKED_OUT
+  listUnavailableForWorkers(): Promise<Equipment[]>; // cannot reserve RESERVED/CHECKED_OUT/MAINTENANCE/RETIRED
+  listMine(userId: string): Promise<Equipment[]>; // items I currently hold (reserved or checked out)
+  listUnavailableWithHolder(): Promise<EquipmentWithHolder[]>;
 
-    // -------- CRUD --------
-    create(
-      clerkUserId: string,
-      input: {
-        shortDesc: string;
-        longDesc?: string;
-        brand?: string;
-        model?: string;
-        type?: string;
-        energy?: string;
-        features?: string;
-        condition?: string;
-        issues?: string;
-        age?: string;
-        qrSlug?: string | null;
-      }
-    ): Promise<Equipment>;
+  create(
+    currentUserId: string,
+    input: {
+      shortDesc: string;
+      longDesc?: string;
+      brand?: string;
+      model?: string;
+      type?: string;
+      energy?: string;
+      features?: string;
+      condition?: string;
+      issues?: string;
+      age?: string;
+      qrSlug?: string | null;
+    }
+  ): Promise<Equipment>;
 
-    update(
-      clerkUserId: string,
-      id: string,
-      patch: Partial<
-        Pick<
-          Equipment,
-          | "shortDesc"
-          | "longDesc"
-          | "qrSlug"
-          | "brand"
-          | "model"
-          | "type"
-          | "energy"
-          | "features"
-          | "condition"
-          | "issues"
-          | "age"
-        >
+  update(
+    currentUserId: string,
+    id: string,
+    patch: Partial<
+      Pick<
+        Equipment,
+        | "shortDesc"
+        | "longDesc"
+        | "qrSlug"
+        | "brand"
+        | "model"
+        | "type"
+        | "energy"
+        | "features"
+        | "condition"
+        | "issues"
+        | "age"
       >
-    ): Promise<Equipment>;
+    >
+  ): Promise<Equipment>;
 
-    // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
-    retire(clerkUserId: string, id: string): Promise<Equipment>;
-    unretire(clerkUserId: string, id: string): Promise<Equipment>;
-    hardDelete(clerkUserId: string, id: string): Promise<{ deleted: true }>;
+  // Blocked if status is RESERVED or CHECKED_OUT (or any active row exists)
+  retire(currentUserId: string, id: string): Promise<Equipment>;
+  unretire(currentUserId: string, id: string): Promise<Equipment>;
+  hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
-    // Force release (from RESERVED or CHECKED_OUT)
-    release(clerkUserId: string, id: string): Promise<ReleaseResult>;
+  release(currentUserId: string, id: string): Promise<ReleaseResult>; // Force release (from RESERVED or CHECKED_OUT)
 
-    // Worker lifecycle (RESERVE → CHECKOUT → RETURN)
-    reserve(
-      clerkUserId: string,
-      id: string,
-      userId: string
-    ): Promise<ReserveResult>;
-    cancelReservation(
-      clerkUserId: string,
-      id: string,
-      userId: string
-    ): Promise<CancelResult>;
-    checkoutWithQr(
-      clerkUserId: string,
-      id: string,
-      userId: string,
-      slug: string
-    ): Promise<CheckoutResult>;
-    returnWithQr(
-      clerkUserId: string,
-      id: string,
-      userId: string,
-      slug: string
-    ): Promise<ReleaseResult>;
-  };
+  // Worker lifecycle (RESERVE → CHECKOUT → RETURN)
+  reserve(
+    currentUserId: string,
+    id: string,
+    userId: string
+  ): Promise<ReserveResult>;
+  cancelReservation(
+    currentUserId: string,
+    id: string,
+    userId: string
+  ): Promise<CancelResult>;
+  checkoutWithQr(
+    currentUserId: string,
+    id: string,
+    userId: string,
+    slug: string
+  ): Promise<CheckoutResult>;
+  returnWithQr(
+    currentUserId: string,
+    id: string,
+    userId: string,
+    slug: string
+  ): Promise<ReleaseResult>;
 
-  maintenance: {
-    start(clerkUserId: string, id: string): Promise<Equipment>;
-    end(clerkUserId: string, id: string): Promise<Equipment>;
-  };
+  maintenanceStart(currentUserId: string, id: string): Promise<Equipment>;
+  maintenanceEnd(currentUserId: string, id: string): Promise<Equipment>;
+};
 
-  users: {
-    list(params?: {
-      approved?: boolean;
-      role?: Role;
-    }): Promise<(User & { roles: UserRole[] })[]>;
-    // Reserved + checked-out items (flat list used by AdminUsers UI)
-    listHoldings(): Promise<AdminUserHolding[]>;
+export type ServicesUsers = {
+  list(params?: {
+    approved?: boolean;
+    role?: Role;
+  }): Promise<(User & { roles: UserRole[] })[]>;
+  // Reserved + checked-out items (flat list used by AdminUsers UI)
+  listHoldings(): Promise<AdminUserHolding[]>;
 
-    approve(clerkUserId: string, userId: string): Promise<User>;
-    addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
-    removeRole(
-      clerkUserId: string,
-      userId: string,
-      role: Role
-    ): Promise<{ deleted: boolean }>;
-    // Hard-delete user (Clerk + DB)
-    remove(
-      clerkUserId: string,
-      userId: string,
-      actorUserId: string
-    ): Promise<{ deleted: true; clerkDeleted: boolean }>;
+  approve(clerkUserId: string, userId: string): Promise<User>;
+  addRole(clerkUserId: string, userId: string, role: Role): Promise<UserRole>;
+  removeRole(
+    clerkUserId: string,
+    userId: string,
+    role: Role
+  ): Promise<{ deleted: boolean }>;
+  // Hard-delete user (Clerk + DB)
+  remove(
+    clerkUserId: string,
+    userId: string,
+    actorUserId: string
+  ): Promise<{ deleted: true; clerkDeleted: boolean }>;
 
-    pendingApprovalCount(): Promise<{ pending: number }>;
+  pendingApprovalCount(): Promise<{ pending: number }>;
 
-    me(token: string): Promise<{
-      id: string;
-      isApproved: boolean;
-      roles: Role[];
-      email?: string | null;
-      displayName?: string | null;
-    }>;
-  };
+  me(token: string): Promise<{
+    id: string;
+    isApproved: boolean;
+    roles: Role[];
+    email?: string | null;
+    displayName?: string | null;
+  }>;
+};
 
-  currentUser: {
-    me(clerkUserId: string): Promise<{
-      id: string;
-      isApproved: boolean;
-      roles: Role[];
-      email?: string | null;
-      displayName?: string | null;
-    }>;
-  };
+export type ServicesClients = {
+  list(params?: {
+    q?: string;
+    status?: ClientStatus | "ALL";
+    limit?: number;
+  }): Promise<ClientListItem[]>;
+  get(id: string): Promise<ClientWithContacts>;
 
-  audit: {
-    list(params: {
-      actorUserId?: string;
-      action?: string;
-      from?: string;
-      to?: string;
-      page?: number;
-      pageSize?: number;
-    }): Promise<{ items: AuditEvent[]; total: number }>;
-  };
+  create(currentUserId: string, payload: ClientUpsert): Promise<Client>;
+  update(
+    currentUserId: string,
+    id: string,
+    payload: ClientUpsert
+  ): Promise<Client>;
+  hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
-  admin: {
-    listUserActivity(): Promise<AdminActivityUser[]>;
-  };
+  addContact(
+    currentUserId: string,
+    clientId: string,
+    payload: ContactUpsert
+  ): Promise<ClientContact>;
+  updateContact(
+    currentUserId: string,
+    clientId: string,
+    contactId: string,
+    payload: ContactUpsert
+  ): Promise<ClientContact>;
+  deleteContact(
+    currentUserId: string,
+    clientId: string,
+    contactId: string
+  ): Promise<{ deleted: true }>;
+  setPrimaryContact(
+    currentUserId: string,
+    clientId: string,
+    contactId: string
+  ): Promise<{ primarySet: true }>;
+};
 
-  clients: {
-    // Worker
-    list(params?: {
-      q?: string;
-      status?: ClientStatus | "ALL";
-      limit?: number;
-    }): Promise<ClientListItem[]>;
-    get(id: string): Promise<ClientWithContacts>;
+export type ServicesCurrentUser = {
+  me(clerkUserId: string): Promise<{
+    id: string;
+    isApproved: boolean;
+    roles: Role[];
+    email?: string | null;
+    displayName?: string | null;
+  }>;
+};
 
-    // Admin
-    create(actorId: string, payload: ClientUpsert): Promise<Client>;
-    update(actorId: string, id: string, payload: ClientUpsert): Promise<Client>;
-    hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+export type ServicesActivity = {
+  listUserActivity(): Promise<AdminActivityUser[]>;
+};
 
-    // Contacts (admin only)
-    addContact(
-      actorId: string,
-      clientId: string,
-      payload: ContactUpsert
-    ): Promise<ClientContact>;
-    updateContact(
-      actorId: string,
-      clientId: string,
-      contactId: string,
-      payload: ContactUpsert
-    ): Promise<ClientContact>;
-    deleteContact(
-      actorId: string,
-      clientId: string,
-      contactId: string
-    ): Promise<{ deleted: true }>;
-    setPrimaryContact(
-      actorId: string,
-      clientId: string,
-      contactId: string
-    ): Promise<{ primarySet: true }>;
-  };
+export type ServicesAudit = {
+  list(params: {
+    actorUserId?: string;
+    action?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ items: AuditEvent[]; total: number }>;
+};
+
+export type Services = {
+  equipment: ServicesEquipment;
+  users: ServicesUsers;
+  currentUser: ServicesCurrentUser;
+  activity: ServicesActivity;
+  audit: ServicesAudit;
+  clients: ServicesClients;
 };
