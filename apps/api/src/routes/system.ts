@@ -1,27 +1,5 @@
-// apps/api/src/routes/system.ts
 import { prisma } from "../db/prisma";
 import { FastifyInstance } from "fastify";
-
-// (add these small helpers near the top)
-function maskHost(host?: string) {
-  if (!host) return undefined;
-  const parts = host.split(".");
-  if (parts[0]) parts[0] = parts[0].replace(/.(?=.{4})/g, "*");
-  return parts.join(".");
-}
-function parseDbInfo(url?: string) {
-  try {
-    if (!url) return {};
-    const u = new URL(url);
-    return {
-      host: u.hostname,
-      dbName: u.pathname.replace(/^\//, "") || undefined,
-      provider: /\.neon\.tech$/i.test(u.hostname) ? "neon" : "postgres",
-    };
-  } catch {
-    return {};
-  }
-}
 
 export default async function systemRoutes(app: FastifyInstance) {
   app.get("/hello", async (_req, _reply) => ({ message: "Hello from API" }));

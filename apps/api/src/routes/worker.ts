@@ -2,6 +2,10 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { Role as RoleVal } from "@prisma/client";
 
+async function currentUserId(req: any) {
+  return (await services.currentUser.me(req.auth?.clerkUserId)).id;
+}
+
 export default async function workerRoutes(app: FastifyInstance) {
   const workerGuard = {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -24,29 +28,28 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {
     const id = req.params.id as string;
-    return services.equipment.reserve(req.auth?.clerkUserId, id, req.user.id);
-  });
-
-  app.post("/equipment/:id/reserve/cancel", workerGuard, async (req: any) => {
-    const id = req.params.id as string;
-    return services.equipment.cancelReservation(
-      req.auth?.clerkUserId,
+    return services.equipment.reserve(
+      await currentUserId(req),
       id,
       req.user.id
     );
   });
 
-  //app.post("/equipment/:id/checkout", workerGuard, async (req: any) => {
-  //  const id = req.params.id as string;
-  //  return services.equipment.checkout(id, req.user.id);
-  //});
+  app.post("/equipment/:id/reserve/cancel", workerGuard, async (req: any) => {
+    const id = req.params.id as string;
+    return services.equipment.cancelReservation(
+      await currentUserId(req),
+      id,
+      req.user.id
+    );
+  });
 
   // Enforce QR slug verification before finishing checkout
   app.post("/equipment/:id/checkout/verify", workerGuard, async (req: any) => {
     const id = req.params.id as string;
     const slug = String(req.body?.slug ?? "").trim();
     return services.equipment.checkoutWithQr(
-      req.auth?.clerkUserId,
+      await currentUserId(req),
       id,
       req.user.id,
       slug
@@ -67,7 +70,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const id = req.params.id as string;
     const slug = String(req.body?.slug ?? "").trim();
     return services.equipment.returnWithQr(
-      req.auth?.clerkUserId,
+      await currentUserId(req),
       id,
       req.user.id,
       slug
