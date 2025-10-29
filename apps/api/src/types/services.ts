@@ -95,6 +95,14 @@ export type PropertyUpsert = Pick<
   | "pointOfContactId"
 > & { id?: string };
 
+export type PropertyListItemParams = {
+  q?: string;
+  clientId?: string;
+  status?: PropertyStatus | "ALL";
+  kind?: PropertyKind | "ALL";
+  limit?: number;
+};
+
 export type PropertyListItem = Property & {
   client?: { id: string; displayName: string | null } | null;
   primaryContact?: Pick<
@@ -282,32 +290,24 @@ export type ServicesAudit = {
 };
 
 export type ServicesProperties = {
-  properties: {
-    list(params?: {
-      q?: string;
-      clientId?: string;
-      status?: PropertyStatus | "ALL";
-      kind?: PropertyKind | "ALL";
-      limit?: number;
-    }): Promise<PropertyListItem[]>;
-    get(id: string): Promise<Property>;
+  list(params?: PropertyListItemParams): Promise<PropertyListItem[]>;
+  get(id: string): Promise<Property>;
 
-    create(actorId: string, payload: PropertyUpsert): Promise<Property>;
-    update(
-      actorId: string,
-      id: string,
-      payload: PropertyUpsert
-    ): Promise<Property>;
-    archive(actorId: string, id: string): Promise<{ archived: true }>;
-    unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
-    hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+  create(actorId: string, payload: PropertyUpsert): Promise<Property>;
+  update(
+    actorId: string,
+    id: string,
+    payload: PropertyUpsert
+  ): Promise<Property>;
+  archive(actorId: string, id: string): Promise<{ archived: true }>;
+  unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
+  hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
 
-    setPrimaryContact(
-      actorId: string,
-      id: string,
-      contactId: string | null
-    ): Promise<{ primarySet: true }>;
-  };
+  setPrimaryContact(
+    actorId: string,
+    id: string,
+    contactId: string | null
+  ): Promise<{ primarySet: true }>;
 };
 
 export type Services = {
