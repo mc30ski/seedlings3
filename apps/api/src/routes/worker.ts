@@ -94,4 +94,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     const id = String(req.params.id);
     return services.clients.get(id);
   });
+
+  app.get("/properties", workerGuard, async (req: any) => {
+    const { q, clientId, status, kind, limit } = (req.query || {}) as {
+      q?: string;
+      clientId?: string;
+      status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
+      kind?: string | "ALL";
+      limit?: string;
+    };
+    return services.properties.list({
+      q,
+      clientId,
+      status: status as any,
+      kind: (kind as any) ?? "ALL",
+      limit: limit ? Number(limit) : undefined,
+    });
+  });
+
+  app.get("/properties/:id", workerGuard, async (req: any) => {
+    const id = String(req.params.id);
+    return services.properties.get(id);
+  });
 }

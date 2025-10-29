@@ -28,6 +28,7 @@ enum AuditScope {
   EQUIPMENT
   CLIENT
   JOB
+  PROPERTY
   // add more scopes as you expand the schema
 }
 
@@ -48,6 +49,7 @@ enum AuditVerb {
   RESERVATION_CANCELLED
   RETURNED
   FORCE_RELEASED
+  PRIMARY_CONTACT_SET
   // add new verbs as needed
 }
 
@@ -206,6 +208,8 @@ model Client {
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+  //TODO: NOT BEING USED YET, BUT SHOULD MAKE ALL ENTITIES BE RETIRED/ARCHIVED
+  archivedAt    DateTime?
 
   @@index([status])
   @@index([displayName])
@@ -281,6 +285,7 @@ model Property {
 
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
+  archivedAt         DateTime?
 
   status           PropertyStatus @default(PENDING)
 

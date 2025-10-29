@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "AuditScope" ADD VALUE 'PROPERTY';
+
+-- AlterEnum
+ALTER TYPE "AuditVerb" ADD VALUE 'PRIMARY_CONTACT_SET';

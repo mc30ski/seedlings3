@@ -32,12 +32,23 @@ export const AUDIT = {
     CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
     ARCHIVED: [AuditScope.CLIENT, AuditVerb.RETIRED] as const, // using RETIRED to mean archived
-    UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const, // if you add verb later swap this
+    UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const,
     DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
 
     CONTACT_CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
     CONTACT_UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
     CONTACT_DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
+  },
+  PROPERTY: {
+    CREATED: [AuditScope.PROPERTY, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.PROPERTY, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.PROPERTY, AuditVerb.RETIRED] as const, // using RETIRED to mean archived
+    UNARCHIVED: [AuditScope.PROPERTY, AuditVerb.UNRETIRED] as const,
+    DELETED: [AuditScope.PROPERTY, AuditVerb.DELETED] as const,
+    PRIMARY_CONTACT_SET: [
+      AuditScope.PROPERTY,
+      AuditVerb.PRIMARY_CONTACT_SET,
+    ] as const,
   },
 } as const;
 

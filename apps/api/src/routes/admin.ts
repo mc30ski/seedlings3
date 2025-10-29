@@ -222,4 +222,72 @@ export default async function adminRoutes(app: FastifyInstance) {
       );
     }
   );
+
+  app.get("/admin/properties", adminGuard, async (req: any) => {
+    const { q, clientId, status, kind, limit } = (req.query || {}) as {
+      q?: string;
+      clientId?: string;
+      status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
+      kind?: string | "ALL";
+      limit?: string;
+    };
+    return services.properties.list({
+      q,
+      clientId,
+      status: status as any,
+      kind: (kind as any) ?? "ALL",
+      limit: limit ? Number(limit) : undefined,
+    });
+  });
+
+  app.get("/admin/properties/:id", adminGuard, async (req: any) => {
+    return services.properties.get(String(req.params.id));
+  });
+
+  app.post("/admin/properties", adminGuard, async (req: any) => {
+    return services.properties.create(await currentUserId(req), req.body);
+  });
+
+  app.patch("/admin/properties/:id", adminGuard, async (req: any) => {
+    return services.properties.update(
+      await currentUserId(req),
+      String(req.params.id),
+      req.body
+    );
+  });
+
+  app.post("/admin/properties/:id/archive", adminGuard, async (req: any) => {
+    return services.properties.archive(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/properties/:id/unarchive", adminGuard, async (req: any) => {
+    return services.properties.unarchive(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.delete("/admin/properties/:id", adminGuard, async (req: any) => {
+    return services.properties.hardDelete(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  // Primary contact for the property (optional)
+  app.post(
+    "/admin/properties/:id/primary-contact",
+    adminGuard,
+    async (req: any) => {
+      const { contactId } = (req.body || {}) as { contactId?: string | null };
+      return services.properties.setPrimaryContact(
+        await currentUserId(req),
+        String(req.params.id),
+        contactId ?? null
+      );
+    }
+  );
 }
