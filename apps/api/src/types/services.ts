@@ -1,5 +1,15 @@
-import type { Equipment, AuditEvent, User, UserRole } from "@prisma/client";
-import type { Client, ClientContact, ClientStatus } from "@prisma/client";
+import type {
+  Equipment,
+  AuditEvent,
+  User,
+  UserRole,
+  Client,
+  ClientContact,
+  ClientStatus,
+  Property,
+  PropertyKind,
+  PropertyStatus,
+} from "@prisma/client";
 
 export type ClientWithContacts = Client & { contacts: ClientContact[] };
 
@@ -67,6 +77,30 @@ export type AdminActivityUser = {
   lastActivityAt: Date | null;
   count: number;
   events: AdminActivityEvent[];
+};
+
+export type PropertyUpsert = Pick<
+  Property,
+  | "clientId"
+  | "kind"
+  | "status"
+  | "displayName"
+  | "street1"
+  | "street2"
+  | "city"
+  | "state"
+  | "postalCode"
+  | "country"
+  | "accessNotes"
+  | "pointOfContactId"
+> & { id?: string };
+
+export type PropertyListItem = Property & {
+  client?: { id: string; displayName: string | null } | null;
+  primaryContact?: Pick<
+    ClientContact,
+    "id" | "firstName" | "lastName" | "email" | "phone"
+  > | null;
 };
 
 export type ServicesEquipment = {
@@ -247,6 +281,35 @@ export type ServicesAudit = {
   }): Promise<{ items: AuditEvent[]; total: number }>;
 };
 
+export type ServicesProperties = {
+  properties: {
+    list(params?: {
+      q?: string;
+      clientId?: string;
+      status?: PropertyStatus | "ALL";
+      kind?: PropertyKind | "ALL";
+      limit?: number;
+    }): Promise<PropertyListItem[]>;
+    get(id: string): Promise<Property>;
+
+    create(actorId: string, payload: PropertyUpsert): Promise<Property>;
+    update(
+      actorId: string,
+      id: string,
+      payload: PropertyUpsert
+    ): Promise<Property>;
+    archive(actorId: string, id: string): Promise<{ archived: true }>;
+    unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
+    hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+
+    setPrimaryContact(
+      actorId: string,
+      id: string,
+      contactId: string | null
+    ): Promise<{ primarySet: true }>;
+  };
+};
+
 export type Services = {
   equipment: ServicesEquipment;
   users: ServicesUsers;
@@ -254,4 +317,5 @@ export type Services = {
   activity: ServicesActivity;
   audit: ServicesAudit;
   clients: ServicesClients;
+  properties: ServicesProperties;
 };

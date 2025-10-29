@@ -170,11 +170,13 @@ enum ContactRole {
 //   APPROVED
 //   REJECTED
 // }
-// enum PropertyStatus {
-//   PENDING
-//   ACTIVE
-//   ARCHIVED
-// }
+
+enum PropertyStatus {
+   PENDING
+   ACTIVE
+   ARCHIVED
+}
+
 // enum JobScope {
 //   ENTIRE_SITE
 //   SINGLE_ADDRESS
@@ -250,23 +252,24 @@ model Property {
   kind               PropertyKind   @default(SINGLE)
 
   // Labels & addressing
-  label              String
-  line1              String
-  line2              String?
+  displayName        String
+  street1            String
+  street2            String?
   city               String
   state              String
   postalCode         String
   country            String
 
   // Optional geo
-  lat                Float?
-  lng                Float?
+  //lat                Float?
+  //lng                Float?
+  //geohash            String
 
   // Aggregate-site (community) fields (optional)
-  unitLabel          String?        // e.g., "home", "lot", "unit"
-  unitCount          Int?
-  siteName           String?
-  siteBoundaryGeo    Json?          // polygon/bbox later if needed
+  //unitLabel          String?        // e.g., "home", "lot", "unit"
+  //unitCount          Int?
+  //siteName           String?
+  //siteBoundaryGeo    Json?          // polygon/bbox later if needed
 
   // Default point of contact for this property
   pointOfContactId   String?
@@ -274,13 +277,12 @@ model Property {
 
   // Light ops
   accessNotes        String?
-  photos             Json?
+  //photos             Json?
 
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
-  // ----- Post-MVP property-level approvals (optional) -----
-  // status           PropertyStatus @default(PENDING)
+  status           PropertyStatus @default(PENDING)
 
   @@index([clientId])
   @@index([kind])
