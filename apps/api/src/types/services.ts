@@ -15,9 +15,38 @@ export type ClientWithContacts = Client & { contacts: ClientContact[] };
 
 export type ClientListItem = Client & {
   contactCount: number;
+  propertyCount: number;
+  // full contacts list (UI filters as needed)
+  contacts: Array<
+    Pick<
+      ClientContact,
+      | "id"
+      | "firstName"
+      | "lastName"
+      | "role"
+      | "email"
+      | "phone"
+      | "normalizedPhone"
+      | "isPrimary"
+      | "active"
+    >
+  >;
+  // small properties preview
+  properties?: Array<
+    Pick<Property, "id" | "displayName" | "city" | "state" | "status">
+  >;
+  // convenience field
   primaryContact?: Pick<
     ClientContact,
-    "id" | "firstName" | "lastName" | "email" | "phone"
+    | "id"
+    | "firstName"
+    | "lastName"
+    | "role"
+    | "email"
+    | "phone"
+    | "normalizedPhone"
+    | "isPrimary"
+    | "active"
   > | null;
 };
 

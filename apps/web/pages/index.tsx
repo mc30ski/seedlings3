@@ -102,6 +102,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<ClientsTab role="worker" />),
     },
     {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: wrapWithInlineMessage(<PropertiesTab role="worker" />),
+    },
+    {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
