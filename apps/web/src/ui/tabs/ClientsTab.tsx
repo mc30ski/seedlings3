@@ -566,7 +566,6 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
           role="admin"
           initialProperty={propEditing ?? undefined}
           defaultClientId={propDefaultClient}
-          scope="properties"
           onSaved={() => void load()}
         />
       )}
