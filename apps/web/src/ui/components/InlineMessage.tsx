@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Box, HStack, Text, Icon, CloseButton } from "@chakra-ui/react";
+import { Box, HStack, Text, Icon, CloseButton, Portal } from "@chakra-ui/react";
 import { CheckCircle2, Info, AlertTriangle, OctagonAlert } from "lucide-react";
 
 export const MESSAGE_KIND = ["SUCCESS", "WARNING", "INFO", "ERROR"] as const;
@@ -15,6 +15,8 @@ export type InlineMessageEventDetail = {
   text: string;
   /** Auto-hide after N ms (optional). If omitted, stays until replaced or dismissed. */
   autoHideMs?: number;
+  /** Optional fade animation duration (ms) when hiding (auto or manual). Defaults to 180ms. */
+  fadeOutMs?: number;
 };
 
 type Props = {
@@ -29,7 +31,7 @@ type Props = {
   style?: React.CSSProperties;
 };
 
-type MsgState = { type: MessageKind; text: string } | null;
+type MsgState = { type: MessageKind; text: string; fadeOutMs?: number } | null;
 
 // Publisher API (re-export below for convenience)
 const EVENT_NAME = "seedlings3:inline-message";
@@ -42,7 +44,31 @@ export default function InlineMessage({
   style,
 }: Props) {
   const [msg, setMsg] = useState<MsgState>(null);
-  const timerRef = useRef<number | null>(null);
+  const [isVisible, setIsVisible] = useState(false); // controls fade in/out
+  const autoTimerRef = useRef<number | null>(null);
+  const fadeTimerRef = useRef<number | null>(null);
+
+  // helper: clear any timers
+  const clearTimers = () => {
+    if (autoTimerRef.current) {
+      window.clearTimeout(autoTimerRef.current);
+      autoTimerRef.current = null;
+    }
+    if (fadeTimerRef.current) {
+      window.clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+  };
+
+  // helper: begin fade-out then clear the message after fade duration
+  const beginHide = (fadeOutMs = 180) => {
+    setIsVisible(false); // triggers CSS transition
+    if (fadeTimerRef.current) window.clearTimeout(fadeTimerRef.current);
+    fadeTimerRef.current = window.setTimeout(() => {
+      setMsg(null);
+      fadeTimerRef.current = null;
+    }, fadeOutMs);
+  };
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -63,17 +89,20 @@ export default function InlineMessage({
       if (!matches) return;
 
       // replace current message
-      setMsg({ type: det.type, text: det.text });
+      clearTimers();
+      setMsg({ type: det.type, text: det.text, fadeOutMs: det.fadeOutMs });
+      // show (fade-in)
+      setIsVisible(true);
 
-      // reset/arm auto-hide
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = null;
+      if (det.autoHideMs === undefined) {
+        det.autoHideMs = 5000; // Default
       }
+
+      // arm auto-hide (starts fade, then clears after fadeOutMs)
       if (det.autoHideMs && det.autoHideMs > 0) {
-        timerRef.current = window.setTimeout(() => {
-          setMsg(null);
-          timerRef.current = null;
+        autoTimerRef.current = window.setTimeout(() => {
+          beginHide(det.fadeOutMs ?? 180);
+          autoTimerRef.current = null;
         }, det.autoHideMs);
       }
     };
@@ -81,9 +110,7 @@ export default function InlineMessage({
     window.addEventListener(EVENT_NAME, handler as EventListener);
     return () => {
       window.removeEventListener(EVENT_NAME, handler as EventListener);
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-      }
+      clearTimers();
     };
   }, [scope]);
 
@@ -92,39 +119,70 @@ export default function InlineMessage({
   const palette = getPalette(msg?.type ?? "INFO");
   const dismissible = msg ? dismissibleTypes.includes(msg.type) : false;
 
+  // read fade duration from current message or default
+  const fadeOutMs = msg?.fadeOutMs ?? 180;
+
   return (
-    <Box
-      role={
-        msg?.type === "ERROR" || msg?.type === "WARNING" ? "alert" : "status"
-      }
-      aria-live="polite"
-      borderWidth="1px"
-      borderRadius="md"
-      px={3}
-      py={2}
-      mb={3}
-      bg={palette.bg}
-      borderColor={palette.border}
-      color={palette.fg}
-      className={className}
-      style={style}
-    >
-      <HStack justify="space-between" align="center" gap="2" minH="36px">
-        <HStack align="start" gap="2" minW={0}>
-          <Icon as={palette.icon} boxSize={4} mt="1px" />
-          <Text fontSize="sm" fontWeight="medium" lineClamp={4}>
-            {msg?.text ?? ""}
-          </Text>
-        </HStack>
-        {dismissible && (
-          <CloseButton
-            size="sm"
-            aria-label="Dismiss"
-            onClick={() => setMsg(null)}
-          />
-        )}
-      </HStack>
-    </Box>
+    <Portal>
+      {/* Overlay container (doesn't take layout space) */}
+      <Box
+        position="fixed"
+        left={0}
+        right={0}
+        bottom="16px"
+        display="flex"
+        justifyContent="center"
+        pointerEvents="none"
+        zIndex={1000}
+      >
+        {/* Holder width: ~80% viewport, capped; tweak as you like */}
+        <Box
+          pointerEvents="auto"
+          w="80vw"
+          maxW="800px"
+          mx="4"
+          // fade/slide in & out
+          transition={`transform ${fadeOutMs}ms ease, opacity ${fadeOutMs}ms ease`}
+          transform={isVisible ? "translateY(0)" : "translateY(8px)"}
+          opacity={isVisible ? 1 : 0}
+        >
+          <Box
+            role={
+              msg?.type === "ERROR" || msg?.type === "WARNING"
+                ? "alert"
+                : "status"
+            }
+            aria-live="polite"
+            borderWidth="1px"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg={palette.bg}
+            borderColor={palette.border}
+            color={palette.fg}
+            boxShadow="md"
+            className={className}
+            style={style}
+          >
+            <HStack justify="space-between" align="center" gap="2" minH="36px">
+              <HStack align="start" gap="2" minW={0}>
+                <Icon as={palette.icon} boxSize={4} mt="1px" />
+                <Text fontSize="sm" fontWeight="medium" lineClamp={4}>
+                  {msg?.text ?? ""}
+                </Text>
+              </HStack>
+              {dismissible && (
+                <CloseButton
+                  size="sm"
+                  aria-label="Dismiss"
+                  onClick={() => beginHide(fadeOutMs)}
+                />
+              )}
+            </HStack>
+          </Box>
+        </Box>
+      </Box>
+    </Portal>
   );
 }
 
