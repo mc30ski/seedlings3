@@ -9,7 +9,6 @@ import {
   TabsIndicator,
   Box,
   Flex,
-  HStack,
   Icon,
   Button,
 } from "@chakra-ui/react";
@@ -135,9 +134,6 @@ export default function ScrollableUnderlineTabs({
     el.scrollBy({ left: dir === "left" ? -amt : amt, behavior: "smooth" });
   };
 
-  // No gutters in overlay/fade/none; only "buttons" mode used gutters previously
-  const reserveGutters = edgeMode === "buttons" ? 36 : 0;
-
   return (
     <TabsRoot
       value={current}
@@ -158,64 +154,69 @@ export default function ScrollableUnderlineTabs({
         py={headerPaddingY}
         className={headerClassName}
       >
-        <Box
-          position="relative"
-          px={reserveGutters ? `${reserveGutters}px` : 0}
-        >
-          <Flex
-            ref={scrollRef}
-            role="tablist"
-            aria-label={ariaLabel}
-            gap={2}
-            overflowX="auto"
-            css={{
-              scrollbarWidth: "none",
-              msOverflowStyle: "none",
-              "&::-webkit-scrollbar": { display: "none" },
-            }}
-          >
-            <TabsList asChild>
-              <HStack gap={1} flexShrink={0} px={1}>
-                {visibleTabs.map((t) => (
-                  <TabsTrigger
-                    key={t.value}
-                    value={t.value}
-                    disabled={t.disabled}
-                    asChild
+        <Box position="relative">
+          {/* Make TabsList the actual scroll container */}
+          <TabsList asChild>
+            <Box
+              ref={scrollRef}
+              role="tablist"
+              aria-label={ariaLabel}
+              position="relative"
+              display="flex"
+              gap={2}
+              overflowX="auto"
+              whiteSpace="nowrap"
+              px={1}
+              css={{
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+                "&::-webkit-scrollbar": { display: "none" },
+              }}
+              onScroll={updateIndicators}
+            >
+              {visibleTabs.map((t) => (
+                <TabsTrigger
+                  key={t.value}
+                  value={t.value}
+                  disabled={t.disabled}
+                  asChild
+                >
+                  <Flex
+                    align="center"
+                    gap={2}
+                    px={3}
+                    py={2}
+                    flex="0 0 auto" /* no growth → prevents width inflation */
+                    borderBottom="2px solid transparent"
+                    color="gray.700"
+                    _hover={{ color: "gray.900", bg: "gray.50" }}
+                    css={{
+                      "&[data-state=active]": {
+                        borderColor: "blue.600",
+                        color: "blue.700",
+                        fontWeight: 600,
+                      },
+                    }}
                   >
-                    <Flex
-                      align="center"
-                      gap={2}
-                      px={3}
-                      py={2}
-                      borderBottom="2px solid transparent"
-                      color="gray.700"
-                      _hover={{ color: "gray.900", bg: "gray.50" }}
-                      css={{
-                        "&[data-state=active]": {
-                          borderColor: "blue.600",
-                          color: "blue.700",
-                          fontWeight: 600,
-                        },
-                      }}
-                    >
-                      {t.icon && <Icon as={t.icon} boxSize="1em" />}
-                      <span>{t.label}</span>
-                    </Flex>
-                  </TabsTrigger>
-                ))}
-              </HStack>
-            </TabsList>
-          </Flex>
+                    {t.icon && <Icon as={t.icon} boxSize="1em" />}
+                    <span>{t.label}</span>
+                  </Flex>
+                </TabsTrigger>
+              ))}
 
-          {showIndicator && (
-            <TabsIndicator
-              mt="-2px"
-              height="2px"
-              bg="blue.600"
-              borderRadius="full"
-            />
-          )}
+              {/* Keep the indicator INSIDE the scrollable list */}
+              {showIndicator && (
+                <TabsIndicator
+                  position="absolute"
+                  bottom="0"
+                  left="0"
+                  height="2px"
+                  bg="blue.600"
+                  borderRadius="full"
+                />
+              )}
+            </Box>
+          </TabsList>
 
           {/* Slim fades */}
           {edgeMode !== "none" && (
@@ -241,7 +242,7 @@ export default function ScrollableUnderlineTabs({
             </>
           )}
 
-          {/* Overlay arrows: small, outside-looking chips; no gutters needed */}
+          {/* Overlay arrows */}
           {edgeMode === "overlay" && canLeft && (
             <Button
               onClick={() => scrollByAmount("left")}
@@ -286,44 +287,6 @@ export default function ScrollableUnderlineTabs({
               px={1.5}
               minW="auto"
               height="22px"
-            >
-              <Icon as={FiChevronRight} />
-            </Button>
-          )}
-
-          {/* If you still want the older "buttons" mode with gutters: */}
-          {edgeMode === "buttons" && canLeft && (
-            <Button
-              onClick={() => scrollByAmount("left")}
-              position="absolute"
-              left="4px"
-              top="50%"
-              transform="translateY(-50%)"
-              variant="solid"
-              size="xs"
-              borderRadius="full"
-              bg="white"
-              boxShadow="sm"
-              _hover={{ bg: "gray.50" }}
-              aria-label="Scroll left"
-            >
-              <Icon as={FiChevronLeft} />
-            </Button>
-          )}
-          {edgeMode === "buttons" && canRight && (
-            <Button
-              onClick={() => scrollByAmount("right")}
-              position="absolute"
-              right="4px"
-              top="50%"
-              transform="translateY(-50%)"
-              variant="solid"
-              size="xs"
-              borderRadius="full"
-              bg="white"
-              boxShadow="sm"
-              _hover={{ bg: "gray.50" }}
-              aria-label="Scroll right"
             >
               <Icon as={FiChevronRight} />
             </Button>

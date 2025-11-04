@@ -163,11 +163,11 @@ export default function PropertiesTab({
   async function approve(p: any) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/approve`, {});
+      await load(false);
       publishInlineMessage({
         type: "SUCCESS",
         text: "Property approved and made active.",
       });
-      await load(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -178,11 +178,11 @@ export default function PropertiesTab({
   async function archive(p: any) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/archive`, {});
+      await load(false);
       publishInlineMessage({
         type: "SUCCESS",
         text: "Property archived.",
       });
-      await load(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -193,11 +193,11 @@ export default function PropertiesTab({
   async function unarchive(p: any) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/unarchive`, {});
+      await load(false);
       publishInlineMessage({
         type: "SUCCESS",
         text: "Property unarchived.",
       });
-      await load(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -209,11 +209,11 @@ export default function PropertiesTab({
     try {
       setLoading(true);
       await apiDelete(`/api/admin/properties/${id}`);
+      await load(true);
       publishInlineMessage({
         type: "SUCCESS",
         text: "Property deleted.",
       });
-      await load(true);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
