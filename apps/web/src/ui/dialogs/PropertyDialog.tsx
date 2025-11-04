@@ -8,13 +8,14 @@ import {
   HStack,
   Input,
   Portal,
-  Select, // Chakra v3 namespace API
+  Select,
   Text,
   Textarea,
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import { prettyStatus } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -23,8 +24,8 @@ import {
 type Mode = "create" | "update";
 type RoleMode = "worker" | "admin";
 
-type PropertyStatus = "PENDING" | "ACTIVE" | "ARCHIVED"; // align with prisma enum
-type PropertyKind = "SINGLE" | "AGGREGATE_SITE"; // align with prisma enum
+type PropertyStatus = "PENDING" | "ACTIVE" | "ARCHIVED";
+type PropertyKind = "SINGLE" | "AGGREGATE_SITE";
 
 type ClientLite = { id: string; displayName: string };
 type ContactLite = {
@@ -57,16 +58,13 @@ type Props = {
   mode: Mode;
   role: RoleMode;
 
-  /** When creating from a Client context, pass clientId to pre-select */
+  // When creating from a Client context, pass clientId to pre-select
   defaultClientId?: string;
 
-  /** When updating, pass the current property */
+  // When updating, pass the current property
   initialProperty?: PropertyShape | null;
 
-  /** InlineMessage scope (mount <InlineMessage scope="properties" /> where appropriate) */
-  scope?: string;
-
-  /** Callback after successful save */
+  // Callback after successful save
   onSaved?: (saved: any) => void;
 };
 
@@ -77,7 +75,6 @@ export default function PropertyDialog({
   role,
   defaultClientId,
   initialProperty,
-  scope = "properties",
   onSaved,
 }: Props) {
   const isAdmin = role === "admin";
@@ -104,7 +101,6 @@ export default function PropertyDialog({
 
   const [pocValue, setPocValue] = useState<string[]>(["NONE"]);
 
-  // ---- collections (ensure currently selected item exists so Select doesn't clear)
   const clientItems = useMemo(() => {
     const items = clients.map((c) => ({
       label: c.displayName || c.id,
@@ -124,7 +120,7 @@ export default function PropertyDialog({
   const statusItems = useMemo(
     () =>
       (["PENDING", "ACTIVE", "ARCHIVED"] as PropertyStatus[]).map((s) => ({
-        label: s,
+        label: prettyStatus(s),
         value: s,
       })),
     []
@@ -137,7 +133,7 @@ export default function PropertyDialog({
   const kindItems = useMemo(
     () =>
       (["SINGLE", "AGGREGATE_SITE"] as PropertyKind[]).map((s) => ({
-        label: s,
+        label: prettyStatus(s),
         value: s,
       })),
     []
@@ -289,19 +285,15 @@ export default function PropertyDialog({
     const cid = clientValue[0];
     if (!cid) {
       publishInlineMessage({
-        scope,
         type: "WARNING",
         text: "Please select a client.",
-        autoHideMs: 3000,
       });
       return;
     }
     if (!displayName.trim()) {
       publishInlineMessage({
-        scope,
         type: "WARNING",
         text: "Please enter a property name.",
-        autoHideMs: 3000,
       });
       return;
     }
@@ -313,10 +305,8 @@ export default function PropertyDialog({
       !country.trim()
     ) {
       publishInlineMessage({
-        scope,
         type: "WARNING",
         text: "Address is incomplete.",
-        autoHideMs: 3000,
       });
       return;
     }
@@ -342,10 +332,8 @@ export default function PropertyDialog({
       if (mode === "create") {
         saved = await apiPost("/api/admin/properties", payload);
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Property “${payload.displayName}” created.`,
-          autoHideMs: 3500,
         });
       } else {
         if (!initialProperty?.id) throw new Error("Missing property id");
@@ -354,17 +342,13 @@ export default function PropertyDialog({
           payload
         );
         publishInlineMessage({
-          scope,
           type: "SUCCESS",
           text: `Property “${payload.displayName}” updated.`,
-          autoHideMs: 3500,
         });
       }
       onSaved?.(saved);
-      onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
-        scope,
         type: "ERROR",
         text: getErrorMessage(
           mode === "create"
@@ -374,8 +358,24 @@ export default function PropertyDialog({
         ),
       });
     } finally {
+      onOpenChange(false);
       setBusy(false);
     }
+  }
+
+  function ableToSave() {
+    return (
+      clientValue &&
+      clientValue.length > 0 &&
+      displayName &&
+      statusValue &&
+      kindValue &&
+      street1 &&
+      city &&
+      stateValue &&
+      postalCode &&
+      country
+    );
   }
 
   return (
@@ -400,10 +400,9 @@ export default function PropertyDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                {/* Client selector (admins choose; workers read-only) */}
                 <div>
                   <HStack justify="space-between">
-                    <Text mb="1">Client</Text>
+                    <Text mb="1">Client *</Text>
                     {!isAdmin && <Badge colorPalette="gray">Read-only</Badge>}
                   </HStack>
                   <Select.Root
@@ -430,19 +429,17 @@ export default function PropertyDialog({
                     </Select.Positioner>
                   </Select.Root>
                 </div>
-
                 <div>
-                  <Text mb="1">Property name</Text>
+                  <Text mb="1">Property name *</Text>
                   <Input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="e.g., Main House"
                   />
                 </div>
-
                 <HStack gap={3}>
                   <div style={{ flex: 1 }}>
-                    <Text mb="1">Status</Text>
+                    <Text mb="1">Status *</Text>
                     <Select.Root
                       collection={statusCollection}
                       value={statusValue}
@@ -470,7 +467,7 @@ export default function PropertyDialog({
                     </Select.Root>
                   </div>
                   <div style={{ flex: 1 }}>
-                    <Text mb="1">Kind</Text>
+                    <Text mb="1">Kind *</Text>
                     <Select.Root
                       collection={kindCollection}
                       value={kindValue}
@@ -498,9 +495,8 @@ export default function PropertyDialog({
                     </Select.Root>
                   </div>
                 </HStack>
-
                 <div>
-                  <Text mb="1">Address</Text>
+                  <Text mb="1">Address *</Text>
                   <Input
                     value={street1}
                     onChange={(e) => setStreet1(e.target.value)}
@@ -538,7 +534,6 @@ export default function PropertyDialog({
                     />
                   </HStack>
                 </div>
-
                 <div>
                   <Text mb="1">Default contact</Text>
                   <Select.Root
@@ -565,9 +560,8 @@ export default function PropertyDialog({
                     </Select.Positioner>
                   </Select.Root>
                 </div>
-
                 <div>
-                  <Text mb="1">Access notes (optional)</Text>
+                  <Text mb="1">Access notes</Text>
                   <Textarea
                     value={accessNotes}
                     onChange={(e) => setAccessNotes(e.target.value)}
@@ -577,7 +571,6 @@ export default function PropertyDialog({
                 </div>
               </VStack>
             </Dialog.Body>
-
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button
@@ -587,7 +580,11 @@ export default function PropertyDialog({
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy}>
+                <Button
+                  onClick={handleSave}
+                  loading={busy}
+                  disabled={!ableToSave()}
+                >
                   {mode === "create" ? "Create" : "Save"}
                 </Button>
               </HStack>

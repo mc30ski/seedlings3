@@ -324,16 +324,17 @@ export type ServicesProperties = {
 
   create(actorId: string, payload: PropertyUpsert): Promise<Property>;
   update(
-    actorId: string,
+    currentUserId: string,
     id: string,
     payload: PropertyUpsert
   ): Promise<Property>;
-  archive(actorId: string, id: string): Promise<{ archived: true }>;
-  unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
-  hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+  approve(currentUserId: string, id: string): Promise<{ updated: true }>;
+  archive(currentUserId: string, id: string): Promise<{ archived: true }>;
+  unarchive(currentUserId: string, id: string): Promise<{ unarchived: true }>;
+  hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
   setPrimaryContact(
-    actorId: string,
+    currentUserId: string,
     id: string,
     contactId: string | null
   ): Promise<{ primarySet: true }>;

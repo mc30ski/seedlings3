@@ -105,7 +105,9 @@ export default function HomePage() {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      content: wrapWithInlineMessage(<PropertiesTab role="worker" />),
+      content: wrapWithInlineMessage(
+        <PropertiesTab me={me} purpose="WORKER" />
+      ),
     },
     {
       value: "jobs",
@@ -150,7 +152,7 @@ export default function HomePage() {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      content: wrapWithInlineMessage(<PropertiesTab role="admin" />),
+      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "jobs",

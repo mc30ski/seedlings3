@@ -4,66 +4,77 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
-  Card, // ← namespace
+  Card,
   HStack,
-  Input,
   Spacer,
   Text,
   VStack,
-  Badge,
-  Select, // ← namespace (for Select.Root, etc.)
+  Select,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
+import { Me, Role, hasRole } from "@/src/lib/types";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
-import InlineMessage, {
+import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import PropertyDialog, {
   type PropertyShape,
 } from "@/src/ui/dialogs/PropertyDialog";
-import PropertyPOCPicker from "@/src/ui/components/PropertyPOCPicker";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import { propertyStatusColor, prettyStatus } from "@/src/lib/lib";
+import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import DeleteDialog, {
+  type ToDeleteProps,
+} from "@/src/ui/dialogs/DeleteDialog";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import StatusButton from "@/src/ui/components/StatusButton";
 
-type RoleMode = "worker" | "admin";
-type PropertyStatus = "PENDING" | "ACTIVE" | "ARCHIVED";
-type PropertyKind = "SINGLE" | "AGGREGATE_SITE";
+// Constant representing the kind states for this entity.
+const kindStates = ["ALL", "SINGLE", "AGGREGATE_SITE"] as const;
 
-type Props = { role?: RoleMode };
-type ClientLite = { id: string; displayName: string };
+// Constant representing the status states for this entity.
+const statusStates = [
+  ["ALL", "All"],
+  ["PENDING", "Pending"],
+  ["ACTIVE", "Active"],
+  ["ARCHIVED", "Archived"],
+] as const;
 
-export default function PropertiesTab({ role = "worker" }: Props) {
-  const isAdmin = role === "admin";
+type TabPropsType = {
+  me: Me | null;
+  purpose: Role;
+};
 
+export default function PropertiesTab({
+  me,
+  purpose = "WORKER",
+}: TabPropsType) {
+  const isWorker = hasRole(me?.roles, "WORKER");
+  const isAdmin = hasRole(me?.roles, "ADMIN");
+  const isSuper = hasRole(me?.roles, "SUPER");
+  const isAvail = isAdmin || isWorker;
+  const forAdmin = purpose === "ADMIN" && isAdmin;
+
+  // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string[]>(["ALL"]);
+  const [status, setStatus] = useState<string>("ALL");
   const [kind, setKind] = useState<string[]>(["ALL"]);
-  const [clientFilter, setClientFilter] = useState<string[]>(["ALL"]);
-  const [clients, setClients] = useState<ClientLite[]>([]);
 
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<PropertyShape | null>(null);
+  const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
 
-  // collections
-  const statusItems = useMemo(
-    () =>
-      ["ALL", "PENDING", "ACTIVE", "ARCHIVED"].map((s) => ({
-        label: s,
-        value: s,
-      })),
-    []
-  );
-  const statusCollection = useMemo(
-    () => createListCollection({ items: statusItems }),
-    [statusItems]
-  );
+  // Helper variable to disable other buttons while actions are in flight.
+  const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
+  // Used to create the dropdown menus.
   const kindItems = useMemo(
-    () =>
-      ["ALL", "SINGLE", "AGGREGATE_SITE"].map((s) => ({ label: s, value: s })),
+    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
     []
   );
   const kindCollection = useMemo(
@@ -71,93 +82,65 @@ export default function PropertiesTab({ role = "worker" }: Props) {
     [kindItems]
   );
 
-  const clientItems = useMemo(
-    () =>
-      [{ label: "ALL", value: "ALL" }].concat(
-        clients.map((c) => ({ label: c.displayName || c.id, value: c.id }))
-      ),
-    [clients]
-  );
-  const clientCollection = useMemo(
-    () => createListCollection({ items: clientItems }),
-    [clientItems]
-  );
-
-  async function load() {
-    setLoading(true);
+  // Main function to load all the items from the API.
+  async function load(displayLoading: boolean = true) {
+    setLoading(displayLoading);
     try {
-      const base = isAdmin ? "/api/admin/properties" : "/api/properties";
-      const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      if (status[0] && status[0] !== "ALL") params.set("status", status[0]);
-      if (kind[0] && kind[0] !== "ALL") params.set("kind", kind[0]);
-      if (clientFilter[0] && clientFilter[0] !== "ALL")
-        params.set("clientId", clientFilter[0]);
-
-      const res: unknown = await apiGet(
-        `${base}${params.toString() ? `?${params}` : ""}`
+      const base = forAdmin ? "/api/admin/properties" : "/api/properties";
+      const list: any[] = await apiGet(base);
+      setItems(
+        list
+          .sort((a, b) => a.displayName.localeCompare(b.displayName))
+          .filter((i) => forAdmin || i.status === "ACTIVE")
       );
-
-      // Accept either a raw array or a paginated envelope
-      const list: any[] = Array.isArray(res)
-        ? res
-        : Array.isArray((res as any)?.items)
-          ? (res as any).items
-          : [];
-
-      setItems(list);
     } catch (err) {
       publishInlineMessage({
-        scope: "properties",
         type: "ERROR",
         text: getErrorMessage("Failed to load properties", err),
       });
-      setItems([]); // ensure array on error
+      setItems([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // Load clients list for the filter + dialog
-  useEffect(() => {
-    const loadClients = async () => {
-      try {
-        const path = isAdmin
-          ? "/api/admin/clients?limit=500"
-          : "/api/clients?limit=500";
-
-        const res: unknown = await apiGet(path);
-
-        // normalize to an array (supports either raw array or { items: [...] })
-        const list: any[] = Array.isArray(res)
-          ? res
-          : Array.isArray((res as any)?.items)
-            ? (res as any).items
-            : [];
-
-        setClients(
-          list.map((c: any) => ({
-            id: c.id,
-            displayName: c.displayName ?? "",
-          }))
-        );
-      } catch {
-        setClients([]);
-      }
-    };
-    void loadClients();
-  }, [isAdmin]);
-
+  // Loads all the items for the first time.
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, kind, clientFilter, isAdmin]);
+  }, [forAdmin]);
+
+  // Filtered items based on search, kind or status.
+  const filtered = useMemo(() => {
+    let rows = items;
+
+    // Filter based on entity type.
+    if (kind[0] !== "ALL") {
+      rows = rows.filter((i) => i.kind === kind[0]);
+    }
+
+    // Filter based on entity status.
+    if (status !== "ALL") {
+      rows = rows.filter((i) => i.status === status);
+    }
+
+    // Filter based on free text.
+    const qlc = q.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((r) => {
+        const arr = [r.displayName || ""];
+        return arr.map((i) => i.toLowerCase()).some((i) => i.includes(qlc));
+      });
+    }
+
+    return rows;
+  }, [items, q, kind, status]);
 
   function openCreate() {
     setEditing(null);
     setDialogOpen(true);
   }
-  function openEdit(p: any) {
+
+  async function openEdit(p: any) {
     const shape: PropertyShape = {
       id: p.id,
       clientId: p.clientId,
@@ -177,19 +160,31 @@ export default function PropertiesTab({ role = "worker" }: Props) {
     setDialogOpen(true);
   }
 
+  async function approve(p: any) {
+    try {
+      await apiPost(`/api/admin/properties/${p.id}/approve`, {});
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: "Property approved and made active.",
+      });
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Approved failed", err),
+      });
+    }
+  }
   async function archive(p: any) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/archive`, {});
       publishInlineMessage({
-        scope: "properties",
         type: "SUCCESS",
         text: "Property archived.",
-        autoHideMs: 2000,
       });
-      void load();
+      await load(false);
     } catch (err) {
       publishInlineMessage({
-        scope: "properties",
         type: "ERROR",
         text: getErrorMessage("Archive failed", err),
       });
@@ -199,73 +194,46 @@ export default function PropertiesTab({ role = "worker" }: Props) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/unarchive`, {});
       publishInlineMessage({
-        scope: "properties",
         type: "SUCCESS",
         text: "Property unarchived.",
-        autoHideMs: 2000,
       });
-      void load();
+      await load(false);
     } catch (err) {
       publishInlineMessage({
-        scope: "properties",
         type: "ERROR",
         text: getErrorMessage("Unarchive failed", err),
       });
     }
   }
-  async function remove(p: any) {
+  async function hardDelete(id: string) {
     try {
-      await apiDelete(`/api/admin/properties/${p.id}`);
+      setLoading(true);
+      await apiDelete(`/api/admin/properties/${id}`);
       publishInlineMessage({
-        scope: "properties",
         type: "SUCCESS",
         text: "Property deleted.",
-        autoHideMs: 2000,
       });
-      void load();
+      await load(true);
     } catch (err) {
       publishInlineMessage({
-        scope: "properties",
         type: "ERROR",
         text: getErrorMessage("Delete failed", err),
       });
     }
   }
 
+  if (!isAvail) return <UnavailableNotice />;
+  if (loading) return <LoadingCenter />;
+
   return (
     <Box w="full">
-      <InlineMessage scope="properties" />
-
-      {/* Toolbar */}
       <HStack mb={3} gap={3}>
-        <Input
+        <SearchWithClear
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search properties (name, address, city…) "
+          onChange={setQ}
+          inputId="properties-search"
+          placeholder="Search…"
         />
-        <Select.Root
-          collection={statusCollection}
-          value={status}
-          onValueChange={(e) => setStatus(e.value)}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-        >
-          <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Status" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {statusItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
-
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -288,88 +256,42 @@ export default function PropertiesTab({ role = "worker" }: Props) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-
-        <Select.Root
-          collection={clientCollection}
-          value={clientFilter}
-          onValueChange={(e) => setClientFilter(e.value)}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-        >
-          <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Client" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {clientItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
-
         <Spacer />
-        {isAdmin && <Button onClick={openCreate}>New Property</Button>}
+        {forAdmin && <Button onClick={openCreate}>New</Button>}
       </HStack>
-
-      {/* List */}
+      <HStack mb={3} gap={2} wrap="wrap">
+        {statusStates.map(([val, label]) => (
+          <Button
+            key={val}
+            size="sm"
+            variant={status === val ? "solid" : "outline"}
+            onClick={() => {
+              setStatus(val);
+            }}
+          >
+            {label}
+          </Button>
+        ))}
+      </HStack>
       <VStack align="stretch" gap={3}>
-        {!loading && items.length === 0 && (
-          <Box p="8" textAlign="center" color="fg.muted">
-            No properties found.
+        {!loading && filtered.length === 0 && (
+          <Box p="8" color="fg.muted">
+            No properties match current filters.
           </Box>
         )}
-
-        {items.map((p: any) => (
-          <Card.Root key={p.id} variant="subtle">
+        {filtered.map((p: any) => (
+          <Card.Root key={p.id} variant="outline">
             <Card.Header pb="2">
-              <HStack gap={3}>
-                <Text fontWeight="semibold">{p.displayName}</Text>
-                <Badge>{p.status}</Badge>
-                <Badge variant="outline">{p.kind}</Badge>
-                <Spacer />
-                {isAdmin && (
-                  <HStack gap={2}>
-                    {p.status !== "ARCHIVED" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(p)}
-                      >
-                        Edit
-                      </Button>
-                    ) : null}
-                    {p.status === "ACTIVE" || p.status === "PENDING" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => archive(p)}
-                      >
-                        Archive
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => unarchive(p)}
-                      >
-                        Unarchive
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      colorPalette="red"
-                      onClick={() => remove(p)}
-                    >
-                      Delete
-                    </Button>
-                  </HStack>
-                )}
+              <HStack gap={3} justify="space-between" align="center">
+                <HStack gap={3} flex="1" minW={0}>
+                  <Text fontWeight="semibold">{p.displayName}</Text>
+                  <StatusBadge
+                    status={p.status}
+                    palette={propertyStatusColor(p.status)}
+                    variant="subtle"
+                  />
+                </HStack>
+                <StatusBadge status={p.kind} palette="gray" variant="outline" />
               </HStack>
             </Card.Header>
             <Card.Body pt="0">
@@ -382,31 +304,123 @@ export default function PropertiesTab({ role = "worker" }: Props) {
                 <Text fontSize="sm">
                   Client: <b>{p.client?.displayName ?? p.clientId}</b>
                 </Text>
-
-                {isAdmin && (
-                  <PropertyPOCPicker
-                    propertyId={p.id}
-                    clientId={p.clientId}
-                    currentContactId={p.pointOfContactId ?? null}
-                    onChanged={() => void load()}
-                  />
-                )}
+                <Text fontSize="sm">
+                  Default contact:{" "}
+                  <b>
+                    {p.pointOfContactId
+                      ? `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`
+                      : "None"}
+                  </b>
+                </Text>
               </VStack>
             </Card.Body>
+            {forAdmin && (
+              <Card.Footer>
+                <HStack gap={2} wrap="wrap" mb="2">
+                  <StatusButton
+                    id={"properties-edit"}
+                    itemId={p.id}
+                    label={"Edit"}
+                    onClick={async () => {
+                      await openEdit(p);
+                    }}
+                    variant={"outline"}
+                    disabled={loading}
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                  {p.status === "PENDING" && (
+                    <StatusButton
+                      id={"properties-pending"}
+                      itemId={p.id}
+                      label={"Approve"}
+                      onClick={async () => {
+                        await approve(p);
+                      }}
+                      variant={"outline"}
+                      disabled={loading}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  )}
+                  {p.status === "ACTIVE" || p.status === "PENDING" ? (
+                    <StatusButton
+                      id={"properties-archive"}
+                      itemId={p.id}
+                      label={"Archive"}
+                      onClick={async () => {
+                        await archive(p);
+                      }}
+                      variant={"outline"}
+                      disabled={loading}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  ) : (
+                    <StatusButton
+                      id={"properties-unarchive"}
+                      itemId={p.id}
+                      label={"Unarchive"}
+                      onClick={async () => {
+                        await unarchive(p);
+                      }}
+                      variant={"outline"}
+                      disabled={loading}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  )}
+                  {p.status === "ARCHIVED" && (
+                    <StatusButton
+                      id={"properties-delete"}
+                      itemId={p.id}
+                      label={"Delete"}
+                      onClick={async () => {
+                        void setToDelete({
+                          id: p.id,
+                          title: "Delete property?",
+                          summary: p.displayName,
+                          disabled: !isSuper,
+                          details: (
+                            <Text color="red.500">
+                              You must be a Super Admin to delete.
+                            </Text>
+                          ),
+                        });
+                      }}
+                      variant={"outline"}
+                      disabled={loading}
+                      colorPalette={"red"}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  )}
+                </HStack>
+              </Card.Footer>
+            )}
           </Card.Root>
         ))}
       </VStack>
 
-      {/* Create/Update dialog */}
-      {isAdmin && (
+      {forAdmin && (
         <PropertyDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           mode={editing ? "update" : "create"}
-          role={isAdmin ? "admin" : "worker"}
+          role={forAdmin ? "admin" : "worker"}
           initialProperty={editing ?? undefined}
-          scope="properties"
           onSaved={() => void load()}
+        />
+      )}
+      {forAdmin && (
+        <DeleteDialog
+          toDelete={toDelete}
+          cancel={() => setToDelete(null)}
+          complete={async () => {
+            if (!toDelete) return;
+            await hardDelete(toDelete.id);
+            setToDelete(null);
+          }}
         />
       )}
     </Box>

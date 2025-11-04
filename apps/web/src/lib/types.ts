@@ -9,3 +9,6 @@ export type Me = {
 };
 
 export type TabRolePropType = { role: "worker" | "admin" };
+
+export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
+  !!roles?.includes(role);

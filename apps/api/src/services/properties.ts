@@ -130,6 +130,19 @@ export const properties: ServicesProperties = {
     });
   },
 
+  async approve(currentUserId: string, id: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.property.update({
+        where: { id },
+        data: { status: PropertyStatus.ACTIVE, updatedAt: new Date() },
+      });
+      await writeAudit(tx, AUDIT.PROPERTY.UPDATED, currentUserId, {
+        propertyId: id,
+      });
+    });
+    return { updated: true as const };
+  },
+
   async archive(currentUserId: string, id: string) {
     await prisma.$transaction(async (tx) => {
       await tx.property.update({

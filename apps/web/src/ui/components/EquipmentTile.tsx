@@ -7,7 +7,6 @@ import {
   VStack,
   Badge,
   Button,
-  Spacer,
   useDisclosure,
 } from "@chakra-ui/react";
 import { useState } from "react";
@@ -25,7 +24,7 @@ import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
-import ActionButton from "@/src/ui/components/ActionButton";
+//import ActionButton from "@/src/ui/components/ActionButton";
 
 type EquipmentTileListProps = {
   item: Equipment;
@@ -450,6 +449,7 @@ export default function EquipmentTileList({
         >
           <Box flexBasis="100%" w="full" minW={0}>
             <HStack gap={2}>
+              {/* 
               {canWorkerCheckout(item) && (
                 <ActionButton
                   key="worker_checkout"
@@ -557,7 +557,7 @@ export default function EquipmentTileList({
                   }
                   variant="danger-outline"
                 />
-              )}
+              )}*/}
             </HStack>
           </Box>
         </Stack>
