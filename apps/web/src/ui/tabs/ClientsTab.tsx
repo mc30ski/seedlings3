@@ -33,9 +33,7 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
-import PropertyDialog, {
-  type PropertyShape,
-} from "@/src/ui/dialogs/PropertyDialog";
+import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
 import { useRouter } from "next/navigation";
 //TODO:
 export type TabRolePropType = { role: "worker" | "admin" };
@@ -99,7 +97,7 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
 
   // NEW: Property dialog state
   const [propDialogOpen, setPropDialogOpen] = useState(false);
-  const [propEditing, setPropEditing] = useState<PropertyShape | null>(null);
+  const [propEditing, setPropEditing] = useState<any | null>(null); //TODO: any
   const [propDefaultClient, setPropDefaultClient] = useState<
     string | undefined
   >(undefined);
@@ -564,9 +562,9 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
         <PropertyDialog
           open={propDialogOpen}
           onOpenChange={setPropDialogOpen}
-          mode={propEditing ? "update" : "create"}
-          role="admin"
-          initialProperty={propEditing ?? undefined}
+          mode={propEditing ? "UPDATE" : "CREATE"}
+          role="ADMIN"
+          initial={propEditing ?? undefined}
           defaultClientId={propDefaultClient}
           onSaved={() => void load()}
         />
