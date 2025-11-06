@@ -26,7 +26,7 @@ import {
   clientStatusColor,
   contactStatusColor,
 } from "@/src/lib/lib";
-import type { Me, TabRolePropType } from "@/src/lib/types";
+import type { Me } from "@/src/lib/types";
 import ClientDialog, { type Client } from "@/src/ui/dialogs/ClientDialog";
 import ContactDialog, { type Contact } from "@/src/ui/dialogs/ContactDialog";
 import DeleteDialog, {
@@ -37,6 +37,8 @@ import PropertyDialog, {
   type PropertyShape,
 } from "@/src/ui/dialogs/PropertyDialog";
 import { useRouter } from "next/navigation";
+//TODO:
+export type TabRolePropType = { role: "worker" | "admin" };
 
 // Filter type for this page
 type FilterType =

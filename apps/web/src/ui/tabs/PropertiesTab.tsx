@@ -10,63 +10,56 @@ import {
   Text,
   VStack,
   Select,
+  createListCollection,
 } from "@chakra-ui/react";
-import { createListCollection } from "@chakra-ui/react/collection";
-import { Me, Role, hasRole } from "@/src/lib/types";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
+import {
+  determineRoles,
+  propertyStatusColor,
+  prettyStatus,
+} from "@/src/lib/lib";
+import {
+  TabPropsType,
+  PROPERTY_KIND,
+  PROPERTY_STATUS,
+  Property,
+} from "@/src/lib/types";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import PropertyDialog, {
-  type PropertyShape,
-} from "@/src/ui/dialogs/PropertyDialog";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
-import { propertyStatusColor, prettyStatus } from "@/src/lib/lib";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import StatusButton from "@/src/ui/components/StatusButton";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
-import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
-import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import StatusButton from "@/src/ui/components/StatusButton";
+import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
 
 // Constant representing the kind states for this entity.
-const kindStates = ["ALL", "SINGLE", "AGGREGATE_SITE"] as const;
+const kindStates = ["ALL", ...PROPERTY_KIND] as const;
 
 // Constant representing the status states for this entity.
-const statusStates = [
-  ["ALL", "All"],
-  ["PENDING", "Pending"],
-  ["ACTIVE", "Active"],
-  ["ARCHIVED", "Archived"],
-] as const;
-
-type TabPropsType = {
-  me: Me | null;
-  purpose: Role;
-};
+const statusStates = ["ALL", ...PROPERTY_STATUS] as const;
 
 export default function PropertiesTab({
   me,
   purpose = "WORKER",
 }: TabPropsType) {
-  const isWorker = hasRole(me?.roles, "WORKER");
-  const isAdmin = hasRole(me?.roles, "ADMIN");
-  const isSuper = hasRole(me?.roles, "SUPER");
-  const isAvail = isAdmin || isWorker;
-  const forAdmin = purpose === "ADMIN" && isAdmin;
+  const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("ALL");
   const [kind, setKind] = useState<string[]>(["ALL"]);
 
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<Property[]>([]);
   const [loading, setLoading] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<PropertyShape | null>(null);
+  const [editing, setEditing] = useState<Property | null>(null);
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
 
   // Helper variable to disable other buttons while actions are in flight.
@@ -87,7 +80,7 @@ export default function PropertiesTab({
     setLoading(displayLoading);
     try {
       const base = forAdmin ? "/api/admin/properties" : "/api/properties";
-      const list: any[] = await apiGet(base);
+      const list: Property[] = await apiGet(base);
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
@@ -127,7 +120,19 @@ export default function PropertiesTab({
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) => {
-        const arr = [r.displayName || ""];
+        const arr = [
+          r.displayName || "",
+          r.status || "",
+          r.status || "",
+          r.kind || "",
+          r.street1 || "",
+          r.street2 || "",
+          r.city || "",
+          r.state || "",
+          r.postalCode || "",
+          r.country || "",
+          r.accessNotes || "",
+        ];
         return arr.map((i) => i.toLowerCase()).some((i) => i.includes(qlc));
       });
     }
@@ -140,27 +145,12 @@ export default function PropertiesTab({
     setDialogOpen(true);
   }
 
-  async function openEdit(p: any) {
-    const shape: PropertyShape = {
-      id: p.id,
-      clientId: p.clientId,
-      displayName: p.displayName,
-      status: p.status,
-      kind: p.kind,
-      street1: p.street1,
-      street2: p.street2 ?? null,
-      city: p.city,
-      state: p.state,
-      postalCode: p.postalCode,
-      country: p.country,
-      accessNotes: p.accessNotes ?? "",
-      pointOfContactId: p.pointOfContactId ?? null,
-    };
-    setEditing(shape);
+  async function openEdit(p: Property) {
+    setEditing(p);
     setDialogOpen(true);
   }
 
-  async function approve(p: any) {
+  async function approve(p: Property) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/approve`, {});
       await load(false);
@@ -175,7 +165,7 @@ export default function PropertiesTab({
       });
     }
   }
-  async function archive(p: any) {
+  async function archive(p: Property) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/archive`, {});
       await load(false);
@@ -190,7 +180,7 @@ export default function PropertiesTab({
       });
     }
   }
-  async function unarchive(p: any) {
+  async function unarchive(p: Property) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/unarchive`, {});
       await load(false);
@@ -260,18 +250,23 @@ export default function PropertiesTab({
         {forAdmin && <Button onClick={openCreate}>New</Button>}
       </HStack>
       <HStack mb={3} gap={2} wrap="wrap">
-        {statusStates.map(([val, label]) => (
-          <Button
-            key={val}
-            size="sm"
-            variant={status === val ? "solid" : "outline"}
-            onClick={() => {
-              setStatus(val);
-            }}
-          >
-            {label}
-          </Button>
-        ))}
+        {statusStates
+          .map((s) => ({
+            label: prettyStatus(s),
+            val: s,
+          }))
+          .map(({ label, val }) => (
+            <Button
+              key={val}
+              size="sm"
+              variant={status === val ? "solid" : "outline"}
+              onClick={() => {
+                setStatus(val);
+              }}
+            >
+              {label}
+            </Button>
+          ))}
       </HStack>
       <VStack align="stretch" gap={3}>
         {!loading && filtered.length === 0 && (
@@ -279,7 +274,7 @@ export default function PropertiesTab({
             No properties match current filters.
           </Box>
         )}
-        {filtered.map((p: any) => (
+        {filtered.map((p: Property) => (
           <Card.Root key={p.id} variant="outline">
             <Card.Header pb="2">
               <HStack gap={3} justify="space-between" align="center">
@@ -406,9 +401,9 @@ export default function PropertiesTab({
         <PropertyDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
-          mode={editing ? "update" : "create"}
-          role={forAdmin ? "admin" : "worker"}
-          initialProperty={editing ?? undefined}
+          mode={editing ? "UPDATE" : "CREATE"}
+          role={forAdmin ? "ADMIN" : "WORKER"}
+          initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}

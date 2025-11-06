@@ -93,7 +93,7 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab role="worker" />),
+      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="WORKER" />),
     },
     {
       value: "clients",
@@ -128,7 +128,7 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab role="admin" />),
+      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="ADMIN" />),
     },
     {
       value: "users",

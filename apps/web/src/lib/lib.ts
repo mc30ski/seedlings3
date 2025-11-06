@@ -1,3 +1,5 @@
+import { Me, Role } from "@/src/lib/types";
+
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -130,4 +132,19 @@ export function badgeColors(
     };
   }
   return { bg: `${palette}.600`, color: "white" };
+}
+
+export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
+  !!roles?.includes(role);
+
+export function determineRoles(me: Me | null, purpose: Role) {
+  const isWorker = hasRole(me?.roles, "WORKER");
+  const isAdmin = hasRole(me?.roles, "WORKER");
+  return {
+    isWorker: isWorker,
+    isAdmin: isAdmin,
+    isSuper: hasRole(me?.roles, "SUPER"),
+    isAvail: isAdmin || isWorker,
+    forAdmin: purpose === "ADMIN" && isAdmin,
+  };
 }

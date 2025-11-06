@@ -1,5 +1,6 @@
 import ComingSoonNotice from "@/src/ui/notices/ComingSoonNotice";
-import { TabRolePropType } from "@/src/lib/types";
+//TODO:
+export type TabRolePropType = { role: "worker" | "admin" };
 
 export default function JobsTab({ role = "worker" }: TabRolePropType) {
   return (

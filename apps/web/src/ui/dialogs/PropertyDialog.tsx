@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Badge,
   Button,
@@ -15,17 +15,20 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import {
+  Role,
+  DialogMode,
+  Property,
+  PropertyStatus,
+  PropertyKind,
+  PROPERTY_KIND,
+  PROPERTY_STATUS,
+} from "@/src/lib/types";
 import { prettyStatus } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-
-type Mode = "create" | "update";
-type RoleMode = "worker" | "admin";
-
-type PropertyStatus = "PENDING" | "ACTIVE" | "ARCHIVED";
-type PropertyKind = "SINGLE" | "AGGREGATE_SITE";
 
 type ClientLite = { id: string; displayName: string };
 type ContactLite = {
@@ -36,36 +39,16 @@ type ContactLite = {
   phone?: string | null;
 };
 
-export type PropertyShape = {
-  id: string;
-  clientId: string;
-  displayName: string;
-  status: PropertyStatus;
-  kind: PropertyKind;
-  street1: string;
-  street2?: string | null;
-  city: string;
-  state: string;
-  postalCode: string;
-  country: string;
-  accessNotes?: string | null;
-  pointOfContactId?: string | null;
-};
-
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode: Mode;
-  role: RoleMode;
+  mode: DialogMode;
+  role: Role;
+  initial?: Property | null;
+  onSaved?: (saved: Property) => void;
 
   // When creating from a Client context, pass clientId to pre-select
   defaultClientId?: string;
-
-  // When updating, pass the current property
-  initialProperty?: PropertyShape | null;
-
-  // Callback after successful save
-  onSaved?: (saved: any) => void;
 };
 
 export default function PropertyDialog({
@@ -73,11 +56,12 @@ export default function PropertyDialog({
   onOpenChange,
   mode,
   role,
-  defaultClientId,
-  initialProperty,
+  initial,
   onSaved,
+  defaultClientId,
 }: Props) {
-  const isAdmin = role === "admin";
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
 
   // clients (for selection)
@@ -85,11 +69,13 @@ export default function PropertyDialog({
   // contacts for currently selected client
   const [contacts, setContacts] = useState<ContactLite[]>([]);
 
-  // --- form state
+  // --- Form state
   const [clientValue, setClientValue] = useState<string[]>([]);
   const [displayName, setDisplayName] = useState("");
-  const [statusValue, setStatusValue] = useState<string[]>(["PENDING"]);
-  const [kindValue, setKindValue] = useState<string[]>(["SINGLE"]);
+  const [statusValue, setStatusValue] = useState<string[]>([
+    PROPERTY_STATUS[0],
+  ]);
+  const [kindValue, setKindValue] = useState<string[]>([PROPERTY_KIND[0]]);
 
   const [street1, setStreet1] = useState("");
   const [street2, setStreet2] = useState("");
@@ -119,7 +105,7 @@ export default function PropertyDialog({
 
   const statusItems = useMemo(
     () =>
-      (["PENDING", "ACTIVE", "ARCHIVED"] as PropertyStatus[]).map((s) => ({
+      PROPERTY_STATUS.map((s) => ({
         label: prettyStatus(s),
         value: s,
       })),
@@ -132,7 +118,7 @@ export default function PropertyDialog({
 
   const kindItems = useMemo(
     () =>
-      (["SINGLE", "AGGREGATE_SITE"] as PropertyKind[]).map((s) => ({
+      PROPERTY_KIND.map((s) => ({
         label: prettyStatus(s),
         value: s,
       })),
@@ -164,6 +150,21 @@ export default function PropertyDialog({
     () => createListCollection({ items: contactItems }),
     [contactItems]
   );
+
+  function ableToSave() {
+    return (
+      clientValue &&
+      clientValue.length > 0 &&
+      displayName &&
+      statusValue &&
+      kindValue &&
+      street1 &&
+      city &&
+      stateValue &&
+      postalCode &&
+      country
+    );
+  }
 
   // load clients list when dialog opens
   useEffect(() => {
@@ -199,24 +200,24 @@ export default function PropertyDialog({
   // seed form when opening/switching modes/records
   useEffect(() => {
     if (!open) return;
-    if (mode === "update" && initialProperty) {
-      setClientValue([initialProperty.clientId]);
-      setDisplayName(initialProperty.displayName ?? "");
-      setStatusValue([initialProperty.status ?? "PENDING"]);
-      setKindValue([initialProperty.kind ?? "SINGLE"]);
-      setStreet1(initialProperty.street1 ?? "");
-      setStreet2(initialProperty.street2 ?? "");
-      setCity(initialProperty.city ?? "");
-      setStateValue(initialProperty.state ?? "");
-      setPostalCode(initialProperty.postalCode ?? "");
-      setCountry(initialProperty.country ?? "USA");
-      setAccessNotes(initialProperty.accessNotes ?? "");
-      setPocValue([initialProperty.pointOfContactId ?? "NONE"]);
+    if (mode === "UPDATE" && initial) {
+      setClientValue([initial.clientId ?? ""]);
+      setDisplayName(initial.displayName ?? "");
+      setStatusValue([initial.status ?? PROPERTY_STATUS[0]]);
+      setKindValue([initial.kind ?? PROPERTY_KIND[0]]);
+      setStreet1(initial.street1 ?? "");
+      setStreet2(initial.street2 ?? "");
+      setCity(initial.city ?? "");
+      setStateValue(initial.state ?? "");
+      setPostalCode(initial.postalCode ?? "");
+      setCountry(initial.country ?? "USA");
+      setAccessNotes(initial.accessNotes ?? "");
+      setPocValue([initial.pointOfContactId ?? "NONE"]);
     } else {
       setClientValue(defaultClientId ? [defaultClientId] : []);
       setDisplayName("");
-      setStatusValue(["PENDING"]);
-      setKindValue(["SINGLE"]);
+      setStatusValue([PROPERTY_STATUS[0]]);
+      setKindValue([PROPERTY_KIND[0]]);
       setStreet1("");
       setStreet2("");
       setCity("");
@@ -226,7 +227,7 @@ export default function PropertyDialog({
       setAccessNotes("");
       setPocValue(["NONE"]);
     }
-  }, [open, mode, initialProperty, defaultClientId]);
+  }, [open, mode, initial, defaultClientId]);
 
   // load contacts whenever selected client changes
   useEffect(() => {
@@ -314,8 +315,8 @@ export default function PropertyDialog({
     const payload = {
       clientId: cid,
       displayName: displayName.trim(),
-      status: (statusValue[0] as PropertyStatus) ?? "PENDING",
-      kind: (kindValue[0] as PropertyKind) ?? "SINGLE",
+      status: (statusValue[0] as PropertyStatus) ?? PROPERTY_STATUS[0],
+      kind: (kindValue[0] as PropertyKind) ?? PROPERTY_KIND[0],
       street1: street1.trim(),
       street2: street2.trim() || null,
       city: city.trim(),
@@ -328,17 +329,17 @@ export default function PropertyDialog({
 
     setBusy(true);
     try {
-      let saved;
-      if (mode === "create") {
-        saved = await apiPost("/api/admin/properties", payload);
+      let saved: Property;
+      if (mode === "CREATE") {
+        saved = await apiPost<Property>("/api/admin/properties", payload);
         publishInlineMessage({
           type: "SUCCESS",
           text: `Property “${payload.displayName}” created.`,
         });
       } else {
-        if (!initialProperty?.id) throw new Error("Missing property id");
-        saved = await apiPatch(
-          `/api/admin/properties/${initialProperty.id}`,
+        if (!initial?.id) throw new Error("Missing property id");
+        saved = await apiPatch<Property>(
+          `/api/admin/properties/${initial.id}`,
           payload
         );
         publishInlineMessage({
@@ -351,7 +352,7 @@ export default function PropertyDialog({
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage(
-          mode === "create"
+          mode === "CREATE"
             ? "Create property failed"
             : "Update property failed",
           err
@@ -363,23 +364,12 @@ export default function PropertyDialog({
     }
   }
 
-  function ableToSave() {
-    return (
-      clientValue &&
-      clientValue.length > 0 &&
-      displayName &&
-      statusValue &&
-      kindValue &&
-      street1 &&
-      city &&
-      stateValue &&
-      postalCode &&
-      country
-    );
-  }
-
   return (
-    <Dialog.Root open={open} onOpenChange={(e) => onOpenChange(e.open)}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(e) => onOpenChange(e.open)}
+      initialFocusEl={() => cancelRef.current}
+    >
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
@@ -394,7 +384,7 @@ export default function PropertyDialog({
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                {mode === "create" ? "Create Property" : "Update Property"}
+                {mode === "CREATE" ? "Create Property" : "Update Property"}
               </Dialog.Title>
             </Dialog.Header>
 
@@ -411,7 +401,7 @@ export default function PropertyDialog({
                     onValueChange={(e) => setClientValue(e.value)}
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                    disabled={!isAdmin && mode === "update"}
+                    disabled={!isAdmin && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -449,6 +439,7 @@ export default function PropertyDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
+                      disabled={!isAdmin && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -477,6 +468,7 @@ export default function PropertyDialog({
                         strategy: "fixed",
                         hideWhenDetached: true,
                       }}
+                      disabled={!isAdmin && mode === "UPDATE"}
                     >
                       <Select.Control>
                         <Select.Trigger>
@@ -542,7 +534,9 @@ export default function PropertyDialog({
                     onValueChange={(e) => setPocValue(e.value)}
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                    disabled={!clientValue[0]}
+                    disabled={
+                      !clientValue[0] || (!isAdmin && mode === "UPDATE")
+                    }
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -575,6 +569,7 @@ export default function PropertyDialog({
               <HStack justify="flex-end" w="full">
                 <Button
                   variant="ghost"
+                  ref={cancelRef}
                   onClick={() => onOpenChange(false)}
                   disabled={busy}
                 >
@@ -585,7 +580,7 @@ export default function PropertyDialog({
                   loading={busy}
                   disabled={!ableToSave()}
                 >
-                  {mode === "create" ? "Create" : "Save"}
+                  {mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>

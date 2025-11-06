@@ -2,7 +2,7 @@ import { sleep } from "@/src/lib/lib";
 
 // Introduce delay for debugging
 const DELAY = 0;
-//const DELAY = 3000;
+//const DELAY = 1500;
 
 // Introduce error for any API call for debuggin
 const ERROR = false;

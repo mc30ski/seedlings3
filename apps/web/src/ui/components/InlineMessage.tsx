@@ -13,7 +13,7 @@ export type InlineMessageEventDetail = {
   scope?: string;
   type: MessageKind;
   text: string;
-  /** Auto-hide after N ms (optional). If omitted, stays until replaced or dismissed. */
+  /** Auto-hide after N ms (optional). */
   autoHideMs?: number;
   /** Optional fade animation duration (ms) when hiding (auto or manual). Defaults to 180ms. */
   fadeOutMs?: number;
@@ -94,7 +94,7 @@ export default function InlineMessage({
       // show (fade-in)
       setIsVisible(true);
 
-      if (det.autoHideMs === undefined) {
+      if (det.autoHideMs === undefined && det.type === "SUCCESS") {
         det.autoHideMs = 5000; // Default
       }
 
@@ -204,9 +204,9 @@ function getPalette(kind: MessageKind) {
       };
     case "ERROR":
       return {
-        bg: "red.50",
-        border: "red.200",
-        fg: "red.800",
+        bg: "red.100",
+        border: "red.400",
+        fg: "red.900",
         icon: OctagonAlert,
       };
     case "INFO":
