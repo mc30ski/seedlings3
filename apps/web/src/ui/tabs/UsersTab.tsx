@@ -20,7 +20,8 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { TabRolePropType } from "@/src/lib/types";
+//TODO:
+export type TabRolePropType = { role: "worker" | "admin" };
 
 type ApiUser = {
   id: string;

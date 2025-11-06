@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
+  Badge,
   Button,
   Dialog,
   HStack,
@@ -14,145 +15,56 @@ import {
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
 import {
+  Role,
+  DialogMode,
+  Equipment,
+  EQUIPMENT_KIND,
+  EQUIPMENT_ENERGY,
+  EquipmentKind,
+  EquipmentEnergy,
+} from "@/src/lib/types";
+import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-export const EQUIPMENT_TYPES = [
-  "MOWER",
-  "TRIMMER",
-  "BLOWER",
-  "HEDGER",
-  "EDGER",
-  "CUTTER",
-  "SPREADER",
-  "WASHER",
-  "MISC",
-] as const;
-
-export const EQUIPMENT_ENERGY = [
-  "87 Octane",
-  "93 Octane",
-  "50:1 Mixed",
-  "40:1 Mixed",
-  "Electric Plugin",
-  "Electric Battery",
-  "Manual",
-] as const;
-
-export type EquipmentEnergy = (typeof EQUIPMENT_ENERGY)[number];
-
-export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
-
-export type EquipmentStatus =
-  | "AVAILABLE"
-  | "RESERVED"
-  | "CHECKED_OUT"
-  | "MAINTENANCE"
-  | "RETIRED";
-
-export type EquipmentHolder = {
-  userId: string;
-  displayName: string | null;
-  email: string | null;
-  reservedAt: string; // ISO
-  checkedOutAt: string | null;
-  state: "RESERVED" | "CHECKED_OUT";
-};
-
-export type Equipment = {
-  id: string;
-  type: EquipmentType;
-  qrSlug: string;
-  shortDesc: string;
-  brand: string;
-  model: string;
-  energy: EquipmentEnergy;
-
-  longDesc?: string | undefined;
-  features?: string | undefined;
-  condition?: string | undefined;
-  issues?: string | undefined;
-  age?: string | undefined;
-
-  status?: EquipmentStatus | undefined;
-
-  createdAt?: string | undefined;
-  updatedAt?: string | undefined;
-  retiredAt?: string | undefined;
-
-  holder?: EquipmentHolder | undefined;
-};
-
-type Mode = "create" | "update";
-
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode: Mode;
+  mode: DialogMode;
+  role: Role;
   initial?: Equipment | null;
   onSaved?: (saved: any) => void;
-  actionLabel?: string;
 };
 
 export default function EquipmentDialog({
   open,
   onOpenChange,
   mode,
+  role,
   initial,
   onSaved,
-  actionLabel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-
+  const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
 
   // --- Form state
-  const [type, setType] = useState<EquipmentType>(EQUIPMENT_TYPES[0]);
+  const [type, setType] = useState<string[]>([EQUIPMENT_KIND[0]]);
   const [qrSlug, setQrSlug] = useState("");
   const [shortDesc, setShortDesc] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
-  const [energy, setEnergy] = useState<EquipmentEnergy>(EQUIPMENT_ENERGY[0]);
+  const [energy, setEnergy] = useState<string[]>([EQUIPMENT_ENERGY[0]]);
   const [longDesc, setLongDesc] = useState<string | undefined>("");
   const [features, setFeatures] = useState<string | undefined>("");
   const [condition, setCondition] = useState<string | undefined>("");
   const [issues, setIssues] = useState<string | undefined>("");
   const [age, setAge] = useState<string | undefined>("");
 
-  // Seed form when opened or when switching clients
-  useEffect(() => {
-    if (!open) return;
-    if (mode === "update" && initial) {
-      setType(initial.type);
-      setQrSlug(initial.qrSlug);
-      setShortDesc(initial.shortDesc);
-      setBrand(initial.brand);
-      setModel(initial.model);
-      setEnergy(initial.energy);
-      setLongDesc(initial.longDesc);
-      setFeatures(initial.features);
-      setCondition(initial.condition);
-      setIssues(initial.issues);
-      setAge(initial.age);
-    } else {
-      setType(EQUIPMENT_TYPES[0]);
-      setQrSlug("");
-      setShortDesc("");
-      setBrand("");
-      setModel("");
-      setEnergy(EQUIPMENT_ENERGY[0]);
-      setLongDesc("");
-      setFeatures("");
-      setCondition("");
-      setIssues("");
-      setAge("");
-    }
-  }, [open, mode, initial]);
-
   const typeItems = useMemo(
     () =>
-      EQUIPMENT_TYPES.map((str) => ({
+      EQUIPMENT_KIND.map((str) => ({
         label: str,
         value: str,
       })),
@@ -182,88 +94,150 @@ export default function EquipmentDialog({
     return type && qrSlug && shortDesc && brand && model && energy;
   }
 
+  // seed form when opening/switching modes/records
+  useEffect(() => {
+    if (!open) return;
+    if (mode === "UPDATE" && initial) {
+      setType([initial.type ?? EQUIPMENT_KIND[0]]);
+      setQrSlug(initial.qrSlug ?? "");
+      setShortDesc(initial.shortDesc ?? "");
+      setBrand(initial.brand ?? "");
+      setModel(initial.model ?? "");
+      setEnergy([initial.energy ?? EQUIPMENT_ENERGY[0]]);
+      setLongDesc(initial.longDesc ?? "");
+      setFeatures(initial.features ?? "");
+      setCondition(initial.condition ?? "");
+      setIssues(initial.issues ?? "");
+      setAge(initial.age ?? "");
+    } else {
+      setType([EQUIPMENT_KIND[0]]);
+      setQrSlug("");
+      setShortDesc("");
+      setBrand("");
+      setModel("");
+      setEnergy([EQUIPMENT_ENERGY[0]]);
+      setLongDesc("");
+      setFeatures("");
+      setCondition("");
+      setIssues("");
+      setAge("");
+    }
+  }, [open, mode, initial]);
+
+  /*
+"id": "003744a7-3e14-4e26-aa7c-00fff59224d5",
+        "qrSlug": "abc001",
+        "status": "AVAILABLE",
+        "type": "HEDGER",
+        "brand": "Brand",
+        "model": "Model",
+        "shortDesc": "Hedge Trimmer",
+        "longDesc": "",
+        "energy": "87 Octane",
+        "features": "",
+        "condition": "",
+        "issues": "",
+        "age": "",
+        "createdAt": "2025-10-10T11:18:22.084Z",
+        "updatedAt": "2025-11-06T13:40:37.732Z",
+        "retiredAt": null,
+        "holder": null
+
+*/
+
   async function handleSave() {
     const payload = {
-      type: (type ?? "").trim(),
-      qrSlug: (qrSlug ?? "").trim(),
-      shortDesc: (shortDesc ?? "").trim(),
-      brand: (brand ?? "").trim(),
-      model: (model ?? "").trim(),
-      energy: (energy ?? "").trim(),
-      longDesc: (longDesc ?? "").trim(),
-      features: (features ?? "").trim(),
-      condition: (condition ?? "").trim(),
-      issues: (issues ?? "").trim(),
-      age: (age ?? "").trim(),
+      type: (type[0] as EquipmentKind) ?? EQUIPMENT_KIND[0],
+      qrSlug: qrSlug,
+      brand: brand,
+      model: model,
+      shortDesc: shortDesc,
+      longDesc: longDesc,
+      energy: (type[0] as EquipmentEnergy) ?? EQUIPMENT_ENERGY[0],
+      features: features,
+      condition: condition,
+      issues: issues,
+      age: age,
     };
 
     setBusy(true);
     try {
-      let saved;
-      if (mode === "create") {
+      let saved: Equipment;
+      if (mode === "CREATE") {
         saved = await apiPost<Equipment>("/api/admin/equipment", payload);
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Equipment “${payload.type}” created.`,
-          autoHideMs: 3500,
+          text: `Property “${payload.shortDesc}” created.`,
         });
       } else {
-        if (!initial?.id) {
-          throw new Error("Missing equipment id for update");
-        }
+        if (!initial?.id) throw new Error("Missing equipment id");
         saved = await apiPatch<Equipment>(
           `/api/admin/equipment/${initial.id}`,
           payload
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Equipment updated successfully.`,
-          autoHideMs: 3500,
+          text: `Property “${payload.shortDesc}” updated.`,
         });
       }
       onSaved?.(saved);
-      onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage(
-          mode === "create"
+          mode === "CREATE"
             ? "Create equipment failed"
             : "Update equipment failed",
           err
         ),
       });
     } finally {
+      onOpenChange(false);
       setBusy(false);
     }
   }
 
   return (
     <Dialog.Root
-      role="dialog"
       open={open}
-      initialFocusEl={() => cancelRef.current}
       onOpenChange={(e) => onOpenChange(e.open)}
+      initialFocusEl={() => cancelRef.current}
     >
       <Portal>
-        <Dialog.Backdrop zIndex={1500} />
-        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
-          <Dialog.Content>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content
+            mx="4"
+            maxW="lg"
+            w="full"
+            rounded="2xl"
+            p="4"
+            shadow="lg"
+          >
+            <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                {mode === "create" ? "Create Equipment" : "Update Equipment"}
+                {mode === "CREATE" ? "Create Property" : "Update Property"}
               </Dialog.Title>
             </Dialog.Header>
+
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 <div>
-                  <Text mb="1">Type *</Text>
+                  <HStack justify="space-between">
+                    <Text mb="1">Type *</Text>
+                    {!isAdmin && <Badge colorPalette="gray">Read-only</Badge>}
+                  </HStack>
                   <Select.Root
                     collection={typeCollection}
-                    value={[type]}
-                    onValueChange={(e) => setType(e.value[0] as EquipmentType)}
+                    value={type}
+                    onValueChange={(e) => setType(e.value)}
                     size="sm"
-                    positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    positioning={{
+                      strategy: "fixed",
+                      hideWhenDetached: true,
+                    }}
+                    disabled={!isAdmin && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -286,10 +260,8 @@ export default function EquipmentDialog({
                   <Input
                     value={qrSlug}
                     onChange={(e) => setQrSlug(e.target.value)}
-                    placeholder="QR Slug / ID"
-                    aria-label="ID / QRSlug"
-                    required
-                    autoFocus
+                    placeholder="QR Slug"
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -298,8 +270,7 @@ export default function EquipmentDialog({
                     value={shortDesc}
                     onChange={(e) => setShortDesc(e.target.value)}
                     placeholder="Summary"
-                    aria-label="Summary"
-                    required
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -308,8 +279,7 @@ export default function EquipmentDialog({
                     value={brand}
                     onChange={(e) => setBrand(e.target.value)}
                     placeholder="Brand"
-                    aria-label="Brand"
-                    required
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -318,24 +288,27 @@ export default function EquipmentDialog({
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                     placeholder="Model"
-                    aria-label="Model"
-                    required
+                    mb="2"
                   />
                 </div>
                 <div>
-                  <Text mb="1">Energy *</Text>
+                  <HStack justify="space-between">
+                    <Text mb="1">Energy *</Text>
+                  </HStack>
                   <Select.Root
                     collection={energyCollection}
-                    value={[energy]}
-                    onValueChange={(e) =>
-                      setEnergy(e.value[0] as EquipmentEnergy)
-                    }
+                    value={energy}
+                    onValueChange={(e) => setEnergy(e.value)}
                     size="sm"
-                    positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    positioning={{
+                      strategy: "fixed",
+                      hideWhenDetached: true,
+                    }}
+                    disabled={!isAdmin && mode === "UPDATE"}
                   >
                     <Select.Control>
                       <Select.Trigger>
-                        <Select.ValueText placeholder="Select energy" />
+                        <Select.ValueText placeholder="Select a type" />
                       </Select.Trigger>
                     </Select.Control>
                     <Select.Positioner>
@@ -355,7 +328,7 @@ export default function EquipmentDialog({
                     value={longDesc}
                     onChange={(e) => setLongDesc(e.target.value)}
                     placeholder="Details"
-                    aria-label="Details"
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -364,7 +337,7 @@ export default function EquipmentDialog({
                     value={features}
                     onChange={(e) => setFeatures(e.target.value)}
                     placeholder="Features"
-                    aria-label="Features"
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -373,7 +346,7 @@ export default function EquipmentDialog({
                     value={condition}
                     onChange={(e) => setCondition(e.target.value)}
                     placeholder="Condition"
-                    aria-label="Condition"
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -382,7 +355,7 @@ export default function EquipmentDialog({
                     value={issues}
                     onChange={(e) => setIssues(e.target.value)}
                     placeholder="Issues"
-                    aria-label="Issues"
+                    mb="2"
                   />
                 </div>
                 <div>
@@ -391,13 +364,13 @@ export default function EquipmentDialog({
                     value={age}
                     onChange={(e) => setAge(e.target.value)}
                     placeholder="Age"
-                    aria-label="Age"
+                    mb="2"
                   />
                 </div>
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
-              <HStack justify="flex-end" w="full" gap="2">
+              <HStack justify="flex-end" w="full">
                 <Button
                   variant="ghost"
                   ref={cancelRef}
@@ -411,7 +384,7 @@ export default function EquipmentDialog({
                   loading={busy}
                   disabled={!ableToSave()}
                 >
-                  {actionLabel ?? (mode === "create" ? "Create" : "Save")}
+                  {mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>

@@ -93,13 +93,21 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab role="worker" />),
+      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="WORKER" />),
     },
     {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
       content: wrapWithInlineMessage(<ClientsTab role="worker" />),
+    },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: wrapWithInlineMessage(
+        <PropertiesTab me={me} purpose="WORKER" />
+      ),
     },
     {
       value: "jobs",
@@ -120,7 +128,7 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab role="admin" />),
+      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="ADMIN" />),
     },
     {
       value: "users",
@@ -144,7 +152,7 @@ export default function HomePage() {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      content: wrapWithInlineMessage(<PropertiesTab role="admin" />),
+      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "jobs",

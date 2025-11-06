@@ -1,3 +1,8 @@
+import { Me, Role } from "@/src/lib/types";
+
+export const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 export function notifyEquipmentUpdated() {
   try {
     window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));
@@ -80,6 +85,14 @@ export function contactStatusColor(value: string): string {
   return "teal";
 }
 
+export function propertyStatusColor(value: string): string {
+  const t = (value || "").toUpperCase();
+  if (t.includes("ACTIVE")) return "green";
+  if (t.includes("PENDING")) return "orange";
+  if (t.includes("ARCHIVED")) return "red";
+  return "gray";
+}
+
 export function prettyDate(iso?: string | null) {
   if (!iso) return "—";
   try {
@@ -94,4 +107,44 @@ export function prettyDate(iso?: string | null) {
   } catch {
     return iso || "—";
   }
+}
+
+export type BadgeColorsVariant = "subtle" | "outline" | "solid";
+
+export function badgeColors(
+  palette: string,
+  variant: BadgeColorsVariant = "subtle"
+) {
+  if (variant === "subtle") {
+    return {
+      bg: `${palette}.100`,
+      color: `${palette}.700`,
+      border: "1px solid",
+      borderColor: `${palette}.200`,
+    };
+  }
+  if (variant === "outline") {
+    return {
+      bg: `${palette}.200`,
+      color: `${palette}.700`,
+      border: "1px solid",
+      borderColor: `${palette}.300`,
+    };
+  }
+  return { bg: `${palette}.600`, color: "white" };
+}
+
+export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
+  !!roles?.includes(role);
+
+export function determineRoles(me: Me | null, purpose: Role) {
+  const isWorker = hasRole(me?.roles, "WORKER");
+  const isAdmin = hasRole(me?.roles, "WORKER");
+  return {
+    isWorker: isWorker,
+    isAdmin: isAdmin,
+    isSuper: hasRole(me?.roles, "SUPER"),
+    isAvail: isAdmin || isWorker,
+    forAdmin: purpose === "ADMIN" && isAdmin,
+  };
 }

@@ -15,9 +15,38 @@ export type ClientWithContacts = Client & { contacts: ClientContact[] };
 
 export type ClientListItem = Client & {
   contactCount: number;
+  propertyCount: number;
+  // full contacts list (UI filters as needed)
+  contacts: Array<
+    Pick<
+      ClientContact,
+      | "id"
+      | "firstName"
+      | "lastName"
+      | "role"
+      | "email"
+      | "phone"
+      | "normalizedPhone"
+      | "isPrimary"
+      | "active"
+    >
+  >;
+  // small properties preview
+  properties?: Array<
+    Pick<Property, "id" | "displayName" | "city" | "state" | "status">
+  >;
+  // convenience field
   primaryContact?: Pick<
     ClientContact,
-    "id" | "firstName" | "lastName" | "email" | "phone"
+    | "id"
+    | "firstName"
+    | "lastName"
+    | "role"
+    | "email"
+    | "phone"
+    | "normalizedPhone"
+    | "isPrimary"
+    | "active"
   > | null;
 };
 
@@ -295,16 +324,17 @@ export type ServicesProperties = {
 
   create(actorId: string, payload: PropertyUpsert): Promise<Property>;
   update(
-    actorId: string,
+    currentUserId: string,
     id: string,
     payload: PropertyUpsert
   ): Promise<Property>;
-  archive(actorId: string, id: string): Promise<{ archived: true }>;
-  unarchive(actorId: string, id: string): Promise<{ unarchived: true }>;
-  hardDelete(actorId: string, id: string): Promise<{ deleted: true }>;
+  approve(currentUserId: string, id: string): Promise<{ updated: true }>;
+  archive(currentUserId: string, id: string): Promise<{ archived: true }>;
+  unarchive(currentUserId: string, id: string): Promise<{ unarchived: true }>;
+  hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
 
   setPrimaryContact(
-    actorId: string,
+    currentUserId: string,
     id: string,
     contactId: string | null
   ): Promise<{ primarySet: true }>;

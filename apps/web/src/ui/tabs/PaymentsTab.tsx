@@ -1,6 +1,7 @@
 import ComingSoonNotice from "@/src/ui/notices/ComingSoonNotice";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import { TabRolePropType } from "@/src/lib/types";
+//TODO:
+export type TabRolePropType = { role: "worker" | "admin" };
 
 export default function PaymentsTab({ role = "worker" }: TabRolePropType) {
   return role !== "worker" && role !== "admin" ? (

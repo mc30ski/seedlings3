@@ -256,6 +256,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  app.post("/admin/properties/:id/approve", adminGuard, async (req: any) => {
+    return services.properties.approve(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
   app.post("/admin/properties/:id/archive", adminGuard, async (req: any) => {
     return services.properties.archive(
       await currentUserId(req),

@@ -91,9 +91,10 @@ export const clients: ServicesClients = {
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: {
+        _count: { select: { contacts: true, properties: true } },
+
+        // full contacts list; UI can filter inactive
         contacts: {
-          //where: { active: true },
-          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           select: {
             id: true,
             firstName: true,
@@ -105,16 +106,50 @@ export const clients: ServicesClients = {
             isPrimary: true,
             active: true,
           },
+          orderBy: [
+            { isPrimary: "desc" }, // primary first
+            { active: "desc" }, // then active
+            { updatedAt: "desc" },
+            { createdAt: "desc" },
+          ],
+        },
+
+        // lightweight properties preview (cap the list)
+        properties: {
+          select: {
+            id: true,
+            displayName: true,
+            city: true,
+            state: true,
+            status: true,
+          },
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+          take: 3,
         },
       },
     });
 
-    return rows.map((c) => ({
-      ...c,
-      contactCount: c.contacts.length,
-      primaryContact:
-        c.contacts.find((x) => x.isPrimary) ?? c.contacts[0] ?? null,
-    }));
+    return rows.map((c) => {
+      const { _count, ...client } = c;
+      const primaryContact =
+        c.contacts.find((ct) => ct.isPrimary) ??
+        c.contacts.find((ct) => ct.active) ??
+        c.contacts[0] ??
+        null;
+
+      return {
+        // all Client fields (id, type, displayName, status, notesInternal, createdAt, updatedAt, archivedAt, etc.)
+        ...client,
+
+        // explicit additions for the UI
+        contacts: c.contacts,
+        properties: c.properties,
+
+        contactCount: _count.contacts,
+        propertyCount: _count.properties,
+        primaryContact,
+      };
+    });
   },
 
   async get(id: string) {

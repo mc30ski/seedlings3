@@ -1,3 +1,13 @@
+import { sleep } from "@/src/lib/lib";
+
+// Introduce delay for debugging
+const DELAY = 0;
+//const DELAY = 1500;
+
+// Introduce error for any API call for debuggin
+const ERROR = false;
+//const ERROR = true;
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -43,6 +53,13 @@ export async function request<T>(
   path: string,
   body?: unknown
 ): Promise<T> {
+  if (DELAY) {
+    await sleep(DELAY);
+  }
+  if (!path.endsWith("/me") && ERROR) {
+    throw new Error("This is a DEBUG error.");
+  }
+
   const headers = new Headers();
   await authHeaders(headers); // your existing auth (e.g., Authorization)
 
