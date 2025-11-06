@@ -80,7 +80,7 @@ export type Equipment = {
   holder?: EquipmentHolder | undefined;
 };
 
-export const PROPERTY_KIND = ["SITE", "AGGREGATE_SITE"] as const;
+export const PROPERTY_KIND = ["SINGLE", "AGGREGATE_SITE"] as const;
 export type PropertyKind = (typeof PROPERTY_KIND)[number];
 
 export const PROPERTY_STATUS = ["PENDING", "ACTIVE", "ARCHIVED"] as const;
