@@ -124,27 +124,6 @@ export default function EquipmentDialog({
     }
   }, [open, mode, initial]);
 
-  /*
-"id": "003744a7-3e14-4e26-aa7c-00fff59224d5",
-        "qrSlug": "abc001",
-        "status": "AVAILABLE",
-        "type": "HEDGER",
-        "brand": "Brand",
-        "model": "Model",
-        "shortDesc": "Hedge Trimmer",
-        "longDesc": "",
-        "energy": "87 Octane",
-        "features": "",
-        "condition": "",
-        "issues": "",
-        "age": "",
-        "createdAt": "2025-10-10T11:18:22.084Z",
-        "updatedAt": "2025-11-06T13:40:37.732Z",
-        "retiredAt": null,
-        "holder": null
-
-*/
-
   async function handleSave() {
     const payload = {
       type: (type[0] as EquipmentKind) ?? EQUIPMENT_KIND[0],

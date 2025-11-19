@@ -19,10 +19,10 @@ import {
   prettyStatus,
 } from "@/src/lib/lib";
 import {
-  TabPropsType,
+  type TabPropsType,
   PROPERTY_KIND,
   PROPERTY_STATUS,
-  Property,
+  type Property,
 } from "@/src/lib/types";
 import {
   publishInlineMessage,
@@ -37,6 +37,7 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
+import { MapLink } from "@/src/ui/helpers/Link";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...PROPERTY_KIND] as const;
@@ -89,7 +90,7 @@ export default function PropertiesTab({
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Failed to load properties", err),
+        text: getErrorMessage("Failed to load properties.", err),
       });
       setItems([]);
     } finally {
@@ -156,12 +157,15 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property approved and made active.",
+        text: `Property '${p.displayName}' approved and made active.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Approved failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' approved failed.`,
+          err
+        ),
       });
     }
   }
@@ -171,12 +175,15 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property archived.",
+        text: `Property '${p.displayName}' archived.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Archive failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' archive failed.`,
+          err
+        ),
       });
     }
   }
@@ -186,28 +193,31 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property unarchived.",
+        text: `Property '${p.displayName}' unarchived.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Unarchive failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' unarchive failed.`,
+          err
+        ),
       });
     }
   }
-  async function hardDelete(id: string) {
+  async function hardDelete(id: string, displayName: string) {
     try {
       setLoading(true);
       await apiDelete(`/api/admin/properties/${id}`);
       await load(true);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property deleted.",
+        text: `Property '${displayName}' deleted.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Delete failed", err),
+        text: getErrorMessage(`Property '${displayName}' delete failed.`, err),
       });
     }
   }
@@ -274,127 +284,140 @@ export default function PropertiesTab({
             No properties match current filters.
           </Box>
         )}
-        {filtered.map((p: Property) => (
-          <Card.Root key={p.id} variant="outline">
-            <Card.Header pb="2">
-              <HStack gap={3} justify="space-between" align="center">
-                <HStack gap={3} flex="1" minW={0}>
-                  <Text fontWeight="semibold">{p.displayName}</Text>
+        {filtered.map((p: Property) => {
+          const address = [
+            p.street1,
+            p.street2,
+            p.city,
+            p.state,
+            p.postalCode,
+            p.country,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          return (
+            <Card.Root key={p.id} variant="outline">
+              <Card.Header pb="2">
+                <HStack gap={3} justify="space-between" align="center">
+                  <HStack gap={3} flex="1" minW={0}>
+                    <Text fontWeight="semibold">{p.displayName}</Text>
+                    <StatusBadge
+                      status={p.status}
+                      palette={propertyStatusColor(p.status)}
+                      variant="subtle"
+                    />
+                  </HStack>
                   <StatusBadge
-                    status={p.status}
-                    palette={propertyStatusColor(p.status)}
-                    variant="subtle"
+                    status={p.kind}
+                    palette="gray"
+                    variant="outline"
                   />
                 </HStack>
-                <StatusBadge status={p.kind} palette="gray" variant="outline" />
-              </HStack>
-            </Card.Header>
-            <Card.Body pt="0">
-              <VStack align="start" gap={1}>
-                <Text fontSize="sm" color="fg.muted">
-                  {p.street1}
-                  {p.street2 ? `, ${p.street2}` : ""}, {p.city}, {p.state}{" "}
-                  {p.postalCode}, {p.country}
-                </Text>
-                <Text fontSize="sm">
-                  Client: <b>{p.client?.displayName ?? p.clientId}</b>
-                </Text>
-                <Text fontSize="sm">
-                  Default contact:{" "}
-                  <b>
-                    {p.pointOfContactId
-                      ? `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`
-                      : "None"}
-                  </b>
-                </Text>
-              </VStack>
-            </Card.Body>
-            {forAdmin && (
-              <Card.Footer>
-                <HStack gap={2} wrap="wrap" mb="2">
-                  <StatusButton
-                    id={"properties-edit"}
-                    itemId={p.id}
-                    label={"Edit"}
-                    onClick={async () => {
-                      await openEdit(p);
-                    }}
-                    variant={"outline"}
-                    disabled={loading}
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                  {p.status === "PENDING" && (
+              </Card.Header>
+              <Card.Body pt="0">
+                <VStack align="start" gap={1}>
+                  <MapLink address={address} />
+                  <Text fontSize="sm">
+                    Client: <b>{p.client?.displayName ?? p.clientId}</b>
+                  </Text>
+                  <Text fontSize="sm">
+                    Default contact:{" "}
+                    <b>
+                      {p.pointOfContactId
+                        ? `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`
+                        : "None"}
+                    </b>
+                  </Text>
+                </VStack>
+              </Card.Body>
+              {forAdmin && (
+                <Card.Footer>
+                  <HStack gap={2} wrap="wrap" mb="2">
                     <StatusButton
-                      id={"properties-pending"}
+                      id={"properties-edit"}
                       itemId={p.id}
-                      label={"Approve"}
+                      label={"Edit"}
                       onClick={async () => {
-                        await approve(p);
+                        await openEdit(p);
                       }}
                       variant={"outline"}
                       disabled={loading}
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
                     />
-                  )}
-                  {p.status === "ACTIVE" || p.status === "PENDING" ? (
-                    <StatusButton
-                      id={"properties-archive"}
-                      itemId={p.id}
-                      label={"Archive"}
-                      onClick={async () => {
-                        await archive(p);
-                      }}
-                      variant={"outline"}
-                      disabled={loading}
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                  ) : (
-                    <StatusButton
-                      id={"properties-unarchive"}
-                      itemId={p.id}
-                      label={"Unarchive"}
-                      onClick={async () => {
-                        await unarchive(p);
-                      }}
-                      variant={"outline"}
-                      disabled={loading}
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                  )}
-                  {p.status === "ARCHIVED" && (
-                    <StatusButton
-                      id={"properties-delete"}
-                      itemId={p.id}
-                      label={"Delete"}
-                      onClick={async () => {
-                        void setToDelete({
-                          id: p.id,
-                          title: "Delete property?",
-                          summary: p.displayName,
-                          disabled: !isSuper,
-                          details: (
-                            <Text color="red.500">
-                              You must be a Super Admin to delete.
-                            </Text>
-                          ),
-                        });
-                      }}
-                      variant={"outline"}
-                      disabled={loading}
-                      colorPalette={"red"}
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                  )}
-                </HStack>
-              </Card.Footer>
-            )}
-          </Card.Root>
-        ))}
+                    {p.status === "PENDING" && (
+                      <StatusButton
+                        id={"properties-pending"}
+                        itemId={p.id}
+                        label={"Approve"}
+                        onClick={async () => {
+                          await approve(p);
+                        }}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {p.status === "ACTIVE" || p.status === "PENDING" ? (
+                      <StatusButton
+                        id={"properties-archive"}
+                        itemId={p.id}
+                        label={"Archive"}
+                        onClick={async () => {
+                          await archive(p);
+                        }}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    ) : (
+                      <StatusButton
+                        id={"properties-unarchive"}
+                        itemId={p.id}
+                        label={"Unarchive"}
+                        onClick={async () => {
+                          await unarchive(p);
+                        }}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {p.status === "ARCHIVED" && (
+                      <StatusButton
+                        id={"properties-delete"}
+                        itemId={p.id}
+                        label={"Delete"}
+                        onClick={async () => {
+                          void setToDelete({
+                            id: p.id,
+                            title: "Delete property?",
+                            summary: p.displayName,
+                            disabled: !isSuper,
+                            details: (
+                              <Text color="red.500">
+                                You must be a Super Admin to delete.
+                              </Text>
+                            ),
+                            extra: p.displayName,
+                          });
+                        }}
+                        variant={"outline"}
+                        disabled={loading}
+                        colorPalette={"red"}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                  </HStack>
+                </Card.Footer>
+              )}
+            </Card.Root>
+          );
+        })}
       </VStack>
 
       {forAdmin && (
@@ -413,7 +436,7 @@ export default function PropertiesTab({
           cancel={() => setToDelete(null)}
           complete={async () => {
             if (!toDelete) return;
-            await hardDelete(toDelete.id);
+            await hardDelete(toDelete.id, toDelete.extra ?? "");
             setToDelete(null);
           }}
         />

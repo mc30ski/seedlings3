@@ -99,7 +99,7 @@ export default function HomePage() {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-      content: wrapWithInlineMessage(<ClientsTab role="worker" />),
+      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="WORKER" />),
     },
     {
       value: "properties",
@@ -131,6 +131,18 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="ADMIN" />),
     },
     {
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
+    },
+    {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
@@ -141,18 +153,6 @@ export default function HomePage() {
       label: "Activity",
       icon: FiActivity,
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-      content: wrapWithInlineMessage(<ClientsTab role="admin" />),
-    },
-    {
-      value: "properties",
-      label: "Properties",
-      icon: FiMapPin,
-      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "jobs",

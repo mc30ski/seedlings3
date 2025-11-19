@@ -22,11 +22,9 @@ export function errorMessage(err: any): string {
 export function prettyStatus(s: string): string {
   if (!s) return "—";
   return s
-    .toLowerCase()
     .replace(/_/g, " ")
-    .split(" ")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function extractSlug(value: string): string {
@@ -74,15 +72,10 @@ export function equipmentStatusColor(value: string): string {
 
 export function clientStatusColor(value: string): string {
   const t = (value || "").toUpperCase();
-  if (t.includes("INDIVIDUAL")) return "blue";
-  if (t.includes("HOUSEHOLD")) return "green";
-  if (t.includes("COMMUNITY")) return "purple";
-  if (t.includes("ORGANIZATION")) return "yellow";
+  if (t.includes("ACTIVE")) return "green";
+  if (t.includes("PAUSED")) return "orange";
+  if (t.includes("ARCHIVED")) return "red";
   return "gray";
-}
-
-export function contactStatusColor(value: string): string {
-  return "teal";
 }
 
 export function propertyStatusColor(value: string): string {

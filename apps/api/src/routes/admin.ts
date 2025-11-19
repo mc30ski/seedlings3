@@ -171,8 +171,36 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  app.post("/admin/clients/:id/pause", adminGuard, async (req: any) => {
+    return services.clients.pause(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/clients/:id/unpause", adminGuard, async (req: any) => {
+    return services.clients.unpause(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/clients/:id/archive", adminGuard, async (req: any) => {
+    return services.clients.archive(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/clients/:id/unarchive", adminGuard, async (req: any) => {
+    return services.clients.unarchive(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
   app.delete("/admin/clients/:id", adminGuard, async (req: any) => {
-    return services.clients.hardDelete(
+    return services.clients.delete(
       await currentUserId(req),
       String(req.params.id)
     );

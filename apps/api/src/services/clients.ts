@@ -3,6 +3,7 @@ import { Prisma, ClientStatus, ContactRole } from "@prisma/client";
 import type { ServicesClients } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { action } from "../lib/services";
 
 function normalizePhone(raw?: string | null): string | null {
   const s = (raw ?? "").replace(/[^\d+]/g, "");
@@ -119,8 +120,12 @@ export const clients: ServicesClients = {
           select: {
             id: true,
             displayName: true,
+            street1: true,
+            street2: true,
             city: true,
             state: true,
+            postalCode: true,
+            country: true,
             status: true,
           },
           orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -138,7 +143,6 @@ export const clients: ServicesClients = {
         null;
 
       return {
-        // all Client fields (id, type, displayName, status, notesInternal, createdAt, updatedAt, archivedAt, etc.)
         ...client,
 
         // explicit additions for the UI
@@ -171,13 +175,14 @@ export const clients: ServicesClients = {
         status: payload.status ?? "ACTIVE",
         notesInternal: payload.notesInternal,
       };
-      const created = await tx.client.create({
+      const record = await tx.client.create({
         data: data,
       });
       await writeAudit(tx, AUDIT.CLIENT.CREATED, currentUserId, {
-        clientRecord: { ...created },
+        id: record.id,
+        record: record,
       });
-      return created;
+      return record;
     });
   },
 
@@ -189,18 +194,59 @@ export const clients: ServicesClients = {
         status: payload.status,
         notesInternal: payload.notesInternal,
       };
-      const updated = await tx.client.update({
+      const record = await tx.client.update({
         where: { id },
         data: data,
       });
       await writeAudit(tx, AUDIT.CLIENT.UPDATED, currentUserId, {
-        clientRecord: { ...updated },
+        id: id,
+        record: record,
       });
-      return updated;
+      return record;
     });
   },
 
-  async hardDelete(currentUserId: string, id: string) {
+  async pause(currentUserId: string, id: string) {
+    return action<ClientStatus>(
+      currentUserId,
+      id,
+      "client",
+      ClientStatus.PAUSED,
+      AUDIT.CLIENT.PAUSED
+    );
+  },
+
+  async unpause(currentUserId: string, id: string) {
+    return action<ClientStatus>(
+      currentUserId,
+      id,
+      "client",
+      ClientStatus.ACTIVE,
+      AUDIT.CLIENT.UNPAUSED
+    );
+  },
+
+  async archive(currentUserId: string, id: string) {
+    return action<ClientStatus>(
+      currentUserId,
+      id,
+      "client",
+      ClientStatus.ARCHIVED,
+      AUDIT.CLIENT.ARCHIVED
+    );
+  },
+
+  async unarchive(currentUserId: string, id: string) {
+    return action<ClientStatus>(
+      currentUserId,
+      id,
+      "client",
+      ClientStatus.ACTIVE,
+      AUDIT.CLIENT.UNARCHIVED
+    );
+  },
+
+  async delete(currentUserId: string, id: string) {
     await prisma.$transaction(async (tx) => {
       await tx.client.delete({ where: { id } });
       await writeAudit(tx, AUDIT.CLIENT.DELETED, currentUserId, { id: id });

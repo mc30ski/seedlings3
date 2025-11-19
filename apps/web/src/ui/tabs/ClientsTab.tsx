@@ -1,221 +1,196 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Badge,
   Box,
   Button,
-  Heading,
+  Card,
   HStack,
-  Separator,
-  Stack,
+  Spacer,
   Text,
   VStack,
+  Select,
   Icon,
+  Accordion,
+  createListCollection,
 } from "@chakra-ui/react";
-import { FiStar } from "react-icons/fi";
+import { determineRoles, prettyStatus, clientStatusColor } from "@/src/lib/lib";
+import {
+  type TabPropsType,
+  type Client,
+  type Contact,
+  CLIENT_KIND,
+  CLIENT_STATUS,
+} from "@/src/lib/types";
+import { doAction, doDelete } from "@/src/lib/services";
+
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
-import { apiGet, apiDelete } from "@/src/lib/api";
-import {
-  prettyStatus,
-  clientStatusColor,
-  contactStatusColor,
-} from "@/src/lib/lib";
-import type { Me } from "@/src/lib/types";
-import ClientDialog, { type Client } from "@/src/ui/dialogs/ClientDialog";
-import ContactDialog, { type Contact } from "@/src/ui/dialogs/ContactDialog";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import ClientDialog from "@/src/ui/dialogs/ClientDialog";
+import ContactDialog from "@/src/ui/dialogs/ContactDialog";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
-import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
+import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import StatusButton from "@/src/ui/components/StatusButton";
 import { useRouter } from "next/navigation";
-//TODO:
-export type TabRolePropType = { role: "worker" | "admin" };
+import { apiGet, apiDelete } from "@/src/lib/api";
+import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
+import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
 
-// Filter type for this page
-type FilterType =
-  | "all"
-  | "individual"
-  | "household"
-  | "organization"
-  | "community";
+// Constant representing the kind states for this entity.
+const kindStates = ["ALL", ...CLIENT_KIND] as const;
 
-function mailLink(to: string, subject: string, body: string) {
-  return (
-    <a
-      href={`mailto:${to}?subject=${subject}&body=${body}`}
-      style={{
-        textDecoration: "underline",
-        color: "#2563eb",
-        cursor: "pointer",
-        outline: "none",
-      }}
-    >
-      {to}
-    </a>
-  );
-}
+// Constant representing the status states for this entity.
+const statusStates = ["ALL", ...CLIENT_STATUS] as const;
 
-function callLink(to: string) {
-  return (
-    <a
-      href={`tel:${to}`}
-      style={{
-        textDecoration: "underline",
-        color: "#2563eb",
-        cursor: "pointer",
-        outline: "none",
-      }}
-      aria-label={`Call ${to}`}
-    >
-      {to}
-    </a>
-  );
-}
+export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
+  const { isSuper, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
 
-export default function ClientsTab({ role = "worker" }: TabRolePropType) {
   const router = useRouter();
-  const isAdmin = role === "admin";
-  const [tabRole, _setTabRole] = useState(role);
+
+  // Variables for filtering the items.
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState<string>("ALL");
+  const [kind, setKind] = useState<string[]>(["ALL"]);
+
+  const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
-  const [me, setMe] = useState<Me | null>(null);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
-  const [contactDialogOpen, setContactDialogOpen] = useState(false);
-  const [contactMode, setContactMode] = useState<"create" | "update">("create");
-  const [contactClientId, setContactClientId] = useState<string>("");
-  const [editingContact, setEditingContact] = useState<Contact | null>(null);
-  const [items, setItems] = useState<Client[]>([]);
-  const [filter, setFilter] = useState("");
-  const [filterType, setFilterType] = useState<FilterType>("all");
-
-  // NEW: Property dialog state
-  const [propDialogOpen, setPropDialogOpen] = useState(false);
-  const [propEditing, setPropEditing] = useState<any | null>(null); //TODO: any
-  const [propDefaultClient, setPropDefaultClient] = useState<
-    string | undefined
-  >(undefined);
-
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [contactEditing, setContactEditing] = useState<Contact | null>(null);
+  const [contactClientId, setContactClientId] = useState("");
   const [toDeleteContact, setToDeleteContact] = useState<ToDeleteProps | null>(
     null
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [data, meResp] = await Promise.all([
-        await (isAdmin
-          ? apiGet<Client[]>("/api/admin/clients")
-          : apiGet<Client[]>("/api/clients")),
-        apiGet<Me>("/api/me"),
-      ]);
+  // Helper variable to disable other buttons while actions are in flight.
+  const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-      setItems(data);
-      setMe(meResp);
+  // Used to create the dropdown menus.
+  const kindItems = useMemo(
+    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    []
+  );
+  const kindCollection = useMemo(
+    () => createListCollection({ items: kindItems }),
+    [kindItems]
+  );
+
+  // Main function to load all the items from the API.
+  async function load(displayLoading: boolean = true) {
+    setLoading(displayLoading);
+    try {
+      const base = forAdmin ? "/api/admin/clients" : "/api/clients";
+      const list: Client[] = await apiGet(base);
+      setItems(
+        list
+          .sort((a, b) => a.displayName.localeCompare(b.displayName))
+          .filter((i) => forAdmin || i.status === "ACTIVE")
+      );
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Failed to load clients", err),
+        text: getErrorMessage("Failed to load clients.", err),
       });
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }
 
+  // Loads all the items for the first time.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [forAdmin]);
+
+  // Filtered items based on search, kind or status.
+  const filtered = useMemo(() => {
+    let rows = items;
+
+    // Filter based on entity type.
+    if (kind[0] !== "ALL") {
+      rows = rows.filter((i) => i.type === kind[0]);
+    }
+
+    // Filter based on entity status.
+    if (status !== "ALL") {
+      rows = rows.filter((i) => i.status === status);
+    }
+
+    // Filter based on free text.
+    const qlc = q.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((r) => {
+        const haystack: string[] = [r.displayName || "", r.notesInternal || ""];
+
+        // Add contact fields into the search haystack
+        for (const ct of r.contacts ?? []) {
+          haystack.push(
+            ct.firstName || "",
+            ct.lastName || "",
+            ct.email || "",
+            ct.phone || "",
+            ct.role || ""
+          );
+        }
+
+        return haystack.some((value) => value.toLowerCase().includes(qlc));
+      });
+    }
+
+    return rows;
+  }, [items, q, kind, status]);
 
   function openCreate() {
     setEditing(null);
     setDialogOpen(true);
   }
 
-  function openEdit(c: any) {
-    const uiClient: Client = {
-      id: c.id,
-      status: c.status ?? "ACTIVE",
-      displayName: c.displayName ?? "",
-      type: c.type ?? "INDIVIDUAL",
-      notesInternal: c.notesInternal ?? "",
-    };
-    setEditing(uiClient);
+  async function openEdit(c: Client) {
+    setEditing(c);
     setDialogOpen(true);
   }
 
-  const filtered = useMemo(() => {
-    const t1 = filter.trim().toLowerCase();
-    const t2 = filterType.trim().toUpperCase();
-    if (!t1 && !t2) return items;
-    let filteredItems = [...items];
-    if (t2) {
-      filteredItems = filteredItems.filter((c) => {
-        return t2 === "ALL" || c.type === t2;
-      });
-    }
-    if (t1) {
-      filteredItems = filteredItems.filter((c) => {
-        const name = (c.displayName ?? "").toLowerCase();
-        const notes = (c.notesInternal ?? "").toLowerCase();
-        const anyContact = (c as any)?.contacts?.some((ct: any) =>
-          [ct.firstName, ct.email, ct.phone, ct.role]
-            .filter(Boolean)
-            .some((v) => (v as string).toLowerCase().includes(t1))
-        );
-        return (
-          name.includes(t1) || (notes.includes(t1) && isAdmin) || anyContact
-        );
-      });
-    }
-    return filteredItems;
-  }, [items, filter, filterType, isAdmin]);
-
-  async function deleteClient(id: string) {
-    try {
-      await apiDelete(`/api/admin/clients/${id}`);
-      await load();
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: "Client deleted.",
-      });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Delete client failed", err),
-      });
-    }
-  }
-
-  function openAddContact(clientId: string) {
+  function openContactCreate(clientId: string) {
     setContactClientId(clientId);
-    setEditingContact(null);
-    setContactMode("create");
+    setContactEditing(null);
     setContactDialogOpen(true);
   }
 
-  function openEditContact(clientId: string, ct: any) {
-    const uiContact: Contact = {
-      id: ct.id,
-      clientId,
-      firstName: ct.firstName ?? "",
-      lastName: ct.lastName ?? "",
-      email: ct.email ?? "",
-      phone: ct.phone ?? "",
-      role: ct.role ?? "",
-      isPrimary: !!ct.isPrimary,
-      active: ct.active ?? true,
-    };
+  async function openContactEdit(clientId: string, c: Contact) {
     setContactClientId(clientId);
-    setEditingContact(uiContact);
-    setContactMode("update");
+    setContactEditing(c);
     setContactDialogOpen(true);
+  }
+
+  async function takeAction(c: Client, action: string) {
+    return await doAction(
+      c,
+      "Client",
+      "clients",
+      action,
+      "displayName",
+      async () => await load(false)
+    );
+  }
+
+  async function deleteAction(id: string, displayName: string) {
+    return await doDelete(
+      id,
+      "Client",
+      "clients",
+      displayName,
+      async () => await load(false)
+    );
   }
 
   async function deleteContact(clientId: string, contactId: string) {
@@ -234,362 +209,414 @@ export default function ClientsTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
-  function openAddProperty(clientId: string) {
-    setPropEditing(null);
-    setPropDefaultClient(clientId);
-    setPropDialogOpen(true);
-  }
-
   function viewAllProperties(clientId: string) {
-    // adjust path if your app uses a different route pattern
     router.push(`/app?tab=properties&clientId=${clientId}`);
   }
 
-  function tabTitle(role: string, status: string) {
-    return filterType === "individual"
-      ? "Individial Clients"
-      : filterType === "household"
-        ? "Household Clients"
-        : filterType === "organization"
-          ? "Organizational Clients"
-          : filterType === "community"
-            ? "Community Clients"
-            : "All Clients";
-  }
-
-  if (role !== "admin" && role !== "worker") {
-    return <UnavailableNotice />;
-  }
+  if (!isAvail) return <UnavailableNotice />;
+  if (loading) return <LoadingCenter />;
 
   return (
     <Box w="full">
-      {loading && <LoadingCenter />}
-      <HStack mb={3}>
+      <HStack mb={3} gap={3}>
         <SearchWithClear
-          value={filter}
-          onChange={setFilter}
-          inputId="clients-search"
+          value={q}
+          onChange={setQ}
+          inputId="properties-search"
           placeholder="Search…"
         />
-        {isAdmin && <Button onClick={openCreate}>New</Button>}
+        <Select.Root
+          collection={kindCollection}
+          value={kind}
+          onValueChange={(e) => setKind(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+        >
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder="Kind" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {kindItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Spacer />
+        {forAdmin && <Button onClick={openCreate}>New</Button>}
       </HStack>
-      <Stack mb={4}>
-        <HStack gap={2} wrap="wrap">
-          <Button
-            size="sm"
-            variant={filterType === "all" ? "solid" : "outline"}
-            onClick={() => setFilterType("all")}
-          >
-            All
-          </Button>
-          <Button
-            size="sm"
-            variant={filterType === "individual" ? "solid" : "outline"}
-            onClick={() => setFilterType("individual")}
-          >
-            Individual
-          </Button>
-          <Button
-            size="sm"
-            variant={filterType === "household" ? "solid" : "outline"}
-            onClick={() => setFilterType("household")}
-          >
-            Household
-          </Button>
-          <Button
-            size="sm"
-            variant={filterType === "community" ? "solid" : "outline"}
-            onClick={() => setFilterType("community")}
-          >
-            Community
-          </Button>
-          <Button
-            size="sm"
-            variant={filterType === "organization" ? "solid" : "outline"}
-            onClick={() => setFilterType("organization")}
-          >
-            Organization
-          </Button>
-        </HStack>
-      </Stack>
-      {/* Separator */}
-      <Box h="1px" bg="gray.200" mb={3} />
-      <Heading size="md" mb={3}>
-        {tabTitle(tabRole, "")}
-      </Heading>
-      {!loading && filtered.length === 0 && (
-        <Text>No clients or contacts match the current filters.</Text>
-      )}
-      {filtered.map((item) => {
-        // properties preview is optional; backend may return properties + propertyCount
-        const propsPreview = (item as any)?.properties as
-          | {
-              id: string;
-              displayName: string;
-              city: string;
-              state: string;
-              status: string;
-            }[]
-          | undefined;
-        const propertyCount = (item as any)?.propertyCount as
-          | number
-          | undefined;
-
-        return (
-          <Box key={item.id} borderWidth="1px" borderRadius="lg" p={3} mb={3}>
-            <HStack align="start" gap="2">
-              <VStack alignItems="start" gap={1} flex="1">
-                <Heading size="sm">{item.displayName}</Heading>
-                <HStack gap="2" wrap="wrap">
-                  <Badge colorPalette={clientStatusColor(item.type)}>
-                    {prettyStatus(item.type)}
-                  </Badge>
+      <HStack mb={3} gap={2} wrap="wrap">
+        {statusStates
+          .map((s) => ({
+            label: prettyStatus(s),
+            val: s,
+          }))
+          .map(({ label, val }) => (
+            <Button
+              key={val}
+              size="sm"
+              variant={status === val ? "solid" : "outline"}
+              onClick={() => {
+                setStatus(val);
+              }}
+            >
+              {label}
+            </Button>
+          ))}
+      </HStack>
+      <VStack align="stretch" gap={3}>
+        {!loading && filtered.length === 0 && (
+          <Box p="8" color="fg.muted">
+            No clients or contacts match current filters.
+          </Box>
+        )}
+        {filtered.map((c: Client) => (
+          <Card.Root key={c.id} variant="outline">
+            <Card.Header pb="2">
+              <HStack gap={3} justify="space-between" align="center">
+                <HStack gap={3} flex="1" minW={0}>
+                  <Text fontWeight="semibold">{c.displayName}</Text>
+                  <StatusBadge
+                    status={c.status}
+                    palette={clientStatusColor(c.status)}
+                    variant="subtle"
+                  />
                 </HStack>
-                {isAdmin && item.notesInternal && (
-                  <Text mt={1} fontSize="sm" color="fg.muted">
-                    {item.notesInternal}
-                  </Text>
-                )}
-              </VStack>
-              {isAdmin && (
-                <HStack gap="2">
-                  <Button variant="outline" onClick={() => openEdit(item)}>
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    colorPalette="red"
-                    onClick={() =>
-                      void setToDelete({
-                        id: item.id,
-                        title: "Delete client and contacts?",
-                        summary: item.displayName,
-                        disabled: me?.roles?.includes("SUPER") ? false : true,
-                        details: (
-                          <Text color="red.500">
-                            You must be a Super Admin to delete.
-                          </Text>
-                        ),
-                      })
-                    }
-                  >
-                    Delete
-                  </Button>
-                </HStack>
-              )}
-            </HStack>
-
-            {/* Contacts */}
-            {isAdmin && (
-              <HStack gap={2}>
-                <Button
-                  mt={2}
-                  size="sm"
-                  variant="subtle"
-                  onClick={() => openAddContact(item.id)}
-                >
-                  Add contact
-                </Button>
+                <StatusBadge status={c.type} palette="gray" variant="outline" />
               </HStack>
-            )}
-            <Separator my={3} />
-            <Stack gap="2" mt={2}>
-              {(item as any)?.contacts?.length === 0 && (
+            </Card.Header>
+            <Card.Body pt="0">
+              <VStack align="start" gap={1}>
                 <Text fontSize="sm" color="fg.muted">
-                  No contacts added.
+                  {c.notesInternal ?? ""}
                 </Text>
-              )}
-              {(item as any)?.contacts
-                ?.toSorted(
-                  (a: any, b: any) =>
-                    +(b.isPrimary ?? false) - +(a.isPrimary ?? false) ||
-                    +(b.active ?? false) - +(a.active ?? false)
-                )
-                .filter((ct: any) => isAdmin || ct.active)
-                .map((ct: any) => (
-                  <HStack
-                    key={ct.id}
-                    opacity={ct.active ? 1.0 : 0.5}
-                    justify="space-between"
-                    align="start"
-                    borderWidth="1px"
-                    borderRadius="md"
-                    bg="gray.100"
-                    p={2}
-                  >
-                    <Box>
-                      {!ct.active && (
-                        <Text fontSize="sm" color="fg.muted">
-                          INACTIVE
-                        </Text>
-                      )}
-                      {ct.isPrimary ? (
-                        <HStack gap="2">
-                          <Icon as={FiStar} boxSize="4" />
-                          <Text fontWeight="medium">
-                            {`${ct.firstName} ${ct.lastName}`}
-                          </Text>
-                        </HStack>
-                      ) : (
-                        <Text fontWeight="medium">
-                          {`${ct.firstName} ${ct.lastName}`}
-                        </Text>
-                      )}
-                      <Badge colorPalette={contactStatusColor(ct.role)}>
-                        {prettyStatus(ct.role)}
-                      </Badge>
-                      <Text fontSize="sm" color="fg.muted">
-                        {mailLink(ct.email ?? "", "", "")}
-                      </Text>
-                      <Text fontSize="sm" color="fg.muted">
-                        {callLink(ct.normalizedPhone ?? ct.phone ?? "")}
-                      </Text>
-                    </Box>
-
-                    {isAdmin && (
-                      <HStack gap="2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openEditContact(item.id, ct)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          colorPalette="red"
-                          onClick={() =>
-                            void setToDeleteContact({
-                              id: item.id,
-                              child: ct.id,
-                              title: "Delete contact from client?",
-                              summary: `${ct.firstName} ${ct.lastName}`,
-                              disabled: me?.roles?.includes("SUPER")
-                                ? false
-                                : true,
+              </VStack>
+            </Card.Body>
+            <Card.Footer>
+              <HStack gap={2} wrap="wrap" mb="2" w="full">
+                {forAdmin && (
+                  <>
+                    <StatusButton
+                      id={"client-edit"}
+                      itemId={c.id}
+                      label={"Edit"}
+                      onClick={async () => {
+                        await openEdit(c);
+                      }}
+                      variant={"outline"}
+                      disabled={loading}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                    {c.status === "ACTIVE" && (
+                      <StatusButton
+                        id={"client-paused"}
+                        itemId={c.id}
+                        label={"Pause"}
+                        onClick={async () => await takeAction(c, "pause")}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {(c.status === "ACTIVE" || c.status === "PAUSED") && (
+                      <StatusButton
+                        id={"client-archive"}
+                        itemId={c.id}
+                        label={"Archive"}
+                        onClick={async () => await takeAction(c, "archive")}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {c.status === "PAUSED" && (
+                      <StatusButton
+                        id={"client-unpaused"}
+                        itemId={c.id}
+                        label={"Unpause"}
+                        onClick={async () => await takeAction(c, "unpause")}
+                        variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {c.status === "ARCHIVED" && (
+                      <>
+                        <StatusButton
+                          id={"client-unarchive"}
+                          itemId={c.id}
+                          label={"Unarchive"}
+                          onClick={async () => await takeAction(c, "unarchive")}
+                          variant={"outline"}
+                          disabled={loading}
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                        <StatusButton
+                          id={"client-delete"}
+                          itemId={c.id}
+                          label={"Delete"}
+                          onClick={async () => {
+                            void setToDelete({
+                              id: c.id,
+                              title:
+                                "Delete client and and all related contacts?",
+                              summary: c.displayName,
+                              disabled: !isSuper,
                               details: (
                                 <Text color="red.500">
                                   You must be a Super Admin to delete.
                                 </Text>
                               ),
-                            })
-                          }
-                        >
-                          Delete
-                        </Button>
-                      </HStack>
+                              extra: c.displayName,
+                            });
+                          }}
+                          variant={"outline"}
+                          disabled={loading}
+                          colorPalette={"red"}
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      </>
                     )}
+                  </>
+                )}
+                {forAdmin && (
+                  <HStack gap={2}>
+                    <Button
+                      mt={2}
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => openContactCreate(c.id)}
+                    >
+                      Add contact
+                    </Button>
                   </HStack>
-                ))}
-            </Stack>
+                )}
+                <Accordion.Root collapsible w="full">
+                  <Accordion.Item key={"contacts_" + c.id} value={"Contacts"}>
+                    <Accordion.ItemTrigger>
+                      <Icon as={FiUsers} boxSize="3" />
+                      Contacts
+                    </Accordion.ItemTrigger>
+                    <Accordion.ItemContent>
+                      <Accordion.ItemBody>
+                        <VStack mt={2}>
+                          {(c as any)?.contacts?.length === 0 && (
+                            <Text fontSize="sm" color="fg.muted">
+                              No contacts added.
+                            </Text>
+                          )}
+                          {(c as any)?.contacts
+                            ?.toSorted(
+                              (a: any, b: any) =>
+                                +(b.isPrimary ?? false) -
+                                  +(a.isPrimary ?? false) ||
+                                +(b.active ?? false) - +(a.active ?? false)
+                            )
+                            .filter((ct: any) => isAdmin || ct.active)
+                            .map((ct: any) => {
+                              return forAdmin || ct.active ? (
+                                <VStack
+                                  opacity={ct.active ? 1.0 : 0.5}
+                                  align="start"
+                                  w="100%"
+                                  borderWidth="1px"
+                                  borderRadius="md"
+                                  gap={0}
+                                  p={3}
+                                >
+                                  <StatusBadge
+                                    status={ct.role}
+                                    palette="gray"
+                                    variant="outline"
+                                  />
+                                  <HStack gap={2}>
+                                    {ct.isPrimary && (
+                                      <Icon as={FiStar} boxSize="4" />
+                                    )}
+                                    <Text fontWeight="medium">
+                                      {`${ct.firstName} ${ct.lastName}`}
+                                    </Text>
+                                  </HStack>
+                                  <Text fontSize="sm" color="fg.muted">
+                                    <MailLink
+                                      to={ct.email}
+                                      subject=""
+                                      body=""
+                                    />
+                                  </Text>
+                                  <Text fontSize="sm" color="fg.muted">
+                                    <CallLink
+                                      to={ct.normalizedPhone ?? ct.phone ?? ""}
+                                    />
+                                  </Text>
+                                  {forAdmin && (
+                                    <HStack gap={2} mt={3}>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() =>
+                                          openContactEdit(c.id, ct)
+                                        }
+                                      >
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        colorPalette="red"
+                                        onClick={() =>
+                                          void setToDeleteContact({
+                                            id: c.id,
+                                            child: ct.id,
+                                            title:
+                                              "Delete contact from client?",
+                                            summary: `${ct.firstName} ${ct.lastName}`,
+                                            disabled: me?.roles?.includes(
+                                              "SUPER"
+                                            )
+                                              ? false
+                                              : true,
+                                            details: (
+                                              <Text color="red.500">
+                                                You must be a Super Admin to
+                                                delete.
+                                              </Text>
+                                            ),
+                                          })
+                                        }
+                                      >
+                                        Delete
+                                      </Button>
+                                    </HStack>
+                                  )}
+                                </VStack>
+                              ) : undefined;
+                            })}
+                        </VStack>
+                      </Accordion.ItemBody>
+                    </Accordion.ItemContent>
+                  </Accordion.Item>
+                </Accordion.Root>
+                <Accordion.Root collapsible w="full">
+                  <Accordion.Item
+                    key={"properties_" + c.id}
+                    value={"Properties"}
+                  >
+                    <Accordion.ItemTrigger>
+                      <Icon as={FiMapPin} boxSize="3" />
+                      Properties
+                    </Accordion.ItemTrigger>
+                    <Accordion.ItemContent>
+                      <Accordion.ItemBody>
+                        <VStack mt={2}>
+                          {(c as any)?.properties?.length === 0 && (
+                            <Text fontSize="sm" color="fg.muted">
+                              No properties added.
+                            </Text>
+                          )}
+                          {(c as any)?.properties.map((p: any) => {
+                            const address = [
+                              p.street1,
+                              p.street2,
+                              p.city,
+                              p.state,
+                              p.postalCode,
+                              p.country,
+                            ]
+                              .filter(Boolean)
+                              .join(", ");
 
-            {/* Properties preview */}
-            <Separator my={3} />
-            <VStack align="stretch" gap={2}>
-              <HStack justify="space-between">
-                <Heading size="sm">Properties</Heading>
-                <HStack gap={2}>
-                  {typeof propertyCount === "number" && (
-                    <Badge variant="subtle">{propertyCount}</Badge>
-                  )}
-                  {isAdmin && (
-                    <>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => openAddProperty(item.id)}
-                      >
-                        Add property
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => viewAllProperties(item.id)}
-                      >
-                        View all
-                      </Button>
-                    </>
-                  )}
-                </HStack>
+                            return forAdmin || p.status === "ACTIVE" ? (
+                              <VStack
+                                opacity={p.status === "ACTIVE" ? 1.0 : 0.5}
+                                align="start"
+                                w="100%"
+                                borderWidth="1px"
+                                borderRadius="md"
+                                gap={0}
+                                p={3}
+                              >
+                                <Text fontSize="sm" color="fg.muted">
+                                  {p.displayName}
+                                </Text>
+                                <MapLink address={address} />
+                              </VStack>
+                            ) : null;
+                          })}
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => viewAllProperties(c.id)}
+                          >
+                            View all
+                          </Button>
+                        </VStack>
+                      </Accordion.ItemBody>
+                    </Accordion.ItemContent>
+                  </Accordion.Item>
+                </Accordion.Root>
               </HStack>
+            </Card.Footer>
+          </Card.Root>
+        ))}
+      </VStack>
 
-              {!propsPreview || propsPreview.length === 0 ? (
-                <Text fontSize="sm" color="fg.muted">
-                  No properties added.
-                </Text>
-              ) : (
-                <Stack gap="1">
-                  {propsPreview.map((p) => (
-                    <HStack key={p.id} justify="space-between">
-                      <HStack gap={2}>
-                        <Text fontSize="sm">{p.displayName}</Text>
-                        <Text fontSize="sm" color="fg.muted">
-                          {p.city}, {p.state}
-                        </Text>
-                      </HStack>
-                      <Badge size="sm">{p.status}</Badge>
-                    </HStack>
-                  ))}
-                </Stack>
-              )}
-            </VStack>
-          </Box>
-        );
-      })}
-
-      <ClientDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        mode={editing ? "update" : "create"}
-        initialClient={editing ?? undefined}
-        onSaved={() => void load()}
-        actionLabel={editing ? "Save" : "Create"}
-      />
-
-      <ContactDialog
-        open={contactDialogOpen}
-        onOpenChange={setContactDialogOpen}
-        mode={contactMode}
-        clientId={contactClientId}
-        initialContact={editingContact ?? undefined}
-        onSaved={() => void load()}
-        actionLabel={contactMode === "create" ? "Create" : "Save"}
-      />
-
-      {/* NEW: Property dialog for quick-add from Clients tab */}
-      {isAdmin && (
-        <PropertyDialog
-          open={propDialogOpen}
-          onOpenChange={setPropDialogOpen}
-          mode={propEditing ? "UPDATE" : "CREATE"}
-          role="ADMIN"
-          initial={propEditing ?? undefined}
-          defaultClientId={propDefaultClient}
+      {forAdmin && (
+        <ClientDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          mode={editing ? "UPDATE" : "CREATE"}
+          role={forAdmin ? "ADMIN" : "WORKER"}
+          initial={editing ?? undefined}
           onSaved={() => void load()}
         />
       )}
-
-      <DeleteDialog
-        toDelete={toDelete}
-        cancel={() => void setToDelete(null)}
-        complete={async () => {
-          await deleteClient(toDelete?.id ?? "");
-          setToDelete(null);
-        }}
-      />
-
-      <DeleteDialog
-        toDelete={toDeleteContact}
-        cancel={() => void setToDeleteContact(null)}
-        complete={async () => {
-          await deleteContact(
-            toDeleteContact?.id ?? "",
-            toDeleteContact?.child ?? ""
-          );
-          setToDeleteContact(null);
-        }}
-      />
+      {forAdmin && (
+        <ContactDialog
+          open={contactDialogOpen}
+          onOpenChange={setContactDialogOpen}
+          mode={contactEditing ? "UPDATE" : "CREATE"}
+          role={forAdmin ? "ADMIN" : "WORKER"}
+          initial={contactEditing ?? undefined}
+          onSaved={() => void load()}
+          clientId={contactClientId}
+        />
+      )}
+      {forAdmin && (
+        <DeleteDialog
+          toDelete={toDelete}
+          cancel={() => void setToDelete(null)}
+          complete={async () => {
+            if (!toDelete) return;
+            await deleteAction(toDelete.id, toDelete.extra ?? "");
+            setToDelete(null);
+          }}
+        />
+      )}
+      {forAdmin && (
+        <DeleteDialog
+          toDelete={toDeleteContact}
+          cancel={() => void setToDeleteContact(null)}
+          complete={async () => {
+            await deleteContact(
+              toDeleteContact?.id ?? "",
+              toDeleteContact?.child ?? ""
+            );
+            setToDeleteContact(null);
+          }}
+        />
+      )}
     </Box>
   );
 }

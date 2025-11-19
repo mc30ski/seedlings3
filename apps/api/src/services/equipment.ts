@@ -35,7 +35,7 @@ async function hasActiveCheckout(tx: Tx, equipmentId: string) {
 // Recompute derived status...
 async function recomputeStatus(tx: Tx, equipmentId: string) {
   const eq = await tx.equipment.findUnique({ where: { id: equipmentId } });
-  if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+  if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
 
   if (eq.status === EquipmentStatus.RETIRED || eq.retiredAt) return eq;
   if (eq.status === EquipmentStatus.MAINTENANCE) return eq;
@@ -263,7 +263,7 @@ export const equipment: ServicesEquipment = {
     return prisma.$transaction(async (tx) => {
       const before = await tx.equipment.findUnique({ where: { id } });
       if (!before)
-        throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+        throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
 
       const data: Prisma.EquipmentUpdateInput = {};
       if (patch.shortDesc !== undefined) data.shortDesc = patch.shortDesc;
@@ -292,7 +292,7 @@ export const equipment: ServicesEquipment = {
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (eq.status === EquipmentStatus.RETIRED) return eq;
 
       if (
@@ -301,14 +301,14 @@ export const equipment: ServicesEquipment = {
       ) {
         throw new ServiceError(
           "CANNOT_RETIRE_WHILE_IN_USE",
-          "Cannot retire equipment while reserved/checked out",
+          "Cannot retire equipment while reserved/checked out.",
           409
         );
       }
       if (await hasActiveCheckout(tx, id)) {
         throw new ServiceError(
           "ACTIVE_CHECKOUT_EXISTS",
-          "Equipment has an active reservation/checkout",
+          "Equipment has an active reservation/checkout.",
           409
         );
       }
@@ -330,7 +330,7 @@ export const equipment: ServicesEquipment = {
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
 
       if (eq.status !== EquipmentStatus.RETIRED) {
         return recomputeStatus(tx, id);
@@ -353,18 +353,18 @@ export const equipment: ServicesEquipment = {
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (eq.status !== EquipmentStatus.RETIRED)
         throw new ServiceError(
           "NOT_RETIRED",
-          "Only retired equipment can be deleted",
+          "Only retired equipment can be deleted.",
           409
         );
 
       if (await hasActiveCheckout(tx, id))
         throw new ServiceError(
           "ACTIVE_CHECKOUT_EXISTS",
-          "Equipment has an active reservation/checkout",
+          "Equipment has an active reservation/checkout.",
           409
         );
 
@@ -406,11 +406,15 @@ export const equipment: ServicesEquipment = {
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (eq.retiredAt)
-        throw new ServiceError("RETIRED", "Equipment retired", 409);
+        throw new ServiceError("RETIRED", "Equipment retired.", 409);
       if (eq.status !== EquipmentStatus.AVAILABLE)
-        throw new ServiceError("NOT_AVAILABLE", "Equipment not available", 409);
+        throw new ServiceError(
+          "NOT_AVAILABLE",
+          "Equipment not available.",
+          409
+        );
 
       if (await hasActiveCheckout(tx, id))
         throw new ServiceError(
@@ -443,11 +447,11 @@ export const equipment: ServicesEquipment = {
       if (!active || active.checkedOutAt)
         throw new ServiceError(
           "NO_ACTIVE_RESERVATION",
-          "No active reservation to cancel",
+          "No active reservation to cancel.",
           409
         );
       if (active.userId !== userId)
-        throw new ServiceError("NOT_OWNER", "Not your reservation", 403);
+        throw new ServiceError("NOT_OWNER", "Not your reservation.", 403);
 
       const unreserved = await tx.checkout.update({
         where: { id: active.id },
@@ -478,23 +482,23 @@ export const equipment: ServicesEquipment = {
     userId: string,
     slug: string
   ) {
-    if (!slug) throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
+    if (!slug) throw new ServiceError("INVALID_INPUT", "Missing QR code.", 400);
 
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
 
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (!eq.qrSlug)
         throw new ServiceError(
           "NO_QR",
-          "This equipment doesn't have a QR code",
+          "This equipment doesn't have a QR code.",
           409
         );
       if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
         throw new ServiceError(
           "QR_MISMATCH",
-          "QR code doesn't match this equipment",
+          "QR code doesn't match this equipment.",
           403
         );
 
@@ -506,7 +510,7 @@ export const equipment: ServicesEquipment = {
       if (!active || active.checkedOutAt)
         throw new ServiceError(
           "NOT_ALLOWED",
-          "Reservation not owned or already checked out",
+          "Reservation not owned or already checked out.",
           403
         );
 
@@ -534,14 +538,14 @@ export const equipment: ServicesEquipment = {
     userId: string,
     slug: string
   ) {
-    if (!slug) throw new ServiceError("INVALID_INPUT", "Missing QR code", 400);
+    if (!slug) throw new ServiceError("INVALID_INPUT", "Missing QR code.", 400);
 
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
 
       // 1) Verify item + QR
       const eq = await tx.equipment.findUnique({ where: { id } });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (!eq.qrSlug)
         throw new ServiceError(
           "NO_QR",
@@ -551,7 +555,7 @@ export const equipment: ServicesEquipment = {
       if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
         throw new ServiceError(
           "QR_MISMATCH",
-          "QR code doesn't match this item",
+          "QR code doesn't match this item.",
           403
         );
 
@@ -568,7 +572,7 @@ export const equipment: ServicesEquipment = {
       if (!active) {
         throw new ServiceError(
           "NOT_ALLOWED",
-          "No active checkout for this user",
+          "No active checkout for this user.",
           403
         );
       }
@@ -601,14 +605,14 @@ export const equipment: ServicesEquipment = {
       const eq = await tx.equipment.findUnique({
         where: { id: id },
       });
-      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found", 404);
+      if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
       if (eq.status === EquipmentStatus.RETIRED)
-        throw new ServiceError("RETIRED", "Equipment retired", 409);
+        throw new ServiceError("RETIRED", "Equipment retired.", 409);
 
       if (await hasActiveCheckout(tx, id))
         throw new ServiceError(
           "ACTIVE_CHECKOUT_EXISTS",
-          "Equipment has an active reservation/checkout",
+          "Equipment has an active reservation/checkout.",
           409
         );
 
