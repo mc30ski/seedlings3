@@ -15,102 +15,116 @@ import {
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
 import {
+  Role,
+  DialogMode,
+  Contact,
+  ContactStatus,
+  ContactKind,
+  CONTACT_KIND,
+  CONTACT_STATUS,
+} from "@/src/lib/types";
+import { prettyStatus } from "@/src/lib/lib";
+import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-type Mode = "create" | "update";
-
-// If your enum differs, adjust these to match your Prisma `ContactRole`
-const CONTACT_ROLE_ITEMS = [
-  { label: "OWNER", value: "OWNER" },
-  { label: "SPOUSE", value: "SPOUSE" },
-  { label: "COMMUNITY_MANAGER", value: "COMMUNITY_MANAGER" },
-  { label: "PROPERTY_MANAGER", value: "PROPERTY_MANAGER" },
-  { label: "BILLING", value: "BILLING" },
-  { label: "TECHNICAL", value: "TECHNICAL" },
-  { label: "OPERATIONS", value: "OPERATIONS" },
-  { label: "LEGAL", value: "LEGAL" },
-  { label: "OTHER", value: "OTHER" },
-];
-
-export type Contact = {
-  id: string;
-  clientId: string;
-  role: string;
-  active: boolean;
-  firstName: string;
-  lastName: string;
-  email: string | null;
-  phone?: string | null;
-  normalizedPhone?: string | null;
-  isPrimary?: boolean;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-};
-
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode: Mode;
-  clientId: string;
-  initialContact?: Contact | null;
+  mode: DialogMode;
+  role: Role;
+  initial?: Contact | null;
   onSaved?: (saved: any) => void;
-  actionLabel?: string;
+  clientId: string;
 };
 
 const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 const E164 = /^\+?[1-9]\d{7,14}$/;
 
-export default function ContactDialog({
+export default function ClientDialog({
   open,
   onOpenChange,
   mode,
-  clientId,
-  initialContact,
+  role,
+  initial,
   onSaved,
-  actionLabel,
+  clientId,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-
+  const isAdmin = role === "ADMIN";
   const [busy, setBusy] = useState(false);
 
   // --- Form state ---
+  const [statusValue, setStatusValue] = useState<string[]>([CONTACT_STATUS[0]]);
+  const [kindValue, setKindValue] = useState<string[]>([CONTACT_KIND[0]]);
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
-  const [active, setActive] = useState(true);
 
-  // role select
-  const [roleValue, setRoleValue] = useState<string[]>(["OWNER"]);
-  const roleCollection = useMemo(
-    () => createListCollection({ items: CONTACT_ROLE_ITEMS }),
+  const statusItems = useMemo(
+    () =>
+      CONTACT_STATUS.map((s) => ({
+        label: prettyStatus(s),
+        value: s,
+      })),
     []
   );
+  const statusCollection = useMemo(
+    () => createListCollection({ items: statusItems }),
+    [statusItems]
+  );
 
-  // Seed/reset
+  const kindItems = useMemo(
+    () =>
+      CONTACT_KIND.map((s) => ({
+        label: prettyStatus(s),
+        value: s,
+      })),
+    []
+  );
+  const kindCollection = useMemo(
+    () => createListCollection({ items: kindItems }),
+    [kindItems]
+  );
+
+  function ableToSave() {
+    return (
+      firstName &&
+      lastName &&
+      email &&
+      phone &&
+      EMAIL_RE.test(email) &&
+      E164.test(phone)
+    );
+  }
+
+  // seed form when opening/switching modes/records
   useEffect(() => {
     if (!open) return;
-    if (mode === "update" && initialContact) {
-      setFirstName(initialContact.firstName ?? "");
-      setLastName(initialContact.lastName ?? "");
-      setEmail(initialContact.email ?? "");
-      setPhone(initialContact.phone ?? "");
-      setIsPrimary(!!initialContact.isPrimary);
-      setActive(initialContact.active ?? true);
-      setRoleValue([initialContact.role ?? "OWNER"]);
+    if (mode === "UPDATE" && initial) {
+      setKindValue([initial.role ?? CONTACT_KIND[0]]);
+      //TODO:
+      //setStatusValue([initial.status ?? CONTACT_STATUS[0]]);
+      setStatusValue([CONTACT_STATUS[0]]);
+      setFirstName(initial.firstName ?? "");
+      setLastName(initial.lastName ?? "");
+      setEmail(initial.email ?? "");
+      setPhone(initial.phone ?? "");
+      setIsPrimary(!!initial.isPrimary);
     } else {
+      setKindValue([CONTACT_KIND[0]]);
+      setStatusValue([CONTACT_STATUS[0]]);
       setFirstName("");
       setLastName("");
       setEmail("");
       setPhone("");
       setIsPrimary(false);
-      setActive(true);
-      setRoleValue(["OWNER"]);
     }
-  }, [open, mode, initialContact]);
+  }, [open, mode, initial]);
 
   async function handleSave() {
     if (!firstName.trim() && !lastName.trim()) {
@@ -121,78 +135,141 @@ export default function ContactDialog({
       return;
     }
 
-    const role = roleValue[0];
-    const payload: Record<string, any> = {
+    const payload = {
+      role: (kindValue[0] as ContactKind) ?? CONTACT_KIND[0],
+      status: (statusValue[0] as ContactStatus) ?? CONTACT_STATUS[0],
       firstName: firstName.trim(),
       lastName: lastName.trim(),
-      email: email.trim() || null,
-      phone: phone.trim() || null,
-      role,
+      email: email.trim(),
+      phone: phone.trim(),
       isPrimary,
-      active,
+      // TODO: need to change to status
+      active: true,
     };
 
     setBusy(true);
     try {
-      let saved;
-      if (mode === "create") {
-        saved = await apiPost(
+      let saved: Contact;
+      if (mode === "CREATE") {
+        saved = await apiPost<Contact>(
           `/api/admin/clients/${clientId}/contacts`,
           payload
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Contact “${payload.firstName} ${payload.lastName}” created.`,
+          text: `Contact '${payload.firstName} ${payload.lastName}' created.`,
         });
       } else {
-        if (!initialContact?.id) {
-          throw new Error("Missing contact id for update");
-        }
-        saved = await apiPatch(
-          `/api/admin/clients/${clientId}/contacts/${initialContact.id}`,
+        if (!initial?.id) throw new Error("Missing client id");
+        saved = await apiPatch<Contact>(
+          `/api/admin/clients/${clientId}/contacts/${initial.id}`,
           payload
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Contact “${payload.firstName} ${payload.lastName}” updated.`,
+          text: `Contact '${payload.firstName} ${payload.lastName}' updated.`,
         });
       }
-
       onSaved?.(saved);
-      onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage(
-          mode === "create" ? "Create contact failed" : "Update contact failed",
+          mode === "CREATE" ? "Create contact failed" : "Update contact failed",
           err
         ),
       });
-      onOpenChange(false);
     } finally {
+      onOpenChange(false);
       setBusy(false);
     }
   }
 
   return (
     <Dialog.Root
-      role="dialog"
       open={open}
-      initialFocusEl={() => cancelRef.current}
       onOpenChange={(e) => onOpenChange(e.open)}
+      initialFocusEl={() => cancelRef.current}
     >
       <Portal>
         <Dialog.Backdrop />
-        <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
-          <Dialog.Content>
+        <Dialog.Positioner>
+          <Dialog.Content
+            mx="4"
+            maxW="lg"
+            w="full"
+            rounded="2xl"
+            p="4"
+            shadow="lg"
+          >
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                {mode === "create" ? "Add Contact" : "Update Contact"}
+                {mode === "CREATE" ? "Add Contact" : "Update Contact"}
               </Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <HStack gap={3}>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Status *</Text>
+                    <Select.Root
+                      collection={statusCollection}
+                      value={statusValue}
+                      onValueChange={(e) => setStatusValue(e.value)}
+                      size="sm"
+                      positioning={{
+                        strategy: "fixed",
+                        hideWhenDetached: true,
+                      }}
+                      disabled={!isAdmin && mode === "UPDATE"}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select status" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {statusItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Kind *</Text>
+                    <Select.Root
+                      collection={kindCollection}
+                      value={kindValue}
+                      onValueChange={(e) => setKindValue(e.value)}
+                      size="sm"
+                      positioning={{
+                        strategy: "fixed",
+                        hideWhenDetached: true,
+                      }}
+                      disabled={!isAdmin && mode === "UPDATE"}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select kind" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {kindItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                  </div>
+                </HStack>
                 <div style={{ flex: 1 }}>
                   <Text mb="1">First name</Text>
                   <Input
@@ -224,66 +301,11 @@ export default function ContactDialog({
                   <Input
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+1 555 555 5555"
+                    placeholder="15551234567"
                   />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <Text mb="1">Role</Text>
-                  <Select.Root
-                    collection={roleCollection}
-                    value={roleValue}
-                    onValueChange={(e) => setRoleValue(e.value)}
-                    size="sm"
-                    positioning={{
-                      strategy: "fixed",
-                      hideWhenDetached: true,
-                    }}
-                  >
-                    <Select.Control>
-                      <Select.Trigger>
-                        <Select.ValueText placeholder="Select role" />
-                      </Select.Trigger>
-                    </Select.Control>
-                    <Select.Positioner>
-                      <Select.Content>
-                        {CONTACT_ROLE_ITEMS.map((it) => (
-                          <Select.Item key={it.value} item={it.value}>
-                            <Select.ItemText>{it.label}</Select.ItemText>
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select.Positioner>
-                  </Select.Root>
-                </div>
-                <Switch.Root
-                  checked={isPrimary}
-                  onCheckedChange={({ checked }) => setIsPrimary(checked)}
-                >
-                  <HStack gap="3" align="center">
-                    <Switch.Control>
-                      <Switch.Thumb />
-                    </Switch.Control>
-                    <Switch.Label>Primary contact</Switch.Label>
-                  </HStack>
-                  <Switch.HiddenInput name="isPrimary" />
-                </Switch.Root>
-                {mode === "update" && (
-                  <Switch.Root
-                    checked={active}
-                    onCheckedChange={({ checked }) => setActive(checked)}
-                  >
-                    <HStack gap="3" align="center">
-                      <Switch.Control>
-                        <Switch.Thumb />
-                      </Switch.Control>
-                      <Switch.Label>Is Active</Switch.Label>
-                    </HStack>
-                    <Switch.HiddenInput name="isActive" />
-                  </Switch.Root>
-                )}
               </VStack>
             </Dialog.Body>
-
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button
@@ -297,14 +319,9 @@ export default function ContactDialog({
                 <Button
                   onClick={handleSave}
                   loading={busy}
-                  disabled={
-                    !!firstName === false ||
-                    !!lastName === false ||
-                    !EMAIL_RE.test(email) ||
-                    !E164.test(phone)
-                  }
+                  disabled={!ableToSave()}
                 >
-                  {actionLabel ?? (mode === "create" ? "Create" : "Save")}
+                  {mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>

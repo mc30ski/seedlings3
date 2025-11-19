@@ -234,12 +234,12 @@ export function publishInlineMessage(detail: InlineMessageEventDetail) {
 
 export function getErrorMessage(message: string, err: unknown): string {
   const anyErr = err as any;
-  let msg = message + ". ";
+  let msg = message + " ";
 
   if (anyErr?.status === 401 || anyErr?.status === 403) {
     msg += "Not authorized or not approved.";
   }
   msg +=
-    typeof anyErr?.message === "string" ? anyErr.message : "Unexpected error";
+    typeof anyErr?.message === "string" ? anyErr.message : "Unexpected error.";
   return msg;
 }

@@ -202,12 +202,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully checked in",
+        text: `Equipment '${slug}' successfully checked in.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment checked in failed", err),
+        text: getErrorMessage(`Equipment '${slug}' checked in failed.`, err),
       });
     }
   }
@@ -220,140 +220,149 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully returned",
+        text: `Equipment '${slug}' successfully returned.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment return failed", err),
+        text: getErrorMessage(`Equipment '${slug}' return failed.`, err),
       });
     }
   }
-  async function reserve(id: string) {
+  async function reserve(e: Equipment) {
     try {
-      await apiPost(`/api/equipment/${id}/reserve`);
+      await apiPost(`/api/equipment/${e.id}/reserve`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully reserved",
+        text: `Equipment '${e.qrSlug}' successfully reserved.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment reserved failed", err),
+        text: getErrorMessage(`Equipment '${e.qrSlug}' reserved failed.`, err),
       });
     }
   }
-  async function cancel(id: string) {
+  async function cancel(e: Equipment) {
     try {
-      await apiPost(`/api/equipment/${id}/reserve/cancel`);
+      await apiPost(`/api/equipment/${e.id}/reserve/cancel`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment reservation successully canceled",
+        text: `Equipment '${e.qrSlug}' reservation successfully canceled.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment reservation canceled failed", err),
+        text: getErrorMessage(
+          `Equipment '${e.qrSlug}' reservation canceled failed.`,
+          err
+        ),
       });
     }
   }
-  async function forceRelease(id: string) {
+  async function forceRelease(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${id}/release`);
+      await apiPost(`/api/admin/equipment/${e.id}/release`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully released",
+        text: `Equipment '${e.qrSlug}' reservation successfully released.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment release failed", err),
+        text: getErrorMessage(`Equipment '${e.qrSlug}' release failed.`, err),
       });
     }
   }
-  async function startMaintainence(id: string) {
+  async function startMaintainence(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${id}/maintenance/start`);
+      await apiPost(`/api/admin/equipment/${e.id}/maintenance/start`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment maintenance successfully started",
+        text: `Equipment '${e.qrSlug}' maintenance successfully started.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment maintenance start failed", err),
+        text: getErrorMessage(
+          `Equipment '${e.qrSlug}' maintenance start failed.`,
+          err
+        ),
       });
     }
   }
-  async function endMaintainence(id: string) {
+  async function endMaintainence(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${id}/maintenance/end`);
+      await apiPost(`/api/admin/equipment/${e.id}/maintenance/end`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment maintenance successfully ended",
+        text: `Equipment '${e.qrSlug}' maintenance successfully ended.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment maintenance end failed", err),
+        text: getErrorMessage(
+          `Equipment '${e.qrSlug}' maintenance end failed.`,
+          err
+        ),
       });
     }
   }
-  async function retire(id: string) {
+  async function retire(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${id}/retire`);
+      await apiPost(`/api/admin/equipment/${e.id}/retire`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully retired",
+        text: `Equipment '${e.qrSlug}' successfully retired.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment retire failed", err),
+        text: getErrorMessage(`Equipment '${e.qrSlug}' retire failed.`, err),
       });
     }
   }
-  async function unretire(id: string) {
+  async function unretire(e: Equipment) {
     try {
-      await apiPost(`/api/admin/equipment/${id}/unretire`);
+      await apiPost(`/api/admin/equipment/${e.id}/unretire`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully unretired",
+        text: `Equipment '${e.qrSlug}' successfully unretired.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment unretired failed", err),
+        text: getErrorMessage(`Equipment '${e.qrSlug}' unretired failed.`, err),
       });
     }
   }
-  async function hardDelete(id: string) {
+  async function hardDelete(id: string, slug: string) {
     try {
       await apiDelete(`/api/admin/equipment/${id}`);
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Equipment successfully deleted",
+        text: `Equipment '${slug}' successfully deleted.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Equipment delete failed", err),
+        text: getErrorMessage(`Equipment '${slug}' delete failed.`, err),
       });
     }
   }
@@ -650,7 +659,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-cancel"}
                     itemId={e.id}
                     label={"Cancel Reservation"}
-                    onClick={async () => await cancel(e.id)}
+                    onClick={async () => await cancel(e)}
                     variant={"outline"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -674,7 +683,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-reserve"}
                     itemId={e.id}
                     label={"Reserve"}
-                    onClick={async () => await reserve(e.id)}
+                    onClick={async () => await reserve(e)}
                     variant={"solid"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -686,7 +695,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-forceRelease"}
                     itemId={e.id}
                     label={"Force release"}
-                    onClick={async () => await forceRelease(e.id)}
+                    onClick={async () => await forceRelease(e)}
                     variant={"solid"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -698,7 +707,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-startMaintenance"}
                     itemId={e.id}
                     label={"Start maintenance"}
-                    onClick={async () => await startMaintainence(e.id)}
+                    onClick={async () => await startMaintainence(e)}
                     variant={"subtle"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -710,7 +719,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-endMaintenance"}
                     itemId={e.id}
                     label={"End maintenance"}
-                    onClick={async () => await endMaintainence(e.id)}
+                    onClick={async () => await endMaintainence(e)}
                     variant={"subtle"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -722,7 +731,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-retire"}
                     itemId={e.id}
                     label={"Retire"}
-                    onClick={async () => await retire(e.id)}
+                    onClick={async () => await retire(e)}
                     variant={"outline"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -734,7 +743,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-unretire"}
                     itemId={e.id}
                     label={"Unretire"}
-                    onClick={async () => await unretire(e.id)}
+                    onClick={async () => await unretire(e)}
                     variant={"subtle"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -757,6 +766,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                             You must be a Super Admin to delete.
                           </Text>
                         ),
+                        extra: e.qrSlug,
                       })
                     }
                     variant={"danger-outline"}
@@ -811,7 +821,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           cancel={() => setToDelete(null)}
           complete={async () => {
             if (!toDelete) return;
-            await hardDelete(toDelete.id);
+            await hardDelete(toDelete.id, toDelete.extra ?? "");
             setToDelete(null);
           }}
         />

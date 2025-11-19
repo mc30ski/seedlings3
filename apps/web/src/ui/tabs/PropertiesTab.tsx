@@ -19,10 +19,10 @@ import {
   prettyStatus,
 } from "@/src/lib/lib";
 import {
-  TabPropsType,
+  type TabPropsType,
   PROPERTY_KIND,
   PROPERTY_STATUS,
-  Property,
+  type Property,
 } from "@/src/lib/types";
 import {
   publishInlineMessage,
@@ -89,7 +89,7 @@ export default function PropertiesTab({
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Failed to load properties", err),
+        text: getErrorMessage("Failed to load properties.", err),
       });
       setItems([]);
     } finally {
@@ -156,12 +156,15 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property approved and made active.",
+        text: `Property '${p.displayName}' approved and made active.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Approved failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' approved failed.`,
+          err
+        ),
       });
     }
   }
@@ -171,12 +174,15 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property archived.",
+        text: `Property '${p.displayName}' archived.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Archive failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' archive failed.`,
+          err
+        ),
       });
     }
   }
@@ -186,28 +192,31 @@ export default function PropertiesTab({
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property unarchived.",
+        text: `Property '${p.displayName}' unarchived.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Unarchive failed", err),
+        text: getErrorMessage(
+          `Property '${p.displayName}' unarchive failed.`,
+          err
+        ),
       });
     }
   }
-  async function hardDelete(id: string) {
+  async function hardDelete(id: string, displayName: string) {
     try {
       setLoading(true);
       await apiDelete(`/api/admin/properties/${id}`);
       await load(true);
       publishInlineMessage({
         type: "SUCCESS",
-        text: "Property deleted.",
+        text: `Property '${displayName}' deleted.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Delete failed", err),
+        text: getErrorMessage(`Property '${displayName}' delete failed.`, err),
       });
     }
   }
@@ -381,6 +390,7 @@ export default function PropertiesTab({
                               You must be a Super Admin to delete.
                             </Text>
                           ),
+                          extra: p.displayName,
                         });
                       }}
                       variant={"outline"}
@@ -413,7 +423,7 @@ export default function PropertiesTab({
           cancel={() => setToDelete(null)}
           complete={async () => {
             if (!toDelete) return;
-            await hardDelete(toDelete.id);
+            await hardDelete(toDelete.id, toDelete.extra ?? "");
             setToDelete(null);
           }}
         />

@@ -70,13 +70,13 @@ export default function PropertyDialog({
   const [contacts, setContacts] = useState<ContactLite[]>([]);
 
   // --- Form state
-  const [clientValue, setClientValue] = useState<string[]>([]);
-  const [displayName, setDisplayName] = useState("");
   const [statusValue, setStatusValue] = useState<string[]>([
     PROPERTY_STATUS[0],
   ]);
   const [kindValue, setKindValue] = useState<string[]>([PROPERTY_KIND[0]]);
 
+  const [clientValue, setClientValue] = useState<string[]>([]);
+  const [displayName, setDisplayName] = useState("");
   const [street1, setStreet1] = useState("");
   const [street2, setStreet2] = useState("");
   const [city, setCity] = useState("");
@@ -201,10 +201,10 @@ export default function PropertyDialog({
   useEffect(() => {
     if (!open) return;
     if (mode === "UPDATE" && initial) {
+      setKindValue([initial.kind ?? PROPERTY_KIND[0]]);
+      setStatusValue([initial.status ?? PROPERTY_STATUS[0]]);
       setClientValue([initial.clientId ?? ""]);
       setDisplayName(initial.displayName ?? "");
-      setStatusValue([initial.status ?? PROPERTY_STATUS[0]]);
-      setKindValue([initial.kind ?? PROPERTY_KIND[0]]);
       setStreet1(initial.street1 ?? "");
       setStreet2(initial.street2 ?? "");
       setCity(initial.city ?? "");
@@ -214,10 +214,10 @@ export default function PropertyDialog({
       setAccessNotes(initial.accessNotes ?? "");
       setPocValue([initial.pointOfContactId ?? "NONE"]);
     } else {
+      setKindValue([PROPERTY_KIND[0]]);
+      setStatusValue([PROPERTY_STATUS[0]]);
       setClientValue(defaultClientId ? [defaultClientId] : []);
       setDisplayName("");
-      setStatusValue([PROPERTY_STATUS[0]]);
-      setKindValue([PROPERTY_KIND[0]]);
       setStreet1("");
       setStreet2("");
       setCity("");
@@ -313,10 +313,10 @@ export default function PropertyDialog({
     }
 
     const payload = {
+      kind: (kindValue[0] as PropertyKind) ?? PROPERTY_KIND[0],
+      status: (statusValue[0] as PropertyStatus) ?? PROPERTY_STATUS[0],
       clientId: cid,
       displayName: displayName.trim(),
-      status: (statusValue[0] as PropertyStatus) ?? PROPERTY_STATUS[0],
-      kind: (kindValue[0] as PropertyKind) ?? PROPERTY_KIND[0],
       street1: street1.trim(),
       street2: street2.trim() || null,
       city: city.trim(),

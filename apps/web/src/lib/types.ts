@@ -110,3 +110,58 @@ export type Property = {
   updatedAt?: string | undefined;
   archivedAt?: string | undefined;
 };
+
+export type Client = {
+  id: string;
+  type: ClientKind;
+  displayName: string;
+  status: ClientStatus;
+  notesInternal?: string | null;
+
+  createdAt?: string | null;
+  updatedAt?: string | null;
+
+  contacts?: Contact[];
+};
+
+export const CLIENT_KIND = [
+  "INDIVIDUAL",
+  "HOUSEHOLD",
+  "ORGANIZATION",
+  "COMMUNITY",
+] as const;
+export type ClientKind = (typeof CLIENT_KIND)[number];
+
+export const CLIENT_STATUS = ["ACTIVE", "PAUSED", "ARCHIVED"] as const;
+export type ClientStatus = (typeof CLIENT_STATUS)[number];
+
+export type Contact = {
+  id: string;
+  clientId: string;
+  role: string;
+  active: boolean;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone?: string | null;
+  normalizedPhone?: string | null;
+  isPrimary?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export const CONTACT_KIND = [
+  "OWNER",
+  "SPOUSE",
+  "COMMUNITY_MANAGER",
+  "PROPERTY_MANAGER",
+  "BILLING",
+  "TECHNICAL",
+  "OPERATIONS",
+  "LEGAL",
+  "OTHER",
+] as const;
+export type ContactKind = (typeof CONTACT_KIND)[number];
+
+export const CONTACT_STATUS = ["ACTIVE", "INACTIVE"] as const;
+export type ContactStatus = (typeof CONTACT_STATUS)[number];

@@ -8,6 +8,7 @@ export type ToDeleteProps = {
   child?: string;
   title: string;
   summary: string;
+  extra?: string;
   disabled?: boolean;
   details?: JSX.Element;
 };

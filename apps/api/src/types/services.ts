@@ -10,6 +10,7 @@ import type {
   PropertyKind,
   PropertyStatus,
 } from "@prisma/client";
+import { AuditTuple } from "../lib/auditActions";
 
 export type ClientWithContacts = Client & { contacts: ClientContact[] };
 
@@ -261,14 +262,19 @@ export type ServicesClients = {
     limit?: number;
   }): Promise<ClientListItem[]>;
   get(id: string): Promise<ClientWithContacts>;
-
-  create(currentUserId: string, payload: ClientUpsert): Promise<Client>;
+  create(currentUserId: string, payload: ClientUpsert): Promise<Client | null>;
   update(
     currentUserId: string,
     id: string,
     payload: ClientUpsert
-  ): Promise<Client>;
-  hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;
+  ): Promise<Client | null>;
+  pause(currentUserId: string, id: string): Promise<Client | null>;
+  unpause(currentUserId: string, id: string): Promise<Client | null>;
+  archive(currentUserId: string, id: string): Promise<Client | null>;
+  unarchive(currentUserId: string, id: string): Promise<Client | null>;
+  delete(currentUserId: string, id: string): Promise<{ deleted: true }>;
+
+  //////////
 
   addContact(
     currentUserId: string,
