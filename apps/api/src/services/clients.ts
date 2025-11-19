@@ -124,6 +124,8 @@ export const clients: ServicesClients = {
             street2: true,
             city: true,
             state: true,
+            postalCode: true,
+            country: true,
             status: true,
           },
           orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],

@@ -531,6 +531,8 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                               p.street2,
                               p.city,
                               p.state,
+                              p.postalCode,
+                              p.country,
                             ]
                               .filter(Boolean)
                               .join(", ");
