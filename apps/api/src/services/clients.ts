@@ -119,6 +119,7 @@ export const clients: ServicesClients = {
         properties: {
           select: {
             id: true,
+            kind: true,
             displayName: true,
             street1: true,
             street2: true,
