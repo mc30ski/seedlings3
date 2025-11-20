@@ -302,6 +302,16 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {forAdmin && (
                   <>
                     <StatusButton
+                      id={"client-addcontact"}
+                      itemId={c.id}
+                      label={"Add contact"}
+                      onClick={async () => openContactCreate(c.id)}
+                      variant={"solid"}
+                      disabled={loading}
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                    <StatusButton
                       id={"client-edit"}
                       itemId={c.id}
                       label={"Edit"}
@@ -331,7 +341,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         itemId={c.id}
                         label={"Archive"}
                         onClick={async () => await takeAction(c, "archive")}
-                        variant={"outline"}
+                        variant={"subtle"}
                         disabled={loading}
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
@@ -390,18 +400,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                     )}
                   </>
                 )}
-                {forAdmin && (
-                  <HStack gap={2}>
-                    <Button
-                      mt={2}
-                      size="sm"
-                      variant="subtle"
-                      onClick={() => openContactCreate(c.id)}
-                    >
-                      Add contact
-                    </Button>
-                  </HStack>
-                )}
                 <Accordion.Root collapsible w="full">
                   <Accordion.Item key={"contacts_" + c.id} value={"Contacts"}>
                     <Accordion.ItemTrigger>
@@ -435,18 +433,19 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                   gap={0}
                                   p={3}
                                 >
-                                  <StatusBadge
-                                    status={ct.role}
-                                    palette="gray"
-                                    variant="outline"
-                                  />
-                                  <HStack gap={2}>
+                                  <HStack w="100%">
                                     {ct.isPrimary && (
                                       <Icon as={FiStar} boxSize="4" />
                                     )}
                                     <Text fontWeight="medium">
                                       {`${ct.firstName} ${ct.lastName}`}
                                     </Text>
+                                    <Spacer />
+                                    <StatusBadge
+                                      status={ct.role}
+                                      palette="gray"
+                                      variant="outline"
+                                    />
                                   </HStack>
                                   <Text fontSize="sm" color="fg.muted">
                                     <MailLink
@@ -547,9 +546,17 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 gap={0}
                                 p={3}
                               >
-                                <Text fontSize="sm" color="fg.muted">
-                                  {p.displayName}
-                                </Text>
+                                <HStack w="100%">
+                                  <Text fontWeight="medium">
+                                    {p.displayName}
+                                  </Text>
+                                  <Spacer />
+                                  <StatusBadge
+                                    status={p.kind}
+                                    palette="gray"
+                                    variant="outline"
+                                  />
+                                </HStack>
                                 <MapLink address={address} />
                               </VStack>
                             ) : null;
