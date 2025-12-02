@@ -54,8 +54,24 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
 
-  type AdminTabs = "equipment" | "users" | "activity" | "clients" | "audit";
+  type AdminTabs =
+    | "equipment"
+    | "clients"
+    | "properties"
+    | "users"
+    | "activity"
+    | "jobs"
+    | "payments"
+    | "audit";
   const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
+
+  type WorkerTabs =
+    | "equipment"
+    | "clients"
+    | "properties"
+    | "jobs"
+    | "payments";
+  const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("equipment");
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -183,7 +199,8 @@ export default function HomePage() {
       content: (
         <ScrollableUnderlineTabs
           tabs={workerTabs}
-          defaultValue="equipment"
+          value={workerInnerTab}
+          onValueChange={(v) => setWorkerInnerTab(v as WorkerTabs)}
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={2}
@@ -243,6 +260,42 @@ export default function HomePage() {
       window.sessionStorage.removeItem(key);
     });
   }, [topTab, adminInnerTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOpenClientPropertySearch = (e: Event) => {
+      const { q, forAdmin } = (e as CustomEvent).detail || {};
+      if (!q) return;
+      setTopTab(forAdmin ? "admin" : "worker");
+      forAdmin
+        ? setAdminInnerTab("properties")
+        : setWorkerInnerTab("properties");
+      window.sessionStorage.setItem("open:clientPropertySearchOnce", String(q));
+    };
+    window.addEventListener(
+      "open:clientPropertySearch",
+      onOpenClientPropertySearch as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        "open:clientPropertySearch",
+        onOpenClientPropertySearch as EventListener
+      );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    //if (topTab !== "admin" || adminInnerTab !== "properties") return;
+    const key = "open:clientPropertySearchOnce";
+    const q = window.sessionStorage.getItem(key);
+    if (!q) return;
+    requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent("clientPropertySearch:run", { detail: { q } })
+      );
+      window.sessionStorage.removeItem(key);
+    });
+  }, [topTab, adminInnerTab, workerInnerTab]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

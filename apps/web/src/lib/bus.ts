@@ -4,3 +4,9 @@ export function openAdminEquipmentSearchOnce(q: string) {
     new CustomEvent("admin:openEquipmentSearch", { detail: { q } })
   );
 }
+
+export function openClientPropertySearch(q: string, forAdmin: boolean) {
+  window.dispatchEvent(
+    new CustomEvent("open:clientPropertySearch", { detail: { q, forAdmin } })
+  );
+}

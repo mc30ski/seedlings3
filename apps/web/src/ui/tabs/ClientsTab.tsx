@@ -23,7 +23,7 @@ import {
   CLIENT_STATUS,
 } from "@/src/lib/types";
 import { doAction, doDelete } from "@/src/lib/services";
-
+import { openClientPropertySearch } from "@/src/lib/bus";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -207,10 +207,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         text: getErrorMessage("Delete contact failed", err),
       });
     }
-  }
-
-  function viewAllProperties(clientId: string) {
-    router.push(`/app?tab=properties&clientId=${clientId}`);
   }
 
   if (!isAvail) return <UnavailableNotice />;
@@ -564,7 +560,9 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           <Button
                             size="xs"
                             variant="ghost"
-                            onClick={() => viewAllProperties(c.id)}
+                            onClick={() =>
+                              openClientPropertySearch(c.displayName, forAdmin)
+                            }
                           >
                             View all
                           </Button>
