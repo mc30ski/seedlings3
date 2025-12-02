@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
   Button,
@@ -63,6 +63,8 @@ export default function PropertiesTab({
   const [editing, setEditing] = useState<Property | null>(null);
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
 
+  const inputRef = useRef<HTMLInputElement>(null);
+
   // Helper variable to disable other buttons while actions are in flight.
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
@@ -103,6 +105,26 @@ export default function PropertiesTab({
     void load();
   }, [forAdmin]);
 
+  // Used to pre-populate the search with information
+  useEffect(() => {
+    const onRun = (ev: Event) => {
+      const { q } = (ev as CustomEvent<{ q?: string }>).detail || {};
+      if (typeof q === "string") {
+        setQ(q);
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        });
+      }
+    };
+    window.addEventListener("clientPropertySearch:run", onRun as EventListener);
+    return () =>
+      window.removeEventListener(
+        "clientPropertySearch:run",
+        onRun as EventListener
+      );
+  }, []);
+
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
     let rows = items;
@@ -133,6 +155,9 @@ export default function PropertiesTab({
           r.postalCode || "",
           r.country || "",
           r.accessNotes || "",
+          r.client?.displayName || "",
+          r.pointOfContact?.firstName || "",
+          r.pointOfContact?.lastName || "",
         ];
         return arr.map((i) => i.toLowerCase()).some((i) => i.includes(qlc));
       });
@@ -229,6 +254,7 @@ export default function PropertiesTab({
     <Box w="full">
       <HStack mb={3} gap={3}>
         <SearchWithClear
+          ref={inputRef}
           value={q}
           onChange={setQ}
           inputId="properties-search"
