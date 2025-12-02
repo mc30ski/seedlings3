@@ -11,7 +11,7 @@ import {
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import { equipmentStatusColor, prettyStatus, prettyDate } from "@/src/lib/lib";
-import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
+import { openEventSearch } from "@/src/lib/bus";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
@@ -68,7 +68,13 @@ function DetailsBlock({ details }: { details?: Record<string, any> | null }) {
               </Text>
               <Text
                 as="button"
-                onClick={() => openAdminEquipmentSearchOnce(details.qrSlug)}
+                onClick={() =>
+                  openEventSearch(
+                    "activityTavToEquipmentTabQRCodeSearch",
+                    details.qrSlug,
+                    true
+                  )
+                }
                 color="blue.600"
                 textDecoration="underline"
                 _hover={{ color: "blue.700" }}

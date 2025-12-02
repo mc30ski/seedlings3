@@ -23,6 +23,7 @@ import {
   equipmentStatusColor,
 } from "@/src/lib/lib";
 import { TabPropsType, EquipmentStatus, Equipment } from "@/src/lib/types";
+import { onEventSearchRun } from "@/src/lib/bus";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -108,21 +109,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     void load();
   }, [forAdmin]);
 
-  // Used to pre-populate the search with information (e.g. QR slug)
   useEffect(() => {
-    const onRun = (ev: Event) => {
-      const { q } = (ev as CustomEvent<{ q?: string }>).detail || {};
-      if (typeof q === "string") {
-        setQ(q);
-        requestAnimationFrame(() => {
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        });
-      }
-    };
-    window.addEventListener("equipmentSearch:run", onRun as EventListener);
-    return () =>
-      window.removeEventListener("equipmentSearch:run", onRun as EventListener);
+    onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
   }, []);
 
   // Filtered items based on search, kind or status.

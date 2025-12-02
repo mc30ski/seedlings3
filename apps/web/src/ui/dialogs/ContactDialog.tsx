@@ -10,7 +10,7 @@ import {
   Select,
   Text,
   VStack,
-  Switch,
+  Checkbox,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
@@ -304,6 +304,15 @@ export default function ClientDialog({
                     placeholder="15551234567"
                   />
                 </div>
+                <Checkbox.Root
+                  checked={isPrimary}
+                  onCheckedChange={(e) => setIsPrimary(!!e.checked)}
+                  disabled={false}
+                >
+                  <Checkbox.HiddenInput />
+                  <Checkbox.Control />
+                  <Checkbox.Label>Primary point of contact</Checkbox.Label>
+                </Checkbox.Root>
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

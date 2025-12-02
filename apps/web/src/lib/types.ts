@@ -1,5 +1,28 @@
 export type Role = "SUPER" | "ADMIN" | "WORKER";
 
+export type AdminTabs =
+  | "equipment"
+  | "clients"
+  | "properties"
+  | "users"
+  | "activity"
+  | "jobs"
+  | "payments"
+  | "audit";
+
+export type WorkerTabs =
+  | "equipment"
+  | "clients"
+  | "properties"
+  | "jobs"
+  | "payments";
+
+export type EventTypes =
+  | "clientTabToPropertiesTabSearch"
+  | "propertyTabToClientTabSearch"
+  | "propertyTabToClientTabContactSearch"
+  | "activityTavToEquipmentTabQRCodeSearch";
+
 export type DialogMode = "CREATE" | "UPDATE";
 
 export type Me = {

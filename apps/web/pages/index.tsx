@@ -21,7 +21,7 @@ import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import InlineMessage from "@/src/ui/components/InlineMessage";
 
-import { Me, Role } from "@/src/lib/types";
+import { Me, Role, AdminTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
   FiBriefcase,
   FiTool,
@@ -54,23 +54,7 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
 
-  type AdminTabs =
-    | "equipment"
-    | "clients"
-    | "properties"
-    | "users"
-    | "activity"
-    | "jobs"
-    | "payments"
-    | "audit";
   const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
-
-  type WorkerTabs =
-    | "equipment"
-    | "clients"
-    | "properties"
-    | "jobs"
-    | "payments";
   const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("equipment");
 
   const loadMe = useCallback(async () => {
@@ -227,75 +211,44 @@ export default function HomePage() {
     },
   ];
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onOpenEquipmentSearch = (e: Event) => {
-      const { q } = (e as CustomEvent).detail || {};
+  const setupSearchEvent = (
+    eventName: EventTypes,
+    tabName: AdminTabs & WorkerTabs
+  ) => {
+    useEffect(() => {
+      if (typeof window === "undefined") return;
+      const onEvent = (e: Event) => {
+        const { q, forAdmin } = (e as CustomEvent).detail || {};
+        if (!q) return;
+        setTopTab(forAdmin ? "admin" : "worker");
+        forAdmin ? setAdminInnerTab(tabName) : setWorkerInnerTab(tabName);
+        window.sessionStorage.setItem(`open:${eventName}Once`, String(q));
+      };
+      window.addEventListener(`open:${eventName}`, onEvent as EventListener);
+      return () =>
+        window.removeEventListener(
+          `open:${eventName}`,
+          onEvent as EventListener
+        );
+    }, []);
+    useEffect(() => {
+      if (typeof window === "undefined") return;
+      const key = `open:${eventName}Once`;
+      const q = window.sessionStorage.getItem(key);
       if (!q) return;
-      setTopTab("admin");
-      setAdminInnerTab("equipment");
-      window.sessionStorage.setItem("admin:equipmentSearchOnce", String(q));
-    };
-    window.addEventListener(
-      "admin:openEquipmentSearch",
-      onOpenEquipmentSearch as EventListener
-    );
-    return () =>
-      window.removeEventListener(
-        "admin:openEquipmentSearch",
-        onOpenEquipmentSearch as EventListener
-      );
-  }, []);
+      requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent(`${eventName}:run`, { detail: { q } })
+        );
+        window.sessionStorage.removeItem(key);
+      });
+    }, [topTab, adminInnerTab, workerInnerTab]);
+  };
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (topTab !== "admin" || adminInnerTab !== "equipment") return;
-    const key = "admin:equipmentSearchOnce";
-    const q = window.sessionStorage.getItem(key);
-    if (!q) return;
-    requestAnimationFrame(() => {
-      window.dispatchEvent(
-        new CustomEvent("equipmentSearch:run", { detail: { q } })
-      );
-      window.sessionStorage.removeItem(key);
-    });
-  }, [topTab, adminInnerTab]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onOpenClientPropertySearch = (e: Event) => {
-      const { q, forAdmin } = (e as CustomEvent).detail || {};
-      if (!q) return;
-      setTopTab(forAdmin ? "admin" : "worker");
-      forAdmin
-        ? setAdminInnerTab("properties")
-        : setWorkerInnerTab("properties");
-      window.sessionStorage.setItem("open:clientPropertySearchOnce", String(q));
-    };
-    window.addEventListener(
-      "open:clientPropertySearch",
-      onOpenClientPropertySearch as EventListener
-    );
-    return () =>
-      window.removeEventListener(
-        "open:clientPropertySearch",
-        onOpenClientPropertySearch as EventListener
-      );
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    //if (topTab !== "admin" || adminInnerTab !== "properties") return;
-    const key = "open:clientPropertySearchOnce";
-    const q = window.sessionStorage.getItem(key);
-    if (!q) return;
-    requestAnimationFrame(() => {
-      window.dispatchEvent(
-        new CustomEvent("clientPropertySearch:run", { detail: { q } })
-      );
-      window.sessionStorage.removeItem(key);
-    });
-  }, [topTab, adminInnerTab, workerInnerTab]);
+  setupSearchEvent("clientTabToPropertiesTabSearch", "properties");
+  setupSearchEvent("propertyTabToClientTabSearch", "clients");
+  setupSearchEvent("propertyTabToClientTabContactSearch", "clients");
+  setupSearchEvent("activityTavToEquipmentTabQRCodeSearch", "equipment");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
