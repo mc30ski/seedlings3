@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Card,
+  Link,
   HStack,
   Spacer,
   Text,
@@ -24,6 +25,7 @@ import {
   PROPERTY_STATUS,
   type Property,
 } from "@/src/lib/types";
+import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -37,7 +39,7 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
-import { MapLink } from "@/src/ui/helpers/Link";
+import { TextLink, MapLink } from "@/src/ui/helpers/Link";
 
 // Constant representing the kind states for this entity.
 const kindStates = ["ALL", ...PROPERTY_KIND] as const;
@@ -105,24 +107,8 @@ export default function PropertiesTab({
     void load();
   }, [forAdmin]);
 
-  // Used to pre-populate the search with information
   useEffect(() => {
-    const onRun = (ev: Event) => {
-      const { q } = (ev as CustomEvent<{ q?: string }>).detail || {};
-      if (typeof q === "string") {
-        setQ(q);
-        requestAnimationFrame(() => {
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        });
-      }
-    };
-    window.addEventListener("clientPropertySearch:run", onRun as EventListener);
-    return () =>
-      window.removeEventListener(
-        "clientPropertySearch:run",
-        onRun as EventListener
-      );
+    onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef);
   }, []);
 
   // Filtered items based on search, kind or status.
@@ -340,19 +326,39 @@ export default function PropertiesTab({
                   />
                 </HStack>
               </Card.Header>
+
               <Card.Body pt="0">
                 <VStack align="start" gap={1}>
                   <MapLink address={address} />
                   <Text fontSize="sm">
-                    Client: <b>{p.client?.displayName ?? p.clientId}</b>
+                    Client:{" "}
+                    <TextLink
+                      text={p.client?.displayName ?? p.clientId}
+                      onClick={() =>
+                        openEventSearch(
+                          "propertyTabToClientTabSearch",
+                          p.client?.displayName,
+                          forAdmin
+                        )
+                      }
+                    />
                   </Text>
                   <Text fontSize="sm">
                     Default contact:{" "}
-                    <b>
-                      {p.pointOfContactId
-                        ? `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`
-                        : "None"}
-                    </b>
+                    {p.pointOfContactId ? (
+                      <TextLink
+                        text={`${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`}
+                        onClick={() =>
+                          openEventSearch(
+                            "propertyTabToClientTabContactSearch",
+                            `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
+                            forAdmin
+                          )
+                        }
+                      />
+                    ) : (
+                      "None"
+                    )}
                   </Text>
                 </VStack>
               </Card.Body>

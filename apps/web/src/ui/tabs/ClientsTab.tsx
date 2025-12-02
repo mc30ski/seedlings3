@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Box,
   Button,
@@ -23,7 +23,7 @@ import {
   CLIENT_STATUS,
 } from "@/src/lib/types";
 import { doAction, doDelete } from "@/src/lib/services";
-import { openClientPropertySearch } from "@/src/lib/bus";
+import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -72,6 +72,8 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     null
   );
 
+  const inputRef = useRef<HTMLInputElement>(null);
+
   // Helper variable to disable other buttons while actions are in flight.
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
@@ -112,6 +114,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     void load();
   }, [forAdmin]);
 
+  useEffect(() => {
+    onEventSearchRun("propertyTabToClientTabSearch", setQ, inputRef);
+    onEventSearchRun("propertyTabToClientTabContactSearch", setQ, inputRef);
+  }, []);
+
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
     let rows = items;
@@ -137,6 +144,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           haystack.push(
             ct.firstName || "",
             ct.lastName || "",
+            `${ct.firstName || ""} ${ct.lastName || ""}`,
             ct.email || "",
             ct.phone || "",
             ct.role || ""
@@ -216,6 +224,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     <Box w="full">
       <HStack mb={3} gap={3}>
         <SearchWithClear
+          ref={inputRef}
           value={q}
           onChange={setQ}
           inputId="properties-search"
@@ -300,7 +309,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                     <StatusButton
                       id={"client-addcontact"}
                       itemId={c.id}
-                      label={"Add contact"}
+                      label={"Add"}
                       onClick={async () => openContactCreate(c.id)}
                       variant={"solid"}
                       disabled={loading}
@@ -561,7 +570,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                             size="xs"
                             variant="ghost"
                             onClick={() =>
-                              openClientPropertySearch(c.displayName, forAdmin)
+                              openEventSearch(
+                                "clientTabToPropertiesTabSearch",
+                                c.displayName,
+                                forAdmin
+                              )
                             }
                           >
                             View all

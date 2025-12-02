@@ -1,5 +1,25 @@
 import { Link, Text } from "@chakra-ui/react";
 
+export function TextLink({
+  text,
+  onClick,
+}: {
+  text: string;
+  onClick: () => void;
+}) {
+  return (
+    <Text
+      as="button"
+      textDecoration="underline"
+      color="blue.600"
+      _hover={{ color: "blue.800" }}
+      onClick={() => onClick()}
+    >
+      {text}
+    </Text>
+  );
+}
+
 export function MailLink({
   to,
   subject,
