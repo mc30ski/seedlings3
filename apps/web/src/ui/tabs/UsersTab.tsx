@@ -12,7 +12,7 @@ import {
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
-import { openAdminEquipmentSearchOnce } from "@/src/lib/bus";
+import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
@@ -589,7 +589,11 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     <Badge
                       key={h.equipmentId}
                       onClick={() =>
-                        openAdminEquipmentSearchOnce(h.qrSlug || "")
+                        openEventSearch(
+                          "activityTavToEquipmentTabQRCodeSearch",
+                          h.qrSlug || "",
+                          true
+                        )
                       }
                       variant="subtle"
                       colorPalette={equipmentStatusColor(h.state)}
