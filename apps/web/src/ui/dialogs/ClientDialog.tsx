@@ -84,7 +84,7 @@ export default function ClientDialog({
   );
 
   function ableToSave() {
-    return displayName && statusValue && kindValue;
+    return statusValue && kindValue && displayName;
   }
 
   // seed form when opening/switching modes/records
@@ -113,7 +113,7 @@ export default function ClientDialog({
     }
 
     const payload = {
-      kind: (kindValue[0] as ClientKind) ?? CLIENT_KIND[0],
+      type: (kindValue[0] as ClientKind) ?? CLIENT_KIND[0],
       status: (statusValue[0] as ClientStatus) ?? CLIENT_STATUS[0],
       displayName: displayName.trim(),
       notesInternal: notesInternal || null,
@@ -180,14 +180,6 @@ export default function ClientDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <div>
-                  <Text mb="1">Client display name *</Text>
-                  <Input
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="e.g., John Smith"
-                  />
-                </div>
                 <HStack gap={3}>
                   <div style={{ flex: 1 }}>
                     <Text mb="1">Status *</Text>
@@ -248,6 +240,14 @@ export default function ClientDialog({
                     </Select.Root>
                   </div>
                 </HStack>
+                <div>
+                  <Text mb="1">Client display name *</Text>
+                  <Input
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="e.g., John Smith"
+                  />
+                </div>
                 <div>
                   <Text mb="1">Notes</Text>
                   <Textarea

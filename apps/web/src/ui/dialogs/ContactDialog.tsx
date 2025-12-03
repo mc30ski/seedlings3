@@ -93,6 +93,8 @@ export default function ClientDialog({
 
   function ableToSave() {
     return (
+      statusValue &&
+      kindValue &&
       firstName &&
       lastName &&
       email &&
@@ -107,9 +109,7 @@ export default function ClientDialog({
     if (!open) return;
     if (mode === "UPDATE" && initial) {
       setKindValue([initial.role ?? CONTACT_KIND[0]]);
-      //TODO:
-      //setStatusValue([initial.status ?? CONTACT_STATUS[0]]);
-      setStatusValue([CONTACT_STATUS[0]]);
+      setStatusValue([initial.status ?? CONTACT_STATUS[0]]);
       setFirstName(initial.firstName ?? "");
       setLastName(initial.lastName ?? "");
       setEmail(initial.email ?? "");

@@ -10,6 +10,8 @@ export async function action<T>(
   audit: AuditTuple
 ) {
   let record = null;
+
+  console.log("HERE", id, table, state);
   await prisma.$transaction(async (tx) => {
     record = await (tx as any)[table].update({
       where: { id },

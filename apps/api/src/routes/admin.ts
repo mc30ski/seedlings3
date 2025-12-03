@@ -227,6 +227,34 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  app.post("/admin/contacts/:id/pause", adminGuard, async (req: any) => {
+    return services.clients.pauseContact(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/contacts/:id/unpause", adminGuard, async (req: any) => {
+    return services.clients.unpauseContact(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/contacts/:id/archive", adminGuard, async (req: any) => {
+    return services.clients.archiveContact(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
+  app.post("/admin/contacts/:id/unarchive", adminGuard, async (req: any) => {
+    return services.clients.unarchiveContact(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
   app.delete(
     "/admin/clients/:id/contacts/:contactId",
     adminGuard,
