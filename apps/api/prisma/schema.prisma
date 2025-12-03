@@ -166,12 +166,11 @@ enum ContactRole {
   OTHER
 }
 
-// ----- Post-MVP (uncomment when you add worker submissions/approvals) -----
-// enum ReviewStatus {
-//   PENDING
-//   APPROVED
-//   REJECTED
-// }
+enum ContactStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
 
 enum PropertyStatus {
    PENDING
@@ -191,15 +190,6 @@ model Client {
 
   status        ClientStatus @default(ACTIVE)
 
-  // MVP: Admin-only creation; approvals removed.
-  // ----- Post-MVP approvals (uncomment to re-enable) -----
-  // reviewStatus         ReviewStatus?
-  // reviewReason         String?
-  // createdByUserId      String?       // who created (worker/admin user id)
-  // lastReviewedByUserId String?
-  // lastReviewedAt       DateTime?
-
-  // Lightweight meta
   notesInternal String?
 
   // Relations
@@ -218,6 +208,8 @@ model Client {
 model ClientContact {
   id               String      @id @default(cuid())
 
+  status           ContactStatus @default(ACTIVE)
+
   // Belongs to Client
   clientId         String
   client           Client      @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -231,6 +223,7 @@ model ClientContact {
 
   role             ContactRole?
   isPrimary        Boolean     @default(false)
+
   active           Boolean     @default(true)
 
   createdAt        DateTime    @default(now())

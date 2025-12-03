@@ -191,6 +191,17 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     );
   }
 
+  async function takeActionContact(c: Contact, action: string) {
+    return await doAction(
+      c,
+      "Contact",
+      "contacts",
+      action,
+      "email",
+      async () => await load(false)
+    );
+  }
+
   async function deleteAction(id: string, displayName: string) {
     return await doDelete(
       id,
@@ -340,18 +351,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
-                    {(c.status === "ACTIVE" || c.status === "PAUSED") && (
-                      <StatusButton
-                        id={"client-archive"}
-                        itemId={c.id}
-                        label={"Archive"}
-                        onClick={async () => await takeAction(c, "archive")}
-                        variant={"subtle"}
-                        disabled={loading}
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
                     {c.status === "PAUSED" && (
                       <StatusButton
                         id={"client-unpaused"}
@@ -359,6 +358,18 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         label={"Unpause"}
                         onClick={async () => await takeAction(c, "unpause")}
                         variant={"outline"}
+                        disabled={loading}
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {c.status === "PAUSED" && (
+                      <StatusButton
+                        id={"client-archive"}
+                        itemId={c.id}
+                        label={"Archive"}
+                        onClick={async () => await takeAction(c, "archive")}
+                        variant={"subtle"}
                         disabled={loading}
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
@@ -445,6 +456,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                     <Text fontWeight="medium">
                                       {`${ct.firstName} ${ct.lastName}`}
                                     </Text>
+                                    <StatusBadge
+                                      status={ct.status}
+                                      palette={clientStatusColor(ct.status)}
+                                      variant="subtle"
+                                    />
                                     <Spacer />
                                     <StatusBadge
                                       status={ct.role}
@@ -466,42 +482,115 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                   </Text>
                                   {forAdmin && (
                                     <HStack gap={2} mt={3}>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() =>
-                                          openContactEdit(c.id, ct)
-                                        }
-                                      >
-                                        Edit
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        colorPalette="red"
-                                        onClick={() =>
-                                          void setToDeleteContact({
-                                            id: c.id,
-                                            child: ct.id,
-                                            title:
-                                              "Delete contact from client?",
-                                            summary: `${ct.firstName} ${ct.lastName}`,
-                                            disabled: me?.roles?.includes(
-                                              "SUPER"
+                                      <StatusButton
+                                        id={"contact-edit"}
+                                        itemId={ct.id}
+                                        label={"Edit"}
+                                        onClick={async () => {
+                                          await openContactEdit(c.id, ct);
+                                        }}
+                                        variant={"outline"}
+                                        disabled={loading}
+                                        busyId={statusButtonBusyId}
+                                        setBusyId={setStatusButtonBusyId}
+                                      />
+                                      {ct.status === "ACTIVE" && (
+                                        <StatusButton
+                                          id={"contact-paused"}
+                                          itemId={ct.id}
+                                          label={"Pause"}
+                                          onClick={async () =>
+                                            await takeActionContact(ct, "pause")
+                                          }
+                                          variant={"outline"}
+                                          disabled={loading}
+                                          busyId={statusButtonBusyId}
+                                          setBusyId={setStatusButtonBusyId}
+                                        />
+                                      )}
+                                      {ct.status === "PAUSED" && (
+                                        <StatusButton
+                                          id={"contact-unpaused"}
+                                          itemId={ct.id}
+                                          label={"Unpause"}
+                                          onClick={async () =>
+                                            await takeActionContact(
+                                              ct,
+                                              "unpause"
                                             )
-                                              ? false
-                                              : true,
-                                            details: (
-                                              <Text color="red.500">
-                                                You must be a Super Admin to
-                                                delete.
-                                              </Text>
-                                            ),
-                                          })
-                                        }
-                                      >
-                                        Delete
-                                      </Button>
+                                          }
+                                          variant={"outline"}
+                                          disabled={loading}
+                                          busyId={statusButtonBusyId}
+                                          setBusyId={setStatusButtonBusyId}
+                                        />
+                                      )}
+                                      {ct.status === "PAUSED" && (
+                                        <StatusButton
+                                          id={"contact-archive"}
+                                          itemId={ct.id}
+                                          label={"Archive"}
+                                          onClick={async () =>
+                                            await takeActionContact(
+                                              ct,
+                                              "archive"
+                                            )
+                                          }
+                                          variant={"subtle"}
+                                          disabled={loading}
+                                          busyId={statusButtonBusyId}
+                                          setBusyId={setStatusButtonBusyId}
+                                        />
+                                      )}
+                                      {ct.status === "ARCHIVED" && (
+                                        <>
+                                          <StatusButton
+                                            id={"contact-unarchive"}
+                                            itemId={ct.id}
+                                            label={"Unarchive"}
+                                            onClick={async () =>
+                                              await takeActionContact(
+                                                ct,
+                                                "unarchive"
+                                              )
+                                            }
+                                            variant={"outline"}
+                                            disabled={loading}
+                                            busyId={statusButtonBusyId}
+                                            setBusyId={setStatusButtonBusyId}
+                                          />
+                                          <StatusButton
+                                            id={"contact-delete"}
+                                            itemId={ct.id}
+                                            label={"Delete"}
+                                            onClick={async () => {
+                                              void setToDeleteContact({
+                                                id: c.id,
+                                                child: ct.id,
+                                                title:
+                                                  "Delete contact from client?",
+                                                summary: `${ct.firstName} ${ct.lastName}`,
+                                                disabled: me?.roles?.includes(
+                                                  "SUPER"
+                                                )
+                                                  ? false
+                                                  : true,
+                                                details: (
+                                                  <Text color="red.500">
+                                                    You must be a Super Admin to
+                                                    delete.
+                                                  </Text>
+                                                ),
+                                              });
+                                            }}
+                                            variant={"outline"}
+                                            disabled={loading}
+                                            colorPalette={"red"}
+                                            busyId={statusButtonBusyId}
+                                            setBusyId={setStatusButtonBusyId}
+                                          />
+                                        </>
+                                      )}
                                     </HStack>
                                   )}
                                 </VStack>

@@ -280,13 +280,29 @@ export type ServicesClients = {
     currentUserId: string,
     clientId: string,
     payload: ContactUpsert
-  ): Promise<ClientContact>;
+  ): Promise<ClientContact | null>;
   updateContact(
     currentUserId: string,
-    clientId: string,
+    id: string,
     contactId: string,
     payload: ContactUpsert
-  ): Promise<ClientContact>;
+  ): Promise<ClientContact | null>;
+  pauseContact(
+    currentUserId: string,
+    id: string
+  ): Promise<ClientContact | null>;
+  unpauseContact(
+    currentUserId: string,
+    id: string
+  ): Promise<ClientContact | null>;
+  archiveContact(
+    currentUserId: string,
+    id: string
+  ): Promise<ClientContact | null>;
+  unarchiveContact(
+    currentUserId: string,
+    id: string
+  ): Promise<ClientContact | null>;
   deleteContact(
     currentUserId: string,
     clientId: string,

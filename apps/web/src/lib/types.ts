@@ -160,6 +160,7 @@ export type ClientStatus = (typeof CLIENT_STATUS)[number];
 
 export type Contact = {
   id: string;
+  status: ContactStatus;
   clientId: string;
   role: string;
   active: boolean;
@@ -186,5 +187,5 @@ export const CONTACT_KIND = [
 ] as const;
 export type ContactKind = (typeof CONTACT_KIND)[number];
 
-export const CONTACT_STATUS = ["ACTIVE", "INACTIVE"] as const;
+export const CONTACT_STATUS = ["ACTIVE", "PAUSED", "ARCHIVED"] as const;
 export type ContactStatus = (typeof CONTACT_STATUS)[number];

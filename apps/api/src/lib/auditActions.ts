@@ -39,6 +39,10 @@ export const AUDIT = {
 
     CONTACT_CREATED: [AuditScope.CLIENT, AuditVerb.CREATED] as const,
     CONTACT_UPDATED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    CONTACT_PAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    CONTACT_UNPAUSED: [AuditScope.CLIENT, AuditVerb.UPDATED] as const,
+    CONTACT_ARCHIVED: [AuditScope.CLIENT, AuditVerb.RETIRED] as const, // using RETIRED to mean archived
+    CONTACT_UNARCHIVED: [AuditScope.CLIENT, AuditVerb.UNRETIRED] as const,
     CONTACT_DELETED: [AuditScope.CLIENT, AuditVerb.DELETED] as const,
   },
   PROPERTY: {

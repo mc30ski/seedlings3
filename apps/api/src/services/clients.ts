@@ -1,5 +1,10 @@
 import { prisma } from "../db/prisma";
-import { Prisma, ClientStatus, ContactRole } from "@prisma/client";
+import {
+  Prisma,
+  ClientStatus,
+  ContactRole,
+  ContactStatus,
+} from "@prisma/client";
 import type { ServicesClients } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
@@ -14,6 +19,7 @@ function normalizePhone(raw?: string | null): string | null {
 
 // Accept either { firstName,lastName } or a single { name } and split it.
 function normalizeContactPayload(payload: any): {
+  status: ContactStatus;
   firstName: string;
   lastName: string;
   email: string | null;
@@ -45,6 +51,7 @@ function normalizeContactPayload(payload: any): {
   }
 
   return {
+    status: payload.status ?? "ACTIVE",
     firstName: first,
     lastName: last,
     email: payload.email ?? null,
@@ -98,6 +105,7 @@ export const clients: ServicesClients = {
         contacts: {
           select: {
             id: true,
+            status: true,
             firstName: true,
             lastName: true,
             role: true,
@@ -109,6 +117,7 @@ export const clients: ServicesClients = {
           },
           orderBy: [
             { isPrimary: "desc" }, // primary first
+            { status: "desc" }, // then status
             { active: "desc" }, // then active
             { updatedAt: "desc" },
             { createdAt: "desc" },
@@ -259,6 +268,7 @@ export const clients: ServicesClients = {
     const cp = normalizeContactPayload(payload);
     const data = {
       clientId,
+      status: cp.status ?? "ACTIVE",
       firstName: cp.firstName,
       lastName: cp.lastName,
       email: cp.email,
@@ -293,6 +303,7 @@ export const clients: ServicesClients = {
   ) {
     const cp = normalizeContactPayload(payload);
     const data = {
+      status: cp.status,
       firstName: cp.firstName,
       lastName: cp.lastName,
       email: cp.email,
@@ -321,6 +332,48 @@ export const clients: ServicesClients = {
 
       return updated;
     });
+  },
+
+  //TODO: DO CREATE, UPDATE, DELETE TOO?
+
+  async pauseContact(currentUserId: string, id: string) {
+    return action<ContactStatus>(
+      currentUserId,
+      id,
+      "clientContact",
+      ContactStatus.PAUSED,
+      AUDIT.CLIENT.CONTACT_PAUSED
+    );
+  },
+
+  async unpauseContact(currentUserId: string, id: string) {
+    return action<ContactStatus>(
+      currentUserId,
+      id,
+      "clientContact",
+      ContactStatus.ACTIVE,
+      AUDIT.CLIENT.CONTACT_UNPAUSED
+    );
+  },
+
+  async archiveContact(currentUserId: string, id: string) {
+    return action<ContactStatus>(
+      currentUserId,
+      id,
+      "clientContact",
+      ContactStatus.ARCHIVED,
+      AUDIT.CLIENT.CONTACT_ARCHIVED
+    );
+  },
+
+  async unarchiveContact(currentUserId: string, id: string) {
+    return action<ContactStatus>(
+      currentUserId,
+      id,
+      "clientContact",
+      ContactStatus.ACTIVE,
+      AUDIT.CLIENT.CONTACT_UNARCHIVED
+    );
   },
 
   async deleteContact(
