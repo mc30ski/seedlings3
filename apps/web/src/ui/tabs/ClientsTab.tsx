@@ -434,14 +434,14 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                             ?.toSorted(
                               (a: any, b: any) =>
                                 +(b.isPrimary ?? false) -
-                                  +(a.isPrimary ?? false) ||
-                                +(b.active ?? false) - +(a.active ?? false)
+                                +(a.isPrimary ?? false)
                             )
-                            .filter((ct: any) => isAdmin || ct.active)
+                            .filter(
+                              (ct: any) => isAdmin || ct.status === "ACTIVE"
+                            )
                             .map((ct: any) => {
-                              return forAdmin || ct.active ? (
+                              return forAdmin || ct.status === "ACTIVE" ? (
                                 <VStack
-                                  opacity={ct.active ? 1.0 : 0.5}
                                   align="start"
                                   w="100%"
                                   borderWidth="1px"
