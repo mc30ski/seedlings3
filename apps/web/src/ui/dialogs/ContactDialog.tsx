@@ -143,8 +143,6 @@ export default function ClientDialog({
       email: email.trim(),
       phone: phone.trim(),
       isPrimary,
-      // TODO: need to change to status
-      active: true,
     };
 
     setBusy(true);

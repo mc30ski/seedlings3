@@ -22,6 +22,7 @@ export type ClientListItem = Client & {
     Pick<
       ClientContact,
       | "id"
+      | "status"
       | "firstName"
       | "lastName"
       | "role"
@@ -29,7 +30,6 @@ export type ClientListItem = Client & {
       | "phone"
       | "normalizedPhone"
       | "isPrimary"
-      | "active"
     >
   >;
   // small properties preview
@@ -40,6 +40,7 @@ export type ClientListItem = Client & {
   primaryContact?: Pick<
     ClientContact,
     | "id"
+    | "status"
     | "firstName"
     | "lastName"
     | "role"
@@ -47,7 +48,6 @@ export type ClientListItem = Client & {
     | "phone"
     | "normalizedPhone"
     | "isPrimary"
-    | "active"
   > | null;
 };
 
@@ -60,7 +60,7 @@ export type ClientUpsert = Pick<
 
 export type ContactUpsert = Pick<
   ClientContact,
-  "firstName" | "lastName" | "email" | "phone" | "role" | "isPrimary" | "active"
+  "status" | "firstName" | "lastName" | "email" | "phone" | "role" | "isPrimary"
 > & { id?: string };
 
 export type Role = "SUPER" | "ADMIN" | "WORKER";

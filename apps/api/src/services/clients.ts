@@ -27,7 +27,6 @@ function normalizeContactPayload(payload: any): {
   normalizedPhone: string | null;
   role: ContactRole | null;
   isPrimary: boolean;
-  active: boolean;
 } {
   let first = (payload.firstName ?? "").trim();
   let last = (payload.lastName ?? "").trim();
@@ -59,7 +58,6 @@ function normalizeContactPayload(payload: any): {
     normalizedPhone,
     role,
     isPrimary: !!payload.isPrimary,
-    active: payload.active ?? true,
   };
 }
 
@@ -101,7 +99,6 @@ export const clients: ServicesClients = {
       include: {
         _count: { select: { contacts: true, properties: true } },
 
-        // full contacts list; UI can filter inactive
         contacts: {
           select: {
             id: true,
@@ -113,12 +110,10 @@ export const clients: ServicesClients = {
             phone: true,
             normalizedPhone: true,
             isPrimary: true,
-            active: true,
           },
           orderBy: [
             { isPrimary: "desc" }, // primary first
             { status: "desc" }, // then status
-            { active: "desc" }, // then active
             { updatedAt: "desc" },
             { createdAt: "desc" },
           ],
@@ -147,10 +142,7 @@ export const clients: ServicesClients = {
     return rows.map((c) => {
       const { _count, ...client } = c;
       const primaryContact =
-        c.contacts.find((ct) => ct.isPrimary) ??
-        c.contacts.find((ct) => ct.active) ??
-        c.contacts[0] ??
-        null;
+        c.contacts.find((ct) => ct.isPrimary) ?? c.contacts[0] ?? null;
 
       return {
         ...client,
@@ -276,7 +268,6 @@ export const clients: ServicesClients = {
       normalizedPhone: cp.normalizedPhone,
       role: cp.role,
       isPrimary: cp.isPrimary,
-      active: cp.active,
     };
     return prisma.$transaction(async (tx) => {
       const contact = await tx.clientContact.create({
@@ -311,7 +302,6 @@ export const clients: ServicesClients = {
       normalizedPhone: cp.normalizedPhone,
       role: cp.role,
       isPrimary: cp.isPrimary,
-      active: cp.active,
     };
     return prisma.$transaction(async (tx) => {
       const updated = await tx.clientContact.update({

@@ -224,8 +224,6 @@ model ClientContact {
   role             ContactRole?
   isPrimary        Boolean     @default(false)
 
-  active           Boolean     @default(true)
-
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
@@ -233,7 +231,7 @@ model ClientContact {
 
   // Backref from Property.pointOfContactId targets this model
 
-  @@index([clientId, active])
+  @@index([clientId, status])
   // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
   @@unique([email])
   @@unique([normalizedPhone])
