@@ -66,6 +66,10 @@ model User {
 
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  jobDefaultAssignments     JobAssigneeDefault[]
+  jobOccurrenceAssignments  JobOccurrenceAssignee[]
+  jobAssignmentAuditActor   JobOccurrenceAssignee[] @relation("JobAssignActor")
 }
 
 model UserRole {
@@ -178,11 +182,6 @@ enum PropertyStatus {
    ARCHIVED
 }
 
-// enum JobScope {
-//   ENTIRE_SITE
-//   SINGLE_ADDRESS
-// }
-
 model Client {
   id            String       @id @default(cuid())
   type          ClientType
@@ -192,14 +191,15 @@ model Client {
 
   notesInternal String?
 
-  // Relations
-  contacts      ClientContact[]
-  properties    Property[]
-
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   //TODO: NOT BEING USED YET, BUT SHOULD MAKE ALL ENTITIES BE RETIRED/ARCHIVED
   archivedAt    DateTime?
+
+  // Relations
+  contacts      ClientContact[]
+  properties    Property[]
+  jobClients    JobClient[]
 
   @@index([status])
   @@index([displayName])
@@ -230,6 +230,8 @@ model ClientContact {
   propertiesAsPOC  Property[]  @relation("PropertyPOC")
 
   // Backref from Property.pointOfContactId targets this model
+
+  jobContacts JobContact[]
 
   @@index([clientId, status])
   // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
@@ -278,7 +280,9 @@ model Property {
   updatedAt          DateTime       @updatedAt
   archivedAt         DateTime?
 
-  status           PropertyStatus @default(PENDING)
+  status            PropertyStatus @default(PENDING)
+
+  jobs              Job[]
 
   @@index([clientId])
   @@index([kind])
@@ -298,37 +302,175 @@ model Property {
 //   @@index([propertyId, active])
 // }
 
-// ----- Post-MVP: Jobs & related joins (designed to drop in later) -----
-// model Job {
-//   id          String    @id @default(cuid())
-//   propertyId  String
-//   property    Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-//   scope       JobScope? // ENTIRE_SITE | SINGLE_ADDRESS (optional)
-//   // add scheduling, pricing, status fields as needed
-//   createdAt   DateTime  @default(now())
-//   updatedAt   DateTime  @updatedAt
-//   contacts    JobContact[]
-//   clients     JobClient[]
-// }
-// model JobContact {
-//   id              String         @id @default(cuid())
-//   jobId           String
-//   job             Job            @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-//   clientContactId String
-//   clientContact   ClientContact  @relation(fields: [clientContactId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-//   role            String         // e.g., "decision_maker" | "on_site" | "notify_only"
-//   notify          Boolean        @default(true)
-//   @@index([jobId])
-//   @@index([clientContactId])
-// }
-// model JobClient {
-//   id        String   @id @default(cuid())
-//   jobId     String
-//   job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-//   clientId  String
-//   client    Client   @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-//   role      String   // e.g., "owner" | "payer" | "point_of_contact"
-//   share     Float?   // optional split % if you ever need it
-//   @@index([jobId])
-//   @@index([clientId])
-// }
+enum JobKind {
+  ENTIRE_SITE
+  SINGLE_ADDRESS
+}
+
+enum JobStatus {
+  PROPOSED
+  ACCEPTED
+}
+
+enum Cadence {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum JobOccurrenceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum JobOccurrenceSource {
+  GENERATED
+  MANUAL
+}
+
+model Job {
+  id          String    @id @default(cuid())
+
+  propertyId  String
+  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  kind        JobKind   @default(SINGLE_ADDRESS) // REQUIRED
+  status      JobStatus @default(PROPOSED)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  contacts    JobContact[]
+  clients     JobClient[]
+
+  schedule          JobSchedule?
+  occurrences       JobOccurrence[]
+  defaultAssignees  JobAssigneeDefault[]
+}
+
+model JobContact {
+  id              String         @id @default(cuid())
+
+  jobId           String
+  job             Job            @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  clientContactId String
+  clientContact   ClientContact  @relation(fields: [clientContactId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  role            String         // "decision_maker" | "on_site" | "notify_only"
+  notify          Boolean        @default(true)
+
+  @@index([jobId])
+  @@index([clientContactId])
+}
+
+model JobClient {
+  id        String   @id @default(cuid())
+
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  role      String   // "owner" | "payer" | "point_of_contact"
+  share     Float?   // optional split %
+
+  @@index([jobId])
+  @@index([clientId])
+}
+
+model JobSchedule {
+  id        String  @id @default(cuid())
+
+  jobId     String  @unique
+  job       Job     @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  autoRenew Boolean @default(false)
+
+  cadence   Cadence?
+  interval  Int?       // every N weeks/months (simple)
+
+  dayOfWeek Int?       // 0-6 for weekly-ish schedules
+  dayOfMonth Int?      // 1-31 for monthly-ish schedules
+
+  preferredStartHour Int?
+  preferredEndHour   Int?
+
+  horizonDays    Int      @default(21)
+  nextGenerateAt DateTime?
+  active         Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model JobOccurrence {
+  id          String   @id @default(cuid())
+
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  kind        JobKind  // REQUIRED (copied from Job.kind on creation, editable later)
+
+  windowStart DateTime?
+  windowEnd   DateTime?
+  startAt     DateTime?
+  endAt       DateTime?
+
+  status      JobOccurrenceStatus @default(SCHEDULED)
+  source      JobOccurrenceSource @default(GENERATED)
+
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignees   JobOccurrenceAssignee[]
+
+  @@index([jobId, status])
+  @@index([startAt])
+  @@index([kind])
+}
+
+model JobAssigneeDefault {
+  id        String   @id @default(cuid())
+
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  role      String?  // optional: "primary" | "helper"
+  active    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, userId])
+  @@index([jobId, active])
+  @@index([userId])
+}
+
+model JobOccurrenceAssignee {
+  id            String        @id @default(cuid())
+
+  occurrenceId  String
+  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  role          String?
+  assignedAt    DateTime      @default(now())
+
+  assignedById  String?
+  assignedBy    User?         @relation("JobAssignActor", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([occurrenceId, userId])
+  @@index([occurrenceId])
+  @@index([userId])
+  @@index([assignedById])
+}
