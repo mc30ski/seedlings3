@@ -147,7 +147,7 @@ export default function HomePage() {
       value: "jobs",
       label: "Services",
       icon: FiBriefcase,
-      content: wrapWithInlineMessage(<ServicesTab role="admin" />),
+      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "users",
