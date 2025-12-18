@@ -56,6 +56,16 @@ export const AUDIT = {
       AuditVerb.PRIMARY_CONTACT_SET,
     ] as const,
   },
+  JOB: {
+    CREATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    // schedule/occurrence/assignees can be treated as UPDATED for now
+    SCHEDULE_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    OCCURRENCE_CREATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
+    OCCURRENCE_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    OCCURRENCES_GENERATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
+    ASSIGNEES_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+  },
 } as const;
 
 // Useful types

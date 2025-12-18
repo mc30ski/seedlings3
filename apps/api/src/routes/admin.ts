@@ -1,6 +1,12 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { Role as RoleVal } from "@prisma/client";
+import {
+  JobKind,
+  JobStatus,
+  Cadence,
+  JobOccurrenceStatus,
+} from "@prisma/client";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -350,6 +356,270 @@ export default async function adminRoutes(app: FastifyInstance) {
         await currentUserId(req),
         String(req.params.id),
         contactId ?? null
+      );
+    }
+  );
+
+  // Jobs: list / get / create / update
+
+  app.get("/admin/jobs", adminGuard, async (req: any) => {
+    const { q, propertyId, status, kind, limit } = (req.query || {}) as {
+      q?: string;
+      propertyId?: string;
+      status?: "PROPOSED" | "ACCEPTED" | "ALL";
+      kind?: "ENTIRE_SITE" | "SINGLE_ADDRESS" | "ALL";
+      limit?: string;
+    };
+
+    return services.jobs.list({
+      q,
+      propertyId,
+      status: (status as any) ?? "ALL",
+      kind: (kind as any) ?? "ALL",
+      limit: limit ? Number(limit) : undefined,
+    });
+  });
+
+  app.get("/admin/jobs/:id", adminGuard, async (req: any) => {
+    return services.jobs.get(String(req.params.id));
+  });
+
+  app.post("/admin/jobs", adminGuard, async (req: any) => {
+    const body = req.body || {};
+    const propertyId = String(body.propertyId || "");
+    const kind = String(body.kind || "").toUpperCase();
+    const status = String(body.status || "").toUpperCase();
+
+    if (!propertyId) throw app.httpErrors.badRequest("propertyId is required");
+    if (kind !== "ENTIRE_SITE" && kind !== "SINGLE_ADDRESS") {
+      throw app.httpErrors.badRequest("Invalid kind");
+    }
+    if (status && status !== "PROPOSED" && status !== "ACCEPTED") {
+      throw app.httpErrors.badRequest("Invalid status");
+    }
+
+    return services.jobs.create(await currentUserId(req), {
+      propertyId,
+      kind: kind as JobKind,
+      status: (status as JobStatus) || undefined,
+    } as any);
+  });
+
+  app.patch("/admin/jobs/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const body = req.body || {};
+
+    const patch: any = {};
+    if (body.propertyId != null) patch.propertyId = String(body.propertyId);
+
+    if (body.kind != null) {
+      const kind = String(body.kind || "").toUpperCase();
+      if (kind !== "ENTIRE_SITE" && kind !== "SINGLE_ADDRESS") {
+        throw app.httpErrors.badRequest("Invalid kind");
+      }
+      patch.kind = kind as JobKind;
+    }
+
+    if (body.status != null) {
+      const status = String(body.status || "").toUpperCase();
+      if (status !== "PROPOSED" && status !== "ACCEPTED") {
+        throw app.httpErrors.badRequest("Invalid status");
+      }
+      patch.status = status as JobStatus;
+    }
+
+    return services.jobs.update(await currentUserId(req), id, patch);
+  });
+
+  // Job schedule: upsert schedule + generate occurrences
+
+  app.put("/admin/jobs/:id/schedule", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const body = req.body || {};
+
+    // autoRenew required for upsert in our service plan
+    const autoRenew = !!body.autoRenew;
+
+    const patch: any = { autoRenew };
+
+    if (body.cadence != null) {
+      const cadence = String(body.cadence || "").toUpperCase();
+      if (
+        cadence !== "WEEKLY" &&
+        cadence !== "BIWEEKLY" &&
+        cadence !== "MONTHLY"
+      ) {
+        throw app.httpErrors.badRequest("Invalid cadence");
+      }
+      patch.cadence = cadence as Cadence;
+    }
+
+    if (body.interval != null) {
+      const interval = Number(body.interval);
+      if (!Number.isFinite(interval) || interval < 1) {
+        throw app.httpErrors.badRequest("interval must be >= 1");
+      }
+      patch.interval = interval;
+    }
+
+    if (body.dayOfWeek != null) {
+      const dayOfWeek = Number(body.dayOfWeek);
+      if (!Number.isFinite(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+        throw app.httpErrors.badRequest("dayOfWeek must be 0-6");
+      }
+      patch.dayOfWeek = dayOfWeek;
+    }
+
+    if (body.dayOfMonth != null) {
+      const dayOfMonth = Number(body.dayOfMonth);
+      if (!Number.isFinite(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) {
+        throw app.httpErrors.badRequest("dayOfMonth must be 1-31");
+      }
+      patch.dayOfMonth = dayOfMonth;
+    }
+
+    if (body.preferredStartHour != null) {
+      const h = Number(body.preferredStartHour);
+      if (!Number.isFinite(h) || h < 0 || h > 23) {
+        throw app.httpErrors.badRequest("preferredStartHour must be 0-23");
+      }
+      patch.preferredStartHour = h;
+    }
+
+    if (body.preferredEndHour != null) {
+      const h = Number(body.preferredEndHour);
+      if (!Number.isFinite(h) || h < 0 || h > 23) {
+        throw app.httpErrors.badRequest("preferredEndHour must be 0-23");
+      }
+      patch.preferredEndHour = h;
+    }
+
+    if (body.horizonDays != null) {
+      const d = Number(body.horizonDays);
+      if (!Number.isFinite(d) || d < 1 || d > 365) {
+        throw app.httpErrors.badRequest("horizonDays must be 1-365");
+      }
+      patch.horizonDays = d;
+    }
+
+    if (body.active != null) patch.active = !!body.active;
+
+    return services.jobs.upsertSchedule(await currentUserId(req), jobId, patch);
+  });
+
+  app.post(
+    "/admin/jobs/:id/occurrences/generate",
+    adminGuard,
+    async (req: any) => {
+      return services.jobs.generateOccurrences(
+        await currentUserId(req),
+        String(req.params.id)
+      );
+    }
+  );
+
+  // Occurrences: create one-off + set assignees + patch occurrence (kind/status/times)
+
+  // Create a one-off occurrence from a job template
+  app.post("/admin/jobs/:id/occurrences", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const body = req.body || {};
+
+    const input: any = {};
+
+    if (body.kind != null) {
+      const kind = String(body.kind || "").toUpperCase();
+      if (kind !== "ENTIRE_SITE" && kind !== "SINGLE_ADDRESS") {
+        throw app.httpErrors.badRequest("Invalid kind");
+      }
+      input.kind = kind as JobKind;
+    }
+
+    // Dates: accept ISO strings; service should parse/validate
+    if (body.windowStart != null) input.windowStart = body.windowStart;
+    if (body.windowEnd != null) input.windowEnd = body.windowEnd;
+    if (body.startAt != null) input.startAt = body.startAt;
+    if (body.endAt != null) input.endAt = body.endAt;
+    if (body.notes != null) input.notes = body.notes;
+
+    if (body.assigneeUserIds != null) {
+      if (!Array.isArray(body.assigneeUserIds)) {
+        throw app.httpErrors.badRequest("assigneeUserIds must be an array");
+      }
+      input.assigneeUserIds = body.assigneeUserIds.map(String);
+    }
+
+    return services.jobs.createOccurrence(
+      await currentUserId(req),
+      jobId,
+      input
+    );
+  });
+
+  // Replace assignees for an occurrence (workers-only enforced in service)
+  app.put(
+    "/admin/occurrences/:occurrenceId/assignees",
+    adminGuard,
+    async (req: any) => {
+      const occurrenceId = String(req.params.occurrenceId);
+      const body = req.body || {};
+      const ids = body.assigneeUserIds;
+
+      if (!Array.isArray(ids)) {
+        throw app.httpErrors.badRequest("assigneeUserIds must be an array");
+      }
+
+      return services.jobs.setOccurrenceAssignees(
+        await currentUserId(req),
+        occurrenceId,
+        {
+          assigneeUserIds: ids.map(String),
+          assignedById: await currentUserId(req),
+        }
+      );
+    }
+  );
+
+  // Patch an occurrence (optional but very useful for admin UI)
+  app.patch(
+    "/admin/occurrences/:occurrenceId",
+    adminGuard,
+    async (req: any) => {
+      const occurrenceId = String(req.params.occurrenceId);
+      const body = req.body || {};
+
+      const patch: any = {};
+
+      if (body.kind != null) {
+        const kind = String(body.kind || "").toUpperCase();
+        if (kind !== "ENTIRE_SITE" && kind !== "SINGLE_ADDRESS") {
+          throw app.httpErrors.badRequest("Invalid kind");
+        }
+        patch.kind = kind as JobKind;
+      }
+
+      if (body.status != null) {
+        const st = String(body.status || "").toUpperCase();
+        const ok =
+          st === "SCHEDULED" ||
+          st === "IN_PROGRESS" ||
+          st === "COMPLETED" ||
+          st === "CANCELED";
+        if (!ok) throw app.httpErrors.badRequest("Invalid occurrence status");
+        patch.status = st as JobOccurrenceStatus;
+      }
+
+      if (body.windowStart != null) patch.windowStart = body.windowStart;
+      if (body.windowEnd != null) patch.windowEnd = body.windowEnd;
+      if (body.startAt != null) patch.startAt = body.startAt;
+      if (body.endAt != null) patch.endAt = body.endAt;
+      if (body.notes != null) patch.notes = body.notes;
+
+      // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
+      return services.jobs.updateOccurrence(
+        await currentUserId(req),
+        occurrenceId,
+        patch
       );
     }
   );

@@ -9,6 +9,15 @@ import type {
   Property,
   PropertyKind,
   PropertyStatus,
+  Job,
+  JobKind,
+  JobStatus,
+  JobSchedule,
+  Cadence,
+  JobOccurrence,
+  JobOccurrenceStatus,
+  JobOccurrenceSource,
+  JobOccurrenceAssignee,
 } from "@prisma/client";
 import { AuditTuple } from "../lib/auditActions";
 
@@ -362,6 +371,114 @@ export type ServicesProperties = {
   ): Promise<{ primarySet: true }>;
 };
 
+/////////
+
+export type JobListItem = Job & {
+  property: Pick<Property, "id" | "displayName" | "city" | "state" | "status">;
+  schedule?: JobSchedule | null;
+  nextOccurrence?: Pick<
+    JobOccurrence,
+    "id" | "startAt" | "windowStart" | "status" | "kind"
+  > | null;
+  assigneeCount: number;
+};
+
+export type JobUpsert = Pick<Job, "propertyId" | "kind" | "status"> & {
+  id?: string;
+  // optional: allow attaching clients/contacts later
+};
+
+export type JobScheduleUpsert = {
+  autoRenew: boolean;
+  cadence?: Cadence | null;
+  interval?: number | null;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  preferredStartHour?: number | null;
+  preferredEndHour?: number | null;
+  horizonDays?: number | null;
+  active?: boolean | null;
+};
+
+export type CreateOccurrenceInput = {
+  // one-off or manual scheduling
+  kind?: JobKind;
+  windowStart?: string | Date | null;
+  windowEnd?: string | Date | null;
+  startAt?: string | Date | null;
+  endAt?: string | Date | null;
+  notes?: string | null;
+
+  // optional assignees at creation time
+  assigneeUserIds?: string[];
+};
+
+export type AssignOccurrenceInput = {
+  assigneeUserIds: string[]; // final desired set (replace semantics)
+  assignedById?: string | null; // if you want audit attribution
+};
+
+export type ServicesJobs = {
+  list(params?: {
+    q?: string;
+    propertyId?: string;
+    status?: JobStatus | "ALL";
+    kind?: JobKind | "ALL";
+    limit?: number;
+  }): Promise<JobListItem[]>;
+
+  get(id: string): Promise<
+    Job & {
+      property: Property;
+      schedule?: JobSchedule | null;
+      occurrences: JobOccurrence[];
+      defaultAssignees: (JobOccurrenceAssignee | any)[]; // or define a better type for JobAssigneeDefault
+    }
+  >;
+
+  create(currentUserId: string, payload: JobUpsert): Promise<Job>;
+  update(currentUserId: string, id: string, payload: JobUpsert): Promise<Job>;
+
+  // schedule acts like “calendar rules” for generating occurrences
+  upsertSchedule(
+    currentUserId: string,
+    jobId: string,
+    patch: JobScheduleUpsert
+  ): Promise<JobSchedule>;
+  generateOccurrences(
+    currentUserId: string,
+    jobId: string
+  ): Promise<{ generated: number }>;
+
+  // “create a one-off from the job” (manual instance, can act like template usage)
+  createOccurrence(
+    currentUserId: string,
+    jobId: string,
+    input: CreateOccurrenceInput
+  ): Promise<JobOccurrence>;
+
+  updateOccurrence(
+    currentUserId: string,
+    occurrenceId: string,
+    patch: {
+      kind?: "ENTIRE_SITE" | "SINGLE_ADDRESS";
+      status?: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELED";
+      windowStart?: string | Date | null;
+      windowEnd?: string | Date | null;
+      startAt?: string | Date | null;
+      endAt?: string | Date | null;
+      notes?: string | null;
+    }
+  ): Promise<JobOccurrence>;
+
+  // assignment at the occurrence level (workers only)
+  setOccurrenceAssignees(
+    currentUserId: string,
+    occurrenceId: string,
+    input: AssignOccurrenceInput
+  ): Promise<{ updated: true }>;
+};
+
 export type Services = {
   equipment: ServicesEquipment;
   users: ServicesUsers;
@@ -370,4 +487,5 @@ export type Services = {
   audit: ServicesAudit;
   clients: ServicesClients;
   properties: ServicesProperties;
+  jobs: ServicesJobs;
 };

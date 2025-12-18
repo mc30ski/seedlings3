@@ -14,6 +14,7 @@ import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
+import ServicesTab from "@/src/ui/tabs/ServicesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -143,6 +144,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
+      value: "jobs",
+      label: "Services",
+      icon: FiBriefcase,
+      content: wrapWithInlineMessage(<ServicesTab role="admin" />),
+    },
+    {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
@@ -153,12 +160,6 @@ export default function HomePage() {
       label: "Activity",
       icon: FiActivity,
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "jobs",
-      label: "Jobs",
-      icon: FiBriefcase,
-      content: wrapWithInlineMessage(<JobsTab role="admin" />),
     },
     {
       value: "payments",

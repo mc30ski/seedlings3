@@ -145,21 +145,11 @@ npm -w apps/api run prisma:migrate:deploy
 - ClientContact — people we call/text/email for a Client
 - Property — where we serve (single address or aggregate site/community)
 - PropertyUnit (optional, post-MVP) — sub-locations inside an aggregate site
-- Job (post-MVP) — work performed at a Property
 
 - Client
 
   - 1──< ClientContact
   - 1──< Property (attr:pointOfContactId ──► ClientContact) 1──< PropertyUnit (optional, post-MVP)
-
-- Job ──► Property
-
-  - ──< JobContact >──► ClientContact (decision_maker / on_site / notify_only)
-  - ──< JobClient >──► Client (owner vs payer; multi-client)
-
-Optional (only for aggregate sites if per-unit tracking is needed later)
-
-- Job 1──< JobUnit (per-home status/photos within an aggregate site)
 
 ## What Ships Now (Admin-Only)
 
@@ -183,11 +173,49 @@ Optional (only for aggregate sites if per-unit tracking is needed later)
   - `pointOfContactId` → **ClientContact** (default POC)
 - PropertyUnit (post-MVP)
   - Optional sub-locations for aggregate sites (only if you need per-unit notes/codes/photos)
-- Job (post-MVP)
-  - `Job.propertyId` (each job at one Property)
-  - **JobContact** (join to ClientContact) for notifications/roles
-  - **JobClient** (join to Client) for owner vs payer / multi-client
-  - Optional `JobUnit` for per-home progress/photos within aggregate sites
+
+1. Job = the template
+   A Job represents the standing “work agreement” for a Property.
+
+- kind (required): ENTIRE_SITE vs SINGLE_ADDRESS
+- status: PROPOSED → ACCEPTED
+- clients: which business entities are involved (owner/payer/etc.)
+- contacts: which people to communicate with (decision maker/on-site/notify)
+
+2. JobSchedule = the auto-renew toggle
+   Instead of true recurring calendar events, JobSchedule just stores:
+
+- autoRenew on/off
+- a simple cadence (weekly/biweekly/monthly) + a couple parameters
+- optional preferred time window
+- helpers like horizonDays / nextGenerateAt
+
+3. JobOccurrence = a real calendar entry (the instance)
+   Each scheduled visit is a real row.
+
+- has dates (windowStart/windowEnd and/or startAt/endAt)
+- has its own lifecycle (SCHEDULED → COMPLETED)
+- has its own kind (required), initially copied from the Job but editable
+
+Important: the “copy Job.kind → JobOccurrence.kind” happens in your service code when creating the occurrence.
+
+4. Assignments are two-layered (defaults + per-instance overrides)
+
+- JobAssigneeDefault: “usually these workers do this job”
+- JobOccurrenceAssignee: “these workers are assigned to this specific visit”
+
+When you create an occurrence, you typically:
+
+- copy Job.kind → JobOccurrence.kind
+- copy JobAssigneeDefault (active) → JobOccurrenceAssignee
+
+After creation, you can change the occurrence assignees without touching defaults.
+
+5. Only WORKER users can be assigned
+   This is enforced in your API/service layer:
+
+- only allow assignment if user.roles.some({ role: WORKER })
+- (optionally) also require user.isApproved = true
 
 ## Post-MVP Plug-Ins (drop-in later)
 
