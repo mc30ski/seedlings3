@@ -1,0 +1,530 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Box,
+  Button,
+  Card,
+  HStack,
+  Spacer,
+  Select,
+  Text,
+  VStack,
+  createListCollection,
+} from "@chakra-ui/react";
+import { apiDelete, apiGet, apiPatch } from "@/src/lib/api";
+import {
+  determineRoles,
+  jobStatusColor,
+  occurrenceStatusColor,
+  prettyStatus,
+} from "@/src/lib/lib";
+import {
+  type TabPropsType,
+  JOB_KIND,
+  JOB_STATUS,
+  type JobListItem,
+  type JobDetail,
+  type JobOccurrenceFull,
+} from "@/src/lib/types";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
+import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
+import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
+import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import StatusButton from "@/src/ui/components/StatusButton";
+import JobDialog from "@/src/ui/dialogs/JobDialog";
+import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
+import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
+import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
+
+const kindStates = ["ALL", ...JOB_KIND] as const;
+const statusStates = ["ALL", ...JOB_STATUS] as const;
+
+export default function ServicesTab({
+  me,
+  purpose = "ADMIN",
+}: TabPropsType) {
+  const { isAvail, forAdmin } = determineRoles(me, purpose);
+
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState<string>("ALL");
+  const [kind, setKind] = useState<string[]>(["ALL"]);
+
+  const kindItems = useMemo(
+    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    []
+  );
+  const kindCollection = useMemo(
+    () => createListCollection({ items: kindItems }),
+    [kindItems]
+  );
+  const [items, setItems] = useState<JobListItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const [jobDetails, setJobDetails] = useState<Record<string, JobDetail>>({});
+  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
+  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+
+  const [jobDialogOpen, setJobDialogOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
+
+  const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
+  const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
+
+  const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
+  const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
+  const [assigneeCurrentAssignees, setAssigneeCurrentAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
+  const [assigneeJobId, setAssigneeJobId] = useState<string>("");
+
+  const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+
+  async function load(displayLoading = true) {
+    setLoading(displayLoading);
+    try {
+      const list = await apiGet<JobListItem[]>("/api/admin/jobs");
+      setItems(Array.isArray(list) ? list : []);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load jobs.", err),
+      });
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function loadDetail(jobId: string, force = false) {
+    if (!force && (jobDetails[jobId] || detailLoading[jobId])) return;
+    setDetailLoading((prev) => ({ ...prev, [jobId]: true }));
+    try {
+      const detail = await apiGet<JobDetail>(`/api/admin/jobs/${jobId}`);
+      setJobDetails((prev) => ({ ...prev, [jobId]: detail }));
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to load job details.", err),
+      });
+    } finally {
+      setDetailLoading((prev) => ({ ...prev, [jobId]: false }));
+    }
+  }
+
+  function toggleExpand(jobId: string) {
+    const next = !expandedMap[jobId];
+    setExpandedMap((prev) => ({ ...prev, [jobId]: next }));
+    if (next) void loadDetail(jobId);
+  }
+
+  async function patchJobStatus(job: JobListItem, newStatus: string) {
+    try {
+      await apiPatch(`/api/admin/jobs/${job.id}`, { status: newStatus });
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Job status updated to ${prettyStatus(newStatus)}.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Update job failed.", err),
+      });
+    }
+  }
+
+  async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string) {
+    try {
+      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, { status: newStatus });
+      void loadDetail(jobId, true);
+      publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Update occurrence failed.", err),
+      });
+    }
+  }
+
+  async function deleteJob(jobId: string) {
+    try {
+      await apiDelete(`/api/admin/jobs/${jobId}`);
+      await load(false);
+      publishInlineMessage({ type: "SUCCESS", text: "Job deleted." });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Delete job failed.", err),
+      });
+    }
+  }
+
+  async function deleteOccurrence(occurrenceId: string, jobId: string) {
+    try {
+      await apiDelete(`/api/admin/occurrences/${occurrenceId}`);
+      void loadDetail(jobId, true);
+      publishInlineMessage({ type: "SUCCESS", text: "Occurrence deleted." });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Delete occurrence failed.", err),
+      });
+    }
+  }
+
+  const filtered = useMemo(() => {
+    let rows = items;
+    if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
+    if (status !== "ALL") rows = rows.filter((i) => i.status === status);
+    const qlc = q.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((r) =>
+        [r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
+          .filter(Boolean)
+          .some((s) => s!.toLowerCase().includes(qlc))
+      );
+    }
+    return rows;
+  }, [items, q, kind, status]);
+
+  if (!isAvail) return <UnavailableNotice />;
+  if (loading) return <LoadingCenter />;
+
+  return (
+    <Box w="full">
+      <HStack mb={3} gap={3}>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          inputId="services-search"
+          placeholder="Search…"
+        />
+        <Select.Root
+          collection={kindCollection}
+          value={kind}
+          onValueChange={(e) => setKind(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+        >
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder="Kind" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {kindItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Spacer />
+        {forAdmin && (
+          <Button
+            onClick={() => {
+              setEditingJob(null);
+              setJobDialogOpen(true);
+            }}
+          >
+            New Job
+          </Button>
+        )}
+      </HStack>
+
+      <HStack mb={3} gap={2} wrap="wrap">
+        {statusStates.map((s) => (
+          <Button
+            key={s}
+            size="sm"
+            variant={status === s ? "solid" : "outline"}
+            onClick={() => setStatus(s)}
+          >
+            {prettyStatus(s)}
+          </Button>
+        ))}
+      </HStack>
+
+      <VStack align="stretch" gap={3}>
+        {filtered.length === 0 && (
+          <Box p="8" color="fg.muted">
+            No jobs match current filters.
+          </Box>
+        )}
+
+        {filtered.map((job) => {
+          const expanded = !!expandedMap[job.id];
+          const detail = jobDetails[job.id];
+          const isLoadingDetail = !!detailLoading[job.id];
+
+          return (
+            <Card.Root key={job.id} variant="outline">
+              <Card.Header pb="2">
+                <HStack gap={3} justify="space-between" align="center">
+                  <HStack gap={3} flex="1" minW={0}>
+                    <Text fontWeight="semibold">
+                      {job.property?.displayName ?? job.propertyId}
+                    </Text>
+                    <StatusBadge
+                      status={job.status}
+                      palette={jobStatusColor(job.status)}
+                      variant="subtle"
+                    />
+                  </HStack>
+                  <StatusBadge status={job.kind} palette="gray" variant="outline" />
+                </HStack>
+                {(job.property?.street1 || job.property?.city) && (
+                  <Text fontSize="sm" color="fg.muted" mt="1">
+                    {[job.property.street1, job.property.city, job.property.state]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </Text>
+                )}
+              </Card.Header>
+
+              <Card.Body pt="0">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => toggleExpand(job.id)}
+                >
+                  {expanded ? "Hide occurrences ▲" : "Show occurrences ▼"}
+                </Button>
+
+                {expanded && (
+                  <Box mt={2}>
+                    {isLoadingDetail && (
+                      <Text fontSize="sm" color="fg.muted">
+                        Loading…
+                      </Text>
+                    )}
+                    {!isLoadingDetail && detail && detail.occurrences.length === 0 && (
+                      <Text fontSize="sm" color="fg.muted">
+                        No occurrences yet.
+                      </Text>
+                    )}
+                    {!isLoadingDetail &&
+                      detail &&
+                      detail.occurrences.map((occ: JobOccurrenceFull) => (
+                        <Box
+                          key={occ.id}
+                          p={2}
+                          borderWidth="1px"
+                          rounded="md"
+                          mb={2}
+                        >
+                          <HStack justify="space-between" align="center">
+                            <VStack align="start" gap={0}>
+                              <Text fontSize="sm" fontWeight="medium">
+                                {occ.windowStart
+                                  ? new Date(occ.windowStart).toLocaleDateString()
+                                  : occ.startAt
+                                  ? new Date(occ.startAt).toLocaleDateString()
+                                  : "—"}
+                              </Text>
+                              <Text fontSize="xs" color="fg.muted">
+                                {occ.assignees.length} assignee
+                                {occ.assignees.length !== 1 ? "s" : ""}
+                              </Text>
+                            </VStack>
+                            <StatusBadge
+                              status={occ.status}
+                              palette={occurrenceStatusColor(occ.status)}
+                              variant="subtle"
+                            />
+                          </HStack>
+
+                          {forAdmin && job.status === "ACCEPTED" && (
+                            <HStack gap={2} mt={2} wrap="wrap">
+                              {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && (
+                                <StatusButton
+                                  id="occ-assignees"
+                                  itemId={occ.id}
+                                  label="Assign Workers"
+                                  onClick={async () => {
+                                    setAssigneeOccurrenceId(occ.id);
+                                    setAssigneeCurrentAssignees(occ.assignees);
+                                    setAssigneeJobId(job.id);
+                                    setAssigneeDialogOpen(true);
+                                  }}
+                                  variant="outline"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              )}
+                              {occ.status === "SCHEDULED" && (
+                                <StatusButton
+                                  id="occ-start"
+                                  itemId={occ.id}
+                                  label="Start"
+                                  onClick={async () =>
+                                    patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS")
+                                  }
+                                  variant="outline"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              )}
+                              {(occ.status === "SCHEDULED" ||
+                                occ.status === "IN_PROGRESS") && (
+                                <StatusButton
+                                  id="occ-complete"
+                                  itemId={occ.id}
+                                  label="Complete"
+                                  onClick={async () =>
+                                    patchOccurrenceStatus(occ.id, job.id, "COMPLETED")
+                                  }
+                                  variant="outline"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              )}
+                              {occ.status !== "CANCELED" &&
+                                occ.status !== "COMPLETED" && (
+                                  <StatusButton
+                                    id="occ-cancel"
+                                    itemId={occ.id}
+                                    label="Cancel"
+                                    onClick={async () =>
+                                      patchOccurrenceStatus(occ.id, job.id, "CANCELED")
+                                    }
+                                    variant="outline"
+                                    colorPalette="red"
+                                    busyId={statusButtonBusyId}
+                                    setBusyId={setStatusButtonBusyId}
+                                  />
+                                )}
+                              {occ.status === "CANCELED" && (
+                                <StatusButton
+                                  id="occ-delete"
+                                  itemId={occ.id}
+                                  label="Delete"
+                                  onClick={async () =>
+                                    deleteOccurrence(occ.id, job.id)
+                                  }
+                                  variant="outline"
+                                  colorPalette="red"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              )}
+                            </HStack>
+                          )}
+                        </Box>
+                      ))}
+                  </Box>
+                )}
+              </Card.Body>
+
+              {forAdmin && (
+                <Card.Footer>
+                  <HStack gap={2} wrap="wrap" mb="2">
+                    <StatusButton
+                      id="job-edit"
+                      itemId={job.id}
+                      label="Edit"
+                      onClick={async () => {
+                        setEditingJob(job);
+                        setJobDialogOpen(true);
+                      }}
+                      variant="outline"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                    {job.status === "ACCEPTED" && (
+                      <StatusButton
+                        id="job-new-occurrence"
+                        itemId={job.id}
+                        label="+ Occurrence"
+                        onClick={async () => {
+                          setOccurrenceJobId(job.id);
+                          setOccurrenceDialogOpen(true);
+                        }}
+                        variant="outline"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "PROPOSED" && (
+                      <StatusButton
+                        id="job-accept"
+                        itemId={job.id}
+                        label="Accept"
+                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        variant="outline"
+                        colorPalette="green"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "PROPOSED" && (
+                      <StatusButton
+                        id="job-delete"
+                        itemId={job.id}
+                        label="Delete"
+                        onClick={async () => deleteJob(job.id)}
+                        variant="outline"
+                        colorPalette="red"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                  </HStack>
+                </Card.Footer>
+              )}
+            </Card.Root>
+          );
+        })}
+      </VStack>
+
+      {forAdmin && (
+        <JobDialog
+          open={jobDialogOpen}
+          onOpenChange={setJobDialogOpen}
+          mode={editingJob ? "UPDATE" : "CREATE"}
+          initial={editingJob}
+          onSaved={() => void load()}
+        />
+      )}
+
+      {forAdmin && (
+        <OccurrenceDialog
+          open={occurrenceDialogOpen}
+          onOpenChange={setOccurrenceDialogOpen}
+          jobId={occurrenceJobId}
+          onSaved={() => {
+            if (occurrenceJobId) void loadDetail(occurrenceJobId, true);
+          }}
+        />
+      )}
+
+      {forAdmin && (
+        <AssigneeDialog
+          open={assigneeDialogOpen}
+          onOpenChange={setAssigneeDialogOpen}
+          occurrenceId={assigneeOccurrenceId}
+          currentAssignees={assigneeCurrentAssignees}
+          onSaved={() => {
+            if (assigneeJobId) {
+              setJobDetails((prev) => {
+                const next = { ...prev };
+                delete next[assigneeJobId];
+                return next;
+              });
+              void loadDetail(assigneeJobId);
+            }
+          }}
+        />
+      )}
+    </Box>
+  );
+}

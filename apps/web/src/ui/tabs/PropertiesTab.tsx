@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Card,
-  Link,
   HStack,
   Spacer,
   Text,
@@ -73,11 +72,11 @@ export default function PropertiesTab({
   // Used to create the dropdown menus.
   const kindItems = useMemo(
     () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
-    []
+    [],
   );
   const kindCollection = useMemo(
     () => createListCollection({ items: kindItems }),
-    [kindItems]
+    [kindItems],
   );
 
   // Main function to load all the items from the API.
@@ -89,7 +88,7 @@ export default function PropertiesTab({
       setItems(
         list
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
-          .filter((i) => forAdmin || i.status === "ACTIVE")
+          .filter((i) => forAdmin || i.status === "ACTIVE"),
       );
     } catch (err) {
       publishInlineMessage({
@@ -175,7 +174,7 @@ export default function PropertiesTab({
         type: "ERROR",
         text: getErrorMessage(
           `Property '${p.displayName}' approved failed.`,
-          err
+          err,
         ),
       });
     }
@@ -193,7 +192,7 @@ export default function PropertiesTab({
         type: "ERROR",
         text: getErrorMessage(
           `Property '${p.displayName}' archive failed.`,
-          err
+          err,
         ),
       });
     }
@@ -211,7 +210,7 @@ export default function PropertiesTab({
         type: "ERROR",
         text: getErrorMessage(
           `Property '${p.displayName}' unarchive failed.`,
-          err
+          err,
         ),
       });
     }
@@ -338,7 +337,7 @@ export default function PropertiesTab({
                         openEventSearch(
                           "propertyTabToClientTabSearch",
                           p.client?.displayName,
-                          forAdmin
+                          forAdmin,
                         )
                       }
                     />
@@ -352,7 +351,7 @@ export default function PropertiesTab({
                           openEventSearch(
                             "propertyTabToClientTabContactSearch",
                             `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
-                            forAdmin
+                            forAdmin,
                           )
                         }
                       />

@@ -189,3 +189,113 @@ export type ContactKind = (typeof CONTACT_KIND)[number];
 
 export const CONTACT_STATUS = ["ACTIVE", "PAUSED", "ARCHIVED"] as const;
 export type ContactStatus = (typeof CONTACT_STATUS)[number];
+
+// ---- Jobs ----
+
+export const JOB_KIND = ["ENTIRE_SITE", "SINGLE_ADDRESS"] as const;
+export type JobKind = (typeof JOB_KIND)[number];
+
+export const JOB_STATUS = ["PROPOSED", "ACCEPTED"] as const;
+export type JobStatus = (typeof JOB_STATUS)[number];
+
+export const JOB_OCCURRENCE_STATUS = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELED",
+] as const;
+export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
+
+export const JOB_CADENCE = ["WEEKLY", "BIWEEKLY", "MONTHLY"] as const;
+export type JobCadence = (typeof JOB_CADENCE)[number];
+
+export type JobSchedule = {
+  id: string;
+  jobId: string;
+  autoRenew: boolean;
+  cadence?: string | null;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  active: boolean;
+};
+
+export type JobOccurrenceAssigneeWithUser = {
+  id: string;
+  occurrenceId: string;
+  userId: string;
+  assignedAt?: string | null;
+  user: { id: string; displayName?: string | null; email?: string | null };
+};
+
+export type JobOccurrenceFull = {
+  id: string;
+  jobId: string;
+  kind: JobKind;
+  status: JobOccurrenceStatus;
+  source: string;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  notes?: string | null;
+  assignees: JobOccurrenceAssigneeWithUser[];
+  createdAt?: string;
+};
+
+export type JobListItem = {
+  id: string;
+  propertyId: string;
+  property: {
+    id: string;
+    displayName: string;
+    street1?: string | null;
+    city?: string | null;
+    state?: string | null;
+    status: string;
+  };
+  kind: JobKind;
+  status: JobStatus;
+  schedule?: JobSchedule | null;
+  nextOccurrence?: {
+    id: string;
+    startAt?: string | null;
+    windowStart?: string | null;
+    status: string;
+    kind: string;
+  } | null;
+  assigneeCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type JobDetail = JobListItem & {
+  occurrences: JobOccurrenceFull[];
+};
+
+export type WorkerOccurrence = {
+  id: string;
+  jobId: string;
+  kind: JobKind;
+  status: JobOccurrenceStatus;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  notes?: string | null;
+  job: {
+    id: string;
+    kind: JobKind;
+    property: {
+      id: string;
+      displayName: string;
+      street1: string;
+      city: string;
+      state: string;
+    };
+  };
+  assignees?: {
+    userId: string;
+    assignedById?: string | null;
+    user: { id: string; displayName?: string | null; email?: string | null };
+  }[];
+};

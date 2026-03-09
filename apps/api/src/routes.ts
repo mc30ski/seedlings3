@@ -105,7 +105,7 @@ export async function registerRoutes(app: FastifyInstance) {
     reply.header("Access-Control-Allow-Credentials", "true");
     reply.header(
       "Access-Control-Allow-Methods",
-      "GET,POST,PATCH,DELETE,OPTIONS"
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     );
     const reqHeaders =
       (req.headers["access-control-request-headers"] as string | undefined) ??
@@ -119,7 +119,7 @@ export async function registerRoutes(app: FastifyInstance) {
   const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => cb(null, isOriginAllowed(origin ?? undefined)),
     credentials: true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     // omit allowedHeaders so the plugin reflects what the browser asks for
   };
   await app.register(cors, corsOptions);

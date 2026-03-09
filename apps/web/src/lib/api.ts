@@ -49,7 +49,7 @@ function isCrossOrigin(absUrl: string) {
 }
 
 export async function request<T>(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown
 ): Promise<T> {
@@ -127,6 +127,7 @@ export async function request<T>(
 
 export const apiGet = <T>(p: string) => request<T>("GET", p);
 export const apiPost = <T>(p: string, b?: unknown) => request<T>("POST", p, b);
+export const apiPut = <T>(p: string, b?: unknown) => request<T>("PUT", p, b);
 export const apiPatch = <T>(p: string, b?: unknown) =>
   request<T>("PATCH", p, b);
 export const apiDelete = <T>(p: string) => request<T>("DELETE", p);
