@@ -52,7 +52,12 @@ export const jobs: ServicesJobs = {
 
     const where: Prisma.JobWhereInput = {};
     if (params?.propertyId) where.propertyId = params.propertyId;
-    if (params?.status && params.status !== "ALL") where.status = params.status;
+    if (params?.status && params.status !== "ALL") {
+      where.status = params.status as JobStatus;
+    } else {
+      // By default, exclude ARCHIVED jobs
+      where.status = { not: JobStatus.ARCHIVED };
+    }
     if (params?.kind && params.kind !== "ALL") where.kind = params.kind;
 
     if (q) {
@@ -592,6 +597,74 @@ export const jobs: ServicesJobs = {
 
       return { generated: 1 };
     });
+  },
+
+  async archiveJob(currentUserId: string, jobId: string) {
+    return prisma.$transaction(async (tx) => {
+      const job = await tx.job.findUnique({ where: { id: jobId } });
+      if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
+      if (job.status === JobStatus.ARCHIVED) {
+        throw new ServiceError("INVALID_STATUS", "Job is already archived.", 409);
+      }
+      if (job.status !== JobStatus.ACCEPTED) {
+        throw new ServiceError("INVALID_STATUS", "Only accepted jobs can be archived.", 409);
+      }
+
+      const record = await tx.job.update({
+        where: { id: jobId },
+        data: { status: JobStatus.ARCHIVED },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ARCHIVED, currentUserId, {
+        jobId,
+        record,
+      });
+
+      return record;
+    });
+  },
+
+  async listArchivedJobs(params?: { page?: number; pageSize?: number }) {
+    const page = Math.max(params?.page ?? 1, 1);
+    const pageSize = Math.min(Math.max(params?.pageSize ?? 25, 1), 100);
+    const skip = (page - 1) * pageSize;
+
+    const where: Prisma.JobWhereInput = { status: JobStatus.ARCHIVED };
+
+    const [rows, total] = await prisma.$transaction([
+      prisma.job.findMany({
+        where,
+        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+        skip,
+        take: pageSize,
+        include: {
+          property: {
+            select: {
+              id: true,
+              displayName: true,
+              street1: true,
+              city: true,
+              state: true,
+              status: true,
+            },
+          },
+          schedule: true,
+          _count: { select: { defaultAssignees: true } },
+        },
+      }),
+      prisma.job.count({ where }),
+    ]);
+
+    return {
+      items: rows.map((j) => ({
+        ...j,
+        nextOccurrence: null,
+        assigneeCount: j._count.defaultAssignees,
+      })),
+      total,
+      page,
+      pageSize,
+    };
   },
 
   async deleteJob(jobId: string) {

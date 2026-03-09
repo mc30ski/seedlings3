@@ -310,6 +310,7 @@ enum JobKind {
 enum JobStatus {
   PROPOSED
   ACCEPTED
+  ARCHIVED
 }
 
 enum Cadence {

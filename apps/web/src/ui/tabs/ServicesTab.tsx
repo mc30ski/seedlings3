@@ -12,7 +12,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { apiDelete, apiGet, apiPatch } from "@/src/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   determineRoles,
   jobStatusColor,
@@ -81,6 +81,13 @@ export default function ServicesTab({
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+
+  // Archived view (server-side paginated)
+  const [archivedItems, setArchivedItems] = useState<JobListItem[]>([]);
+  const [archivedTotal, setArchivedTotal] = useState(0);
+  const [archivedPage, setArchivedPage] = useState(1);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const archivedPageSize = 25;
 
   async function load(displayLoading = true) {
     setLoading(displayLoading);
@@ -166,6 +173,32 @@ export default function ServicesTab({
     }
   }
 
+  async function loadArchived(page = 1, reset = true) {
+    setArchivedLoading(true);
+    try {
+      const res = await apiGet<{ items: JobListItem[]; total: number; page: number; pageSize: number }>(
+        `/api/admin/jobs/archived?page=${page}&pageSize=${archivedPageSize}`
+      );
+      setArchivedItems((prev) => (reset ? res.items : [...prev, ...res.items]));
+      setArchivedTotal(res.total);
+      setArchivedPage(page);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load archived jobs.", err) });
+    } finally {
+      setArchivedLoading(false);
+    }
+  }
+
+  async function archiveJob(jobId: string) {
+    try {
+      await apiPost(`/api/admin/jobs/${jobId}/archive`);
+      await load(false);
+      publishInlineMessage({ type: "SUCCESS", text: "Job archived." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Archive job failed.", err) });
+    }
+  }
+
   async function deleteOccurrence(occurrenceId: string, jobId: string) {
     try {
       await apiDelete(`/api/admin/occurrences/${occurrenceId}`);
@@ -247,7 +280,10 @@ export default function ServicesTab({
             key={s}
             size="sm"
             variant={status === s ? "solid" : "outline"}
-            onClick={() => setStatus(s)}
+            onClick={() => {
+              setStatus(s);
+              if (s === "ARCHIVED") void loadArchived(1, true);
+            }}
           >
             {prettyStatus(s)}
           </Button>
@@ -255,13 +291,19 @@ export default function ServicesTab({
       </HStack>
 
       <VStack align="stretch" gap={3}>
-        {filtered.length === 0 && (
+        {status === "ARCHIVED" && archivedLoading && archivedItems.length === 0 && (
+          <Box p="8" color="fg.muted">Loading archived jobs…</Box>
+        )}
+        {status === "ARCHIVED" && !archivedLoading && archivedItems.length === 0 && (
+          <Box p="8" color="fg.muted">No archived jobs.</Box>
+        )}
+        {status !== "ARCHIVED" && filtered.length === 0 && (
           <Box p="8" color="fg.muted">
             No jobs match current filters.
           </Box>
         )}
 
-        {filtered.map((job) => {
+        {(status === "ARCHIVED" ? archivedItems : filtered).map((job) => {
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
@@ -466,6 +508,18 @@ export default function ServicesTab({
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
+                    {job.status === "ACCEPTED" && (
+                      <StatusButton
+                        id="job-archive"
+                        itemId={job.id}
+                        label="Archive"
+                        onClick={async () => archiveJob(job.id)}
+                        variant="outline"
+                        colorPalette="gray"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
                     {job.status === "PROPOSED" && (
                       <StatusButton
                         id="job-delete"
@@ -485,6 +539,18 @@ export default function ServicesTab({
           );
         })}
       </VStack>
+
+      {status === "ARCHIVED" && archivedItems.length < archivedTotal && (
+        <HStack justify="center" mt={3}>
+          <Button
+            variant="outline"
+            loading={archivedLoading}
+            onClick={() => void loadArchived(archivedPage + 1, false)}
+          >
+            Load more ({archivedItems.length} of {archivedTotal})
+          </Button>
+        </HStack>
+      )}
 
       {forAdmin && (
         <JobDialog
