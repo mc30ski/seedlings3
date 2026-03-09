@@ -59,6 +59,7 @@ export const AUDIT = {
   JOB: {
     CREATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
     UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.JOB, AuditVerb.RETIRED] as const,
     // schedule/occurrence/assignees can be treated as UPDATED for now
     SCHEDULE_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
     OCCURRENCE_CREATED: [AuditScope.JOB, AuditVerb.CREATED] as const,

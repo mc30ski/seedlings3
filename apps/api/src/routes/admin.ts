@@ -624,6 +624,26 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // List archived jobs (paginated)
+  app.get("/admin/jobs/archived", adminGuard, async (req: any) => {
+    const { page, pageSize } = (req.query || {}) as {
+      page?: string;
+      pageSize?: string;
+    };
+    return services.jobs.listArchivedJobs({
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  });
+
+  // Archive an accepted job
+  app.post("/admin/jobs/:id/archive", adminGuard, async (req: any) => {
+    return services.jobs.archiveJob(
+      await currentUserId(req),
+      String(req.params.id)
+    );
+  });
+
   // Delete a proposed job permanently
   app.delete("/admin/jobs/:id", adminGuard, async (req: any) => {
     return services.jobs.deleteJob(String(req.params.id));

@@ -498,6 +498,13 @@ export type ServicesJobs = {
     occurrenceId: string
   ): Promise<{ unclaimed: true }>;
 
+  archiveJob(currentUserId: string, jobId: string): Promise<Job>;
+  listArchivedJobs(params?: { page?: number; pageSize?: number }): Promise<{
+    items: JobListItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>;
   deleteJob(jobId: string): Promise<{ deleted: true }>;
   deleteOccurrence(occurrenceId: string): Promise<{ deleted: true }>;
 
