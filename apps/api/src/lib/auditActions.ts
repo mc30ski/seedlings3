@@ -64,6 +64,7 @@ export const AUDIT = {
     SCHEDULE_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
     OCCURRENCE_CREATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
     OCCURRENCE_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
+    OCCURRENCE_ARCHIVED: [AuditScope.JOB, AuditVerb.RETIRED] as const,
     OCCURRENCES_GENERATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
     ASSIGNEES_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
   },

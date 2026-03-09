@@ -148,7 +148,7 @@ export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 
 export function determineRoles(me: Me | null, purpose: Role) {
   const isWorker = hasRole(me?.roles, "WORKER");
-  const isAdmin = hasRole(me?.roles, "WORKER");
+  const isAdmin = hasRole(me?.roles, "ADMIN");
   return {
     isWorker: isWorker,
     isAdmin: isAdmin,

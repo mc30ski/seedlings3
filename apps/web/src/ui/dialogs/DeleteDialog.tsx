@@ -11,6 +11,7 @@ export type ToDeleteProps = {
   extra?: string;
   disabled?: boolean;
   details?: JSX.Element;
+  actionLabel?: string;
 };
 
 export type DeleteDialogProps = {
@@ -63,7 +64,7 @@ export default function DeleteDialog({
                   onClick={() => void complete()}
                   disabled={toDelete?.disabled}
                 >
-                  Delete
+                  {toDelete?.actionLabel ?? "Delete"}
                 </Button>
               </HStack>
             </Dialog.Footer>

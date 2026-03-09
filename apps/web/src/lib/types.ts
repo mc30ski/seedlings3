@@ -203,6 +203,7 @@ export const JOB_OCCURRENCE_STATUS = [
   "IN_PROGRESS",
   "COMPLETED",
   "CANCELED",
+  "ARCHIVED",
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
 
@@ -238,6 +239,7 @@ export type JobOccurrenceFull = {
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
+  price?: number | null;
   assignees: JobOccurrenceAssigneeWithUser[];
   createdAt?: string;
 };
@@ -264,6 +266,8 @@ export type JobListItem = {
     kind: string;
   } | null;
   assigneeCount: number;
+  notes?: string | null;
+  defaultPrice?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -282,6 +286,7 @@ export type WorkerOccurrence = {
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
+  price?: number | null;
   job: {
     id: string;
     kind: JobKind;

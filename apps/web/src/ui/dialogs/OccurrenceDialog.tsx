@@ -21,6 +21,8 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   jobId: string;
+  defaultNotes?: string | null;
+  defaultPrice?: number | null;
   onSaved?: () => void;
 };
 
@@ -28,6 +30,8 @@ export default function OccurrenceDialog({
   open,
   onOpenChange,
   jobId,
+  defaultNotes,
+  defaultPrice,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -35,13 +39,15 @@ export default function OccurrenceDialog({
   const [windowStart, setWindowStart] = useState("");
   const [windowEnd, setWindowEnd] = useState("");
   const [notes, setNotes] = useState("");
+  const [price, setPrice] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setWindowStart("");
     setWindowEnd("");
-    setNotes("");
-  }, [open]);
+    setNotes(defaultNotes ?? "");
+    setPrice(defaultPrice != null ? String(defaultPrice) : "");
+  }, [open, defaultNotes, defaultPrice]);
 
   async function handleSave() {
     if (!windowStart) {
@@ -54,6 +60,7 @@ export default function OccurrenceDialog({
         windowStart: new Date(windowStart + "T00:00:00").toISOString(),
         windowEnd: windowEnd ? new Date(windowEnd + "T00:00:00").toISOString() : undefined,
         notes: notes.trim() || undefined,
+        price: price !== "" ? Number(price) : undefined,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       onSaved?.();
@@ -99,6 +106,17 @@ export default function OccurrenceDialog({
                     type="date"
                     value={windowEnd}
                     onChange={(e) => setWindowEnd(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Text mb="1">Price</Text>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0.00"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
                   />
                 </div>
                 <div>

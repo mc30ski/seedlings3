@@ -385,7 +385,8 @@ export type JobListItem = Job & {
 
 export type JobUpsert = Pick<Job, "propertyId" | "kind" | "status"> & {
   id?: string;
-  // optional: allow attaching clients/contacts later
+  notes?: string | null;
+  defaultPrice?: number | null;
 };
 
 export type JobScheduleUpsert = {
@@ -408,6 +409,7 @@ export type CreateOccurrenceInput = {
   startAt?: string | Date | null;
   endAt?: string | Date | null;
   notes?: string | null;
+  price?: number | null;
 
   // optional assignees at creation time
   assigneeUserIds?: string[];
@@ -425,9 +427,11 @@ export type ServicesJobs = {
     status?: JobStatus | "ALL";
     kind?: JobKind | "ALL";
     limit?: number;
+    from?: string;
+    to?: string;
   }): Promise<JobListItem[]>;
 
-  listAllOccurrences(): Promise<any[]>;
+  listAllOccurrences(params?: { from?: string; to?: string }): Promise<any[]>;
   listMyOccurrences(userId: string): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
   claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
@@ -499,6 +503,7 @@ export type ServicesJobs = {
   ): Promise<{ unclaimed: true }>;
 
   archiveJob(currentUserId: string, jobId: string): Promise<Job>;
+  archiveOccurrence(currentUserId: string, occurrenceId: string): Promise<JobOccurrence>;
   listArchivedJobs(params?: { page?: number; pageSize?: number }): Promise<{
     items: JobListItem[];
     total: number;

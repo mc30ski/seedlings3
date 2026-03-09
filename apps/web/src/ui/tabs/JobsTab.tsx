@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   HStack,
+  Input,
   Spacer,
   Text,
   VStack,
@@ -24,17 +25,35 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 
-const occurrenceStatusStates = ["ALL", ...JOB_OCCURRENCE_STATUS] as const;
+const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS] as const;
 
 export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const { isAvail } = determineRoles(me, purpose);
   const myId = me?.id ?? "";
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(
+    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS"])
+  );
+
+  function toggleFilter(val: string) {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val);
+      else next.add(val);
+      return next;
+    });
+  }
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+
+  const [dateFrom, setDateFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateTo, setDateTo] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
@@ -42,7 +61,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
-      const list = await apiGet<WorkerOccurrence[]>("/api/occurrences");
+      const qs = new URLSearchParams();
+      if (dateFrom) qs.set("from", dateFrom);
+      if (dateTo) qs.set("to", dateTo);
+      const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
+      const list = await apiGet<WorkerOccurrence[]>(url);
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -57,7 +80,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [dateFrom, dateTo]);
 
   async function claim(occurrenceId: string) {
     try {
@@ -103,7 +126,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const filtered = useMemo(() => {
     let rows = items;
-    if (statusFilter !== "ALL") rows = rows.filter((i) => i.status === statusFilter);
+    if (activeFilters.size > 0) {
+      rows = rows.filter((occ) => {
+        if (activeFilters.has("UNCLAIMED") && (occ.assignees ?? []).length === 0) return true;
+        if (activeFilters.has(occ.status)) return true;
+        return false;
+      });
+    }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((occ) =>
@@ -120,7 +149,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       );
     }
     return rows;
-  }, [items, q, statusFilter]);
+  }, [items, q, activeFilters]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -144,15 +173,48 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Button>
       </HStack>
 
+      <HStack mb={3} gap={2} align="center">
+        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">
+          Date range:
+        </Text>
+        <Input
+          type="date"
+          size="sm"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          maxW="160px"
+        />
+        <Text fontSize="sm">–</Text>
+        <Input
+          type="date"
+          size="sm"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          maxW="160px"
+        />
+        {(dateFrom || dateTo) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </HStack>
+
       <HStack mb={3} gap={2} wrap="wrap">
-        {occurrenceStatusStates.map((s) => (
+        {filterButtons.map((s) => (
           <Button
             key={s}
             size="sm"
-            variant={statusFilter === s ? "solid" : "outline"}
-            onClick={() => setStatusFilter(s)}
+            variant={activeFilters.has(s) ? "solid" : "outline"}
+            onClick={() => toggleFilter(s)}
           >
-            {prettyStatus(s)}
+            {s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s)}
           </Button>
         ))}
       </HStack>

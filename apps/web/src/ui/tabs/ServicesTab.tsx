@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   HStack,
+  Input,
   Spacer,
   Select,
   Text,
@@ -39,6 +40,7 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
+import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -48,11 +50,18 @@ export default function ServicesTab({
   me,
   purpose = "ADMIN",
 }: TabPropsType) {
-  const { isAvail, forAdmin } = determineRoles(me, purpose);
+  const { isAvail, forAdmin, isSuper } = determineRoles(me, purpose);
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("ALL");
   const [kind, setKind] = useState<string[]>(["ALL"]);
+
+  const [dateFrom, setDateFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateTo, setDateTo] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
 
   const kindItems = useMemo(
     () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
@@ -74,6 +83,8 @@ export default function ServicesTab({
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
+  const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
+  const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
 
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
@@ -81,6 +92,10 @@ export default function ServicesTab({
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+  const [showArchivedOccs, setShowArchivedOccs] = useState<Record<string, boolean>>({});
+
+  type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
+  const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
 
   // Archived view (server-side paginated)
   const [archivedItems, setArchivedItems] = useState<JobListItem[]>([]);
@@ -92,7 +107,11 @@ export default function ServicesTab({
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
-      const list = await apiGet<JobListItem[]>("/api/admin/jobs");
+      const qs = new URLSearchParams();
+      if (dateFrom) qs.set("from", dateFrom);
+      if (dateTo) qs.set("to", dateTo);
+      const url = `/api/admin/jobs${qs.toString() ? `?${qs}` : ""}`;
+      const list = await apiGet<JobListItem[]>(url);
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -107,7 +126,7 @@ export default function ServicesTab({
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [dateFrom, dateTo]);
 
   async function loadDetail(jobId: string, force = false) {
     if (!force && (jobDetails[jobId] || detailLoading[jobId])) return;
@@ -212,6 +231,19 @@ export default function ServicesTab({
     }
   }
 
+  async function archiveOccurrence(occurrenceId: string, jobId: string) {
+    try {
+      await apiPost(`/api/admin/occurrences/${occurrenceId}/archive`);
+      void loadDetail(jobId, true);
+      publishInlineMessage({ type: "SUCCESS", text: "Occurrence archived." });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Archive occurrence failed.", err),
+      });
+    }
+  }
+
   const filtered = useMemo(() => {
     let rows = items;
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
@@ -274,6 +306,39 @@ export default function ServicesTab({
         )}
       </HStack>
 
+      <HStack mb={3} gap={2} align="center">
+        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">
+          Date range:
+        </Text>
+        <Input
+          type="date"
+          size="sm"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          maxW="160px"
+        />
+        <Text fontSize="sm">–</Text>
+        <Input
+          type="date"
+          size="sm"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          maxW="160px"
+        />
+        {(dateFrom || dateTo) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </HStack>
+
       <HStack mb={3} gap={2} wrap="wrap">
         {statusStates.map((s) => (
           <Button
@@ -307,6 +372,12 @@ export default function ServicesTab({
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
+          const archivedOccCount = detail?.occurrences.filter((o: JobOccurrenceFull) => o.status === "ARCHIVED").length ?? 0;
+          const visibleOccs = detail
+            ? (showArchivedOccs[job.id]
+                ? detail.occurrences
+                : detail.occurrences.filter((o: JobOccurrenceFull) => o.status !== "ARCHIVED"))
+            : [];
 
           return (
             <Card.Root key={job.id} variant="outline">
@@ -334,6 +405,20 @@ export default function ServicesTab({
               </Card.Header>
 
               <Card.Body pt="0">
+                {(job.defaultPrice != null || job.notes) && (
+                  <VStack align="start" gap={0} mb={2}>
+                    {job.defaultPrice != null && (
+                      <Text fontSize="sm" color="fg.muted">
+                        Default price: <b>${job.defaultPrice.toFixed(2)}</b>
+                      </Text>
+                    )}
+                    {job.notes && (
+                      <Text fontSize="sm" color="fg.muted">
+                        {job.notes}
+                      </Text>
+                    )}
+                  </VStack>
+                )}
                 <Button
                   variant="ghost"
                   size="xs"
@@ -349,120 +434,176 @@ export default function ServicesTab({
                         Loading…
                       </Text>
                     )}
-                    {!isLoadingDetail && detail && detail.occurrences.length === 0 && (
+                    {!isLoadingDetail && detail && detail.occurrences.filter((o: JobOccurrenceFull) => o.status !== "ARCHIVED").length === 0 && archivedOccCount === 0 && (
                       <Text fontSize="sm" color="fg.muted">
                         No occurrences yet.
                       </Text>
                     )}
-                    {!isLoadingDetail &&
-                      detail &&
-                      detail.occurrences.map((occ: JobOccurrenceFull) => (
-                        <Box
-                          key={occ.id}
-                          p={2}
-                          borderWidth="1px"
-                          rounded="md"
-                          mb={2}
-                        >
-                          <HStack justify="space-between" align="center">
-                            <VStack align="start" gap={0}>
-                              <Text fontSize="sm" fontWeight="medium">
-                                {occ.windowStart
-                                  ? new Date(occ.windowStart).toLocaleDateString()
-                                  : occ.startAt
-                                  ? new Date(occ.startAt).toLocaleDateString()
-                                  : "—"}
-                              </Text>
+                    {!isLoadingDetail && detail && visibleOccs.map((occ: JobOccurrenceFull) => (
+                      <Box
+                        key={occ.id}
+                        p={2}
+                        borderWidth="1px"
+                        rounded="md"
+                        mb={2}
+                      >
+                        <HStack justify="space-between" align="center">
+                          <VStack align="start" gap={0}>
+                            <Text fontSize="sm" fontWeight="medium">
+                              {occ.windowStart
+                                ? new Date(occ.windowStart).toLocaleDateString()
+                                : occ.startAt
+                                ? new Date(occ.startAt).toLocaleDateString()
+                                : "—"}
+                            </Text>
+                            <Text fontSize="xs" color="fg.muted">
+                              {occ.assignees.length} assignee
+                              {occ.assignees.length !== 1 ? "s" : ""}
+                            </Text>
+                            {occ.price != null && (
                               <Text fontSize="xs" color="fg.muted">
-                                {occ.assignees.length} assignee
-                                {occ.assignees.length !== 1 ? "s" : ""}
+                                Price: ${occ.price.toFixed(2)}
                               </Text>
-                            </VStack>
-                            <StatusBadge
-                              status={occ.status}
-                              palette={occurrenceStatusColor(occ.status)}
-                              variant="subtle"
-                            />
-                          </HStack>
+                            )}
+                            {occ.notes && (
+                              <Text fontSize="xs" color="fg.muted">
+                                {occ.notes}
+                              </Text>
+                            )}
+                          </VStack>
+                          <StatusBadge
+                            status={occ.status}
+                            palette={occurrenceStatusColor(occ.status)}
+                            variant="subtle"
+                          />
+                        </HStack>
 
-                          {forAdmin && job.status === "ACCEPTED" && (
-                            <HStack gap={2} mt={2} wrap="wrap">
-                              {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && (
-                                <StatusButton
-                                  id="occ-assignees"
-                                  itemId={occ.id}
-                                  label="Assign Workers"
-                                  onClick={async () => {
-                                    setAssigneeOccurrenceId(occ.id);
-                                    setAssigneeCurrentAssignees(occ.assignees);
-                                    setAssigneeJobId(job.id);
-                                    setAssigneeDialogOpen(true);
-                                  }}
-                                  variant="outline"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                              )}
-                              {occ.status === "SCHEDULED" && (
-                                <StatusButton
-                                  id="occ-start"
-                                  itemId={occ.id}
-                                  label="Start"
-                                  onClick={async () =>
-                                    patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS")
-                                  }
-                                  variant="outline"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                              )}
-                              {(occ.status === "SCHEDULED" ||
-                                occ.status === "IN_PROGRESS") && (
-                                <StatusButton
-                                  id="occ-complete"
-                                  itemId={occ.id}
-                                  label="Complete"
-                                  onClick={async () =>
-                                    patchOccurrenceStatus(occ.id, job.id, "COMPLETED")
-                                  }
-                                  variant="outline"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                              )}
-                              {occ.status !== "CANCELED" &&
-                                occ.status !== "COMPLETED" && (
-                                  <StatusButton
-                                    id="occ-cancel"
-                                    itemId={occ.id}
-                                    label="Cancel"
-                                    onClick={async () =>
-                                      patchOccurrenceStatus(occ.id, job.id, "CANCELED")
-                                    }
-                                    variant="outline"
-                                    colorPalette="red"
-                                    busyId={statusButtonBusyId}
-                                    setBusyId={setStatusButtonBusyId}
-                                  />
-                                )}
-                              {occ.status === "CANCELED" && (
-                                <StatusButton
-                                  id="occ-delete"
-                                  itemId={occ.id}
-                                  label="Delete"
-                                  onClick={async () =>
-                                    deleteOccurrence(occ.id, job.id)
-                                  }
-                                  variant="outline"
-                                  colorPalette="red"
-                                  busyId={statusButtonBusyId}
-                                  setBusyId={setStatusButtonBusyId}
-                                />
-                              )}
-                            </HStack>
-                          )}
-                        </Box>
-                      ))}
+                        {forAdmin && job.status === "ACCEPTED" && (
+                          <HStack gap={2} mt={2} wrap="wrap">
+                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-assignees"
+                                itemId={occ.id}
+                                label="Assign Workers"
+                                onClick={async () => {
+                                  setAssigneeOccurrenceId(occ.id);
+                                  setAssigneeCurrentAssignees(occ.assignees);
+                                  setAssigneeJobId(job.id);
+                                  setAssigneeDialogOpen(true);
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "SCHEDULED" && (
+                              <StatusButton
+                                id="occ-start"
+                                itemId={occ.id}
+                                label="Start"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS")
+                                }
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {(occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS") && (
+                              <StatusButton
+                                id="occ-complete"
+                                itemId={occ.id}
+                                label="Complete"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "COMPLETED")
+                                }
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-cancel"
+                                itemId={occ.id}
+                                label="Cancel"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "CANCELED")
+                                }
+                                variant="outline"
+                                colorPalette="red"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "COMPLETED" && (
+                              <StatusButton
+                                id="occ-archive"
+                                itemId={occ.id}
+                                label="Archive"
+                                onClick={async () => archiveOccurrence(occ.id, job.id)}
+                                variant="outline"
+                                colorPalette="gray"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "CANCELED" && (
+                              <StatusButton
+                                id="occ-delete"
+                                itemId={occ.id}
+                                label="Delete"
+                                onClick={async () => deleteOccurrence(occ.id, job.id)}
+                                variant="outline"
+                                colorPalette="red"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-delete-archived"
+                                itemId={occ.id}
+                                label="Delete"
+                                onClick={async () => {
+                                  const dateLabel = occ.windowStart
+                                    ? new Date(occ.windowStart).toLocaleDateString()
+                                    : occ.startAt
+                                    ? new Date(occ.startAt).toLocaleDateString()
+                                    : "unknown date";
+                                  setToDelete({
+                                    deleteType: "archived-occurrence",
+                                    jobId: job.id,
+                                    id: occ.id,
+                                    title: "Delete occurrence?",
+                                    summary: `Occurrence on ${dateLabel}`,
+                                    disabled: !isSuper,
+                                    details: !isSuper ? (
+                                      <Text color="red.500">You must be a Super Admin to delete.</Text>
+                                    ) : undefined,
+                                  });
+                                }}
+                                variant="outline"
+                                colorPalette="red"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                          </HStack>
+                        )}
+                      </Box>
+                    ))}
+                    {!isLoadingDetail && detail && archivedOccCount > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setShowArchivedOccs((prev) => ({ ...prev, [job.id]: !prev[job.id] }))}
+                      >
+                        {showArchivedOccs[job.id]
+                          ? `Hide archived (${archivedOccCount})`
+                          : `Show archived (${archivedOccCount})`}
+                      </Button>
+                    )}
                   </Box>
                 )}
               </Card.Body>
@@ -489,6 +630,8 @@ export default function ServicesTab({
                         label="+ Occurrence"
                         onClick={async () => {
                           setOccurrenceJobId(job.id);
+                          setOccurrenceDefaultNotes(job.notes ?? null);
+                          setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceDialogOpen(true);
                         }}
                         variant="outline"
@@ -516,6 +659,29 @@ export default function ServicesTab({
                         onClick={async () => archiveJob(job.id)}
                         variant="outline"
                         colorPalette="gray"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "ARCHIVED" && (
+                      <StatusButton
+                        id="job-delete-archived"
+                        itemId={job.id}
+                        label="Delete"
+                        onClick={async () => {
+                          setToDelete({
+                            deleteType: "archived-job",
+                            id: job.id,
+                            title: "Delete job?",
+                            summary: job.property?.displayName ?? job.id,
+                            disabled: !isSuper,
+                            details: !isSuper ? (
+                              <Text color="red.500">You must be a Super Admin to delete.</Text>
+                            ) : undefined,
+                          });
+                        }}
+                        variant="outline"
+                        colorPalette="red"
                         busyId={statusButtonBusyId}
                         setBusyId={setStatusButtonBusyId}
                       />
@@ -567,11 +733,27 @@ export default function ServicesTab({
           open={occurrenceDialogOpen}
           onOpenChange={setOccurrenceDialogOpen}
           jobId={occurrenceJobId}
+          defaultNotes={occurrenceDefaultNotes}
+          defaultPrice={occurrenceDefaultPrice}
           onSaved={() => {
             if (occurrenceJobId) void loadDetail(occurrenceJobId, true);
           }}
         />
       )}
+
+      <DeleteDialog
+        toDelete={toDelete}
+        cancel={() => setToDelete(null)}
+        complete={async () => {
+          if (!toDelete) return;
+          if (toDelete.deleteType === "archived-job") {
+            await deleteJob(toDelete.id);
+          } else {
+            await deleteOccurrence(toDelete.id, toDelete.jobId!);
+          }
+          setToDelete(null);
+        }}
+      />
 
       {forAdmin && (
         <AssigneeDialog

@@ -324,6 +324,7 @@ enum JobOccurrenceStatus {
   IN_PROGRESS
   COMPLETED
   CANCELED
+  ARCHIVED
 }
 
 enum JobOccurrenceSource {
@@ -339,6 +340,9 @@ model Job {
 
   kind        JobKind   @default(SINGLE_ADDRESS) // REQUIRED
   status      JobStatus @default(PROPOSED)
+
+  notes        String?
+  defaultPrice Float?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -425,6 +429,7 @@ model JobOccurrence {
   source      JobOccurrenceSource @default(GENERATED)
 
   notes       String?
+  price       Float?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
