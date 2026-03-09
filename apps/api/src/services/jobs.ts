@@ -22,6 +22,7 @@ import {
 import type { ServicesJobs } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { ServiceError } from "../lib/errors";
 
 // ---- helpers ----
 
@@ -70,6 +71,7 @@ export const jobs: ServicesJobs = {
           select: {
             id: true,
             displayName: true,
+            street1: true,
             city: true,
             state: true,
             status: true,
@@ -297,6 +299,10 @@ export const jobs: ServicesJobs = {
         data,
       });
 
+      if (data.status === JobOccurrenceStatus.CANCELED) {
+        await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
+      }
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
         occurrenceId,
         record: updated,
@@ -336,6 +342,197 @@ export const jobs: ServicesJobs = {
       });
 
       return { updated: true as const };
+    });
+  },
+
+  async listAllOccurrences() {
+    return prisma.jobOccurrence.findMany({
+      where: {},
+      include: {
+        job: {
+          include: {
+            property: {
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
+            },
+          },
+        },
+        assignees: {
+          include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
+      },
+      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+    });
+  },
+
+  async listMyOccurrences(userId) {
+    return prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: [JobOccurrenceStatus.SCHEDULED, JobOccurrenceStatus.IN_PROGRESS] },
+        assignees: { some: { userId } },
+      },
+      include: {
+        job: {
+          include: {
+            property: {
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
+            },
+          },
+        },
+        assignees: {
+          include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
+      },
+      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+    });
+  },
+
+  async listAvailableOccurrences() {
+    return prisma.jobOccurrence.findMany({
+      where: {
+        status: JobOccurrenceStatus.SCHEDULED,
+        assignees: { none: {} },
+      },
+      include: {
+        job: {
+          include: {
+            property: {
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
+            },
+          },
+        },
+      },
+      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+    });
+  },
+
+  async addOccurrenceAssignee(currentUserId, occurrenceId, targetUserId) {
+    return prisma.$transaction(async (tx) => {
+      // Only someone already assigned can add team members
+      const isClaimer = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: currentUserId },
+      });
+      if (!isClaimer) {
+        throw new ServiceError("FORBIDDEN", "Only an assigned worker can add team members.", 403);
+      }
+
+      await assertWorkerAssignable(tx, targetUserId);
+
+      // Idempotent — skip if already assigned
+      const existing = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: targetUserId },
+      });
+      if (existing) return { added: false as const, reason: "already_assigned" };
+
+      await tx.jobOccurrenceAssignee.create({
+        data: { occurrenceId, userId: targetUserId, assignedById: currentUserId },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+        occurrenceId,
+        targetUserId,
+        action: "added",
+      });
+
+      return { added: true as const };
+    });
+  },
+
+  async removeOccurrenceAssignee(currentUserId, occurrenceId, targetUserId) {
+    return prisma.$transaction(async (tx) => {
+      // Only the claimer (self-assigned) can remove team members
+      const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: currentUserId },
+      });
+      if (!callerAssignee || callerAssignee.assignedById !== currentUserId) {
+        throw new ServiceError("FORBIDDEN", "Only the person who claimed this job can remove team members.", 403);
+      }
+      // Cannot remove yourself via this endpoint — use unclaim instead
+      if (targetUserId === currentUserId) {
+        throw new ServiceError("INVALID_INPUT", "Use unclaim to remove yourself.", 400);
+      }
+
+      await tx.jobOccurrenceAssignee.deleteMany({
+        where: { occurrenceId, userId: targetUserId },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+        occurrenceId,
+        targetUserId,
+        action: "removed",
+      });
+
+      return { removed: true as const };
+    });
+  },
+
+  async unclaimOccurrence(currentUserId, occurrenceId) {
+    return prisma.$transaction(async (tx) => {
+      // Only the claimer can unclaim
+      const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: currentUserId },
+      });
+      if (!callerAssignee || callerAssignee.assignedById !== currentUserId) {
+        throw new ServiceError("FORBIDDEN", "Only the person who claimed this job can unclaim it.", 403);
+      }
+      // Must be SCHEDULED or IN_PROGRESS to unclaim
+      const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+      if (occ.status === JobOccurrenceStatus.COMPLETED || occ.status === JobOccurrenceStatus.CANCELED) {
+        throw new ServiceError("INVALID_STATUS", "Cannot unclaim a completed or canceled occurrence.", 409);
+      }
+
+      await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+        occurrenceId,
+        action: "unclaimed",
+      });
+
+      return { unclaimed: true as const };
+    });
+  },
+
+  async claimOccurrence(currentUserId, occurrenceId) {
+    return prisma.$transaction(async (tx) => {
+      await assertWorkerAssignable(tx, currentUserId);
+
+      const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+      if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
+        throw new ServiceError("INVALID_STATUS", "Only SCHEDULED occurrences can be claimed.", 409);
+      }
+
+      await tx.jobOccurrenceAssignee.create({
+        data: { occurrenceId, userId: currentUserId, assignedById: currentUserId },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+        occurrenceId,
+        action: "claimed",
+      });
+
+      return { claimed: true as const };
+    });
+  },
+
+  async updateOccurrenceStatus(currentUserId, occurrenceId, status) {
+    return prisma.$transaction(async (tx) => {
+      const assignee = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: currentUserId },
+      });
+      if (!assignee) {
+        throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
+      }
+
+      const updated = await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
+        occurrenceId,
+        record: updated,
+      });
+
+      return updated;
     });
   },
 
@@ -395,5 +592,34 @@ export const jobs: ServicesJobs = {
 
       return { generated: 1 };
     });
+  },
+
+  async deleteJob(jobId: string) {
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
+    if (job.status !== "PROPOSED") {
+      throw new ServiceError("INVALID_STATUS", "Only proposed jobs can be deleted.", 409);
+    }
+    // cascade: delete assignees, then occurrences, then schedules, then job
+    const occurrences = await prisma.jobOccurrence.findMany({ where: { jobId }, select: { id: true } });
+    const occurrenceIds = occurrences.map((o) => o.id);
+    if (occurrenceIds.length > 0) {
+      await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: { in: occurrenceIds } } });
+      await prisma.jobOccurrence.deleteMany({ where: { jobId } });
+    }
+    await prisma.jobSchedule.deleteMany({ where: { jobId } });
+    await prisma.job.delete({ where: { id: jobId } });
+    return { deleted: true as const };
+  },
+
+  async deleteOccurrence(occurrenceId) {
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+    if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+    if (occ.status !== JobOccurrenceStatus.CANCELED) {
+      throw new ServiceError("INVALID_STATUS", "Only canceled occurrences can be deleted.", 409);
+    }
+    await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
+    await prisma.jobOccurrence.delete({ where: { id: occurrenceId } });
+    return { deleted: true as const };
   },
 };

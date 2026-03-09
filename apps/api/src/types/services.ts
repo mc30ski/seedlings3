@@ -427,6 +427,16 @@ export type ServicesJobs = {
     limit?: number;
   }): Promise<JobListItem[]>;
 
+  listAllOccurrences(): Promise<any[]>;
+  listMyOccurrences(userId: string): Promise<any[]>;
+  listAvailableOccurrences(): Promise<any[]>;
+  claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
+  updateOccurrenceStatus(
+    currentUserId: string,
+    occurrenceId: string,
+    status: JobOccurrenceStatus
+  ): Promise<JobOccurrence>;
+
   get(id: string): Promise<
     Job & {
       property: Property;
@@ -470,6 +480,26 @@ export type ServicesJobs = {
       notes?: string | null;
     }
   ): Promise<JobOccurrence>;
+
+  addOccurrenceAssignee(
+    currentUserId: string,
+    occurrenceId: string,
+    targetUserId: string
+  ): Promise<{ added: true } | { added: false; reason: string }>;
+
+  removeOccurrenceAssignee(
+    currentUserId: string,
+    occurrenceId: string,
+    targetUserId: string
+  ): Promise<{ removed: true }>;
+
+  unclaimOccurrence(
+    currentUserId: string,
+    occurrenceId: string
+  ): Promise<{ unclaimed: true }>;
+
+  deleteJob(jobId: string): Promise<{ deleted: true }>;
+  deleteOccurrence(occurrenceId: string): Promise<{ deleted: true }>;
 
   // assignment at the occurrence level (workers only)
   setOccurrenceAssignees(

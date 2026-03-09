@@ -114,7 +114,7 @@ export default function HomePage() {
       value: "jobs",
       label: "Jobs",
       icon: FiBriefcase,
-      content: wrapWithInlineMessage(<JobsTab role="worker" />),
+      content: wrapWithInlineMessage(<JobsTab me={me} purpose="WORKER" />),
     },
     {
       value: "payments",

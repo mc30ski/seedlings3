@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
-import { Role as RoleVal } from "@prisma/client";
+import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -115,5 +115,65 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/properties/:id", workerGuard, async (req: any) => {
     const id = String(req.params.id);
     return services.properties.get(id);
+  });
+
+  // Worker occurrence routes
+  app.get("/occurrences", workerGuard, async () => {
+    return services.jobs.listAllOccurrences();
+  });
+
+  app.get("/occurrences/mine", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.listMyOccurrences(uid);
+  });
+
+  app.get("/occurrences/available", workerGuard, async () => {
+    return services.jobs.listAvailableOccurrences();
+  });
+
+  app.post("/occurrences/:id/claim", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.claimOccurrence(uid, String(req.params.id));
+  });
+
+  app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.IN_PROGRESS
+    );
+  });
+
+  app.post("/occurrences/:id/complete", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.COMPLETED
+    );
+  });
+
+  app.post("/occurrences/:id/add-assignee", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const targetUserId = String(req.body?.userId ?? "");
+    if (!targetUserId) throw app.httpErrors.badRequest("userId is required");
+    return services.jobs.addOccurrenceAssignee(uid, String(req.params.id), targetUserId);
+  });
+
+  app.delete("/occurrences/:id/assignees/:userId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.removeOccurrenceAssignee(uid, String(req.params.id), String(req.params.userId));
+  });
+
+  app.post("/occurrences/:id/unclaim", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.unclaimOccurrence(uid, String(req.params.id));
+  });
+
+  // List of approved workers (for co-worker selection)
+  app.get("/workers", workerGuard, async () => {
+    const list = await services.users.list({ approved: true, role: "WORKER" });
+    return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email }));
   });
 }

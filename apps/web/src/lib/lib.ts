@@ -127,6 +127,22 @@ export function badgeColors(
   return { bg: `${palette}.600`, color: "white" };
 }
 
+export function jobStatusColor(value: string): string {
+  const t = (value || "").toUpperCase();
+  if (t === "ACCEPTED") return "green";
+  if (t === "PROPOSED") return "orange";
+  return "gray";
+}
+
+export function occurrenceStatusColor(value: string): string {
+  const t = (value || "").toUpperCase();
+  if (t === "COMPLETED") return "green";
+  if (t === "IN_PROGRESS") return "cyan";
+  if (t === "SCHEDULED") return "blue";
+  if (t === "CANCELED") return "red";
+  return "gray";
+}
+
 export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
 

@@ -623,4 +623,19 @@ export default async function adminRoutes(app: FastifyInstance) {
       );
     }
   );
+
+  // Delete a proposed job permanently
+  app.delete("/admin/jobs/:id", adminGuard, async (req: any) => {
+    return services.jobs.deleteJob(String(req.params.id));
+  });
+
+  // Delete a canceled occurrence permanently
+  app.delete(
+    "/admin/occurrences/:occurrenceId",
+    adminGuard,
+    async (req: any) => {
+      const occurrenceId = String(req.params.occurrenceId);
+      return services.jobs.deleteOccurrence(occurrenceId);
+    }
+  );
 }

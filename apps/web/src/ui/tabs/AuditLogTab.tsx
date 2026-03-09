@@ -189,49 +189,76 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
   const truncW = useBreakpointValue({ base: "160px", md: "260px" }) ?? "260px";
   const colSpan = 4;
 
-  // Text for the Details column (equipment OR role)
+  // Text for the Details column
   function summaryCellText(row: AuditItem): string {
     const md = (row.metadata ?? {}) as any;
+    const action = row.action;
 
-    if (
-      row.action === "EQUIPMENT_CREATED" ||
-      row.action === "EQUIPMENT_RESERVED" ||
-      row.action === "EQUIPMENT_RESERVATION_CANCELLED" ||
-      row.action === "EQUIPMENT_CHECKED_OUT" ||
-      row.action === "EQUIPMENT_RETURNED" ||
-      row.action === "EQUIPMENT_FORCE_RELEASED" ||
-      row.action === "EQUIPMENT_MAINTENANCE_START" ||
-      row.action === "EQUIPMENT_MAINTENANCE_END" ||
-      row.action === "EQUIPMENT_RETIRED" ||
-      row.action === "EQUIPMENT_UNRETIRED" ||
-      row.action === "EQUIPMENT_UPDATED" ||
-      row.action === "EQUIPMENT_DELETED"
-    ) {
-      const short = md.equipmentRecord.shortDesc;
-      const qrSlug = md.equipmentRecord.qrSlug;
-      return `${short} (${qrSlug})`;
+    // Equipment
+    if (action.startsWith("EQUIPMENT_")) {
+      const eq = md.equipmentRecord;
+      if (!eq) return "";
+      return `${eq.shortDesc ?? ""} (${eq.qrSlug ?? ""})`;
     }
 
-    if (
-      row.action === "USER_APPROVED" ||
-      row.action === "USER_ROLE_ASSIGNED" ||
-      row.action === "USER_ROLE_REMOVED" ||
-      row.action === "USER_DELETED"
-    ) {
-      const email = md.userRecord.email;
+    // User
+    if (action.startsWith("USER_")) {
+      const email = md.userRecord?.email ?? "";
       const role = md.roleRecord?.role;
-      return `${role ? role + " - " : ""}${email}`;
+      return role ? `${role} — ${email}` : email;
     }
 
-    if (row.action === "CLIENT_CREATED" || row.action === "CLIENT_UPDATED") {
-      let summary = "";
-      if (md.clientRecord) {
-        summary = md.clientRecord.displayName;
+    // Property
+    if (action.startsWith("PROPERTY_")) {
+      const name = md.displayName ?? "";
+      if (name) return name;
+      return md.propertyId ? `Property ${md.propertyId.slice(0, 8)}…` : "";
+    }
+
+    // Client
+    if (action.startsWith("CLIENT_")) {
+      // contact actions have contactRecord
+      if (md.contactRecord) {
+        const name = [md.contactRecord.firstName, md.contactRecord.lastName]
+          .filter(Boolean)
+          .join(" ");
+        const email = md.contactRecord.email;
+        return name || email || "";
       }
-      if (!summary && md.contactRecord) {
-        summary = `${md.contactRecord.firstName} ${md.contactRecord.lastName}`;
+      // client record
+      if (md.record?.displayName) return md.record.displayName;
+      return "";
+    }
+
+    // Job
+    if (action.startsWith("JOB_")) {
+      // Assignee actions have an action field
+      if (md.action) {
+        const verb: Record<string, string> = {
+          claimed: "Claimed",
+          unclaimed: "Unclaimed",
+          added: "Assignee added",
+          removed: "Assignee removed",
+        };
+        const label = verb[md.action] ?? md.action;
+        return md.occurrenceId
+          ? `${label} — occ ${md.occurrenceId.slice(0, 8)}…`
+          : label;
       }
-      return summary;
+      // Occurrence updated: show status change
+      if (md.occurrenceId && md.record?.status) {
+        return `Occurrence → ${md.record.status}`;
+      }
+      if (md.occurrenceId) {
+        return `Occurrence ${md.occurrenceId.slice(0, 8)}…`;
+      }
+      // Job created/updated: show kind + status
+      if (md.record) {
+        const parts = [md.record.kind, md.record.status].filter(Boolean);
+        return parts.join(" / ");
+      }
+      if (md.jobId) return `Job ${md.jobId.slice(0, 8)}…`;
+      return "";
     }
 
     return "";
