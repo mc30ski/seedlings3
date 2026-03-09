@@ -118,8 +118,9 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // Worker occurrence routes
-  app.get("/occurrences", workerGuard, async () => {
-    return services.jobs.listAllOccurrences();
+  app.get("/occurrences", workerGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    return services.jobs.listAllOccurrences({ from, to });
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {

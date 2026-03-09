@@ -363,12 +363,14 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Jobs: list / get / create / update
 
   app.get("/admin/jobs", adminGuard, async (req: any) => {
-    const { q, propertyId, status, kind, limit } = (req.query || {}) as {
+    const { q, propertyId, status, kind, limit, from, to } = (req.query || {}) as {
       q?: string;
       propertyId?: string;
       status?: "PROPOSED" | "ACCEPTED" | "ALL";
       kind?: "ENTIRE_SITE" | "SINGLE_ADDRESS" | "ALL";
       limit?: string;
+      from?: string;
+      to?: string;
     };
 
     return services.jobs.list({
@@ -377,6 +379,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       status: (status as any) ?? "ALL",
       kind: (kind as any) ?? "ALL",
       limit: limit ? Number(limit) : undefined,
+      from,
+      to,
     });
   });
 
@@ -402,6 +406,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       propertyId,
       kind: kind as JobKind,
       status: (status as JobStatus) || undefined,
+      notes: body.notes != null ? String(body.notes) : null,
+      defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
     } as any);
   });
 
@@ -427,6 +433,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
       patch.status = status as JobStatus;
     }
+
+    if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
+    if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
 
     return services.jobs.update(await currentUserId(req), id, patch);
   });
@@ -541,6 +550,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
     if (body.notes != null) input.notes = body.notes;
+    if (body.price != null) input.price = Number(body.price);
 
     if (body.assigneeUserIds != null) {
       if (!Array.isArray(body.assigneeUserIds)) {
@@ -613,7 +623,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       if (body.windowEnd != null) patch.windowEnd = body.windowEnd;
       if (body.startAt != null) patch.startAt = body.startAt;
       if (body.endAt != null) patch.endAt = body.endAt;
-      if (body.notes != null) patch.notes = body.notes;
+      if ("notes" in body) patch.notes = body.notes;
+      if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(
@@ -648,6 +659,18 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.delete("/admin/jobs/:id", adminGuard, async (req: any) => {
     return services.jobs.deleteJob(String(req.params.id));
   });
+
+  // Archive a completed occurrence
+  app.post(
+    "/admin/occurrences/:occurrenceId/archive",
+    adminGuard,
+    async (req: any) => {
+      return services.jobs.archiveOccurrence(
+        await currentUserId(req),
+        String(req.params.occurrenceId)
+      );
+    }
+  );
 
   // Delete a canceled occurrence permanently
   app.delete(

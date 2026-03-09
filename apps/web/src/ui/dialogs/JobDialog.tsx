@@ -5,9 +5,11 @@ import {
   Button,
   Dialog,
   HStack,
+  Input,
   Portal,
   Select,
   Text,
+  Textarea,
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
@@ -37,7 +39,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status"> | null;
+  initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "notes" | "defaultPrice"> | null;
   onSaved?: () => void;
 };
 
@@ -55,6 +57,8 @@ export default function JobDialog({
   const [propertyValue, setPropertyValue] = useState<string[]>([]);
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
   const [statusValue, setStatusValue] = useState<string[]>([JOB_STATUS[0]]);
+  const [notes, setNotes] = useState("");
+  const [defaultPrice, setDefaultPrice] = useState("");
 
   // Load active properties when dialog opens
   useEffect(() => {
@@ -78,10 +82,14 @@ export default function JobDialog({
       setPropertyValue([initial.propertyId]);
       setKindValue([initial.kind]);
       setStatusValue([initial.status]);
+      setNotes(initial.notes ?? "");
+      setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
     } else {
       setPropertyValue([]);
       setKindValue([JOB_KIND[0]]);
       setStatusValue([JOB_STATUS[0]]);
+      setNotes("");
+      setDefaultPrice("");
     }
   }, [open, mode, initial]);
 
@@ -129,6 +137,8 @@ export default function JobDialog({
       propertyId: pid,
       kind: kindValue[0] as JobKind,
       status: statusValue[0] as JobStatus,
+      notes: notes.trim() || null,
+      defaultPrice: defaultPrice !== "" ? Number(defaultPrice) : null,
     };
     setBusy(true);
     try {
@@ -253,6 +263,31 @@ export default function JobDialog({
                     </Select.Root>
                   </div>
                 </HStack>
+
+                <HStack gap={3} align="flex-end">
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Default price</Text>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="0.00"
+                      value={defaultPrice}
+                      onChange={(e) => setDefaultPrice(e.target.value)}
+                      size="sm"
+                    />
+                  </div>
+                </HStack>
+
+                <div>
+                  <Text mb="1">Notes</Text>
+                  <Textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Internal notes for this job…"
+                    rows={3}
+                  />
+                </div>
               </VStack>
             </Dialog.Body>
 

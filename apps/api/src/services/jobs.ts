@@ -60,6 +60,20 @@ export const jobs: ServicesJobs = {
     }
     if (params?.kind && params.kind !== "ALL") where.kind = params.kind;
 
+    if (params?.from || params?.to) {
+      const dateRange: Prisma.DateTimeFilter = {};
+      if (params.from) dateRange.gte = new Date(params.from);
+      if (params.to) dateRange.lte = new Date(params.to + "T23:59:59.999Z");
+      where.occurrences = {
+        some: {
+          OR: [
+            { windowStart: dateRange },
+            { windowStart: null, startAt: dateRange },
+          ],
+        },
+      };
+    }
+
     if (q) {
       where.OR = [
         { property: { displayName: { contains: q, mode: "insensitive" } } },
@@ -150,6 +164,8 @@ export const jobs: ServicesJobs = {
           propertyId: payload.propertyId,
           kind: payload.kind,
           status: payload.status ?? JobStatus.PROPOSED,
+          notes: payload.notes ?? null,
+          defaultPrice: payload.defaultPrice ?? null,
         },
       });
 
@@ -170,6 +186,8 @@ export const jobs: ServicesJobs = {
           kind: payload.kind,
           status: payload.status,
           propertyId: payload.propertyId,
+          notes: payload.notes ?? undefined,
+          defaultPrice: payload.defaultPrice ?? undefined,
         },
       });
 
@@ -240,7 +258,8 @@ export const jobs: ServicesJobs = {
           endAt: toDate(input.endAt),
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
-          notes: input.notes ?? null,
+          notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
+          price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
         },
       });
 
@@ -298,6 +317,7 @@ export const jobs: ServicesJobs = {
       if ("endAt" in patch)
         data.endAt = patch.endAt ? new Date(patch.endAt) : null;
       if ("notes" in patch) data.notes = patch.notes ?? null;
+      if ("price" in patch) data.price = patch.price ?? null;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
@@ -350,9 +370,46 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async listAllOccurrences() {
+  async archiveOccurrence(currentUserId: string, occurrenceId: string) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+      if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+      if (occ.status !== JobOccurrenceStatus.COMPLETED) {
+        throw new ServiceError("INVALID_STATUS", "Only completed occurrences can be archived.", 409);
+      }
+
+      const updated = await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status: JobOccurrenceStatus.ARCHIVED },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_ARCHIVED, currentUserId, {
+        occurrenceId,
+        record: updated,
+      });
+
+      return updated;
+    });
+  },
+
+  async listAllOccurrences(params) {
+    const dateRange: Prisma.DateTimeFilter = {};
+    if (params?.from) dateRange.gte = new Date(params.from);
+    if (params?.to) dateRange.lte = new Date(params.to + "T23:59:59.999Z");
+    const hasDates = params?.from || params?.to;
+
     return prisma.jobOccurrence.findMany({
-      where: {},
+      where: {
+        status: { not: JobOccurrenceStatus.ARCHIVED },
+        ...(hasDates
+          ? {
+              OR: [
+                { windowStart: dateRange },
+                { windowStart: null, startAt: dateRange },
+              ],
+            }
+          : {}),
+      },
       include: {
         job: {
           include: {
@@ -565,6 +622,8 @@ export const jobs: ServicesJobs = {
           windowStart: now,
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.GENERATED,
+          notes: (job as any).notes ?? null,
+          price: (job as any).defaultPrice ?? null,
         },
       });
 
@@ -670,8 +729,8 @@ export const jobs: ServicesJobs = {
   async deleteJob(jobId: string) {
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
-    if (job.status !== "PROPOSED") {
-      throw new ServiceError("INVALID_STATUS", "Only proposed jobs can be deleted.", 409);
+    if (job.status !== JobStatus.PROPOSED && job.status !== JobStatus.ARCHIVED) {
+      throw new ServiceError("INVALID_STATUS", "Only proposed or archived jobs can be deleted.", 409);
     }
     // cascade: delete assignees, then occurrences, then schedules, then job
     const occurrences = await prisma.jobOccurrence.findMany({ where: { jobId }, select: { id: true } });
@@ -688,8 +747,8 @@ export const jobs: ServicesJobs = {
   async deleteOccurrence(occurrenceId) {
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-    if (occ.status !== JobOccurrenceStatus.CANCELED) {
-      throw new ServiceError("INVALID_STATUS", "Only canceled occurrences can be deleted.", 409);
+    if (occ.status !== JobOccurrenceStatus.CANCELED && occ.status !== JobOccurrenceStatus.ARCHIVED) {
+      throw new ServiceError("INVALID_STATUS", "Only canceled or archived occurrences can be deleted.", 409);
     }
     await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
     await prisma.jobOccurrence.delete({ where: { id: occurrenceId } });
