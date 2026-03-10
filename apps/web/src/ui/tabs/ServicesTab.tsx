@@ -86,6 +86,10 @@ export default function ServicesTab({
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
 
+  const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
+  const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
+  const [editOccurrenceJobId, setEditOccurrenceJobId] = useState<string>("");
+
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
   const [assigneeCurrentAssignees, setAssigneeCurrentAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
@@ -461,11 +465,14 @@ export default function ServicesTab({
                               {occ.assignees.length} assignee
                               {occ.assignees.length !== 1 ? "s" : ""}
                             </Text>
-                            {occ.price != null && (
-                              <Text fontSize="xs" color="fg.muted">
-                                Price: ${occ.price.toFixed(2)}
-                              </Text>
-                            )}
+                            <Text fontSize="xs" color="fg.muted">
+                              Price:{" "}
+                              {occ.price != null ? (
+                                <b>${occ.price.toFixed(2)}</b>
+                              ) : (
+                                <span>Not set</span>
+                              )}
+                            </Text>
                             {occ.notes && (
                               <Text fontSize="xs" color="fg.muted">
                                 {occ.notes}
@@ -481,6 +488,21 @@ export default function ServicesTab({
 
                         {forAdmin && job.status === "ACCEPTED" && (
                           <HStack gap={2} mt={2} wrap="wrap">
+                            {occ.status !== "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-edit"
+                                itemId={occ.id}
+                                label="Edit"
+                                onClick={async () => {
+                                  setEditingOccurrence(occ);
+                                  setEditOccurrenceJobId(job.id);
+                                  setEditOccurrenceDialogOpen(true);
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
                             {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-assignees"
@@ -738,6 +760,25 @@ export default function ServicesTab({
           defaultPrice={occurrenceDefaultPrice}
           onSaved={() => {
             if (occurrenceJobId) void loadDetail(occurrenceJobId, true);
+          }}
+        />
+      )}
+
+      {forAdmin && editingOccurrence && (
+        <OccurrenceDialog
+          open={editOccurrenceDialogOpen}
+          onOpenChange={(open) => {
+            setEditOccurrenceDialogOpen(open);
+            if (!open) setEditingOccurrence(null);
+          }}
+          mode="UPDATE"
+          occurrenceId={editingOccurrence.id}
+          defaultWindowStart={editingOccurrence.windowStart}
+          defaultWindowEnd={editingOccurrence.windowEnd}
+          defaultNotes={editingOccurrence.notes}
+          defaultPrice={editingOccurrence.price}
+          onSaved={() => {
+            if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
           }}
         />
       )}
