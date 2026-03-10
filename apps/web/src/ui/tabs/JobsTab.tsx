@@ -278,11 +278,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
                 <Card.Body pt="0">
                   <VStack align="start" gap={1}>
-                    {occ.windowStart && (
+                    {occ.startAt && (
                       <Text fontSize="sm">
-                        Window: {new Date(occ.windowStart).toLocaleDateString()}
-                        {occ.windowEnd
-                          ? ` – ${new Date(occ.windowEnd).toLocaleDateString()}`
+                        {new Date(occ.startAt).toLocaleDateString()}
+                        {occ.endAt
+                          ? ` – ${new Date(occ.endAt).toLocaleDateString()}`
                           : ""}
                       </Text>
                     )}

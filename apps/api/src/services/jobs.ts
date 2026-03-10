@@ -69,16 +69,7 @@ export const jobs: ServicesJobs = {
       // Include jobs with an occurrence in range OR jobs with no occurrences yet
       andClauses.push({
         OR: [
-          {
-            occurrences: {
-              some: {
-                OR: [
-                  { windowStart: dateRange },
-                  { windowStart: null, startAt: dateRange },
-                ],
-              },
-            },
-          },
+          { occurrences: { some: { startAt: dateRange } } },
           { occurrences: { none: {} } },
         ],
       });
@@ -115,13 +106,11 @@ export const jobs: ServicesJobs = {
           select: {
             id: true,
             startAt: true,
-            windowStart: true,
             status: true,
             kind: true,
           },
           orderBy: [
             { startAt: "asc" },
-            { windowStart: "asc" },
             { createdAt: "asc" },
           ],
           take: 1, // “next”
@@ -268,8 +257,6 @@ export const jobs: ServicesJobs = {
         data: {
           jobId,
           kind: input.kind ?? job.kind, // copy from template by default
-          windowStart: toDate(input.windowStart),
-          windowEnd: toDate(input.windowEnd),
           startAt: toDate(input.startAt),
           endAt: toDate(input.endAt),
           status: JobOccurrenceStatus.SCHEDULED,
@@ -322,12 +309,6 @@ export const jobs: ServicesJobs = {
       if (patch.status != null) data.status = patch.status;
 
       // allow null to clear
-      if ("windowStart" in patch)
-        data.windowStart = patch.windowStart
-          ? new Date(patch.windowStart)
-          : null;
-      if ("windowEnd" in patch)
-        data.windowEnd = patch.windowEnd ? new Date(patch.windowEnd) : null;
       if ("startAt" in patch)
         data.startAt = patch.startAt ? new Date(patch.startAt) : null;
       if ("endAt" in patch)
@@ -417,14 +398,7 @@ export const jobs: ServicesJobs = {
     return prisma.jobOccurrence.findMany({
       where: {
         status: { not: JobOccurrenceStatus.ARCHIVED },
-        ...(hasDates
-          ? {
-              OR: [
-                { windowStart: dateRange },
-                { windowStart: null, startAt: dateRange },
-              ],
-            }
-          : {}),
+        ...(hasDates ? { startAt: dateRange } : {}),
       },
       include: {
         job: {
@@ -438,7 +412,7 @@ export const jobs: ServicesJobs = {
           include: { user: { select: { id: true, displayName: true, email: true } } },
         },
       },
-      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
   },
 
@@ -460,7 +434,7 @@ export const jobs: ServicesJobs = {
           include: { user: { select: { id: true, displayName: true, email: true } } },
         },
       },
-      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
   },
 
@@ -479,7 +453,7 @@ export const jobs: ServicesJobs = {
           },
         },
       },
-      orderBy: [{ windowStart: "asc" }, { startAt: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
   },
 
@@ -635,7 +609,7 @@ export const jobs: ServicesJobs = {
         data: {
           jobId,
           kind: job.kind,
-          windowStart: now,
+          startAt: now,
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.GENERATED,
           notes: (job as any).notes ?? null,

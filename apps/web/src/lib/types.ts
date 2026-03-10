@@ -202,6 +202,8 @@ export const JOB_OCCURRENCE_STATUS = [
   "SCHEDULED",
   "IN_PROGRESS",
   "COMPLETED",
+  "PENDING_PAYMENT",
+  "CLOSED",
   "CANCELED",
   "ARCHIVED",
 ] as const;
@@ -234,8 +236,6 @@ export type JobOccurrenceFull = {
   kind: JobKind;
   status: JobOccurrenceStatus;
   source: string;
-  windowStart?: string | null;
-  windowEnd?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
@@ -261,7 +261,6 @@ export type JobListItem = {
   nextOccurrence?: {
     id: string;
     startAt?: string | null;
-    windowStart?: string | null;
     status: string;
     kind: string;
   } | null;
@@ -281,8 +280,6 @@ export type WorkerOccurrence = {
   jobId: string;
   kind: JobKind;
   status: JobOccurrenceStatus;
-  windowStart?: string | null;
-  windowEnd?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;

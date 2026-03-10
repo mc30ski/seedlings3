@@ -323,6 +323,8 @@ enum JobOccurrenceStatus {
   SCHEDULED
   IN_PROGRESS
   COMPLETED
+  PENDING_PAYMENT
+  CLOSED
   CANCELED
   ARCHIVED
 }
@@ -420,8 +422,6 @@ model JobOccurrence {
 
   kind        JobKind  // REQUIRED (copied from Job.kind on creation, editable later)
 
-  windowStart DateTime?
-  windowEnd   DateTime?
   startAt     DateTime?
   endAt       DateTime?
 

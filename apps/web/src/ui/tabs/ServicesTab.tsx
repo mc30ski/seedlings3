@@ -455,9 +455,7 @@ export default function ServicesTab({
                         <HStack justify="space-between" align="center">
                           <VStack align="start" gap={0}>
                             <Text fontSize="sm" fontWeight="medium">
-                              {occ.windowStart
-                                ? new Date(occ.windowStart).toLocaleDateString()
-                                : occ.startAt
+                              {occ.startAt
                                 ? new Date(occ.startAt).toLocaleDateString()
                                 : "—"}
                             </Text>
@@ -503,7 +501,7 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
+                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-assignees"
                                 itemId={occ.id}
@@ -545,7 +543,7 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
+                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-cancel"
                                 itemId={occ.id}
@@ -560,6 +558,34 @@ export default function ServicesTab({
                               />
                             )}
                             {occ.status === "COMPLETED" && (
+                              <StatusButton
+                                id="occ-pending-payment"
+                                itemId={occ.id}
+                                label="Pending Payment"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT")
+                                }
+                                variant="outline"
+                                colorPalette="orange"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "PENDING_PAYMENT" && (
+                              <StatusButton
+                                id="occ-close"
+                                itemId={occ.id}
+                                label="Close"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "CLOSED")
+                                }
+                                variant="outline"
+                                colorPalette="purple"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "CLOSED" && (
                               <StatusButton
                                 id="occ-archive"
                                 itemId={occ.id}
@@ -773,8 +799,10 @@ export default function ServicesTab({
           }}
           mode="UPDATE"
           occurrenceId={editingOccurrence.id}
-          defaultWindowStart={editingOccurrence.windowStart}
-          defaultWindowEnd={editingOccurrence.windowEnd}
+          defaultStatus={editingOccurrence.status}
+          defaultKind={editingOccurrence.kind}
+          defaultStartAt={editingOccurrence.startAt}
+          defaultEndAt={editingOccurrence.endAt}
           defaultNotes={editingOccurrence.notes}
           defaultPrice={editingOccurrence.price}
           onSaved={() => {
