@@ -16,6 +16,7 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 
 type Props = {
   open: boolean;
@@ -110,13 +111,9 @@ export default function OccurrenceDialog({
                 </div>
                 <div>
                   <Text mb="1">Price</Text>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="0.00"
+                  <CurrencyInput
                     value={price}
-                    onChange={(e) => setPrice(e.target.value)}
+                    onChange={setPrice}
                   />
                 </div>
                 <div>
