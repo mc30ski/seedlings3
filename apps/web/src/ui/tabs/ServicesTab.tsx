@@ -405,20 +405,21 @@ export default function ServicesTab({
               </Card.Header>
 
               <Card.Body pt="0">
-                {(job.defaultPrice != null || job.notes) && (
-                  <VStack align="start" gap={0} mb={2}>
-                    {job.defaultPrice != null && (
-                      <Text fontSize="sm" color="fg.muted">
-                        Default price: <b>${job.defaultPrice.toFixed(2)}</b>
-                      </Text>
+                <VStack align="start" gap={0} mb={2}>
+                  <Text fontSize="sm" color="fg.muted">
+                    Default price:{" "}
+                    {job.defaultPrice != null ? (
+                      <b>${job.defaultPrice.toFixed(2)}</b>
+                    ) : (
+                      <span>Not set</span>
                     )}
-                    {job.notes && (
-                      <Text fontSize="sm" color="fg.muted">
-                        {job.notes}
-                      </Text>
-                    )}
-                  </VStack>
-                )}
+                  </Text>
+                  {job.notes && (
+                    <Text fontSize="sm" color="fg.muted">
+                      {job.notes}
+                    </Text>
+                  )}
+                </VStack>
                 <Button
                   variant="ghost"
                   size="xs"
