@@ -128,8 +128,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     let rows = items;
     if (activeFilters.size > 0) {
       rows = rows.filter((occ) => {
-        if (activeFilters.has("UNCLAIMED") && (occ.assignees ?? []).length === 0) return true;
-        if (activeFilters.has(occ.status)) return true;
+        const hasAssignees = (occ.assignees ?? []).length > 0;
+        if (activeFilters.has("UNCLAIMED") && !hasAssignees) return true;
+        if (hasAssignees && activeFilters.has(occ.status)) return true;
         return false;
       });
     }
