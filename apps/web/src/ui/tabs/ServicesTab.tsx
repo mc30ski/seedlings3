@@ -615,9 +615,7 @@ export default function ServicesTab({
                                 itemId={occ.id}
                                 label="Delete"
                                 onClick={async () => {
-                                  const dateLabel = occ.windowStart
-                                    ? new Date(occ.windowStart).toLocaleDateString()
-                                    : occ.startAt
+                                  const dateLabel = occ.startAt
                                     ? new Date(occ.startAt).toLocaleDateString()
                                     : "unknown date";
                                   setToDelete({
