@@ -5,7 +5,6 @@ import {
   Button,
   Dialog,
   HStack,
-  Input,
   Portal,
   Select,
   Text,
@@ -27,6 +26,7 @@ import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 
 type PropertyLite = {
   id: string;
@@ -267,13 +267,9 @@ export default function JobDialog({
                 <HStack gap={3} align="flex-end">
                   <div style={{ flex: 1 }}>
                     <Text mb="1">Default price</Text>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="0.00"
+                    <CurrencyInput
                       value={defaultPrice}
-                      onChange={(e) => setDefaultPrice(e.target.value)}
+                      onChange={setDefaultPrice}
                       size="sm"
                     />
                   </div>

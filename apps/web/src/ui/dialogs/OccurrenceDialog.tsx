@@ -11,16 +11,33 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { apiPost } from "@/src/lib/api";
+import { apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
+
+function toDateInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  jobId: string;
+  mode?: "CREATE" | "UPDATE";
+  // CREATE
+  jobId?: string;
+  // UPDATE
+  occurrenceId?: string;
+  // shared pre-populated values
+  defaultWindowStart?: string | null;
+  defaultWindowEnd?: string | null;
   defaultNotes?: string | null;
   defaultPrice?: number | null;
   onSaved?: () => void;
@@ -29,7 +46,11 @@ type Props = {
 export default function OccurrenceDialog({
   open,
   onOpenChange,
+  mode = "CREATE",
   jobId,
+  occurrenceId,
+  defaultWindowStart,
+  defaultWindowEnd,
   defaultNotes,
   defaultPrice,
   onSaved,
@@ -43,11 +64,11 @@ export default function OccurrenceDialog({
 
   useEffect(() => {
     if (!open) return;
-    setWindowStart("");
-    setWindowEnd("");
+    setWindowStart(mode === "UPDATE" ? toDateInput(defaultWindowStart) : "");
+    setWindowEnd(mode === "UPDATE" ? toDateInput(defaultWindowEnd) : "");
     setNotes(defaultNotes ?? "");
-    setPrice(defaultPrice != null ? String(defaultPrice) : "");
-  }, [open, defaultNotes, defaultPrice]);
+    setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
+  }, [open, mode, defaultWindowStart, defaultWindowEnd, defaultNotes, defaultPrice]);
 
   async function handleSave() {
     if (!windowStart) {
@@ -56,19 +77,37 @@ export default function OccurrenceDialog({
     }
     setBusy(true);
     try {
-      await apiPost(`/api/admin/jobs/${jobId}/occurrences`, {
-        windowStart: new Date(windowStart + "T00:00:00").toISOString(),
-        windowEnd: windowEnd ? new Date(windowEnd + "T00:00:00").toISOString() : undefined,
-        notes: notes.trim() || undefined,
-        price: price !== "" ? Number(price) : undefined,
-      });
-      publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
+      const windowStartIso = new Date(windowStart + "T00:00:00").toISOString();
+      const windowEndIso = windowEnd ? new Date(windowEnd + "T00:00:00").toISOString() : null;
+      const priceVal = price !== "" ? Number(price) : null;
+      const notesVal = notes.trim() || null;
+
+      if (mode === "CREATE") {
+        await apiPost(`/api/admin/jobs/${jobId}/occurrences`, {
+          windowStart: windowStartIso,
+          windowEnd: windowEndIso ?? undefined,
+          notes: notesVal ?? undefined,
+          price: priceVal ?? undefined,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
+      } else {
+        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, {
+          windowStart: windowStartIso,
+          windowEnd: windowEndIso,
+          notes: notesVal,
+          price: priceVal,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
+      }
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Create occurrence failed.", err),
+        text: getErrorMessage(
+          mode === "CREATE" ? "Create occurrence failed." : "Update occurrence failed.",
+          err
+        ),
       });
     } finally {
       setBusy(false);
@@ -87,7 +126,9 @@ export default function OccurrenceDialog({
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.CloseTrigger />
             <Dialog.Header>
-              <Dialog.Title>New Occurrence</Dialog.Title>
+              <Dialog.Title>
+                {mode === "CREATE" ? "New Occurrence" : "Edit Occurrence"}
+              </Dialog.Title>
             </Dialog.Header>
 
             <Dialog.Body>
@@ -110,13 +151,9 @@ export default function OccurrenceDialog({
                 </div>
                 <div>
                   <Text mb="1">Price</Text>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="0.00"
+                  <CurrencyInput
                     value={price}
-                    onChange={(e) => setPrice(e.target.value)}
+                    onChange={setPrice}
                   />
                 </div>
                 <div>
@@ -142,7 +179,7 @@ export default function OccurrenceDialog({
                   Cancel
                 </Button>
                 <Button onClick={handleSave} loading={busy} disabled={!windowStart}>
-                  Create
+                  {mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>

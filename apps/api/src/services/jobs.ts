@@ -60,26 +60,40 @@ export const jobs: ServicesJobs = {
     }
     if (params?.kind && params.kind !== "ALL") where.kind = params.kind;
 
+    const andClauses: Prisma.JobWhereInput[] = [];
+
     if (params?.from || params?.to) {
       const dateRange: Prisma.DateTimeFilter = {};
       if (params.from) dateRange.gte = new Date(params.from);
       if (params.to) dateRange.lte = new Date(params.to + "T23:59:59.999Z");
-      where.occurrences = {
-        some: {
-          OR: [
-            { windowStart: dateRange },
-            { windowStart: null, startAt: dateRange },
-          ],
-        },
-      };
+      // Include jobs with an occurrence in range OR jobs with no occurrences yet
+      andClauses.push({
+        OR: [
+          {
+            occurrences: {
+              some: {
+                OR: [
+                  { windowStart: dateRange },
+                  { windowStart: null, startAt: dateRange },
+                ],
+              },
+            },
+          },
+          { occurrences: { none: {} } },
+        ],
+      });
     }
 
     if (q) {
-      where.OR = [
-        { property: { displayName: { contains: q, mode: "insensitive" } } },
-        { property: { city: { contains: q, mode: "insensitive" } } },
-      ];
+      andClauses.push({
+        OR: [
+          { property: { displayName: { contains: q, mode: "insensitive" } } },
+          { property: { city: { contains: q, mode: "insensitive" } } },
+        ],
+      });
     }
+
+    if (andClauses.length) where.AND = andClauses;
 
     const rows = await prisma.job.findMany({
       where,
@@ -128,6 +142,8 @@ export const jobs: ServicesJobs = {
 
     return rows.map((j) => ({
       ...j,
+      notes: j.notes,
+      defaultPrice: j.defaultPrice,
       nextOccurrence: j.occurrences[0] ?? null,
       assigneeCount: j._count.defaultAssignees,
     }));

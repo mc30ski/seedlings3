@@ -619,8 +619,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         patch.status = st as JobOccurrenceStatus;
       }
 
-      if (body.windowStart != null) patch.windowStart = body.windowStart;
-      if (body.windowEnd != null) patch.windowEnd = body.windowEnd;
+      if ("windowStart" in body) patch.windowStart = body.windowStart || null;
+      if ("windowEnd" in body) patch.windowEnd = body.windowEnd || null;
       if (body.startAt != null) patch.startAt = body.startAt;
       if (body.endAt != null) patch.endAt = body.endAt;
       if ("notes" in body) patch.notes = body.notes;
