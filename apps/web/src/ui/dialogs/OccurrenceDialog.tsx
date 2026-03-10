@@ -6,6 +6,7 @@ import {
   Dialog,
   HStack,
   Input,
+  NativeSelect,
   Portal,
   Text,
   Textarea,
@@ -17,6 +18,8 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { prettyStatus } from "@/src/lib/lib";
 
 function toDateInput(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -35,9 +38,11 @@ type Props = {
   jobId?: string;
   // UPDATE
   occurrenceId?: string;
+  defaultStatus?: string | null;
+  defaultKind?: string | null;
   // shared pre-populated values
-  defaultWindowStart?: string | null;
-  defaultWindowEnd?: string | null;
+  defaultStartAt?: string | null;
+  defaultEndAt?: string | null;
   defaultNotes?: string | null;
   defaultPrice?: number | null;
   onSaved?: () => void;
@@ -49,54 +54,63 @@ export default function OccurrenceDialog({
   mode = "CREATE",
   jobId,
   occurrenceId,
-  defaultWindowStart,
-  defaultWindowEnd,
+  defaultStatus,
+  defaultKind,
+  defaultStartAt,
+  defaultEndAt,
   defaultNotes,
   defaultPrice,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
-  const [windowStart, setWindowStart] = useState("");
-  const [windowEnd, setWindowEnd] = useState("");
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("");
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
   const [notes, setNotes] = useState("");
   const [price, setPrice] = useState("");
 
   useEffect(() => {
     if (!open) return;
-    setWindowStart(mode === "UPDATE" ? toDateInput(defaultWindowStart) : "");
-    setWindowEnd(mode === "UPDATE" ? toDateInput(defaultWindowEnd) : "");
+    setStatus(defaultStatus ?? "");
+    setKind(defaultKind ?? "");
+    setStartAt(mode === "UPDATE" ? toDateInput(defaultStartAt) : "");
+    setEndAt(mode === "UPDATE" ? toDateInput(defaultEndAt) : "");
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
-  }, [open, mode, defaultWindowStart, defaultWindowEnd, defaultNotes, defaultPrice]);
+  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
 
   async function handleSave() {
-    if (!windowStart) {
+    if (!startAt) {
       publishInlineMessage({ type: "WARNING", text: "Please select a start date." });
       return;
     }
     setBusy(true);
     try {
-      const windowStartIso = new Date(windowStart + "T00:00:00").toISOString();
-      const windowEndIso = windowEnd ? new Date(windowEnd + "T00:00:00").toISOString() : null;
+      const startAtIso = new Date(startAt + "T00:00:00").toISOString();
+      const endAtIso = endAt ? new Date(endAt + "T00:00:00").toISOString() : null;
       const priceVal = price !== "" ? Number(price) : null;
       const notesVal = notes.trim() || null;
 
       if (mode === "CREATE") {
         await apiPost(`/api/admin/jobs/${jobId}/occurrences`, {
-          windowStart: windowStartIso,
-          windowEnd: windowEndIso ?? undefined,
+          startAt: startAtIso,
+          endAt: endAtIso ?? undefined,
           notes: notesVal ?? undefined,
           price: priceVal ?? undefined,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
-        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, {
-          windowStart: windowStartIso,
-          windowEnd: windowEndIso,
+        const body: Record<string, unknown> = {
+          startAt: startAtIso,
+          endAt: endAtIso,
           notes: notesVal,
           price: priceVal,
-        });
+        };
+        if (status) body.status = status;
+        if (kind) body.kind = kind;
+        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
       }
       onSaved?.();
@@ -133,20 +147,50 @@ export default function OccurrenceDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {mode === "UPDATE" && (
+                  <div>
+                    <Text mb="1">Status</Text>
+                    <NativeSelect.Root>
+                      <NativeSelect.Field
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                      >
+                        {JOB_OCCURRENCE_STATUS.map((s) => (
+                          <option key={s} value={s}>{prettyStatus(s)}</option>
+                        ))}
+                      </NativeSelect.Field>
+                    </NativeSelect.Root>
+                  </div>
+                )}
+                {mode === "UPDATE" && (
+                  <div>
+                    <Text mb="1">Kind</Text>
+                    <NativeSelect.Root>
+                      <NativeSelect.Field
+                        value={kind}
+                        onChange={(e) => setKind(e.target.value)}
+                      >
+                        {JOB_KIND.map((k) => (
+                          <option key={k} value={k}>{prettyStatus(k)}</option>
+                        ))}
+                      </NativeSelect.Field>
+                    </NativeSelect.Root>
+                  </div>
+                )}
                 <div>
-                  <Text mb="1">Window start *</Text>
+                  <Text mb="1">Start date *</Text>
                   <Input
                     type="date"
-                    value={windowStart}
-                    onChange={(e) => setWindowStart(e.target.value)}
+                    value={startAt}
+                    onChange={(e) => setStartAt(e.target.value)}
                   />
                 </div>
                 <div>
-                  <Text mb="1">Window end</Text>
+                  <Text mb="1">End date</Text>
                   <Input
                     type="date"
-                    value={windowEnd}
-                    onChange={(e) => setWindowEnd(e.target.value)}
+                    value={endAt}
+                    onChange={(e) => setEndAt(e.target.value)}
                   />
                 </div>
                 <div>
@@ -178,7 +222,7 @@ export default function OccurrenceDialog({
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy} disabled={!windowStart}>
+                <Button onClick={handleSave} loading={busy} disabled={!startAt}>
                   {mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>

@@ -1,0 +1,1 @@
+ALTER TYPE "JobOccurrenceStatus" ADD VALUE 'CLOSED' BEFORE 'CANCELED';

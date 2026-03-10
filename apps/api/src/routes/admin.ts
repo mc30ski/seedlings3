@@ -545,8 +545,6 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
 
     // Dates: accept ISO strings; service should parse/validate
-    if (body.windowStart != null) input.windowStart = body.windowStart;
-    if (body.windowEnd != null) input.windowEnd = body.windowEnd;
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
     if (body.notes != null) input.notes = body.notes;
@@ -615,15 +613,15 @@ export default async function adminRoutes(app: FastifyInstance) {
           st === "IN_PROGRESS" ||
           st === "COMPLETED" ||
           st === "PENDING_PAYMENT" ||
-          st === "CANCELED";
+          st === "CLOSED" ||
+          st === "CANCELED" ||
+          st === "ARCHIVED";
         if (!ok) throw app.httpErrors.badRequest("Invalid occurrence status");
         patch.status = st as JobOccurrenceStatus;
       }
 
-      if ("windowStart" in body) patch.windowStart = body.windowStart || null;
-      if ("windowEnd" in body) patch.windowEnd = body.windowEnd || null;
-      if (body.startAt != null) patch.startAt = body.startAt;
-      if (body.endAt != null) patch.endAt = body.endAt;
+      if ("startAt" in body) patch.startAt = body.startAt || null;
+      if ("endAt" in body) patch.endAt = body.endAt || null;
       if ("notes" in body) patch.notes = body.notes;
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
 

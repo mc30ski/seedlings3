@@ -378,7 +378,7 @@ export type JobListItem = Job & {
   schedule?: JobSchedule | null;
   nextOccurrence?: Pick<
     JobOccurrence,
-    "id" | "startAt" | "windowStart" | "status" | "kind"
+    "id" | "startAt" | "status" | "kind"
   > | null;
   assigneeCount: number;
 };
@@ -404,8 +404,6 @@ export type JobScheduleUpsert = {
 export type CreateOccurrenceInput = {
   // one-off or manual scheduling
   kind?: JobKind;
-  windowStart?: string | Date | null;
-  windowEnd?: string | Date | null;
   startAt?: string | Date | null;
   endAt?: string | Date | null;
   notes?: string | null;
@@ -476,9 +474,7 @@ export type ServicesJobs = {
     occurrenceId: string,
     patch: {
       kind?: "ENTIRE_SITE" | "SINGLE_ADDRESS";
-      status?: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELED";
-      windowStart?: string | Date | null;
-      windowEnd?: string | Date | null;
+      status?: string;
       startAt?: string | Date | null;
       endAt?: string | Date | null;
       notes?: string | null;
