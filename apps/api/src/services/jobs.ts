@@ -142,6 +142,8 @@ export const jobs: ServicesJobs = {
 
     return rows.map((j) => ({
       ...j,
+      notes: j.notes,
+      defaultPrice: j.defaultPrice,
       nextOccurrence: j.occurrences[0] ?? null,
       assigneeCount: j._count.defaultAssignees,
     }));
