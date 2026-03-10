@@ -202,6 +202,7 @@ export const JOB_OCCURRENCE_STATUS = [
   "SCHEDULED",
   "IN_PROGRESS",
   "COMPLETED",
+  "PENDING_PAYMENT",
   "CANCELED",
   "ARCHIVED",
 ] as const;

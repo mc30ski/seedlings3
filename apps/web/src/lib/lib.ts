@@ -137,6 +137,7 @@ export function jobStatusColor(value: string): string {
 export function occurrenceStatusColor(value: string): string {
   const t = (value || "").toUpperCase();
   if (t === "COMPLETED") return "green";
+  if (t === "PENDING_PAYMENT") return "orange";
   if (t === "IN_PROGRESS") return "cyan";
   if (t === "SCHEDULED") return "blue";
   if (t === "CANCELED") return "red";

@@ -614,6 +614,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           st === "SCHEDULED" ||
           st === "IN_PROGRESS" ||
           st === "COMPLETED" ||
+          st === "PENDING_PAYMENT" ||
           st === "CANCELED";
         if (!ok) throw app.httpErrors.badRequest("Invalid occurrence status");
         patch.status = st as JobOccurrenceStatus;

@@ -545,7 +545,7 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "ARCHIVED" && (
+                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "PENDING_PAYMENT" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-cancel"
                                 itemId={occ.id}
@@ -560,6 +560,20 @@ export default function ServicesTab({
                               />
                             )}
                             {occ.status === "COMPLETED" && (
+                              <StatusButton
+                                id="occ-pending-payment"
+                                itemId={occ.id}
+                                label="Pending Payment"
+                                onClick={async () =>
+                                  patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT")
+                                }
+                                variant="outline"
+                                colorPalette="orange"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "PENDING_PAYMENT" && (
                               <StatusButton
                                 id="occ-archive"
                                 itemId={occ.id}
