@@ -42,6 +42,7 @@ import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
+import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -124,6 +125,13 @@ export default function ServicesTab({
   type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
   const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
 
+  const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
+  const [scheduleNextData, setScheduleNextData] = useState<{
+    jobId: string;
+    frequencyDays: number;
+    closedOccurrence: { startAt?: string | null; endAt?: string | null; name?: string | null; notes?: string | null; price?: number | null };
+  } | null>(null);
+
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
@@ -183,10 +191,30 @@ export default function ServicesTab({
   }
 
   async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string) {
+    // Capture occurrence data before the API call for schedule-next prompt
+    const detail = jobDetails[jobId];
+    const occ = detail?.occurrences.find((o) => o.id === occurrenceId);
+    const job = items.find((j) => j.id === jobId);
     try {
       await apiPatch(`/api/admin/occurrences/${occurrenceId}`, { status: newStatus });
       void loadDetail(jobId, true);
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
+
+      // Prompt to schedule next occurrence if job has a frequency
+      if (newStatus === "CLOSED" && job?.frequencyDays && occ) {
+        setScheduleNextData({
+          jobId,
+          frequencyDays: job.frequencyDays,
+          closedOccurrence: {
+            startAt: occ.startAt,
+            endAt: occ.endAt,
+            name: occ.name ?? job.name,
+            notes: occ.notes,
+            price: occ.price,
+          },
+        });
+        setScheduleNextOpen(true);
+      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -486,6 +514,11 @@ export default function ServicesTab({
                       <span>Not set</span>
                     )}
                   </Text>
+                  {job.frequencyDays && (
+                    <Text fontSize="sm" color="fg.muted">
+                      Frequency: every {job.frequencyDays} day{job.frequencyDays !== 1 ? "s" : ""}
+                    </Text>
+                  )}
                   {job.notes && (
                     <Text fontSize="sm" color="fg.muted">
                       {job.notes}
@@ -580,7 +613,7 @@ export default function ServicesTab({
                           />
                         </HStack>
 
-                        {forAdmin && job.status === "ACCEPTED" && (
+                        {forAdmin && (
                           <HStack gap={2} mt={2} wrap="wrap">
                             <StatusButton
                               id="occ-edit"
@@ -897,6 +930,26 @@ export default function ServicesTab({
               });
               void loadDetail(assigneeJobId);
             }
+          }}
+        />
+      )}
+
+      {scheduleNextData && (
+        <ScheduleNextDialog
+          open={scheduleNextOpen}
+          onOpenChange={(o) => {
+            setScheduleNextOpen(o);
+            if (!o) setScheduleNextData(null);
+          }}
+          jobId={scheduleNextData.jobId}
+          frequencyDays={scheduleNextData.frequencyDays}
+          closedOccurrence={scheduleNextData.closedOccurrence}
+          createEndpoint={`/api/admin/jobs/${scheduleNextData.jobId}/occurrences`}
+          onCreated={(nextStartDate) => {
+            if (nextStartDate && dateTo && nextStartDate > dateTo) {
+              setDateTo(nextStartDate);
+            }
+            void loadDetail(scheduleNextData.jobId, true);
           }}
         />
       )}

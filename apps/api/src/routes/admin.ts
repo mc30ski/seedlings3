@@ -405,11 +405,20 @@ export default async function adminRoutes(app: FastifyInstance) {
     const name = body.name != null ? String(body.name).trim() : null;
     if (!name) throw app.httpErrors.badRequest("name is required");
 
+    let frequencyDays: number | null = null;
+    if (body.frequencyDays != null) {
+      frequencyDays = Math.round(Number(body.frequencyDays));
+      if (!Number.isFinite(frequencyDays) || frequencyDays < 1) {
+        throw app.httpErrors.badRequest("frequencyDays must be a positive integer");
+      }
+    }
+
     return services.jobs.create(await currentUserId(req), {
       propertyId,
       name,
       kind: kind as JobKind,
       status: (status as JobStatus) || undefined,
+      frequencyDays,
       notes: body.notes != null ? String(body.notes) : null,
       defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
     } as any);
@@ -439,6 +448,15 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
 
     if ("name" in body) patch.name = body.name != null ? String(body.name).trim() : null;
+    if ("frequencyDays" in body) {
+      if (body.frequencyDays != null) {
+        const fd = Math.round(Number(body.frequencyDays));
+        if (!Number.isFinite(fd) || fd < 1) throw app.httpErrors.badRequest("frequencyDays must be a positive integer");
+        patch.frequencyDays = fd;
+      } else {
+        patch.frequencyDays = null;
+      }
+    }
     if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
     if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
 
