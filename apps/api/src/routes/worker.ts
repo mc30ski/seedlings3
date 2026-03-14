@@ -155,6 +155,22 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
+  app.post("/occurrences/create-next", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const jobId = String(body.jobId || "");
+    if (!jobId) throw app.httpErrors.badRequest("jobId is required");
+
+    const input: any = {};
+    if (body.name != null) input.name = String(body.name).trim() || null;
+    if (body.startAt != null) input.startAt = body.startAt;
+    if (body.endAt != null) input.endAt = body.endAt;
+    if (body.notes != null) input.notes = body.notes;
+    if (body.price != null) input.price = Number(body.price);
+
+    return services.jobs.createOccurrence(uid, jobId, input);
+  });
+
   app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     return services.jobs.updateOccurrenceStatus(

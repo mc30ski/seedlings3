@@ -258,6 +258,7 @@ export type JobListItem = {
   name?: string | null;
   kind: JobKind;
   status: JobStatus;
+  frequencyDays?: number | null;
   schedule?: JobSchedule | null;
   nextOccurrence?: {
     id: string;
@@ -289,6 +290,8 @@ export type WorkerOccurrence = {
   job: {
     id: string;
     kind: JobKind;
+    frequencyDays?: number | null;
+    name?: string | null;
     property: {
       id: string;
       displayName: string;

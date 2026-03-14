@@ -46,6 +46,11 @@ type Props = {
   defaultEndAt?: string | null;
   defaultNotes?: string | null;
   defaultPrice?: number | null;
+  // optional overrides
+  createEndpoint?: string;
+  createBody?: Record<string, unknown>;
+  title?: string;
+  submitLabel?: string;
   onSaved?: () => void;
 };
 
@@ -62,6 +67,10 @@ export default function OccurrenceDialog({
   defaultEndAt,
   defaultNotes,
   defaultPrice,
+  createEndpoint,
+  createBody,
+  title,
+  submitLabel,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -79,8 +88,8 @@ export default function OccurrenceDialog({
     setStatus(defaultStatus ?? "");
     setKind(defaultKind ?? "");
     setName(defaultName ?? "");
-    setStartAt(mode === "UPDATE" ? toDateInput(defaultStartAt) : "");
-    setEndAt(mode === "UPDATE" ? toDateInput(defaultEndAt) : "");
+    setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
+    setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
   }, [open, mode, defaultStatus, defaultKind, defaultName, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
@@ -100,7 +109,9 @@ export default function OccurrenceDialog({
       const nameVal = name.trim() || null;
 
       if (mode === "CREATE") {
-        await apiPost(`/api/admin/jobs/${jobId}/occurrences`, {
+        const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
+        await apiPost(endpoint, {
+          ...createBody,
           name: nameVal ?? undefined,
           startAt: startAtIso,
           endAt: endAtIso ?? undefined,
@@ -149,7 +160,7 @@ export default function OccurrenceDialog({
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                {mode === "CREATE" ? "New Occurrence" : "Edit Occurrence"}
+                {title ?? (mode === "CREATE" ? "New Occurrence" : "Edit Occurrence")}
               </Dialog.Title>
             </Dialog.Header>
 
@@ -252,7 +263,7 @@ export default function OccurrenceDialog({
                   Cancel
                 </Button>
                 <Button onClick={handleSave} loading={busy} disabled={!startAt}>
-                  {mode === "CREATE" ? "Create" : "Save"}
+                  {submitLabel ?? (mode === "CREATE" ? "Create" : "Save")}
                 </Button>
               </HStack>
             </Dialog.Footer>

@@ -24,6 +24,7 @@ import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
+import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 
 const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
@@ -57,6 +58,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
+
+  const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
+  const [scheduleNextData, setScheduleNextData] = useState<{
+    jobId: string;
+    frequencyDays: number;
+    closedOccurrence: { startAt?: string | null; endAt?: string | null; name?: string | null; notes?: string | null; price?: number | null };
+  } | null>(null);
 
   async function load(displayLoading = true) {
     setLoading(displayLoading);
@@ -109,6 +117,8 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   }
 
   async function updateStatus(occurrenceId: string, action: "start" | "complete" | "accept-payment") {
+    // Capture occ data before the API call (in case list refreshes)
+    const occ = action === "accept-payment" ? items.find((i) => i.id === occurrenceId) : null;
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/${action}`, {});
       await load(false);
@@ -116,6 +126,22 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         type: "SUCCESS",
         text: action === "start" ? "Job started." : action === "complete" ? "Job marked as pending payment." : "Payment accepted.",
       });
+
+      // Prompt to schedule next occurrence if job has a frequency
+      if (action === "accept-payment" && occ?.job?.frequencyDays) {
+        setScheduleNextData({
+          jobId: occ.job.id,
+          frequencyDays: occ.job.frequencyDays,
+          closedOccurrence: {
+            startAt: occ.startAt,
+            endAt: occ.endAt,
+            name: occ.name ?? occ.job.name,
+            notes: occ.notes,
+            price: occ.price,
+          },
+        });
+        setScheduleNextOpen(true);
+      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -428,6 +454,28 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             user: a.user,
           }))}
           onChanged={() => void load(false)}
+        />
+      )}
+
+      {scheduleNextData && (
+        <ScheduleNextDialog
+          open={scheduleNextOpen}
+          onOpenChange={(o) => {
+            setScheduleNextOpen(o);
+            if (!o) setScheduleNextData(null);
+          }}
+          jobId={scheduleNextData.jobId}
+          frequencyDays={scheduleNextData.frequencyDays}
+          closedOccurrence={scheduleNextData.closedOccurrence}
+          createEndpoint="/api/occurrences/create-next"
+          createBody={{ jobId: scheduleNextData.jobId }}
+          onCreated={(nextStartDate) => {
+            if (nextStartDate && dateTo && nextStartDate > dateTo) {
+              setDateTo(nextStartDate);
+            } else {
+              void load(false);
+            }
+          }}
         />
       )}
     </Box>

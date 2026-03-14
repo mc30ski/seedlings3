@@ -40,7 +40,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  initial?: Pick<JobListItem, "id" | "propertyId" | "name" | "kind" | "status" | "notes" | "defaultPrice"> | null;
+  initial?: Pick<JobListItem, "id" | "propertyId" | "name" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
   onSaved?: () => void;
 };
 
@@ -59,6 +59,7 @@ export default function JobDialog({
   const [name, setName] = useState("");
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
   const [statusValue, setStatusValue] = useState<string[]>([JOB_STATUS[0]]);
+  const [frequencyDays, setFrequencyDays] = useState("");
   const [notes, setNotes] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
 
@@ -85,6 +86,7 @@ export default function JobDialog({
       setName(initial.name ?? "");
       setKindValue([initial.kind]);
       setStatusValue([initial.status]);
+      setFrequencyDays(initial.frequencyDays != null ? String(initial.frequencyDays) : "");
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
     } else {
@@ -92,6 +94,7 @@ export default function JobDialog({
       setName("");
       setKindValue([JOB_KIND[0]]);
       setStatusValue([JOB_STATUS[0]]);
+      setFrequencyDays("");
       setNotes("");
       setDefaultPrice("");
     }
@@ -146,6 +149,7 @@ export default function JobDialog({
       name: name.trim(),
       kind: kindValue[0] as JobKind,
       status: statusValue[0] as JobStatus,
+      frequencyDays: frequencyDays !== "" ? Number(frequencyDays) : null,
       notes: notes.trim() || null,
       defaultPrice: defaultPrice !== "" ? Number(defaultPrice) : null,
     };
@@ -295,6 +299,17 @@ export default function JobDialog({
                     <CurrencyInput
                       value={defaultPrice}
                       onChange={setDefaultPrice}
+                      size="sm"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Frequency (days)</Text>
+                    <Input
+                      type="number"
+                      value={frequencyDays}
+                      onChange={(e) => setFrequencyDays(e.target.value)}
+                      placeholder="e.g. 14"
+                      min={1}
                       size="sm"
                     />
                   </div>
