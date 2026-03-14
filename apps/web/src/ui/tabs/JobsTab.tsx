@@ -25,7 +25,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 
-const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS] as const;
+const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const { isAvail } = determineRoles(me, purpose);
@@ -33,7 +33,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const [q, setQ] = useState("");
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
-    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS"])
+    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"])
   );
 
   function toggleFilter(val: string) {
@@ -108,13 +108,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
-  async function updateStatus(occurrenceId: string, action: "start" | "complete") {
+  async function updateStatus(occurrenceId: string, action: "start" | "complete" | "accept-payment") {
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/${action}`, {});
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: action === "start" ? "Job started." : "Job completed.",
+        text: action === "start" ? "Job started." : action === "complete" ? "Job marked as pending payment." : "Payment accepted.",
       });
     } catch (err) {
       publishInlineMessage({
@@ -181,7 +181,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           type="date"
           size="sm"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setDateFrom(val);
+            if (dateTo && val && val > dateTo) setDateTo(val);
+          }}
           maxW="160px"
         />
         <Text fontSize="sm">–</Text>
@@ -189,7 +193,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           type="date"
           size="sm"
           value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setDateTo(val);
+            if (dateFrom && val && val < dateFrom) setDateFrom(val);
+          }}
           maxW="160px"
         />
         {(dateFrom || dateTo) && (
@@ -256,10 +264,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontWeight="semibold">
-                        {occ.job?.property?.displayName}
+                        {occ.name ?? occ.job?.property?.displayName}
                       </Text>
                       <Text fontSize="sm" color="fg.muted">
                         {[
+                          occ.name ? occ.job?.property?.displayName : null,
                           occ.job?.property?.street1,
                           occ.job?.property?.city,
                           occ.job?.property?.state,
@@ -292,23 +301,27 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       </Text>
                     )}
 
-                    {isAssignedToMe && (
-                      <Text fontSize="xs" fontWeight="semibold" color="teal.600">
-                        Assigned to you
-                        {assignees.length > 1
-                          ? ` + ${assignees.length - 1} other${assignees.length - 1 !== 1 ? "s" : ""}`
-                          : ""}
-                      </Text>
+                    {!isUnassigned && (
+                      <VStack align="start" gap={0}>
+                        {assignees.map((a) => {
+                          const isClaimer = a.assignedById === a.userId;
+                          const isMe = a.userId === myId;
+                          return (
+                            <Text
+                              key={a.userId}
+                              fontSize="xs"
+                              fontWeight={isMe ? "semibold" : "normal"}
+                              color={isMe ? "teal.600" : "fg.muted"}
+                            >
+                              {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              {isMe ? " (you)" : ""}
+                              {isClaimer ? " · Claimer" : ""}
+                            </Text>
+                          );
+                        })}
+                      </VStack>
                     )}
-                    {isAssignedToOthers && (
-                      <Text fontSize="xs" color="fg.muted">
-                        Assigned to:{" "}
-                        {assignees
-                          .map((a) => a.user?.displayName ?? a.user?.email ?? a.userId)
-                          .join(", ")}
-                      </Text>
-                    )}
-                    {isUnassigned && occ.status !== "CANCELED" && (
+                    {isUnassigned && occ.status !== "ARCHIVED" && (
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         Unclaimed — available to pick up
                       </Text>
@@ -316,7 +329,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </VStack>
                 </Card.Body>
 
-                {(isUnassigned || isAssignedToMe) && occ.status !== "COMPLETED" && occ.status !== "CANCELED" && (
+                {(isUnassigned || isAssignedToMe) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer>
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && (
@@ -354,7 +367,19 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isClaimer && (
+                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && (
+                        <StatusButton
+                          id="occ-accept-payment"
+                          itemId={occ.id}
+                          label="Accept Payment"
+                          onClick={async () => updateStatus(occ.id, "accept-payment")}
+                          variant="outline"
+                          colorPalette="green"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
+                      {isClaimer && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-manage-team"
                           itemId={occ.id}
@@ -368,7 +393,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isClaimer && (
+                      {isClaimer && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-unclaim"
                           itemId={occ.id}

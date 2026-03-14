@@ -402,8 +402,12 @@ export default async function adminRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Invalid status");
     }
 
+    const name = body.name != null ? String(body.name).trim() : null;
+    if (!name) throw app.httpErrors.badRequest("name is required");
+
     return services.jobs.create(await currentUserId(req), {
       propertyId,
+      name,
       kind: kind as JobKind,
       status: (status as JobStatus) || undefined,
       notes: body.notes != null ? String(body.notes) : null,
@@ -434,6 +438,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       patch.status = status as JobStatus;
     }
 
+    if ("name" in body) patch.name = body.name != null ? String(body.name).trim() : null;
     if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
     if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
 
@@ -544,6 +549,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       input.kind = kind as JobKind;
     }
 
+    if (body.name != null) input.name = String(body.name).trim() || null;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
@@ -588,6 +594,26 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // Admin: add individual assignee
+  app.post("/admin/occurrences/:id/add-assignee", adminGuard, async (req: any) => {
+    const targetUserId = String(req.body?.userId ?? "");
+    if (!targetUserId) throw app.httpErrors.badRequest("userId is required");
+    return services.jobs.adminAddOccurrenceAssignee(
+      await currentUserId(req),
+      String(req.params.id),
+      targetUserId
+    );
+  });
+
+  // Admin: remove individual assignee
+  app.delete("/admin/occurrences/:id/assignees/:userId", adminGuard, async (req: any) => {
+    return services.jobs.adminRemoveOccurrenceAssignee(
+      await currentUserId(req),
+      String(req.params.id),
+      String(req.params.userId)
+    );
+  });
+
   // Patch an occurrence (optional but very useful for admin UI)
   app.patch(
     "/admin/occurrences/:occurrenceId",
@@ -620,6 +646,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         patch.status = st as JobOccurrenceStatus;
       }
 
+      if ("name" in body) patch.name = body.name != null ? String(body.name).trim() || null : null;
       if ("startAt" in body) patch.startAt = body.startAt || null;
       if ("endAt" in body) patch.endAt = body.endAt || null;
       if ("notes" in body) patch.notes = body.notes;

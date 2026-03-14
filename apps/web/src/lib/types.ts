@@ -201,10 +201,8 @@ export type JobStatus = (typeof JOB_STATUS)[number];
 export const JOB_OCCURRENCE_STATUS = [
   "SCHEDULED",
   "IN_PROGRESS",
-  "COMPLETED",
   "PENDING_PAYMENT",
   "CLOSED",
-  "CANCELED",
   "ARCHIVED",
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
@@ -226,6 +224,7 @@ export type JobOccurrenceAssigneeWithUser = {
   id: string;
   occurrenceId: string;
   userId: string;
+  assignedById?: string | null;
   assignedAt?: string | null;
   user: { id: string; displayName?: string | null; email?: string | null };
 };
@@ -236,6 +235,7 @@ export type JobOccurrenceFull = {
   kind: JobKind;
   status: JobOccurrenceStatus;
   source: string;
+  name?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
@@ -255,6 +255,7 @@ export type JobListItem = {
     state?: string | null;
     status: string;
   };
+  name?: string | null;
   kind: JobKind;
   status: JobStatus;
   schedule?: JobSchedule | null;
@@ -280,6 +281,7 @@ export type WorkerOccurrence = {
   jobId: string;
   kind: JobKind;
   status: JobOccurrenceStatus;
+  name?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;

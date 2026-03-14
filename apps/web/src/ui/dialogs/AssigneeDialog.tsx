@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Box,
   Button,
   Dialog,
   HStack,
@@ -11,7 +12,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiGet, apiPut } from "@/src/lib/api";
+import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -29,7 +30,7 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   occurrenceId: string;
   currentAssignees: JobOccurrenceAssigneeWithUser[];
-  onSaved?: () => void;
+  onChanged?: () => void;
 };
 
 export default function AssigneeDialog({
@@ -37,16 +38,20 @@ export default function AssigneeDialog({
   onOpenChange,
   occurrenceId,
   currentAssignees,
-  onSaved,
+  onChanged,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  const [busy, setBusy] = useState(false);
+
+  const [assignees, setAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [addBusy, setAddBusy] = useState(false);
+  const [removingId, setRemovingId] = useState<string>("");
 
   useEffect(() => {
     if (!open) return;
-    setSelected(currentAssignees.map((a) => a.userId));
+    setAssignees(currentAssignees);
+    setSelected([]);
     (async () => {
       try {
         const list = await apiGet<WorkerLite[]>(
@@ -59,13 +64,20 @@ export default function AssigneeDialog({
     })();
   }, [open]);
 
+  const assignedIds = useMemo(() => assignees.map((a) => a.userId), [assignees]);
+
+  const availableWorkers = useMemo(
+    () => workers.filter((w) => !assignedIds.includes(w.id)),
+    [workers, assignedIds]
+  );
+
   const workerItems = useMemo(
     () =>
-      workers.map((w) => ({
+      availableWorkers.map((w) => ({
         label: w.displayName ?? w.email ?? w.id,
         value: w.id,
       })),
-    [workers]
+    [availableWorkers]
   );
 
   const workerCollection = useMemo(
@@ -73,22 +85,64 @@ export default function AssigneeDialog({
     [workerItems]
   );
 
-  async function handleSave() {
-    setBusy(true);
+  async function handleAdd() {
+    if (selected.length === 0) return;
+    setAddBusy(true);
     try {
-      await apiPut(`/api/admin/occurrences/${occurrenceId}/assignees`, {
-        assigneeUserIds: selected,
+      for (const userId of selected) {
+        const result = await apiPost<{ added: boolean; reason?: string }>(
+          `/api/admin/occurrences/${occurrenceId}/add-assignee`,
+          { userId }
+        );
+        if (result.added) {
+          const worker = workers.find((w) => w.id === userId);
+          if (worker) {
+            // Determine assignedById: first assignee = self-claimer, others assigned by claimer
+            const isClaimer = assignees.length === 0 && selected[0] === userId;
+            const claimerId = assignees.find((a) => a.assignedById === a.userId)?.userId ?? userId;
+            setAssignees((prev) => [
+              ...prev,
+              {
+                id: "",
+                occurrenceId,
+                userId,
+                assignedById: isClaimer ? userId : claimerId,
+                user: { id: userId, displayName: worker.displayName, email: worker.email },
+              },
+            ]);
+          }
+        }
+      }
+      setSelected([]);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: selected.length === 1 ? "Worker assigned." : `${selected.length} workers assigned.`,
       });
-      publishInlineMessage({ type: "SUCCESS", text: "Assignees updated." });
-      onSaved?.();
-      onOpenChange(false);
+      onChanged?.();
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Update assignees failed.", err),
+        text: getErrorMessage("Failed to assign worker.", err),
       });
     } finally {
-      setBusy(false);
+      setAddBusy(false);
+    }
+  }
+
+  async function handleRemove(targetUserId: string) {
+    setRemovingId(targetUserId);
+    try {
+      await apiDelete(`/api/admin/occurrences/${occurrenceId}/assignees/${targetUserId}`);
+      setAssignees((prev) => prev.filter((a) => a.userId !== targetUserId));
+      publishInlineMessage({ type: "SUCCESS", text: "Worker removed." });
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to remove worker.", err),
+      });
+    } finally {
+      setRemovingId("");
     }
   }
 
@@ -104,46 +158,100 @@ export default function AssigneeDialog({
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.CloseTrigger />
             <Dialog.Header>
-              <Dialog.Title>Manage Assignees</Dialog.Title>
+              <Dialog.Title>Assign Workers</Dialog.Title>
             </Dialog.Header>
 
             <Dialog.Body>
-              <VStack align="stretch" gap={3}>
+              <VStack align="stretch" gap={4}>
                 <div>
-                  <Text mb="1">Assigned workers</Text>
-                  <Select.Root
-                    collection={workerCollection}
-                    value={selected}
-                    onValueChange={(e) => setSelected(e.value)}
-                    multiple
-                    size="sm"
-                    positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                  >
-                    <Select.Control>
-                      <Select.Trigger>
-                        <Select.ValueText
-                          placeholder={
-                            workers.length === 0
-                              ? "Loading workers…"
-                              : "Select workers"
-                          }
-                        />
-                      </Select.Trigger>
-                    </Select.Control>
-                    <Select.Positioner>
-                      <Select.Content>
-                        {workerItems.map((it) => (
-                          <Select.Item key={it.value} item={it.value}>
-                            <Select.ItemText>{it.label}</Select.ItemText>
-                            <Select.ItemIndicator />
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select.Positioner>
-                  </Select.Root>
-                  <Text fontSize="xs" color="fg.muted" mt="1">
-                    Select multiple. Clear all to unassign everyone.
-                  </Text>
+                  <Text fontWeight="medium" mb="2">Assigned workers</Text>
+                  {assignees.length === 0 && (
+                    <Text fontSize="sm" color="fg.muted">No one assigned yet.</Text>
+                  )}
+                  <VStack align="stretch" gap={1}>
+                    {assignees.map((a) => {
+                      const isClaimer = a.assignedById === a.userId;
+                      return (
+                        <HStack
+                          key={a.userId}
+                          px={2}
+                          py={1}
+                          rounded="md"
+                          borderWidth="1px"
+                          borderColor={isClaimer ? "teal.200" : "gray.200"}
+                          bg={isClaimer ? "teal.50" : undefined}
+                          justify="space-between"
+                        >
+                          <VStack align="start" gap={0}>
+                            <Text fontSize="sm" fontWeight={isClaimer ? "medium" : "normal"} color={isClaimer ? "teal.700" : undefined}>
+                              {a.user.displayName ?? a.user.email ?? a.userId}
+                            </Text>
+                            {isClaimer && (
+                              <Text fontSize="xs" color="teal.500">Claimer</Text>
+                            )}
+                          </VStack>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette="red"
+                            loading={removingId === a.userId}
+                            disabled={removingId !== ""}
+                            onClick={() => handleRemove(a.userId)}
+                          >
+                            Remove
+                          </Button>
+                        </HStack>
+                      );
+                    })}
+                  </VStack>
+                </div>
+
+                <div>
+                  <Text fontWeight="medium" mb="2">Add workers</Text>
+                  <HStack gap={2} align="flex-end">
+                    <Box flex="1">
+                      <Select.Root
+                        collection={workerCollection}
+                        value={selected}
+                        onValueChange={(e) => setSelected(e.value)}
+                        multiple
+                        size="sm"
+                        positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                      >
+                        <Select.Control>
+                          <Select.Trigger>
+                            <Select.ValueText
+                              placeholder={
+                                workers.length === 0
+                                  ? "Loading…"
+                                  : availableWorkers.length === 0
+                                  ? "All workers assigned"
+                                  : "Select workers"
+                              }
+                            />
+                          </Select.Trigger>
+                        </Select.Control>
+                        <Select.Positioner>
+                          <Select.Content>
+                            {workerItems.map((it) => (
+                              <Select.Item key={it.value} item={it.value}>
+                                <Select.ItemText>{it.label}</Select.ItemText>
+                                <Select.ItemIndicator />
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Select.Root>
+                    </Box>
+                    <Button
+                      size="sm"
+                      onClick={handleAdd}
+                      loading={addBusy}
+                      disabled={selected.length === 0 || removingId !== ""}
+                    >
+                      Add
+                    </Button>
+                  </HStack>
                 </div>
               </VStack>
             </Dialog.Body>
@@ -151,15 +259,11 @@ export default function AssigneeDialog({
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button
-                  variant="ghost"
                   ref={cancelRef}
                   onClick={() => onOpenChange(false)}
-                  disabled={busy}
+                  disabled={addBusy || removingId !== ""}
                 >
-                  Cancel
-                </Button>
-                <Button onClick={handleSave} loading={busy}>
-                  Save
+                  Done
                 </Button>
               </HStack>
             </Dialog.Footer>

@@ -15,7 +15,6 @@ import {
   Prisma,
   Role,
   JobStatus,
-  JobKind,
   JobOccurrenceStatus,
   JobOccurrenceSource,
 } from "@prisma/client";
@@ -52,10 +51,12 @@ export const jobs: ServicesJobs = {
 
     const where: Prisma.JobWhereInput = {};
     if (params?.propertyId) where.propertyId = params.propertyId;
-    if (params?.status && params.status !== "ALL") {
+    if (params?.status === "ALL") {
+      // no status filter — return all including ARCHIVED
+    } else if (params?.status) {
       where.status = params.status as JobStatus;
     } else {
-      // By default, exclude ARCHIVED jobs
+      // default: exclude ARCHIVED
       where.status = { not: JobStatus.ARCHIVED };
     }
     if (params?.kind && params.kind !== "ALL") where.kind = params.kind;
@@ -167,11 +168,12 @@ export const jobs: ServicesJobs = {
       const record = await tx.job.create({
         data: {
           propertyId: payload.propertyId,
+          name: (payload as any).name ?? null,
           kind: payload.kind,
           status: payload.status ?? JobStatus.PROPOSED,
           notes: payload.notes ?? null,
           defaultPrice: payload.defaultPrice ?? null,
-        },
+        } as any,
       });
 
       await writeAudit(tx, AUDIT.JOB.CREATED, currentUserId, {
@@ -191,9 +193,10 @@ export const jobs: ServicesJobs = {
           kind: payload.kind,
           status: payload.status,
           propertyId: payload.propertyId,
+          name: "name" in payload ? ((payload as any).name ?? null) : undefined,
           notes: payload.notes ?? undefined,
           defaultPrice: payload.defaultPrice ?? undefined,
-        },
+        } as any,
       });
 
       await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
@@ -256,14 +259,15 @@ export const jobs: ServicesJobs = {
       const occ = await tx.jobOccurrence.create({
         data: {
           jobId,
-          kind: input.kind ?? job.kind, // copy from template by default
+          kind: input.kind ?? job.kind,
           startAt: toDate(input.startAt),
           endAt: toDate(input.endAt),
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
+          name: input.name !== undefined ? input.name : (job as any).name ?? null,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
-        },
+        } as any,
       });
 
       // If caller passed assignees, use those; otherwise copy defaults.
@@ -309,6 +313,7 @@ export const jobs: ServicesJobs = {
       if (patch.status != null) data.status = patch.status;
 
       // allow null to clear
+      if ("name" in patch) data.name = patch.name ?? null;
       if ("startAt" in patch)
         data.startAt = patch.startAt ? new Date(patch.startAt) : null;
       if ("endAt" in patch)
@@ -371,8 +376,8 @@ export const jobs: ServicesJobs = {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
       if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-      if (occ.status !== JobOccurrenceStatus.COMPLETED) {
-        throw new ServiceError("INVALID_STATUS", "Only completed occurrences can be archived.", 409);
+      if (occ.status !== JobOccurrenceStatus.CLOSED) {
+        throw new ServiceError("INVALID_STATUS", "Only closed occurrences can be archived.", 409);
       }
 
       const updated = await tx.jobOccurrence.update({
@@ -517,6 +522,54 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async adminAddOccurrenceAssignee(adminUserId, occurrenceId, targetUserId) {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: targetUserId },
+      });
+      if (existing) return { added: false as const, reason: "already_assigned" };
+
+      // First assignee becomes the claimer (assignedById = themselves).
+      // Subsequent assignees are assigned by the claimer.
+      const existingAssignees = await tx.jobOccurrenceAssignee.findMany({
+        where: { occurrenceId },
+        orderBy: { assignedAt: "asc" },
+      });
+      const assignedById =
+        existingAssignees.length === 0
+          ? targetUserId
+          : existingAssignees[0].assignedById ?? existingAssignees[0].userId;
+
+      await tx.jobOccurrenceAssignee.create({
+        data: { occurrenceId, userId: targetUserId, assignedById },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+        occurrenceId,
+        targetUserId,
+        action: "added",
+      });
+
+      return { added: true as const };
+    });
+  },
+
+  async adminRemoveOccurrenceAssignee(adminUserId, occurrenceId, targetUserId) {
+    return prisma.$transaction(async (tx) => {
+      await tx.jobOccurrenceAssignee.deleteMany({
+        where: { occurrenceId, userId: targetUserId },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+        occurrenceId,
+        targetUserId,
+        action: "removed",
+      });
+
+      return { removed: true as const };
+    });
+  },
+
   async unclaimOccurrence(currentUserId, occurrenceId) {
     return prisma.$transaction(async (tx) => {
       // Only the claimer can unclaim
@@ -612,9 +665,10 @@ export const jobs: ServicesJobs = {
           startAt: now,
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.GENERATED,
+          name: (job as any).name ?? null,
           notes: (job as any).notes ?? null,
           price: (job as any).defaultPrice ?? null,
-        },
+        } as any,
       });
 
       // copy default assignees to the occurrence
@@ -722,12 +776,13 @@ export const jobs: ServicesJobs = {
     if (job.status !== JobStatus.PROPOSED && job.status !== JobStatus.ARCHIVED) {
       throw new ServiceError("INVALID_STATUS", "Only proposed or archived jobs can be deleted.", 409);
     }
-    // cascade: delete assignees, then occurrences, then schedules, then job
-    const occurrences = await prisma.jobOccurrence.findMany({ where: { jobId }, select: { id: true } });
-    const occurrenceIds = occurrences.map((o) => o.id);
-    if (occurrenceIds.length > 0) {
-      await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: { in: occurrenceIds } } });
-      await prisma.jobOccurrence.deleteMany({ where: { jobId } });
+    const occurrenceCount = await prisma.jobOccurrence.count({ where: { jobId } });
+    if (occurrenceCount > 0) {
+      throw new ServiceError(
+        "HAS_OCCURRENCES",
+        "Delete all job occurrences before deleting the job.",
+        409
+      );
     }
     await prisma.jobSchedule.deleteMany({ where: { jobId } });
     await prisma.job.delete({ where: { id: jobId } });
@@ -737,8 +792,13 @@ export const jobs: ServicesJobs = {
   async deleteOccurrence(occurrenceId) {
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-    if (occ.status !== JobOccurrenceStatus.CANCELED && occ.status !== JobOccurrenceStatus.ARCHIVED) {
-      throw new ServiceError("INVALID_STATUS", "Only canceled or archived occurrences can be deleted.", 409);
+    if (
+      occ.status !== JobOccurrenceStatus.SCHEDULED &&
+      occ.status !== JobOccurrenceStatus.IN_PROGRESS &&
+      occ.status !== JobOccurrenceStatus.CANCELED &&
+      occ.status !== JobOccurrenceStatus.ARCHIVED
+    ) {
+      throw new ServiceError("INVALID_STATUS", "Only scheduled, in-progress, canceled, or archived occurrences can be deleted.", 409);
     }
     await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
     await prisma.jobOccurrence.delete({ where: { id: occurrenceId } });
