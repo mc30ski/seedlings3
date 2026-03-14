@@ -404,6 +404,7 @@ export type JobScheduleUpsert = {
 export type CreateOccurrenceInput = {
   // one-off or manual scheduling
   kind?: JobKind;
+  name?: string | null;
   startAt?: string | Date | null;
   endAt?: string | Date | null;
   notes?: string | null;
@@ -475,9 +476,11 @@ export type ServicesJobs = {
     patch: {
       kind?: "ENTIRE_SITE" | "SINGLE_ADDRESS";
       status?: string;
+      name?: string | null;
       startAt?: string | Date | null;
       endAt?: string | Date | null;
       notes?: string | null;
+      price?: number | null;
     }
   ): Promise<JobOccurrence>;
 
@@ -489,6 +492,18 @@ export type ServicesJobs = {
 
   removeOccurrenceAssignee(
     currentUserId: string,
+    occurrenceId: string,
+    targetUserId: string
+  ): Promise<{ removed: true }>;
+
+  adminAddOccurrenceAssignee(
+    adminUserId: string,
+    occurrenceId: string,
+    targetUserId: string
+  ): Promise<{ added: true } | { added: false; reason: string }>;
+
+  adminRemoveOccurrenceAssignee(
+    adminUserId: string,
     occurrenceId: string,
     targetUserId: string
   ): Promise<{ removed: true }>;

@@ -151,7 +151,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
-      JobOccurrenceStatus.COMPLETED
+      JobOccurrenceStatus.PENDING_PAYMENT
+    );
+  });
+
+  app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.CLOSED
     );
   });
 

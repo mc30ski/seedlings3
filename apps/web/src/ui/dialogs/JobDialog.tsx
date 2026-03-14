@@ -5,6 +5,7 @@ import {
   Button,
   Dialog,
   HStack,
+  Input,
   Portal,
   Select,
   Text,
@@ -39,7 +40,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "notes" | "defaultPrice"> | null;
+  initial?: Pick<JobListItem, "id" | "propertyId" | "name" | "kind" | "status" | "notes" | "defaultPrice"> | null;
   onSaved?: () => void;
 };
 
@@ -55,6 +56,7 @@ export default function JobDialog({
 
   const [properties, setProperties] = useState<PropertyLite[]>([]);
   const [propertyValue, setPropertyValue] = useState<string[]>([]);
+  const [name, setName] = useState("");
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
   const [statusValue, setStatusValue] = useState<string[]>([JOB_STATUS[0]]);
   const [notes, setNotes] = useState("");
@@ -80,12 +82,14 @@ export default function JobDialog({
     if (!open) return;
     if (mode === "UPDATE" && initial) {
       setPropertyValue([initial.propertyId]);
+      setName(initial.name ?? "");
       setKindValue([initial.kind]);
       setStatusValue([initial.status]);
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
     } else {
       setPropertyValue([]);
+      setName("");
       setKindValue([JOB_KIND[0]]);
       setStatusValue([JOB_STATUS[0]]);
       setNotes("");
@@ -133,8 +137,13 @@ export default function JobDialog({
       publishInlineMessage({ type: "WARNING", text: "Please select a property." });
       return;
     }
+    if (!name.trim()) {
+      publishInlineMessage({ type: "WARNING", text: "Please enter a name." });
+      return;
+    }
     const payload = {
       propertyId: pid,
+      name: name.trim(),
       kind: kindValue[0] as JobKind,
       status: statusValue[0] as JobStatus,
       notes: notes.trim() || null,
@@ -189,7 +198,13 @@ export default function JobDialog({
                   <Select.Root
                     collection={propertyCollection}
                     value={propertyValue}
-                    onValueChange={(e) => setPropertyValue(e.value)}
+                    onValueChange={(e) => {
+                      setPropertyValue(e.value);
+                      if (mode === "CREATE" && e.value[0]) {
+                        const prop = properties.find((p) => p.id === e.value[0]);
+                        if (prop && !name) setName(prop.displayName);
+                      }
+                    }}
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
                   >
@@ -208,6 +223,16 @@ export default function JobDialog({
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
+                </div>
+
+                <div>
+                  <Text mb="1">Name *</Text>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Job name"
+                    size="sm"
+                  />
                 </div>
 
                 <HStack gap={3}>
@@ -300,7 +325,7 @@ export default function JobDialog({
                 <Button
                   onClick={handleSave}
                   loading={busy}
-                  disabled={!propertyValue[0]}
+                  disabled={!propertyValue[0] || !name.trim()}
                 >
                   {mode === "CREATE" ? "Create" : "Save"}
                 </Button>

@@ -1,0 +1,2 @@
+ALTER TABLE "Job" ADD COLUMN "name" TEXT;
+ALTER TABLE "JobOccurrence" ADD COLUMN "name" TEXT;

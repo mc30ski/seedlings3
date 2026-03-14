@@ -24,6 +24,7 @@ import {
   type TabPropsType,
   JOB_KIND,
   JOB_STATUS,
+  JOB_OCCURRENCE_STATUS,
   type JobListItem,
   type JobDetail,
   type JobOccurrenceFull,
@@ -44,7 +45,6 @@ import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog"
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
-const statusStates = ["ALL", ...JOB_STATUS] as const;
 
 export default function ServicesTab({
   me,
@@ -53,8 +53,31 @@ export default function ServicesTab({
   const { isAvail, forAdmin, isSuper } = determineRoles(me, purpose);
 
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string>("ALL");
   const [kind, setKind] = useState<string[]>(["ALL"]);
+  const [activeJobStatuses, setActiveJobStatuses] = useState<Set<string>>(
+    new Set(["PROPOSED", "ACCEPTED"])
+  );
+
+  function toggleJobStatus(val: string) {
+    setActiveJobStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val);
+      else next.add(val);
+      return next;
+    });
+  }
+  const [activeOccFilters, setActiveOccFilters] = useState<Set<string>>(
+    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT", "CLOSED"])
+  );
+
+  function toggleOccFilter(val: string) {
+    setActiveOccFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val);
+      else next.add(val);
+      return next;
+    });
+  }
 
   const [dateFrom, setDateFrom] = useState(() => new Date().toISOString().slice(0, 10));
   const [dateTo, setDateTo] = useState(() => {
@@ -83,6 +106,7 @@ export default function ServicesTab({
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
+  const [occurrenceDefaultName, setOccurrenceDefaultName] = useState<string | null>(null);
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
 
@@ -96,26 +120,14 @@ export default function ServicesTab({
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
-  const [showArchivedOccs, setShowArchivedOccs] = useState<Record<string, boolean>>({});
 
   type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
   const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
 
-  // Archived view (server-side paginated)
-  const [archivedItems, setArchivedItems] = useState<JobListItem[]>([]);
-  const [archivedTotal, setArchivedTotal] = useState(0);
-  const [archivedPage, setArchivedPage] = useState(1);
-  const [archivedLoading, setArchivedLoading] = useState(false);
-  const archivedPageSize = 25;
-
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
-      const qs = new URLSearchParams();
-      if (dateFrom) qs.set("from", dateFrom);
-      if (dateTo) qs.set("to", dateTo);
-      const url = `/api/admin/jobs${qs.toString() ? `?${qs}` : ""}`;
-      const list = await apiGet<JobListItem[]>(url);
+      const list = await apiGet<JobListItem[]>("/api/admin/jobs?status=ALL");
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({
@@ -130,7 +142,7 @@ export default function ServicesTab({
 
   useEffect(() => {
     void load();
-  }, [dateFrom, dateTo]);
+  }, []);
 
   async function loadDetail(jobId: string, force = false) {
     if (!force && (jobDetails[jobId] || detailLoading[jobId])) return;
@@ -196,20 +208,36 @@ export default function ServicesTab({
     }
   }
 
-  async function loadArchived(page = 1, reset = true) {
-    setArchivedLoading(true);
-    try {
-      const res = await apiGet<{ items: JobListItem[]; total: number; page: number; pageSize: number }>(
-        `/api/admin/jobs/archived?page=${page}&pageSize=${archivedPageSize}`
-      );
-      setArchivedItems((prev) => (reset ? res.items : [...prev, ...res.items]));
-      setArchivedTotal(res.total);
-      setArchivedPage(page);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load archived jobs.", err) });
-    } finally {
-      setArchivedLoading(false);
+  async function openDeleteJobDialog(job: JobListItem) {
+    // Ensure detail is loaded so we can check occurrence count
+    let detail = jobDetails[job.id];
+    if (!detail) {
+      try {
+        detail = await apiGet<JobDetail>(`/api/admin/jobs/${job.id}`);
+        setJobDetails((prev) => ({ ...prev, [job.id]: detail! }));
+      } catch {
+        // proceed without detail; API will guard server-side
+      }
     }
+
+    const occurrenceCount = detail?.occurrences.length ?? 0;
+    const hasOccurrences = occurrenceCount > 0;
+    const superRequired = !isSuper && job.status === "ARCHIVED";
+
+    setToDelete({
+      deleteType: "archived-job",
+      id: job.id,
+      title: "Delete job?",
+      summary: job.name ?? job.property?.displayName ?? job.id,
+      disabled: hasOccurrences || superRequired,
+      details: hasOccurrences ? (
+        <Text color="red.500">
+          This job has {occurrenceCount} occurrence{occurrenceCount !== 1 ? "s" : ""}. Delete all job occurrences before deleting the job.
+        </Text>
+      ) : superRequired ? (
+        <Text color="red.500">You must be a Super Admin to delete.</Text>
+      ) : undefined,
+    });
   }
 
   async function archiveJob(jobId: string) {
@@ -250,18 +278,18 @@ export default function ServicesTab({
 
   const filtered = useMemo(() => {
     let rows = items;
+    if (activeJobStatuses.size > 0) rows = rows.filter((i) => activeJobStatuses.has(i.status));
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
-    if (status !== "ALL") rows = rows.filter((i) => i.status === status);
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) =>
-        [r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
+        [r.name, r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
           .filter(Boolean)
           .some((s) => s!.toLowerCase().includes(qlc))
       );
     }
     return rows;
-  }, [items, q, kind, status]);
+  }, [items, q, kind, activeJobStatuses]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading) return <LoadingCenter />;
@@ -318,7 +346,11 @@ export default function ServicesTab({
           type="date"
           size="sm"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setDateFrom(val);
+            if (dateTo && val && val > dateTo) setDateTo(val);
+          }}
           maxW="160px"
         />
         <Text fontSize="sm">–</Text>
@@ -326,7 +358,11 @@ export default function ServicesTab({
           type="date"
           size="sm"
           value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setDateTo(val);
+            if (dateFrom && val && val < dateFrom) setDateFrom(val);
+          }}
           maxW="160px"
         />
         {(dateFrom || dateTo) && (
@@ -343,16 +379,41 @@ export default function ServicesTab({
         )}
       </HStack>
 
-      <HStack mb={3} gap={2} wrap="wrap">
-        {statusStates.map((s) => (
+      <HStack mb={1} gap={2} align="center" wrap="wrap">
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
+          Jobs:
+        </Text>
+        {JOB_STATUS.map((s) => (
           <Button
             key={s}
             size="sm"
-            variant={status === s ? "solid" : "outline"}
-            onClick={() => {
-              setStatus(s);
-              if (s === "ARCHIVED") void loadArchived(1, true);
-            }}
+            variant={activeJobStatuses.has(s) ? "solid" : "outline"}
+            colorPalette={s === "ARCHIVED" ? "gray" : undefined}
+            onClick={() => toggleJobStatus(s)}
+          >
+            {prettyStatus(s)}
+          </Button>
+        ))}
+      </HStack>
+
+      <HStack mb={3} gap={2} align="center" wrap="wrap">
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
+          Occurrences:
+        </Text>
+        <Button
+          key="UNCLAIMED"
+          size="sm"
+          variant={activeOccFilters.has("UNCLAIMED") ? "solid" : "outline"}
+          onClick={() => toggleOccFilter("UNCLAIMED")}
+        >
+          Unclaimed
+        </Button>
+        {JOB_OCCURRENCE_STATUS.map((s) => (
+          <Button
+            key={s}
+            size="sm"
+            variant={activeOccFilters.has(s) ? "solid" : "outline"}
+            onClick={() => toggleOccFilter(s)}
           >
             {prettyStatus(s)}
           </Button>
@@ -360,27 +421,27 @@ export default function ServicesTab({
       </HStack>
 
       <VStack align="stretch" gap={3}>
-        {status === "ARCHIVED" && archivedLoading && archivedItems.length === 0 && (
-          <Box p="8" color="fg.muted">Loading archived jobs…</Box>
-        )}
-        {status === "ARCHIVED" && !archivedLoading && archivedItems.length === 0 && (
-          <Box p="8" color="fg.muted">No archived jobs.</Box>
-        )}
-        {status !== "ARCHIVED" && filtered.length === 0 && (
+        {filtered.length === 0 && (
           <Box p="8" color="fg.muted">
             No jobs match current filters.
           </Box>
         )}
 
-        {(status === "ARCHIVED" ? archivedItems : filtered).map((job) => {
+        {filtered.map((job) => {
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
-          const archivedOccCount = detail?.occurrences.filter((o: JobOccurrenceFull) => o.status === "ARCHIVED").length ?? 0;
           const visibleOccs = detail
-            ? (showArchivedOccs[job.id]
-                ? detail.occurrences
-                : detail.occurrences.filter((o: JobOccurrenceFull) => o.status !== "ARCHIVED"))
+            ? detail.occurrences.filter((o: JobOccurrenceFull) => {
+                if (o.startAt) {
+                  const d = o.startAt.slice(0, 10);
+                  if (dateFrom && d < dateFrom) return false;
+                  if (dateTo && d > dateTo) return false;
+                }
+                const isUnclaimed = o.assignees.length === 0;
+                if (isUnclaimed) return activeOccFilters.has("UNCLAIMED");
+                return activeOccFilters.has(o.status);
+              })
             : [];
 
           return (
@@ -388,9 +449,16 @@ export default function ServicesTab({
               <Card.Header pb="2">
                 <HStack gap={3} justify="space-between" align="center">
                   <HStack gap={3} flex="1" minW={0}>
-                    <Text fontWeight="semibold">
-                      {job.property?.displayName ?? job.propertyId}
-                    </Text>
+                    <VStack align="start" gap={0}>
+                      <Text fontWeight="semibold">
+                        {job.name ?? job.property?.displayName ?? job.propertyId}
+                      </Text>
+                      {job.name && (
+                        <Text fontSize="xs" color="fg.muted">
+                          {job.property?.displayName}
+                        </Text>
+                      )}
+                    </VStack>
                     <StatusBadge
                       status={job.status}
                       palette={jobStatusColor(job.status)}
@@ -439,9 +507,14 @@ export default function ServicesTab({
                         Loading…
                       </Text>
                     )}
-                    {!isLoadingDetail && detail && detail.occurrences.filter((o: JobOccurrenceFull) => o.status !== "ARCHIVED").length === 0 && archivedOccCount === 0 && (
+                    {!isLoadingDetail && detail && detail.occurrences.length === 0 && (
                       <Text fontSize="sm" color="fg.muted">
                         No occurrences yet.
+                      </Text>
+                    )}
+                    {!isLoadingDetail && detail && detail.occurrences.length > 0 && visibleOccs.length === 0 && (
+                      <Text fontSize="sm" color="fg.muted">
+                        No occurrences match the current status filters.
                       </Text>
                     )}
                     {!isLoadingDetail && detail && visibleOccs.map((occ: JobOccurrenceFull) => (
@@ -454,15 +527,38 @@ export default function ServicesTab({
                       >
                         <HStack justify="space-between" align="center">
                           <VStack align="start" gap={0}>
-                            <Text fontSize="sm" fontWeight="medium">
+                            {occ.name && (
+                              <Text fontSize="sm" fontWeight="medium">
+                                {occ.name}
+                              </Text>
+                            )}
+                            <Text fontSize="sm" fontWeight={occ.name ? "normal" : "medium"} color={occ.name ? "fg.muted" : undefined}>
                               {occ.startAt
                                 ? new Date(occ.startAt).toLocaleDateString()
                                 : "—"}
                             </Text>
-                            <Text fontSize="xs" color="fg.muted">
-                              {occ.assignees.length} assignee
-                              {occ.assignees.length !== 1 ? "s" : ""}
-                            </Text>
+                            {occ.assignees.length === 0 ? (
+                              <Text fontSize="xs" color="orange.500" fontWeight="medium">
+                                Unclaimed — available to pick up
+                              </Text>
+                            ) : (
+                              <VStack align="start" gap={0}>
+                                {occ.assignees.map((a) => {
+                                  const isClaimer = a.assignedById === a.userId;
+                                  return (
+                                    <Text
+                                      key={a.userId}
+                                      fontSize="xs"
+                                      fontWeight={isClaimer ? "medium" : "normal"}
+                                      color={isClaimer ? "teal.700" : "fg.muted"}
+                                    >
+                                      {a.user.displayName ?? a.user.email ?? a.userId}
+                                      {isClaimer ? " · Claimer" : ""}
+                                    </Text>
+                                  );
+                                })}
+                              </VStack>
+                            )}
                             <Text fontSize="xs" color="fg.muted">
                               Price:{" "}
                               {occ.price != null ? (
@@ -486,26 +582,24 @@ export default function ServicesTab({
 
                         {forAdmin && job.status === "ACCEPTED" && (
                           <HStack gap={2} mt={2} wrap="wrap">
-                            {occ.status !== "ARCHIVED" && (
-                              <StatusButton
-                                id="occ-edit"
-                                itemId={occ.id}
-                                label="Edit"
-                                onClick={async () => {
-                                  setEditingOccurrence(occ);
-                                  setEditOccurrenceJobId(job.id);
-                                  setEditOccurrenceDialogOpen(true);
-                                }}
-                                variant="outline"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
-                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                            <StatusButton
+                              id="occ-edit"
+                              itemId={occ.id}
+                              label="Edit"
+                              onClick={async () => {
+                                setEditingOccurrence(occ);
+                                setEditOccurrenceJobId(job.id);
+                                setEditOccurrenceDialogOpen(true);
+                              }}
+                              variant="outline"
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
+                            {occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-assignees"
                                 itemId={occ.id}
-                                label="Assign Workers"
+                                label="Manage Team"
                                 onClick={async () => {
                                   setAssigneeOccurrenceId(occ.id);
                                   setAssigneeCurrentAssignees(occ.assignees);
@@ -530,57 +624,77 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {(occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS") && (
+                            {occ.status === "IN_PROGRESS" && (
                               <StatusButton
                                 id="occ-complete"
                                 itemId={occ.id}
                                 label="Complete"
                                 onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "COMPLETED")
+                                  patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT")
                                 }
                                 variant="outline"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "CANCELED" && occ.status !== "COMPLETED" && occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                            {occ.status === "SCHEDULED" && (
                               <StatusButton
                                 id="occ-cancel"
                                 itemId={occ.id}
                                 label="Cancel"
-                                onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "CANCELED")
-                                }
+                                onClick={async () => {
+                                  const dateLabel = occ.startAt
+                                    ? new Date(occ.startAt).toLocaleDateString()
+                                    : "unknown date";
+                                  setToDelete({
+                                    deleteType: "archived-occurrence",
+                                    jobId: job.id,
+                                    id: occ.id,
+                                    title: "Cancel occurrence?",
+                                    summary: `Occurrence on ${dateLabel} will be deleted.`,
+                                    disabled: false,
+                                  });
+                                }}
                                 variant="outline"
                                 colorPalette="red"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "COMPLETED" && (
+                            {occ.status === "IN_PROGRESS" && (
                               <StatusButton
-                                id="occ-pending-payment"
+                                id="occ-cancel"
                                 itemId={occ.id}
-                                label="Pending Payment"
-                                onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT")
-                                }
+                                label="Cancel"
+                                onClick={async () => {
+                                  const dateLabel = occ.startAt
+                                    ? new Date(occ.startAt).toLocaleDateString()
+                                    : "unknown date";
+                                  setToDelete({
+                                    deleteType: "archived-occurrence",
+                                    jobId: job.id,
+                                    id: occ.id,
+                                    title: "Cancel occurrence?",
+                                    summary: `Occurrence on ${dateLabel} will be deleted.`,
+                                    disabled: false,
+                                  });
+                                }}
                                 variant="outline"
-                                colorPalette="orange"
+                                colorPalette="red"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
                             {occ.status === "PENDING_PAYMENT" && (
                               <StatusButton
-                                id="occ-close"
+                                id="occ-accept-payment"
                                 itemId={occ.id}
-                                label="Close"
+                                label="Accept Payment"
                                 onClick={async () =>
                                   patchOccurrenceStatus(occ.id, job.id, "CLOSED")
                                 }
                                 variant="outline"
-                                colorPalette="purple"
+                                colorPalette="green"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
@@ -593,18 +707,6 @@ export default function ServicesTab({
                                 onClick={async () => archiveOccurrence(occ.id, job.id)}
                                 variant="outline"
                                 colorPalette="gray"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
-                            {occ.status === "CANCELED" && (
-                              <StatusButton
-                                id="occ-delete"
-                                itemId={occ.id}
-                                label="Delete"
-                                onClick={async () => deleteOccurrence(occ.id, job.id)}
-                                variant="outline"
-                                colorPalette="red"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
@@ -640,17 +742,6 @@ export default function ServicesTab({
                         )}
                       </Box>
                     ))}
-                    {!isLoadingDetail && detail && archivedOccCount > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setShowArchivedOccs((prev) => ({ ...prev, [job.id]: !prev[job.id] }))}
-                      >
-                        {showArchivedOccs[job.id]
-                          ? `Hide archived (${archivedOccCount})`
-                          : `Show archived (${archivedOccCount})`}
-                      </Button>
-                    )}
                   </Box>
                 )}
               </Card.Body>
@@ -677,6 +768,7 @@ export default function ServicesTab({
                         label="+ Occurrence"
                         onClick={async () => {
                           setOccurrenceJobId(job.id);
+                          setOccurrenceDefaultName(job.name ?? null);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceDialogOpen(true);
@@ -710,35 +802,12 @@ export default function ServicesTab({
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
-                    {job.status === "ARCHIVED" && (
-                      <StatusButton
-                        id="job-delete-archived"
-                        itemId={job.id}
-                        label="Delete"
-                        onClick={async () => {
-                          setToDelete({
-                            deleteType: "archived-job",
-                            id: job.id,
-                            title: "Delete job?",
-                            summary: job.property?.displayName ?? job.id,
-                            disabled: !isSuper,
-                            details: !isSuper ? (
-                              <Text color="red.500">You must be a Super Admin to delete.</Text>
-                            ) : undefined,
-                          });
-                        }}
-                        variant="outline"
-                        colorPalette="red"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {job.status === "PROPOSED" && (
+                    {(job.status === "ARCHIVED" || job.status === "PROPOSED") && (
                       <StatusButton
                         id="job-delete"
                         itemId={job.id}
                         label="Delete"
-                        onClick={async () => deleteJob(job.id)}
+                        onClick={async () => openDeleteJobDialog(job)}
                         variant="outline"
                         colorPalette="red"
                         busyId={statusButtonBusyId}
@@ -752,18 +821,6 @@ export default function ServicesTab({
           );
         })}
       </VStack>
-
-      {status === "ARCHIVED" && archivedItems.length < archivedTotal && (
-        <HStack justify="center" mt={3}>
-          <Button
-            variant="outline"
-            loading={archivedLoading}
-            onClick={() => void loadArchived(archivedPage + 1, false)}
-          >
-            Load more ({archivedItems.length} of {archivedTotal})
-          </Button>
-        </HStack>
-      )}
 
       {forAdmin && (
         <JobDialog
@@ -780,6 +837,7 @@ export default function ServicesTab({
           open={occurrenceDialogOpen}
           onOpenChange={setOccurrenceDialogOpen}
           jobId={occurrenceJobId}
+          defaultName={occurrenceDefaultName}
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
           onSaved={() => {
@@ -799,6 +857,7 @@ export default function ServicesTab({
           occurrenceId={editingOccurrence.id}
           defaultStatus={editingOccurrence.status}
           defaultKind={editingOccurrence.kind}
+          defaultName={editingOccurrence.name}
           defaultStartAt={editingOccurrence.startAt}
           defaultEndAt={editingOccurrence.endAt}
           defaultNotes={editingOccurrence.notes}
@@ -829,7 +888,7 @@ export default function ServicesTab({
           onOpenChange={setAssigneeDialogOpen}
           occurrenceId={assigneeOccurrenceId}
           currentAssignees={assigneeCurrentAssignees}
-          onSaved={() => {
+          onChanged={() => {
             if (assigneeJobId) {
               setJobDetails((prev) => {
                 const next = { ...prev };
