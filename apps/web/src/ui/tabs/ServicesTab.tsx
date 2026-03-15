@@ -912,7 +912,17 @@ export default function ServicesTab({
           onOpenChange={setJobDialogOpen}
           mode={editingJob ? "UPDATE" : "CREATE"}
           initial={editingJob}
-          onSaved={() => void load()}
+          onSaved={(created) => {
+            void load();
+            if (created) {
+              setOccurrenceJobId(created.id);
+              setOccurrenceDefaultName(created.name);
+              setOccurrenceDefaultNotes(created.notes ?? null);
+              setOccurrenceDefaultPrice(created.defaultPrice ?? null);
+              setOccurrenceJobHasFrequency(!!(created.frequencyDays));
+              setOccurrenceDialogOpen(true);
+            }
+          }}
         />
       )}
 
