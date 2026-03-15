@@ -43,6 +43,9 @@ import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { MapLink, TextLink } from "@/src/ui/helpers/Link";
+import { openEventSearch } from "@/src/lib/bus";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -80,11 +83,14 @@ export default function ServicesTab({
     });
   }
 
-  const [dateFrom, setDateFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
-    return d.toISOString().slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
 
   const kindItems = useMemo(
@@ -110,6 +116,7 @@ export default function ServicesTab({
   const [occurrenceDefaultName, setOccurrenceDefaultName] = useState<string | null>(null);
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
+  const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
@@ -124,6 +131,14 @@ export default function ServicesTab({
 
   type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
   const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
+
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    colorPalette: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
   const [scheduleNextData, setScheduleNextData] = useState<{
@@ -200,8 +215,8 @@ export default function ServicesTab({
       void loadDetail(jobId, true);
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
 
-      // Prompt to schedule next occurrence if job has a frequency
-      if (newStatus === "CLOSED" && job?.frequencyDays && occ) {
+      // Prompt to schedule next occurrence if job has a frequency (skip for one-off)
+      if (newStatus === "CLOSED" && job?.frequencyDays && occ && !occ.isOneOff) {
         setScheduleNextData({
           jobId,
           frequencyDays: job.frequencyDays,
@@ -250,7 +265,7 @@ export default function ServicesTab({
 
     const occurrenceCount = detail?.occurrences.length ?? 0;
     const hasOccurrences = occurrenceCount > 0;
-    const superRequired = !isSuper && job.status === "ARCHIVED";
+    const superRequired = !isSuper;
 
     setToDelete({
       deleteType: "archived-job",
@@ -481,10 +496,29 @@ export default function ServicesTab({
                       <Text fontWeight="semibold">
                         {job.name ?? job.property?.displayName ?? job.propertyId}
                       </Text>
-                      {job.name && (
-                        <Text fontSize="xs" color="fg.muted">
-                          {job.property?.displayName}
-                        </Text>
+                      {job.name && job.property?.displayName && (
+                        <TextLink
+                          text={job.property.displayName}
+                          onClick={() =>
+                            openEventSearch(
+                              "jobsTabToPropertiesTabSearch",
+                              job.property?.displayName ?? "",
+                              forAdmin,
+                            )
+                          }
+                        />
+                      )}
+                      {!job.name && job.property?.displayName && (
+                        <TextLink
+                          text="View Property"
+                          onClick={() =>
+                            openEventSearch(
+                              "jobsTabToPropertiesTabSearch",
+                              job.property?.displayName ?? "",
+                              forAdmin,
+                            )
+                          }
+                        />
                       )}
                     </VStack>
                     <StatusBadge
@@ -496,11 +530,9 @@ export default function ServicesTab({
                   <StatusBadge status={job.kind} palette="gray" variant="outline" />
                 </HStack>
                 {(job.property?.street1 || job.property?.city) && (
-                  <Text fontSize="sm" color="fg.muted" mt="1">
-                    {[job.property.street1, job.property.city, job.property.state]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </Text>
+                  <Box mt="1">
+                    <MapLink address={[job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ")} />
+                  </Box>
                 )}
               </Card.Header>
 
@@ -525,32 +557,36 @@ export default function ServicesTab({
                     </Text>
                   )}
                 </VStack>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => toggleExpand(job.id)}
-                >
-                  {expanded ? "Hide occurrences ▲" : "Show occurrences ▼"}
-                </Button>
+                {(detail ? detail.occurrences.length === 0 : (job.occurrenceCount ?? 0) === 0) ? (
+                  <Text fontSize="sm" color="fg.muted">No occurrences</Text>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => toggleExpand(job.id)}
+                  >
+                    {expanded ? "Hide occurrences ▲" : "Show occurrences ▼"}
+                  </Button>
+                )}
 
                 {expanded && (
                   <Box mt={2}>
-                    {isLoadingDetail && (
+                    {isLoadingDetail && !detail && (
                       <Text fontSize="sm" color="fg.muted">
                         Loading…
                       </Text>
                     )}
-                    {!isLoadingDetail && detail && detail.occurrences.length === 0 && (
+                    {detail && detail.occurrences.length === 0 && (
                       <Text fontSize="sm" color="fg.muted">
-                        No occurrences yet.
+                        No occurrences.
                       </Text>
                     )}
-                    {!isLoadingDetail && detail && detail.occurrences.length > 0 && visibleOccs.length === 0 && (
+                    {detail && detail.occurrences.length > 0 && visibleOccs.length === 0 && (
                       <Text fontSize="sm" color="fg.muted">
                         No occurrences match the current status filters.
                       </Text>
                     )}
-                    {!isLoadingDetail && detail && visibleOccs.map((occ: JobOccurrenceFull) => (
+                    {detail && visibleOccs.map((occ: JobOccurrenceFull) => (
                       <Box
                         key={occ.id}
                         p={2}
@@ -649,9 +685,13 @@ export default function ServicesTab({
                                 id="occ-start"
                                 itemId={occ.id}
                                 label="Start"
-                                onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS")
-                                }
+                                onClick={async () => setConfirmAction({
+                                  title: "Start Occurrence?",
+                                  message: "Are you sure you want to start this occurrence?",
+                                  confirmLabel: "Start",
+                                  colorPalette: "blue",
+                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS"),
+                                })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
@@ -662,9 +702,13 @@ export default function ServicesTab({
                                 id="occ-complete"
                                 itemId={occ.id}
                                 label="Complete"
-                                onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT")
-                                }
+                                onClick={async () => setConfirmAction({
+                                  title: "Complete Occurrence?",
+                                  message: "Are you sure you want to mark this occurrence as complete?",
+                                  confirmLabel: "Complete",
+                                  colorPalette: "green",
+                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT"),
+                                })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
@@ -723,9 +767,13 @@ export default function ServicesTab({
                                 id="occ-accept-payment"
                                 itemId={occ.id}
                                 label="Accept Payment"
-                                onClick={async () =>
-                                  patchOccurrenceStatus(occ.id, job.id, "CLOSED")
-                                }
+                                onClick={async () => setConfirmAction({
+                                  title: "Accept Payment?",
+                                  message: "Are you sure you want to accept payment and close this occurrence?",
+                                  confirmLabel: "Accept Payment",
+                                  colorPalette: "green",
+                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "CLOSED"),
+                                })}
                                 variant="outline"
                                 colorPalette="green"
                                 busyId={statusButtonBusyId}
@@ -737,40 +785,44 @@ export default function ServicesTab({
                                 id="occ-archive"
                                 itemId={occ.id}
                                 label="Archive"
-                                onClick={async () => archiveOccurrence(occ.id, job.id)}
+                                onClick={async () => setConfirmAction({
+                                  title: "Archive Occurrence?",
+                                  message: "Are you sure you want to archive this occurrence?",
+                                  confirmLabel: "Archive",
+                                  colorPalette: "gray",
+                                  onConfirm: () => void archiveOccurrence(occ.id, job.id),
+                                })}
                                 variant="outline"
                                 colorPalette="gray"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "ARCHIVED" && (
-                              <StatusButton
-                                id="occ-delete-archived"
-                                itemId={occ.id}
-                                label="Delete"
-                                onClick={async () => {
-                                  const dateLabel = occ.startAt
-                                    ? new Date(occ.startAt).toLocaleDateString()
-                                    : "unknown date";
-                                  setToDelete({
-                                    deleteType: "archived-occurrence",
-                                    jobId: job.id,
-                                    id: occ.id,
-                                    title: "Delete occurrence?",
-                                    summary: `Occurrence on ${dateLabel}`,
-                                    disabled: !isSuper,
-                                    details: !isSuper ? (
-                                      <Text color="red.500">You must be a Super Admin to delete.</Text>
-                                    ) : undefined,
-                                  });
-                                }}
-                                variant="outline"
-                                colorPalette="red"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
+                            <StatusButton
+                              id="occ-delete"
+                              itemId={occ.id}
+                              label="Delete"
+                              onClick={async () => {
+                                const dateLabel = occ.startAt
+                                  ? new Date(occ.startAt).toLocaleDateString()
+                                  : "unknown date";
+                                setToDelete({
+                                  deleteType: "archived-occurrence",
+                                  jobId: job.id,
+                                  id: occ.id,
+                                  title: "Delete occurrence?",
+                                  summary: `Occurrence on ${dateLabel}`,
+                                  disabled: !isSuper,
+                                  details: !isSuper ? (
+                                    <Text color="red.500">You must be a Super Admin to delete.</Text>
+                                  ) : undefined,
+                                });
+                              }}
+                              variant="outline"
+                              colorPalette="red"
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
                           </HStack>
                         )}
                       </Box>
@@ -804,6 +856,7 @@ export default function ServicesTab({
                           setOccurrenceDefaultName(job.name ?? null);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
+                          setOccurrenceJobHasFrequency(!!job.frequencyDays);
                           setOccurrenceDialogOpen(true);
                         }}
                         variant="outline"
@@ -835,18 +888,16 @@ export default function ServicesTab({
                         setBusyId={setStatusButtonBusyId}
                       />
                     )}
-                    {(job.status === "ARCHIVED" || job.status === "PROPOSED") && (
-                      <StatusButton
-                        id="job-delete"
-                        itemId={job.id}
-                        label="Delete"
-                        onClick={async () => openDeleteJobDialog(job)}
-                        variant="outline"
-                        colorPalette="red"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
+                    <StatusButton
+                      id="job-delete"
+                      itemId={job.id}
+                      label="Delete"
+                      onClick={async () => openDeleteJobDialog(job)}
+                      variant="outline"
+                      colorPalette="red"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
                   </HStack>
                 </Card.Footer>
               )}
@@ -873,8 +924,12 @@ export default function ServicesTab({
           defaultName={occurrenceDefaultName}
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
+          showOneOff={occurrenceJobHasFrequency}
           onSaved={() => {
-            if (occurrenceJobId) void loadDetail(occurrenceJobId, true);
+            if (occurrenceJobId) {
+              setExpandedMap((prev) => ({ ...prev, [occurrenceJobId]: true }));
+              void loadDetail(occurrenceJobId, true);
+            }
           }}
         />
       )}
@@ -923,12 +978,7 @@ export default function ServicesTab({
           currentAssignees={assigneeCurrentAssignees}
           onChanged={() => {
             if (assigneeJobId) {
-              setJobDetails((prev) => {
-                const next = { ...prev };
-                delete next[assigneeJobId];
-                return next;
-              });
-              void loadDetail(assigneeJobId);
+              void loadDetail(assigneeJobId, true);
             }
           }}
         />
@@ -953,6 +1003,19 @@ export default function ServicesTab({
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title ?? ""}
+        message={confirmAction?.message ?? ""}
+        confirmLabel={confirmAction?.confirmLabel}
+        confirmColorPalette={confirmAction?.colorPalette}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </Box>
   );
 }

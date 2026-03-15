@@ -125,17 +125,18 @@ export const jobs: ServicesJobs = {
           },
         },
         _count: {
-          select: { defaultAssignees: true },
+          select: { defaultAssignees: true, occurrences: true },
         },
       },
     });
 
-    return rows.map((j) => ({
+    return rows.map(({ _count, occurrences, ...j }) => ({
       ...j,
       notes: j.notes,
       defaultPrice: j.defaultPrice,
-      nextOccurrence: j.occurrences[0] ?? null,
-      assigneeCount: j._count.defaultAssignees,
+      nextOccurrence: occurrences[0] ?? null,
+      assigneeCount: _count.defaultAssignees,
+      occurrenceCount: _count.occurrences,
     }));
   },
 
@@ -269,6 +270,7 @@ export const jobs: ServicesJobs = {
           name: input.name !== undefined ? input.name : (job as any).name ?? null,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
+          isOneOff: input.isOneOff ?? false,
         } as any,
       });
 
@@ -775,9 +777,6 @@ export const jobs: ServicesJobs = {
   async deleteJob(jobId: string) {
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
-    if (job.status !== JobStatus.PROPOSED && job.status !== JobStatus.ARCHIVED) {
-      throw new ServiceError("INVALID_STATUS", "Only proposed or archived jobs can be deleted.", 409);
-    }
     const occurrenceCount = await prisma.jobOccurrence.count({ where: { jobId } });
     if (occurrenceCount > 0) {
       throw new ServiceError(
@@ -794,14 +793,6 @@ export const jobs: ServicesJobs = {
   async deleteOccurrence(occurrenceId) {
     const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
-    if (
-      occ.status !== JobOccurrenceStatus.SCHEDULED &&
-      occ.status !== JobOccurrenceStatus.IN_PROGRESS &&
-      occ.status !== JobOccurrenceStatus.CANCELED &&
-      occ.status !== JobOccurrenceStatus.ARCHIVED
-    ) {
-      throw new ServiceError("INVALID_STATUS", "Only scheduled, in-progress, canceled, or archived occurrences can be deleted.", 409);
-    }
     await prisma.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
     await prisma.jobOccurrence.delete({ where: { id: occurrenceId } });
     return { deleted: true as const };

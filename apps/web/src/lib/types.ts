@@ -21,7 +21,8 @@ export type EventTypes =
   | "clientTabToPropertiesTabSearch"
   | "propertyTabToClientTabSearch"
   | "propertyTabToClientTabContactSearch"
-  | "activityTavToEquipmentTabQRCodeSearch";
+  | "activityTavToEquipmentTabQRCodeSearch"
+  | "jobsTabToPropertiesTabSearch";
 
 export type DialogMode = "CREATE" | "UPDATE";
 
@@ -240,6 +241,7 @@ export type JobOccurrenceFull = {
   endAt?: string | null;
   notes?: string | null;
   price?: number | null;
+  isOneOff?: boolean;
   assignees: JobOccurrenceAssigneeWithUser[];
   createdAt?: string;
 };
@@ -267,6 +269,7 @@ export type JobListItem = {
     kind: string;
   } | null;
   assigneeCount: number;
+  occurrenceCount?: number;
   notes?: string | null;
   defaultPrice?: number | null;
   createdAt?: string;
@@ -287,6 +290,7 @@ export type WorkerOccurrence = {
   endAt?: string | null;
   notes?: string | null;
   price?: number | null;
+  isOneOff?: boolean;
   job: {
     id: string;
     kind: JobKind;

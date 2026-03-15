@@ -568,6 +568,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
 
     if (body.name != null) input.name = String(body.name).trim() || null;
+    if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;

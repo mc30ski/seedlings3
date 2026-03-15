@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Button,
+  Checkbox,
   Dialog,
   HStack,
   Input,
@@ -51,6 +52,7 @@ type Props = {
   createBody?: Record<string, unknown>;
   title?: string;
   submitLabel?: string;
+  showOneOff?: boolean;
   onSaved?: () => void;
 };
 
@@ -71,6 +73,7 @@ export default function OccurrenceDialog({
   createBody,
   title,
   submitLabel,
+  showOneOff,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -82,6 +85,7 @@ export default function OccurrenceDialog({
   const [endAt, setEndAt] = useState("");
   const [notes, setNotes] = useState("");
   const [price, setPrice] = useState("");
+  const [isOneOff, setIsOneOff] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -92,6 +96,7 @@ export default function OccurrenceDialog({
     setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
+    setIsOneOff(false);
   }, [open, mode, defaultStatus, defaultKind, defaultName, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
 
   async function handleSave() {
@@ -117,6 +122,7 @@ export default function OccurrenceDialog({
           endAt: endAtIso ?? undefined,
           notes: notesVal ?? undefined,
           price: priceVal ?? undefined,
+          ...(isOneOff ? { isOneOff: true } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
@@ -249,6 +255,16 @@ export default function OccurrenceDialog({
                     rows={2}
                   />
                 </div>
+                {showOneOff && mode === "CREATE" && (
+                  <Checkbox.Root
+                    checked={isOneOff}
+                    onCheckedChange={(e) => setIsOneOff(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label>One-off (skip next occurrence prompt)</Checkbox.Label>
+                  </Checkbox.Root>
+                )}
               </VStack>
             </Dialog.Body>
 

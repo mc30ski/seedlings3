@@ -25,11 +25,14 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { MapLink, TextLink } from "@/src/ui/helpers/Link";
+import { openEventSearch } from "@/src/lib/bus";
 
 const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
-  const { isAvail } = determineRoles(me, purpose);
+  const { isAvail, forAdmin } = determineRoles(me, purpose);
   const myId = me?.id ?? "";
 
   const [q, setQ] = useState("");
@@ -49,15 +52,26 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  const [dateFrom, setDateFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
-    return d.toISOString().slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
+
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    colorPalette: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
   const [scheduleNextData, setScheduleNextData] = useState<{
@@ -127,8 +141,8 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         text: action === "start" ? "Job started." : action === "complete" ? "Job marked as pending payment." : "Payment accepted.",
       });
 
-      // Prompt to schedule next occurrence if job has a frequency
-      if (action === "accept-payment" && occ?.job?.frequencyDays) {
+      // Prompt to schedule next occurrence if job has a frequency (skip for one-off)
+      if (action === "accept-payment" && occ?.job?.frequencyDays && !occ.isOneOff) {
         setScheduleNextData({
           jobId: occ.job.id,
           frequencyDays: occ.job.frequencyDays,
@@ -292,16 +306,26 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       <Text fontWeight="semibold">
                         {occ.name ?? occ.job?.property?.displayName}
                       </Text>
-                      <Text fontSize="sm" color="fg.muted">
-                        {[
+                      <MapLink address={[
                           occ.name ? occ.job?.property?.displayName : null,
                           occ.job?.property?.street1,
                           occ.job?.property?.city,
                           occ.job?.property?.state,
                         ]
                           .filter(Boolean)
-                          .join(", ")}
-                      </Text>
+                          .join(", ")} />
+                      {occ.job?.property?.displayName && (
+                        <TextLink
+                          text="View Property"
+                          onClick={() =>
+                            openEventSearch(
+                              "jobsTabToPropertiesTabSearch",
+                              occ.job?.property?.displayName ?? "",
+                              forAdmin,
+                            )
+                          }
+                        />
+                      )}
                     </VStack>
                     <StatusBadge
                       status={occ.status}
@@ -363,7 +387,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id="occ-claim"
                           itemId={occ.id}
                           label="Claim"
-                          onClick={async () => claim(occ.id)}
+                          onClick={async () => setConfirmAction({
+                            title: "Claim Job?",
+                            message: "Are you sure you want to claim this job?",
+                            confirmLabel: "Claim",
+                            colorPalette: "green",
+                            onConfirm: () => void claim(occ.id),
+                          })}
                           variant="outline"
                           colorPalette="green"
                           busyId={statusButtonBusyId}
@@ -375,7 +405,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id="occ-start"
                           itemId={occ.id}
                           label="Start"
-                          onClick={async () => updateStatus(occ.id, "start")}
+                          onClick={async () => setConfirmAction({
+                            title: "Start Job?",
+                            message: "Are you sure you want to start this job?",
+                            confirmLabel: "Start",
+                            colorPalette: "blue",
+                            onConfirm: () => void updateStatus(occ.id, "start"),
+                          })}
                           variant="outline"
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
@@ -386,7 +422,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id="occ-complete"
                           itemId={occ.id}
                           label="Complete"
-                          onClick={async () => updateStatus(occ.id, "complete")}
+                          onClick={async () => setConfirmAction({
+                            title: "Complete Job?",
+                            message: "Are you sure you want to mark this job as complete?",
+                            confirmLabel: "Complete",
+                            colorPalette: "green",
+                            onConfirm: () => void updateStatus(occ.id, "complete"),
+                          })}
                           variant="outline"
                           colorPalette="green"
                           busyId={statusButtonBusyId}
@@ -398,7 +440,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id="occ-accept-payment"
                           itemId={occ.id}
                           label="Accept Payment"
-                          onClick={async () => updateStatus(occ.id, "accept-payment")}
+                          onClick={async () => setConfirmAction({
+                            title: "Accept Payment?",
+                            message: "Are you sure you want to accept payment and close this occurrence?",
+                            confirmLabel: "Accept Payment",
+                            colorPalette: "green",
+                            onConfirm: () => void updateStatus(occ.id, "accept-payment"),
+                          })}
                           variant="outline"
                           colorPalette="green"
                           busyId={statusButtonBusyId}
@@ -424,7 +472,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           id="occ-unclaim"
                           itemId={occ.id}
                           label="Unclaim"
-                          onClick={async () => unclaim(occ.id)}
+                          onClick={async () => setConfirmAction({
+                            title: "Unclaim Job?",
+                            message: "Are you sure you want to unclaim this job?",
+                            confirmLabel: "Unclaim",
+                            colorPalette: "red",
+                            onConfirm: () => void unclaim(occ.id),
+                          })}
                           variant="outline"
                           colorPalette="red"
                           busyId={statusButtonBusyId}
@@ -478,6 +532,19 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title ?? ""}
+        message={confirmAction?.message ?? ""}
+        confirmLabel={confirmAction?.confirmLabel}
+        confirmColorPalette={confirmAction?.colorPalette}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </Box>
   );
 }

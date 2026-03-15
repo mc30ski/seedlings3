@@ -410,6 +410,8 @@ export type CreateOccurrenceInput = {
   notes?: string | null;
   price?: number | null;
 
+  isOneOff?: boolean;
+
   // optional assignees at creation time
   assigneeUserIds?: string[];
 };
