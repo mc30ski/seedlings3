@@ -250,6 +250,7 @@ export default function HomePage() {
   setupSearchEvent("propertyTabToClientTabSearch", "clients");
   setupSearchEvent("propertyTabToClientTabContactSearch", "clients");
   setupSearchEvent("activityTavToEquipmentTabQRCodeSearch", "equipment");
+  setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
 
   useEffect(() => {
     if (typeof window === "undefined") return;

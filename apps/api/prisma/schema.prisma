@@ -434,6 +434,7 @@ model JobOccurrence {
   name        String?
   notes       String?
   price       Float?
+  isOneOff    Boolean @default(false)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

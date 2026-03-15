@@ -163,6 +163,7 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     const input: any = {};
     if (body.name != null) input.name = String(body.name).trim() || null;
+    if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
     if (body.notes != null) input.notes = body.notes;

@@ -82,8 +82,9 @@ export default function ScheduleNextDialog({
         open={open}
         onOpenChange={(o) => {
           if (!o) {
-            // User closed the occurrence form — treat as skip
-            handleSkipRequest();
+            // User closed the occurrence form — go back to prompt with skip confirmation
+            setShowForm(false);
+            setShowSkipConfirm(true);
             return;
           }
           onOpenChange(o);

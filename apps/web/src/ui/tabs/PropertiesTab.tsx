@@ -108,6 +108,7 @@ export default function PropertiesTab({
 
   useEffect(() => {
     onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef);
+    onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef);
   }, []);
 
   // Filtered items based on search, kind or status.
