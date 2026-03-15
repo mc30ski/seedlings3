@@ -41,7 +41,7 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
   initial?: Pick<JobListItem, "id" | "propertyId" | "name" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
-  onSaved?: () => void;
+  onSaved?: (created?: { id: string; name: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null }) => void;
 };
 
 export default function JobDialog({
@@ -156,15 +156,23 @@ export default function JobDialog({
     setBusy(true);
     try {
       if (mode === "CREATE") {
-        await apiPost("/api/admin/jobs", payload);
+        const created = await apiPost<{ id: string }>("/api/admin/jobs", payload);
         publishInlineMessage({ type: "SUCCESS", text: "Job created." });
+        onOpenChange(false);
+        onSaved?.({
+          id: created.id,
+          name: payload.name,
+          defaultPrice: payload.defaultPrice,
+          notes: payload.notes,
+          frequencyDays: payload.frequencyDays,
+        });
       } else {
         if (!initial?.id) throw new Error("Missing job id");
         await apiPatch(`/api/admin/jobs/${initial.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Job updated." });
+        onOpenChange(false);
+        onSaved?.();
       }
-      onSaved?.();
-      onOpenChange(false);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
