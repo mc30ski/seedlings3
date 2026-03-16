@@ -174,11 +174,20 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.jobs.updateOccurrenceStatus(
-      uid,
-      String(req.params.id),
-      JobOccurrenceStatus.CLOSED
-    );
+    const body = req.body || {};
+    return services.payments.createPayment(uid, {
+      occurrenceId: String(req.params.id),
+      amountPaid: Number(body.amountPaid),
+      method: String(body.method || "CASH"),
+      note: body.note ? String(body.note) : null,
+      splits: Array.isArray(body.splits) ? body.splits : [],
+    });
+  });
+
+  app.get("/payments/mine", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    return services.payments.listMyPayments(uid, { from, to });
   });
 
   app.post("/occurrences/:id/add-assignee", workerGuard, async (req: any) => {

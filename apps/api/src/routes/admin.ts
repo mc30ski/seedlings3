@@ -726,4 +726,32 @@ export default async function adminRoutes(app: FastifyInstance) {
       return services.jobs.deleteOccurrence(occurrenceId);
     }
   );
+
+  // Accept payment for an occurrence (admin)
+  app.post(
+    "/admin/occurrences/:occurrenceId/accept-payment",
+    adminGuard,
+    async (req: any) => {
+      const uid = await currentUserId(req);
+      const body = req.body || {};
+      return services.payments.createPayment(uid, {
+        occurrenceId: String(req.params.occurrenceId),
+        amountPaid: Number(body.amountPaid),
+        method: String(body.method || "CASH"),
+        note: body.note ? String(body.note) : null,
+        splits: Array.isArray(body.splits) ? body.splits : [],
+      });
+    }
+  );
+
+  // List all payments (admin)
+  app.get("/admin/payments", adminGuard, async (req: any) => {
+    const { from, to, userId, method } = (req.query || {}) as {
+      from?: string;
+      to?: string;
+      userId?: string;
+      method?: string;
+    };
+    return services.payments.listAllPayments({ from, to, userId, method });
+  });
 }

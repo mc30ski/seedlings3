@@ -117,6 +117,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   useEffect(() => {
     onEventSearchRun("propertyTabToClientTabSearch", setQ, inputRef);
     onEventSearchRun("propertyTabToClientTabContactSearch", setQ, inputRef);
+    onEventSearchRun("paymentsTabToClientsTabSearch", setQ, inputRef);
   }, []);
 
   // Filtered items based on search, kind or status.

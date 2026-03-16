@@ -534,6 +534,36 @@ export type ServicesJobs = {
   ): Promise<{ updated: true }>;
 };
 
+export type ServicesPayments = {
+  createPayment(
+    currentUserId: string,
+    input: {
+      occurrenceId: string;
+      amountPaid: number;
+      method: string;
+      note?: string | null;
+      splits: Array<{ userId: string; amount: number }>;
+    }
+  ): Promise<any>;
+
+  listMyPayments(
+    userId: string,
+    params?: { from?: string; to?: string }
+  ): Promise<{ items: any[]; totalAmount: number }>;
+
+  listAllPayments(params?: {
+    from?: string;
+    to?: string;
+    userId?: string;
+    method?: string;
+  }): Promise<{
+    items: any[];
+    personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
+  }>;
+
+  getPaymentByOccurrence(occurrenceId: string): Promise<any | null>;
+};
+
 export type Services = {
   equipment: ServicesEquipment;
   users: ServicesUsers;
@@ -543,4 +573,5 @@ export type Services = {
   clients: ServicesClients;
   properties: ServicesProperties;
   jobs: ServicesJobs;
+  payments: ServicesPayments;
 };
