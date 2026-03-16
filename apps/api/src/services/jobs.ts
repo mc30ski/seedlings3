@@ -156,6 +156,12 @@ export const jobs: ServicesJobs = {
                 user: { select: { id: true, displayName: true, email: true } },
               },
             },
+            payment: {
+              include: {
+                splits: { include: { user: { select: { id: true, displayName: true } } } },
+                collectedBy: { select: { id: true, displayName: true } },
+              },
+            },
           },
         },
         clients: { include: { client: true } },
@@ -420,6 +426,12 @@ export const jobs: ServicesJobs = {
         assignees: {
           include: { user: { select: { id: true, displayName: true, email: true } } },
         },
+        payment: {
+          include: {
+            splits: { include: { user: { select: { id: true, displayName: true } } } },
+            collectedBy: { select: { id: true, displayName: true } },
+          },
+        },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
@@ -441,6 +453,12 @@ export const jobs: ServicesJobs = {
         },
         assignees: {
           include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
+        payment: {
+          include: {
+            splits: { include: { user: { select: { id: true, displayName: true } } } },
+            collectedBy: { select: { id: true, displayName: true } },
+          },
         },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],

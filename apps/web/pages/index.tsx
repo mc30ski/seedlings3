@@ -55,8 +55,8 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
 
-  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("equipment");
-  const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("equipment");
+  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("jobs");
+  const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("jobs");
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -91,10 +91,22 @@ export default function HomePage() {
 
   const workerTabs: TabItem[] = [
     {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: wrapWithInlineMessage(<JobsTab me={me} purpose="WORKER" />),
+    },
+    {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
       content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="WORKER" />),
+    },
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="WORKER" />),
     },
     {
       value: "clients",
@@ -110,26 +122,26 @@ export default function HomePage() {
         <PropertiesTab me={me} purpose="WORKER" />
       ),
     },
-    {
-      value: "jobs",
-      label: "Jobs",
-      icon: FiBriefcase,
-      content: wrapWithInlineMessage(<JobsTab me={me} purpose="WORKER" />),
-    },
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab role="worker" />),
-    },
   ];
 
   const adminTabs: TabItem[] = [
+    {
+      value: "jobs",
+      label: "Services",
+      icon: FiBriefcase,
+      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
+    },
     {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
       content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="ADMIN" />),
     },
     {
       value: "clients",
@@ -144,12 +156,6 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
-      value: "jobs",
-      label: "Services",
-      icon: FiBriefcase,
-      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
-    },
-    {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
@@ -160,12 +166,6 @@ export default function HomePage() {
       label: "Activity",
       icon: FiActivity,
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab role="admin" />),
     },
     {
       value: "audit",
@@ -251,6 +251,9 @@ export default function HomePage() {
   setupSearchEvent("propertyTabToClientTabContactSearch", "clients");
   setupSearchEvent("activityTavToEquipmentTabQRCodeSearch", "equipment");
   setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
+  setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
+  setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
+  setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -44,8 +44,9 @@ import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch } from "@/src/lib/bus";
+import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -55,6 +56,7 @@ export default function ServicesTab({
   purpose = "ADMIN",
 }: TabPropsType) {
   const { isAvail, forAdmin, isSuper } = determineRoles(me, purpose);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<string[]>(["ALL"]);
@@ -140,6 +142,10 @@ export default function ServicesTab({
     onConfirm: () => void;
   } | null>(null);
 
+  const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
+  const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<JobOccurrenceFull | null>(null);
+  const [acceptPaymentJobId, setAcceptPaymentJobId] = useState<string>("");
+
   const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
   const [scheduleNextData, setScheduleNextData] = useState<{
     jobId: string;
@@ -165,6 +171,10 @@ export default function ServicesTab({
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef);
   }, []);
 
   async function loadDetail(jobId: string, force = false) {
@@ -341,6 +351,7 @@ export default function ServicesTab({
     <Box w="full">
       <HStack mb={3} gap={3}>
         <SearchWithClear
+          ref={inputRef}
           value={q}
           onChange={setQ}
           inputId="services-search"
@@ -641,6 +652,25 @@ export default function ServicesTab({
                                 {occ.notes}
                               </Text>
                             )}
+                            {occ.payment && (
+                              <Box mt={1} p={1} bg="green.50" rounded="sm">
+                                <Text fontSize="xs" fontWeight="medium" color="green.700">
+                                  Paid: ${occ.payment.amountPaid.toFixed(2)} via {prettyStatus(occ.payment.method)}
+                                </Text>
+                                {occ.payment.note && (
+                                  <Text fontSize="xs" color="green.600">{occ.payment.note}</Text>
+                                )}
+                                {occ.payment.splits && occ.payment.splits.length > 1 && (
+                                  <VStack align="start" gap={0} mt={0.5}>
+                                    {occ.payment.splits.map((sp: any) => (
+                                      <Text key={sp.userId} fontSize="xs" color="green.600">
+                                        {sp.user?.displayName ?? sp.userId}: ${sp.amount.toFixed(2)}
+                                      </Text>
+                                    ))}
+                                  </VStack>
+                                )}
+                              </Box>
+                            )}
                           </VStack>
                           <StatusBadge
                             status={occ.status}
@@ -767,13 +797,11 @@ export default function ServicesTab({
                                 id="occ-accept-payment"
                                 itemId={occ.id}
                                 label="Accept Payment"
-                                onClick={async () => setConfirmAction({
-                                  title: "Accept Payment?",
-                                  message: "Are you sure you want to accept payment and close this occurrence?",
-                                  confirmLabel: "Accept Payment",
-                                  colorPalette: "green",
-                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "CLOSED"),
-                                })}
+                                onClick={async () => {
+                                  setAcceptPaymentOcc(occ);
+                                  setAcceptPaymentJobId(job.id);
+                                  setAcceptPaymentOpen(true);
+                                }}
                                 variant="outline"
                                 colorPalette="green"
                                 busyId={statusButtonBusyId}
@@ -1026,6 +1054,44 @@ export default function ServicesTab({
         }}
         onCancel={() => setConfirmAction(null)}
       />
+
+      {acceptPaymentOcc && (
+        <AcceptPaymentDialog
+          open={acceptPaymentOpen}
+          onOpenChange={(o) => {
+            setAcceptPaymentOpen(o);
+            if (!o) setAcceptPaymentOcc(null);
+          }}
+          endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
+          defaultAmount={acceptPaymentOcc.price}
+          assignees={(acceptPaymentOcc.assignees ?? []).map((a) => ({
+            userId: a.userId,
+            displayName: a.user?.displayName ?? a.user?.email,
+          }))}
+          onAccepted={() => {
+            const occ = acceptPaymentOcc;
+            const jobId = acceptPaymentJobId;
+            if (jobId) void loadDetail(jobId, true);
+            // Prompt to schedule next if job has frequency and not one-off
+            const job = items.find((j) => j.id === jobId);
+            if (job?.frequencyDays && occ && !occ.isOneOff) {
+              setScheduleNextData({
+                jobId,
+                frequencyDays: job.frequencyDays,
+                closedOccurrence: {
+                  startAt: occ.startAt,
+                  endAt: occ.endAt,
+                  name: occ.name ?? job.name,
+                  notes: occ.notes,
+                  price: occ.price,
+                },
+              });
+              setScheduleNextOpen(true);
+            }
+            setAcceptPaymentOcc(null);
+          }}
+        />
+      )}
     </Box>
   );
 }

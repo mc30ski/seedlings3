@@ -70,6 +70,9 @@ model User {
   jobDefaultAssignments     JobAssigneeDefault[]
   jobOccurrenceAssignments  JobOccurrenceAssignee[]
   jobAssignmentAuditActor   JobOccurrenceAssignee[] @relation("JobAssignActor")
+
+  paymentsCollected         Payment[]
+  paymentSplits             PaymentSplit[]
 }
 
 model UserRole {
@@ -440,6 +443,7 @@ model JobOccurrence {
   updatedAt   DateTime @updatedAt
 
   assignees   JobOccurrenceAssignee[]
+  payment     Payment?
 
   @@index([jobId, status])
   @@index([startAt])
@@ -484,4 +488,50 @@ model JobOccurrenceAssignee {
   @@index([occurrenceId])
   @@index([userId])
   @@index([assignedById])
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  VENMO
+  ZELLE
+  OTHER
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+
+  occurrenceId   String        @unique
+  occurrence     JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  amountPaid     Float
+  method         PaymentMethod
+  note           String?
+
+  collectedById  String
+  collectedBy    User          @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  splits         PaymentSplit[]
+
+  createdAt      DateTime      @default(now())
+
+  @@index([collectedById, createdAt])
+  @@index([method, createdAt])
+}
+
+model PaymentSplit {
+  id         String   @id @default(cuid())
+
+  paymentId  String
+  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  amount     Float
+
+  createdAt  DateTime @default(now())
+
+  @@unique([paymentId, userId])
+  @@index([userId, createdAt])
 }

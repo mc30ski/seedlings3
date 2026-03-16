@@ -22,7 +22,10 @@ export type EventTypes =
   | "propertyTabToClientTabSearch"
   | "propertyTabToClientTabContactSearch"
   | "activityTavToEquipmentTabQRCodeSearch"
-  | "jobsTabToPropertiesTabSearch";
+  | "jobsTabToPropertiesTabSearch"
+  | "paymentsTabToPropertiesTabSearch"
+  | "paymentsTabToClientsTabSearch"
+  | "paymentsTabToServicesTabSearch";
 
 export type DialogMode = "CREATE" | "UPDATE";
 
@@ -243,6 +246,7 @@ export type JobOccurrenceFull = {
   price?: number | null;
   isOneOff?: boolean;
   assignees: JobOccurrenceAssigneeWithUser[];
+  payment?: PaymentInfo | null;
   createdAt?: string;
 };
 
@@ -280,6 +284,68 @@ export type JobDetail = JobListItem & {
   occurrences: JobOccurrenceFull[];
 };
 
+// ---- Payments ----
+
+export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "OTHER"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
+
+export type PaymentSplitItem = {
+  id: string;
+  userId: string;
+  amount: number;
+  user: { id: string; displayName?: string | null; email?: string | null };
+};
+
+export type PaymentInfo = {
+  id: string;
+  occurrenceId: string;
+  amountPaid: number;
+  method: PaymentMethod;
+  note?: string | null;
+  collectedBy?: { id: string; displayName?: string | null };
+  splits: PaymentSplitItem[];
+  createdAt: string;
+};
+
+export type PaymentListItem = PaymentInfo & {
+  occurrence: {
+    id: string;
+    jobId: string;
+    name?: string | null;
+    startAt?: string | null;
+    job: {
+      id: string;
+      name?: string | null;
+      property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
+    };
+  };
+};
+
+export type WorkerPaymentItem = {
+  splitId: string;
+  myAmount: number;
+  payment: {
+    id: string;
+    amountPaid: number;
+    method: PaymentMethod;
+    note?: string | null;
+    collectedBy?: { id: string; displayName?: string | null };
+    createdAt: string;
+    splits: PaymentSplitItem[];
+  };
+  occurrence: {
+    id: string;
+    jobId: string;
+    name?: string | null;
+    startAt?: string | null;
+    job: {
+      id: string;
+      name?: string | null;
+      property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
+    };
+  };
+};
+
 export type WorkerOccurrence = {
   id: string;
   jobId: string;
@@ -291,6 +357,7 @@ export type WorkerOccurrence = {
   notes?: string | null;
   price?: number | null;
   isOneOff?: boolean;
+  payment?: PaymentInfo | null;
   job: {
     id: string;
     kind: JobKind;
