@@ -343,8 +343,6 @@ model Job {
   propertyId  String
   property    Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  name        String?
-
   kind        JobKind   @default(SINGLE_ADDRESS) // REQUIRED
   status      JobStatus @default(PROPOSED)
 

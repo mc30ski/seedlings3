@@ -90,7 +90,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         {items.map((item) => {
           const prop = item.occurrence?.job?.property;
           const client = prop?.client;
-          const jobName = item.occurrence?.job?.name || item.occurrence?.name;
+          const jobName = item.occurrence?.name;
           return (
             <Card.Root key={item.splitId} variant="outline">
               <Card.Body py="3" px="4">
@@ -298,7 +298,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         {items.map((p) => {
           const prop = p.occurrence?.job?.property;
           const client = prop?.client;
-          const jobName = p.occurrence?.job?.name || p.occurrence?.name;
+          const jobName = p.occurrence?.name;
           return (
             <Card.Root key={p.id} variant="outline">
               <Card.Body py="3" px="4">
