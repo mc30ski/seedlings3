@@ -42,7 +42,6 @@ type Props = {
   defaultStatus?: string | null;
   defaultKind?: string | null;
   // shared pre-populated values
-  defaultName?: string | null;
   defaultStartAt?: string | null;
   defaultEndAt?: string | null;
   defaultNotes?: string | null;
@@ -64,7 +63,6 @@ export default function OccurrenceDialog({
   occurrenceId,
   defaultStatus,
   defaultKind,
-  defaultName,
   defaultStartAt,
   defaultEndAt,
   defaultNotes,
@@ -80,7 +78,6 @@ export default function OccurrenceDialog({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [kind, setKind] = useState("");
-  const [name, setName] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [notes, setNotes] = useState("");
@@ -91,13 +88,12 @@ export default function OccurrenceDialog({
     if (!open) return;
     setStatus(defaultStatus ?? "");
     setKind(defaultKind ?? "");
-    setName(defaultName ?? "");
     setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
     setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
     setIsOneOff(false);
-  }, [open, mode, defaultStatus, defaultKind, defaultName, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
+  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
 
   async function handleSave() {
     if (!startAt) {
@@ -111,13 +107,10 @@ export default function OccurrenceDialog({
       const priceVal = price !== "" ? Number(price) : null;
       const notesVal = notes.trim() || null;
 
-      const nameVal = name.trim() || null;
-
       if (mode === "CREATE") {
         const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
         await apiPost(endpoint, {
           ...createBody,
-          name: nameVal ?? undefined,
           startAt: startAtIso,
           endAt: endAtIso ?? undefined,
           notes: notesVal ?? undefined,
@@ -127,7 +120,6 @@ export default function OccurrenceDialog({
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
         const body: Record<string, unknown> = {
-          name: nameVal,
           startAt: startAtIso,
           endAt: endAtIso,
           notes: notesVal,
@@ -202,14 +194,6 @@ export default function OccurrenceDialog({
                     </NativeSelect.Root>
                   </div>
                 )}
-                <div>
-                  <Text mb="1">Name</Text>
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Occurrence name…"
-                  />
-                </div>
                 <div>
                   <Text mb="1">Start date *</Text>
                   <Input

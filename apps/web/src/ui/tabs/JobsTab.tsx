@@ -81,7 +81,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [scheduleNextData, setScheduleNextData] = useState<{
     jobId: string;
     frequencyDays: number;
-    closedOccurrence: { startAt?: string | null; endAt?: string | null; name?: string | null; notes?: string | null; price?: number | null };
+    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null };
   } | null>(null);
 
   async function load(displayLoading = true) {
@@ -290,10 +290,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontWeight="semibold">
-                        {occ.name ?? occ.job?.property?.displayName}
+                        {occ.job?.property?.displayName}
                       </Text>
                       <MapLink address={[
-                          occ.name ? occ.job?.property?.displayName : null,
                           occ.job?.property?.street1,
                           occ.job?.property?.city,
                           occ.job?.property?.state,
@@ -572,7 +571,6 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 closedOccurrence: {
                   startAt: occ.startAt,
                   endAt: occ.endAt,
-                  name: occ.name,
                   notes: occ.notes,
                   price: occ.price,
                 },

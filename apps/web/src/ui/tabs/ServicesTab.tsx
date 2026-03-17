@@ -115,7 +115,6 @@ export default function ServicesTab({
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
-  const [occurrenceDefaultName, setOccurrenceDefaultName] = useState<string | null>(null);
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
   const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
@@ -150,7 +149,7 @@ export default function ServicesTab({
   const [scheduleNextData, setScheduleNextData] = useState<{
     jobId: string;
     frequencyDays: number;
-    closedOccurrence: { startAt?: string | null; endAt?: string | null; name?: string | null; notes?: string | null; price?: number | null };
+    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null };
   } | null>(null);
 
   async function load(displayLoading = true) {
@@ -233,7 +232,6 @@ export default function ServicesTab({
           closedOccurrence: {
             startAt: occ.startAt,
             endAt: occ.endAt,
-            name: occ.name,
             notes: occ.notes,
             price: occ.price,
           },
@@ -600,12 +598,7 @@ export default function ServicesTab({
                       >
                         <HStack justify="space-between" align="center">
                           <VStack align="start" gap={0}>
-                            {occ.name && (
-                              <Text fontSize="sm" fontWeight="medium">
-                                {occ.name}
-                              </Text>
-                            )}
-                            <Text fontSize="sm" fontWeight={occ.name ? "normal" : "medium"} color={occ.name ? "fg.muted" : undefined}>
+                            <Text fontSize="sm" fontWeight="medium">
                               {occ.startAt
                                 ? new Date(occ.startAt).toLocaleDateString()
                                 : "—"}
@@ -874,7 +867,6 @@ export default function ServicesTab({
                         label="+ Occurrence"
                         onClick={async () => {
                           setOccurrenceJobId(job.id);
-                          setOccurrenceDefaultName(null);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceJobHasFrequency(!!job.frequencyDays);
@@ -937,7 +929,6 @@ export default function ServicesTab({
             void load();
             if (created) {
               setOccurrenceJobId(created.id);
-              setOccurrenceDefaultName(null);
               setOccurrenceDefaultNotes(created.notes ?? null);
               setOccurrenceDefaultPrice(created.defaultPrice ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
@@ -952,7 +943,6 @@ export default function ServicesTab({
           open={occurrenceDialogOpen}
           onOpenChange={setOccurrenceDialogOpen}
           jobId={occurrenceJobId}
-          defaultName={occurrenceDefaultName}
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
           showOneOff={occurrenceJobHasFrequency}
@@ -976,7 +966,6 @@ export default function ServicesTab({
           occurrenceId={editingOccurrence.id}
           defaultStatus={editingOccurrence.status}
           defaultKind={editingOccurrence.kind}
-          defaultName={editingOccurrence.name}
           defaultStartAt={editingOccurrence.startAt}
           defaultEndAt={editingOccurrence.endAt}
           defaultNotes={editingOccurrence.notes}
@@ -1074,7 +1063,6 @@ export default function ServicesTab({
                 closedOccurrence: {
                   startAt: occ.startAt,
                   endAt: occ.endAt,
-                  name: occ.name,
                   notes: occ.notes,
                   price: occ.price,
                 },

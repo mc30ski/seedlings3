@@ -86,7 +86,6 @@ export const payments: ServicesPayments = {
               select: {
                 id: true,
                 jobId: true,
-                name: true,
                 startAt: true,
                 job: {
                   select: {
@@ -154,7 +153,6 @@ export const payments: ServicesPayments = {
           select: {
             id: true,
             jobId: true,
-            name: true,
             startAt: true,
             job: {
               select: {

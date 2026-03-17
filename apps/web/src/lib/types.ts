@@ -239,7 +239,6 @@ export type JobOccurrenceFull = {
   kind: JobKind;
   status: JobOccurrenceStatus;
   source: string;
-  name?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
@@ -311,7 +310,6 @@ export type PaymentListItem = PaymentInfo & {
   occurrence: {
     id: string;
     jobId: string;
-    name?: string | null;
     startAt?: string | null;
     job: {
       id: string;
@@ -335,7 +333,6 @@ export type WorkerPaymentItem = {
   occurrence: {
     id: string;
     jobId: string;
-    name?: string | null;
     startAt?: string | null;
     job: {
       id: string;
@@ -349,7 +346,6 @@ export type WorkerOccurrence = {
   jobId: string;
   kind: JobKind;
   status: JobOccurrenceStatus;
-  name?: string | null;
   startAt?: string | null;
   endAt?: string | null;
   notes?: string | null;
