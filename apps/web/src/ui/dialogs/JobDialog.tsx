@@ -34,6 +34,7 @@ type PropertyLite = {
   displayName: string;
   city?: string | null;
   state?: string | null;
+  client?: { id: string; displayName: string } | null;
 };
 
 type Props = {
@@ -101,10 +102,13 @@ export default function JobDialog({
   }, [open, mode, initial]);
 
   const propertyItems = useMemo(() => {
-    const items = properties.map((p) => ({
-      label: [p.displayName, p.city, p.state].filter(Boolean).join(", "),
-      value: p.id,
-    }));
+    const items = properties.map((p) => {
+      const location = [p.city, p.state].filter(Boolean).join(", ");
+      const parts = [p.displayName];
+      if (location) parts.push(location);
+      if (p.client?.displayName) parts.push(`(${p.client.displayName})`);
+      return { label: parts.join(" — "), value: p.id };
+    });
     const cur = propertyValue[0];
     if (cur && !items.some((i) => i.value === cur)) {
       items.unshift({ label: cur, value: cur });
