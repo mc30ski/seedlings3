@@ -562,7 +562,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       input.kind = kind as JobKind;
     }
 
-    if (body.name != null) input.name = String(body.name).trim() || null;
     if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
@@ -660,7 +659,6 @@ export default async function adminRoutes(app: FastifyInstance) {
         patch.status = st as JobOccurrenceStatus;
       }
 
-      if ("name" in body) patch.name = body.name != null ? String(body.name).trim() || null : null;
       if ("startAt" in body) patch.startAt = body.startAt || null;
       if ("endAt" in body) patch.endAt = body.endAt || null;
       if ("notes" in body) patch.notes = body.notes;

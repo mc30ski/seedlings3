@@ -432,7 +432,6 @@ model JobOccurrence {
   status      JobOccurrenceStatus @default(SCHEDULED)
   source      JobOccurrenceSource @default(GENERATED)
 
-  name        String?
   notes       String?
   price       Float?
   isOneOff    Boolean @default(false)

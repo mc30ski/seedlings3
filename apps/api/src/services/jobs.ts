@@ -272,7 +272,6 @@ export const jobs: ServicesJobs = {
           endAt: toDate(input.endAt),
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
-          name: input.name ?? null,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           isOneOff: input.isOneOff ?? false,
@@ -321,8 +320,6 @@ export const jobs: ServicesJobs = {
       if (patch.kind != null) data.kind = patch.kind;
       if (patch.status != null) data.status = patch.status;
 
-      // allow null to clear
-      if ("name" in patch) data.name = patch.name ?? null;
       if ("startAt" in patch)
         data.startAt = patch.startAt ? new Date(patch.startAt) : null;
       if ("endAt" in patch)

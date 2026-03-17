@@ -90,7 +90,6 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         {items.map((item) => {
           const prop = item.occurrence?.job?.property;
           const client = prop?.client;
-          const jobName = item.occurrence?.name;
           return (
             <Card.Root key={item.splitId} variant="outline">
               <Card.Body py="3" px="4">
@@ -112,16 +111,13 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                           onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin)}
                         />
                       )}
-                      {jobName && (
+                      {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", jobName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin)}
                         />
                       )}
                     </HStack>
-                    {jobName && (
-                      <Text fontSize="sm" color="fg.muted">{jobName}</Text>
-                    )}
                     {item.occurrence?.startAt && (
                       <Text fontSize="xs" color="fg.muted">
                         {new Date(item.occurrence.startAt).toLocaleDateString()}
@@ -298,7 +294,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         {items.map((p) => {
           const prop = p.occurrence?.job?.property;
           const client = prop?.client;
-          const jobName = p.occurrence?.name;
           return (
             <Card.Root key={p.id} variant="outline">
               <Card.Body py="3" px="4">
@@ -320,16 +315,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                           onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin)}
                         />
                       )}
-                      {jobName && (
+                      {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", jobName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin)}
                         />
                       )}
                     </HStack>
-                    {jobName && (
-                      <Text fontSize="sm" color="fg.muted">{jobName}</Text>
-                    )}
                     {p.occurrence?.startAt && (
                       <Text fontSize="xs" color="fg.muted">
                         {new Date(p.occurrence.startAt).toLocaleDateString()}

@@ -23,7 +23,6 @@ function addDays(isoDate: string | null | undefined, days: number): string {
 type ClosedOccurrence = {
   startAt?: string | null;
   endAt?: string | null;
-  name?: string | null;
   notes?: string | null;
   price?: number | null;
 };
@@ -95,7 +94,6 @@ export default function ScheduleNextDialog({
         submitLabel="Schedule"
         createEndpoint={createEndpoint}
         createBody={createBody}
-        defaultName={closedOccurrence.name}
         defaultStartAt={nextStartAt ? nextStartAt + "T00:00:00" : null}
         defaultEndAt={nextEndAt ? nextEndAt + "T00:00:00" : null}
         defaultNotes={closedOccurrence.notes}
