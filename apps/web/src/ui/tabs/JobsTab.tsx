@@ -572,7 +572,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 closedOccurrence: {
                   startAt: occ.startAt,
                   endAt: occ.endAt,
-                  name: occ.name ?? occ.job.name,
+                  name: occ.name,
                   notes: occ.notes,
                   price: occ.price,
                 },

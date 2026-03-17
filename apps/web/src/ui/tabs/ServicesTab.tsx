@@ -233,7 +233,7 @@ export default function ServicesTab({
           closedOccurrence: {
             startAt: occ.startAt,
             endAt: occ.endAt,
-            name: occ.name ?? job.name,
+            name: occ.name,
             notes: occ.notes,
             price: occ.price,
           },
@@ -281,7 +281,7 @@ export default function ServicesTab({
       deleteType: "archived-job",
       id: job.id,
       title: "Delete job?",
-      summary: job.name ?? job.property?.displayName ?? job.id,
+      summary: job.property?.displayName ?? job.id,
       disabled: hasOccurrences || superRequired,
       details: hasOccurrences ? (
         <Text color="red.500">
@@ -336,7 +336,7 @@ export default function ServicesTab({
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) =>
-        [r.name, r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
+        [r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
           .filter(Boolean)
           .some((s) => s!.toLowerCase().includes(qlc))
       );
@@ -505,21 +505,9 @@ export default function ServicesTab({
                   <HStack gap={3} flex="1" minW={0}>
                     <VStack align="start" gap={0}>
                       <Text fontWeight="semibold">
-                        {job.name ?? job.property?.displayName ?? job.propertyId}
+                        {job.property?.displayName ?? job.propertyId}
                       </Text>
-                      {job.name && job.property?.displayName && (
-                        <TextLink
-                          text={job.property.displayName}
-                          onClick={() =>
-                            openEventSearch(
-                              "jobsTabToPropertiesTabSearch",
-                              job.property?.displayName ?? "",
-                              forAdmin,
-                            )
-                          }
-                        />
-                      )}
-                      {!job.name && job.property?.displayName && (
+                      {job.property?.displayName && (
                         <TextLink
                           text="View Property"
                           onClick={() =>
@@ -530,6 +518,11 @@ export default function ServicesTab({
                             )
                           }
                         />
+                      )}
+                      {job.property?.client?.displayName && (
+                        <Text fontSize="xs" color="fg.muted">
+                          Client: {job.property.client.displayName}
+                        </Text>
                       )}
                     </VStack>
                     <StatusBadge
@@ -881,7 +874,7 @@ export default function ServicesTab({
                         label="+ Occurrence"
                         onClick={async () => {
                           setOccurrenceJobId(job.id);
-                          setOccurrenceDefaultName(job.name ?? null);
+                          setOccurrenceDefaultName(null);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceJobHasFrequency(!!job.frequencyDays);
@@ -944,7 +937,7 @@ export default function ServicesTab({
             void load();
             if (created) {
               setOccurrenceJobId(created.id);
-              setOccurrenceDefaultName(created.name);
+              setOccurrenceDefaultName(null);
               setOccurrenceDefaultNotes(created.notes ?? null);
               setOccurrenceDefaultPrice(created.defaultPrice ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
@@ -1081,7 +1074,7 @@ export default function ServicesTab({
                 closedOccurrence: {
                   startAt: occ.startAt,
                   endAt: occ.endAt,
-                  name: occ.name ?? job.name,
+                  name: occ.name,
                   notes: occ.notes,
                   price: occ.price,
                 },

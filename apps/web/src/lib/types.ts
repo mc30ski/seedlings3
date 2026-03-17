@@ -260,8 +260,8 @@ export type JobListItem = {
     city?: string | null;
     state?: string | null;
     status: string;
+    client?: { id: string; displayName: string } | null;
   };
-  name?: string | null;
   kind: JobKind;
   status: JobStatus;
   frequencyDays?: number | null;
@@ -315,7 +315,6 @@ export type PaymentListItem = PaymentInfo & {
     startAt?: string | null;
     job: {
       id: string;
-      name?: string | null;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
     };
   };
@@ -340,7 +339,6 @@ export type WorkerPaymentItem = {
     startAt?: string | null;
     job: {
       id: string;
-      name?: string | null;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
     };
   };
@@ -362,7 +360,6 @@ export type WorkerOccurrence = {
     id: string;
     kind: JobKind;
     frequencyDays?: number | null;
-    name?: string | null;
     property: {
       id: string;
       displayName: string;

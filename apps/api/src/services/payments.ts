@@ -91,7 +91,6 @@ export const payments: ServicesPayments = {
                 job: {
                   select: {
                     id: true,
-                    name: true,
                     property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
                   },
                 },
@@ -160,7 +159,6 @@ export const payments: ServicesPayments = {
             job: {
               select: {
                 id: true,
-                name: true,
                 property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
               },
             },

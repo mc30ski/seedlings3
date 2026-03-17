@@ -402,9 +402,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Invalid status");
     }
 
-    const name = body.name != null ? String(body.name).trim() : null;
-    if (!name) throw app.httpErrors.badRequest("name is required");
-
     let frequencyDays: number | null = null;
     if (body.frequencyDays != null) {
       frequencyDays = Math.round(Number(body.frequencyDays));
@@ -415,7 +412,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     return services.jobs.create(await currentUserId(req), {
       propertyId,
-      name,
       kind: kind as JobKind,
       status: (status as JobStatus) || undefined,
       frequencyDays,
@@ -447,7 +443,6 @@ export default async function adminRoutes(app: FastifyInstance) {
       patch.status = status as JobStatus;
     }
 
-    if ("name" in body) patch.name = body.name != null ? String(body.name).trim() : null;
     if ("frequencyDays" in body) {
       if (body.frequencyDays != null) {
         const fd = Math.round(Number(body.frequencyDays));
