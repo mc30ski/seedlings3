@@ -97,10 +97,8 @@ export default function ClientDialog({
       kindValue &&
       firstName &&
       lastName &&
-      email &&
-      phone &&
-      EMAIL_RE.test(email) &&
-      E164.test(phone)
+      (!email || EMAIL_RE.test(email)) &&
+      (!phone || E164.test(phone))
     );
   }
 
