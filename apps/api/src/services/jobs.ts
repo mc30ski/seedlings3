@@ -428,6 +428,10 @@ export const jobs: ServicesJobs = {
             collectedBy: { select: { id: true, displayName: true } },
           },
         },
+        expenses: {
+          include: { createdBy: { select: { id: true, displayName: true } } },
+          orderBy: { createdAt: "asc" as const },
+        },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
@@ -455,6 +459,10 @@ export const jobs: ServicesJobs = {
             splits: { include: { user: { select: { id: true, displayName: true } } } },
             collectedBy: { select: { id: true, displayName: true } },
           },
+        },
+        expenses: {
+          include: { createdBy: { select: { id: true, displayName: true } } },
+          orderBy: { createdAt: "asc" as const },
         },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],

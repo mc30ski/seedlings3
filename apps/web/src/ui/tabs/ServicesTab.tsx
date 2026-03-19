@@ -657,6 +657,21 @@ export default function ServicesTab({
                                 )}
                               </Box>
                             )}
+
+                            {occ.expenses && occ.expenses.length > 0 && (
+                              <Box mt={1} p={1} bg="orange.50" rounded="sm">
+                                <Text fontSize="xs" fontWeight="medium" color="orange.700">
+                                  Expenses: ${occ.expenses.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
+                                </Text>
+                                <VStack align="start" gap={0} mt={0.5}>
+                                  {occ.expenses.map((exp: any) => (
+                                    <Text key={exp.id} fontSize="xs" color="orange.600">
+                                      ${exp.cost.toFixed(2)} — {exp.description}
+                                    </Text>
+                                  ))}
+                                </VStack>
+                              </Box>
+                            )}
                           </VStack>
                           <StatusBadge
                             status={occ.status}

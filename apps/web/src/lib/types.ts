@@ -246,6 +246,7 @@ export type JobOccurrenceFull = {
   isOneOff?: boolean;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
+  expenses?: ExpenseItem[];
   createdAt?: string;
 };
 
@@ -283,6 +284,18 @@ export type JobDetail = JobListItem & {
   occurrences: JobOccurrenceFull[];
 };
 
+// ---- Expenses ----
+
+export type ExpenseItem = {
+  id: string;
+  occurrenceId?: string;
+  cost: number;
+  description: string;
+  createdById: string;
+  createdBy?: { id: string; displayName?: string | null };
+  createdAt?: string;
+};
+
 // ---- Payments ----
 
 export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "OTHER"] as const;
@@ -311,6 +324,7 @@ export type PaymentListItem = PaymentInfo & {
     id: string;
     jobId: string;
     startAt?: string | null;
+    expenses?: ExpenseItem[];
     job: {
       id: string;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
@@ -334,6 +348,7 @@ export type WorkerPaymentItem = {
     id: string;
     jobId: string;
     startAt?: string | null;
+    expenses?: ExpenseItem[];
     job: {
       id: string;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
@@ -352,6 +367,7 @@ export type WorkerOccurrence = {
   price?: number | null;
   isOneOff?: boolean;
   payment?: PaymentInfo | null;
+  expenses?: ExpenseItem[];
   job: {
     id: string;
     kind: JobKind;

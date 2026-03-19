@@ -206,6 +206,31 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.jobs.unclaimOccurrence(uid, String(req.params.id));
   });
 
+  // ── Expenses (claimer only) ──
+
+  app.post("/occurrences/:id/expenses", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    return services.expenses.addExpense(uid, String(req.params.id), {
+      cost: Number(body.cost),
+      description: String(body.description ?? ""),
+    });
+  });
+
+  app.patch("/expenses/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const input: any = {};
+    if (body.cost !== undefined) input.cost = Number(body.cost);
+    if (body.description !== undefined) input.description = String(body.description);
+    return services.expenses.updateExpense(uid, String(req.params.id), input);
+  });
+
+  app.delete("/expenses/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.expenses.deleteExpense(uid, String(req.params.id));
+  });
+
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });
