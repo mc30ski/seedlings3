@@ -12,9 +12,10 @@ type Step = "idle" | "client" | "contact" | "property" | "job" | "occurrence";
 type Props = {
   active: boolean;
   onDone: () => void;
+  onComplete?: () => void;
 };
 
-export default function NewJobSetupWorkflow({ active, onDone }: Props) {
+export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Props) {
   const [step, setStep] = useState<Step>("idle");
 
   // stepRef is updated synchronously so close handlers can tell
@@ -147,6 +148,7 @@ export default function NewJobSetupWorkflow({ active, onDone }: Props) {
           onSaved={() => {
             reset();
             onDone();
+            onComplete?.();
           }}
         />
       )}
