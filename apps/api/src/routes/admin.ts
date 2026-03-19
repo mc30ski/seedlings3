@@ -737,6 +737,31 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // Update a payment (admin)
+  app.patch("/admin/payments/:paymentId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const input: any = {};
+    if (body.amountPaid !== undefined) input.amountPaid = Number(body.amountPaid);
+    if (body.method !== undefined) input.method = String(body.method);
+    if ("note" in body) input.note = body.note ? String(body.note) : null;
+    if (body.splits !== undefined) {
+      if (!Array.isArray(body.splits)) throw app.httpErrors.badRequest("splits must be an array");
+      input.splits = body.splits.map((sp: any) => ({
+        userId: String(sp.userId),
+        amount: Number(sp.amount),
+      }));
+    }
+    return services.payments.updatePayment(uid, String(req.params.paymentId), input);
+  });
+
+  // Delete a payment (admin)
+  app.delete("/admin/payments/:paymentId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.payments.deletePayment(uid, String(req.params.paymentId));
+    return { ok: true };
+  });
+
   // List all payments (admin)
   app.get("/admin/payments", adminGuard, async (req: any) => {
     const { from, to, userId, method } = (req.query || {}) as {

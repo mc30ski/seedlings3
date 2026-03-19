@@ -16,16 +16,6 @@ export const payments: ServicesPayments = {
       throw new ServiceError("INVALID_AMOUNT", "Amount paid must be greater than zero.", 400);
     }
 
-    // Validate splits sum
-    const splitsSum = splits.reduce((s, sp) => s + sp.amount, 0);
-    if (Math.abs(splitsSum - amountPaid) > 0.01) {
-      throw new ServiceError(
-        "SPLITS_MISMATCH",
-        `Splits total ($${splitsSum.toFixed(2)}) does not match amount paid ($${amountPaid.toFixed(2)}).`,
-        400
-      );
-    }
-
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
@@ -187,6 +177,70 @@ export const payments: ServicesPayments = {
     }));
 
     return { items: payments, personTotals };
+  },
+
+  async updatePayment(currentUserId, paymentId, input) {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { splits: true },
+      });
+      if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
+
+      const data: any = {};
+      if (input.amountPaid !== undefined) {
+        if (input.amountPaid <= 0) {
+          throw new ServiceError("INVALID_AMOUNT", "Amount paid must be greater than zero.", 400);
+        }
+        data.amountPaid = input.amountPaid;
+      }
+      if (input.method !== undefined) {
+        if (!VALID_METHODS.includes(input.method as PaymentMethod)) {
+          throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${input.method}`, 400);
+        }
+        data.method = input.method as PaymentMethod;
+      }
+      if ("note" in input) data.note = input.note || null;
+
+      await tx.payment.update({ where: { id: paymentId }, data });
+
+      if (input.splits) {
+        await tx.paymentSplit.deleteMany({ where: { paymentId } });
+        await tx.paymentSplit.createMany({
+          data: input.splits.map((sp) => ({
+            paymentId,
+            userId: sp.userId,
+            amount: sp.amount,
+          })),
+        });
+      }
+
+      return tx.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+          collectedBy: { select: { id: true, displayName: true } },
+        },
+      });
+    });
+  },
+
+  async deletePayment(currentUserId, paymentId) {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.payment.findUnique({
+        where: { id: paymentId },
+      });
+      if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
+
+      // Revert occurrence back to PENDING_PAYMENT
+      await tx.jobOccurrence.update({
+        where: { id: existing.occurrenceId },
+        data: { status: JobOccurrenceStatus.PENDING_PAYMENT },
+      });
+
+      // Delete payment (splits cascade)
+      await tx.payment.delete({ where: { id: paymentId } });
+    });
   },
 
   async getPaymentByOccurrence(occurrenceId) {

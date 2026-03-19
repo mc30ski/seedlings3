@@ -3,15 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Box,
+  Button,
   Card,
+  Dialog,
   HStack,
   Input,
+  Portal,
   Select,
   Text,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { apiGet } from "@/src/lib/api";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
 import { determineRoles, prettyStatus } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -25,6 +29,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import StatusButton from "@/src/ui/components/StatusButton";
 import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 
@@ -164,6 +169,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
 
 // ─── Admin Payments ──────────────────────────────────────────────────
 
+const editMethodItems = PAYMENT_METHOD.map((m) => ({ label: prettyStatus(m), value: m }));
+const editMethodCollection = createListCollection({ items: editMethodItems });
+
 function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
@@ -173,6 +181,21 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [dateTo, setDateTo] = useState("");
   const [methodFilter, setMethodFilter] = useState<string[]>(["ALL"]);
   const [personFilter, setPersonFilter] = useState("");
+
+  // Edit state
+  const [editPayment, setEditPayment] = useState<PaymentListItem | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editMethod, setEditMethod] = useState<string[]>([]);
+  const [editNote, setEditNote] = useState("");
+  const [editSplits, setEditSplits] = useState<Record<string, string>>({});
+  const [editBusy, setEditBusy] = useState(false);
+  const [editConfirm, setEditConfirm] = useState(false);
+
+  // Delete state
+  const [deletePayment, setDeletePayment] = useState<PaymentListItem | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
   // Build person collection from personTotals
   const personItems = useMemo(() => {
@@ -216,6 +239,65 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     () => items.reduce((s, p) => s + p.amountPaid, 0),
     [items]
   );
+
+  function openEdit(p: PaymentListItem) {
+    setEditPayment(p);
+    setEditAmount(p.amountPaid.toFixed(2));
+    setEditMethod([p.method]);
+    setEditNote(p.note ?? "");
+    const map: Record<string, string> = {};
+    p.splits.forEach((sp) => { map[sp.userId] = sp.amount.toFixed(2); });
+    setEditSplits(map);
+    setEditConfirm(false);
+  }
+
+  async function handleEditSave() {
+    if (!editPayment) return;
+    const amt = parseFloat(editAmount);
+    if (isNaN(amt) || amt <= 0) {
+      publishInlineMessage({ type: "WARNING", text: "Please enter a valid amount." });
+      return;
+    }
+    if (!editConfirm) {
+      setEditConfirm(true);
+      return;
+    }
+    setEditBusy(true);
+    try {
+      const splits = editPayment.splits.map((sp) => ({
+        userId: sp.userId,
+        amount: parseFloat(editSplits[sp.userId] || "0"),
+      }));
+      await apiPatch(`/api/admin/payments/${editPayment.id}`, {
+        amountPaid: amt,
+        method: editMethod[0],
+        note: editNote.trim() || null,
+        splits,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Payment updated." });
+      setEditPayment(null);
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update payment failed.", err) });
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deletePayment) return;
+    setDeleteBusy(true);
+    try {
+      await apiDelete(`/api/admin/payments/${deletePayment.id}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Payment deleted. Occurrence reverted to pending payment." });
+      setDeletePayment(null);
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete payment failed.", err) });
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
 
   return (
     <Box w="full">
@@ -356,10 +438,179 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   </Text>
                 </HStack>
               </Card.Body>
+              <Card.Footer>
+                <HStack gap={2} wrap="wrap">
+                  <StatusButton
+                    id="payment-edit"
+                    itemId={p.id}
+                    label="Edit"
+                    onClick={async () => openEdit(p)}
+                    variant="outline"
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                  <StatusButton
+                    id="payment-delete"
+                    itemId={p.id}
+                    label="Delete"
+                    onClick={async () => setDeletePayment(p)}
+                    variant="outline"
+                    colorPalette="red"
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                </HStack>
+              </Card.Footer>
             </Card.Root>
           );
         })}
       </VStack>
+
+      {/* ── Edit Payment Dialog ── */}
+      <Dialog.Root open={!!editPayment} onOpenChange={(e) => { if (!e.open) setEditPayment(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Edit Payment</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <div>
+                    <Text mb="1">Amount Paid *</Text>
+                    <CurrencyInput
+                      value={editAmount}
+                      onChange={(v) => {
+                        setEditAmount(v);
+                        setEditConfirm(false);
+                        // Auto-recalculate even splits
+                        const total = parseFloat(v);
+                        if (!isNaN(total) && total > 0 && editPayment?.splits.length) {
+                          const even = (total / editPayment.splits.length).toFixed(2);
+                          const map: Record<string, string> = {};
+                          editPayment.splits.forEach((sp) => { map[sp.userId] = even; });
+                          setEditSplits(map);
+                        }
+                      }}
+                      size="sm"
+                    />
+                  </div>
+                  <div>
+                    <Text mb="1">Payment Method *</Text>
+                    <Select.Root
+                      collection={editMethodCollection}
+                      value={editMethod}
+                      onValueChange={(e) => { setEditMethod(e.value); setEditConfirm(false); }}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Method" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {editMethodItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                  </div>
+                  <div>
+                    <Text mb="1">Note</Text>
+                    <Input
+                      value={editNote}
+                      onChange={(e) => { setEditNote(e.target.value); setEditConfirm(false); }}
+                      placeholder="e.g. check #1234"
+                      size="sm"
+                    />
+                  </div>
+                  {editPayment && editPayment.splits.length > 1 && (
+                    <div>
+                      <Text mb="1">Per-Person Split</Text>
+                      <VStack align="stretch" gap={2}>
+                        {editPayment.splits.map((sp) => (
+                          <HStack key={sp.userId} gap={2}>
+                            <Text fontSize="sm" flex="1" minW={0} truncate>
+                              {sp.user?.displayName ?? sp.userId}
+                            </Text>
+                            <CurrencyInput
+                              value={editSplits[sp.userId] || ""}
+                              onChange={(v) => { setEditSplits((prev) => ({ ...prev, [sp.userId]: v })); setEditConfirm(false); }}
+                              size="sm"
+                            />
+                          </HStack>
+                        ))}
+                      </VStack>
+                    </div>
+                  )}
+                </VStack>
+              </Dialog.Body>
+
+              {editConfirm && (
+                <VStack align="stretch" px="4" pb="2" gap={1}>
+                  <Text fontSize="sm" color="orange.600" fontWeight="medium">
+                    Are you sure you want to update this payment? This will change the recorded payment amounts.
+                  </Text>
+                </VStack>
+              )}
+
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setEditPayment(null)} disabled={editBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette={editConfirm ? "orange" : undefined}
+                    onClick={handleEditSave}
+                    loading={editBusy}
+                    disabled={!editAmount || !editMethod[0]}
+                  >
+                    {editConfirm ? "Yes, Save Changes" : "Save"}
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* ── Delete Payment Confirmation ── */}
+      <Dialog.Root open={!!deletePayment} onOpenChange={(e) => { if (!e.open) setDeletePayment(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Delete Payment</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text>
+                  Are you sure you want to delete this ${deletePayment?.amountPaid.toFixed(2)} payment?
+                  The occurrence will be reverted to pending payment status.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setDeletePayment(null)} disabled={deleteBusy}>
+                    Cancel
+                  </Button>
+                  <Button colorPalette="red" onClick={handleDelete} loading={deleteBusy}>
+                    Delete Payment
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }
