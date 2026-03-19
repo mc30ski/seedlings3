@@ -11,7 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { apiGet, apiPost } from "@/src/lib/api";
+import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
@@ -27,6 +27,7 @@ import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
+import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 
@@ -83,6 +84,21 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     frequencyDays: number;
     closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null };
   } | null>(null);
+
+  const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
+
+  async function deleteExpense(expenseId: string) {
+    try {
+      await apiDelete(`/api/expenses/${expenseId}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
+      void load(false);
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to delete expense.", err),
+      });
+    }
+  }
 
   async function load(displayLoading = true) {
     setLoading(displayLoading);
@@ -380,6 +396,34 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         )}
                       </Box>
                     )}
+
+                    {/* Expenses */}
+                    {occ.expenses && occ.expenses.length > 0 && (
+                      <Box mt={1} p={1} bg="orange.50" rounded="sm" w="full">
+                        <Text fontSize="xs" fontWeight="medium" color="orange.700">
+                          Expenses: ${occ.expenses.reduce((s, e) => s + e.cost, 0).toFixed(2)}
+                        </Text>
+                        <VStack align="start" gap={0} mt={0.5}>
+                          {occ.expenses.map((exp) => (
+                            <HStack key={exp.id} gap={1} w="full">
+                              <Text fontSize="xs" color="orange.600" flex="1">
+                                ${exp.cost.toFixed(2)} — {exp.description}
+                              </Text>
+                              {isClaimer && (
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="red"
+                                  onClick={() => deleteExpense(exp.id)}
+                                >
+                                  ✕
+                                </Button>
+                              )}
+                            </HStack>
+                          ))}
+                        </VStack>
+                      </Box>
+                    )}
                   </VStack>
                 </Card.Body>
 
@@ -468,6 +512,18 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
+                      {isClaimer && (
+                        <StatusButton
+                          id="occ-add-expense"
+                          itemId={occ.id}
+                          label="Add Expense"
+                          onClick={async () => setExpenseDialogOccId(occ.id)}
+                          variant="outline"
+                          colorPalette="orange"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
                       {isClaimer && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-unclaim"
@@ -545,6 +601,16 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           setConfirmAction(null);
         }}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <AddExpenseDialog
+        open={!!expenseDialogOccId}
+        onOpenChange={(o) => { if (!o) setExpenseDialogOccId(null); }}
+        endpoint={`/api/occurrences/${expenseDialogOccId}/expenses`}
+        onAdded={() => {
+          setExpenseDialogOccId(null);
+          void load(false);
+        }}
       />
 
       {acceptPaymentOcc && (

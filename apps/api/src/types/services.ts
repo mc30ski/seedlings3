@@ -580,6 +580,31 @@ export type ServicesPayments = {
   ): Promise<void>;
 };
 
+export type ServicesExpenses = {
+  addExpense(
+    currentUserId: string,
+    occurrenceId: string,
+    input: { cost: number; description: string }
+  ): Promise<any>;
+
+  updateExpense(
+    currentUserId: string,
+    expenseId: string,
+    input: { cost?: number; description?: string }
+  ): Promise<any>;
+
+  deleteExpense(
+    currentUserId: string,
+    expenseId: string
+  ): Promise<{ deleted: true }>;
+
+  adminDeleteExpense(
+    expenseId: string
+  ): Promise<{ deleted: true }>;
+
+  listExpensesByOccurrence(occurrenceId: string): Promise<any[]>;
+};
+
 export type Services = {
   equipment: ServicesEquipment;
   users: ServicesUsers;
@@ -590,4 +615,5 @@ export type Services = {
   properties: ServicesProperties;
   jobs: ServicesJobs;
   payments: ServicesPayments;
+  expenses: ServicesExpenses;
 };

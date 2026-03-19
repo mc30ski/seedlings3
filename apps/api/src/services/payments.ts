@@ -83,6 +83,10 @@ export const payments: ServicesPayments = {
                     property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
                   },
                 },
+                expenses: {
+                  select: { id: true, cost: true, description: true, createdById: true },
+                  orderBy: { createdAt: "asc" as const },
+                },
               },
             },
             splits: {
@@ -149,6 +153,10 @@ export const payments: ServicesPayments = {
                 id: true,
                 property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
               },
+            },
+            expenses: {
+              select: { id: true, cost: true, description: true, createdById: true },
+              orderBy: { createdAt: "asc" as const },
             },
           },
         },

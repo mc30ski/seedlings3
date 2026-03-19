@@ -772,4 +772,14 @@ export default async function adminRoutes(app: FastifyInstance) {
     };
     return services.payments.listAllPayments({ from, to, userId, method });
   });
+
+  // ── Admin Expenses ──
+
+  app.get("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {
+    return services.expenses.listExpensesByOccurrence(String(req.params.occurrenceId));
+  });
+
+  app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
+    return services.expenses.adminDeleteExpense(String(req.params.id));
+  });
 }

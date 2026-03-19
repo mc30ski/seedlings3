@@ -80,11 +80,30 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} maxW="160px" />
       </HStack>
 
-      <Box mb={3} p={3} bg="green.50" rounded="md">
-        <Text fontSize="lg" fontWeight="bold" color="green.700">
-          Total: ${totalAmount.toFixed(2)}
-        </Text>
-      </Box>
+      {(() => {
+        const totalExpenses = items.reduce(
+          (s, it) => s + (it.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0),
+          0
+        );
+        const net = totalAmount - totalExpenses;
+        return (
+          <Box mb={3} p={3} bg="green.50" rounded="md">
+            <Text fontSize="lg" fontWeight="bold" color="green.700">
+              Total: ${totalAmount.toFixed(2)}
+            </Text>
+            {totalExpenses > 0 && (
+              <>
+                <Text fontSize="sm" color="orange.600">
+                  Expenses: −${totalExpenses.toFixed(2)}
+                </Text>
+                <Text fontSize="lg" fontWeight="bold" color="green.700">
+                  Net: ${net.toFixed(2)}
+                </Text>
+              </>
+            )}
+          </Box>
+        );
+      })()}
 
       {loading && <LoadingCenter />}
       {!loading && items.length === 0 && (
@@ -146,17 +165,45 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                         ))}
                       </VStack>
                     )}
+                    {(() => {
+                      const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      return expTotal > 0 ? (
+                        <VStack align="start" gap={0} mt={0.5}>
+                          {(item.occurrence?.expenses ?? []).map((exp) => (
+                            <Text key={exp.id} fontSize="xs" color="orange.600">
+                              Expense: ${exp.cost.toFixed(2)} — {exp.description}
+                            </Text>
+                          ))}
+                        </VStack>
+                      ) : null;
+                    })()}
                   </VStack>
-                  <VStack align="end" gap={0}>
-                    <Text fontWeight="bold" color="green.700" fontSize="lg">
-                      ${item.myAmount.toFixed(2)}
-                    </Text>
-                    {item.payment.amountPaid !== item.myAmount && (
-                      <Text fontSize="xs" color="fg.muted">
-                        of ${item.payment.amountPaid.toFixed(2)} total
-                      </Text>
-                    )}
-                  </VStack>
+                  {(() => {
+                    const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                    const net = item.myAmount - expTotal;
+                    return (
+                      <VStack align="end" gap={0}>
+                        <Text fontWeight="bold" color="green.700" fontSize="lg">
+                          ${item.myAmount.toFixed(2)}
+                        </Text>
+                        {item.payment.amountPaid !== item.myAmount && (
+                          <Text fontSize="xs" color="fg.muted">
+                            of ${item.payment.amountPaid.toFixed(2)} total
+                          </Text>
+                        )}
+                        {expTotal > 0 && (
+                          <>
+                            <Text fontSize="xs" color="orange.600">
+                              −${expTotal.toFixed(2)} expenses
+                            </Text>
+                            <Text fontWeight="bold" color="green.700" fontSize="sm">
+                              Net: ${net.toFixed(2)}
+                            </Text>
+                          </>
+                        )}
+                      </VStack>
+                    );
+                  })()}
                 </HStack>
               </Card.Body>
             </Card.Root>
@@ -237,6 +284,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   const grandTotal = useMemo(
     () => items.reduce((s, p) => s + p.amountPaid, 0),
+    [items]
+  );
+
+  const totalExpenses = useMemo(
+    () => items.reduce((s, p) => s + (p.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0), 0),
     [items]
   );
 
@@ -356,6 +408,16 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         <Text fontSize="lg" fontWeight="bold" color="green.700">
           Total: ${grandTotal.toFixed(2)}
         </Text>
+        {totalExpenses > 0 && (
+          <>
+            <Text fontSize="sm" color="orange.600">
+              Expenses: −${totalExpenses.toFixed(2)}
+            </Text>
+            <Text fontSize="lg" fontWeight="bold" color="green.700">
+              Net: ${(grandTotal - totalExpenses).toFixed(2)}
+            </Text>
+          </>
+        )}
         {personTotals.length > 1 && (
           <VStack align="start" gap={0} mt={1}>
             {personTotals.map((p) => (
@@ -432,10 +494,40 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                         ))}
                       </VStack>
                     )}
+                    {(() => {
+                      const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      return expTotal > 0 ? (
+                        <VStack align="start" gap={0} mt={0.5}>
+                          {(p.occurrence?.expenses ?? []).map((exp) => (
+                            <Text key={exp.id} fontSize="xs" color="orange.600">
+                              Expense: ${exp.cost.toFixed(2)} — {exp.description}
+                            </Text>
+                          ))}
+                        </VStack>
+                      ) : null;
+                    })()}
                   </VStack>
-                  <Text fontWeight="bold" color="green.700" fontSize="lg">
-                    ${p.amountPaid.toFixed(2)}
-                  </Text>
+                  {(() => {
+                    const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                    const net = p.amountPaid - expTotal;
+                    return (
+                      <VStack align="end" gap={0}>
+                        <Text fontWeight="bold" color="green.700" fontSize="lg">
+                          ${p.amountPaid.toFixed(2)}
+                        </Text>
+                        {expTotal > 0 && (
+                          <>
+                            <Text fontSize="xs" color="orange.600">
+                              −${expTotal.toFixed(2)} expenses
+                            </Text>
+                            <Text fontWeight="bold" color="green.700" fontSize="sm">
+                              Net: ${net.toFixed(2)}
+                            </Text>
+                          </>
+                        )}
+                      </VStack>
+                    );
+                  })()}
                 </HStack>
               </Card.Body>
               <Card.Footer>
