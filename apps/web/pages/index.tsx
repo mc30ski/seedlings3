@@ -218,10 +218,8 @@ export default function HomePage() {
           <WorkflowToolbar workflows={adminWorkflows} />
           <NewJobSetupWorkflow
             active={activeWorkflow === "new-job-setup"}
-            onDone={() => {
-              setActiveWorkflow(null);
-              window.location.reload();
-            }}
+            onDone={() => setActiveWorkflow(null)}
+            onComplete={() => window.location.reload()}
           />
           <ScrollableUnderlineTabs
             tabs={adminTabs}
