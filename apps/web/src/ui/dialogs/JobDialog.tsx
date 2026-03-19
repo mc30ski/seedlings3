@@ -43,6 +43,7 @@ type Props = {
   mode: DialogMode;
   initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
   onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null }) => void;
+  defaultPropertyId?: string;
 };
 
 export default function JobDialog({
@@ -51,6 +52,7 @@ export default function JobDialog({
   mode,
   initial,
   onSaved,
+  defaultPropertyId,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,14 +91,14 @@ export default function JobDialog({
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
     } else {
-      setPropertyValue([]);
+      setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
       setKindValue([JOB_KIND[0]]);
       setStatusValue([JOB_STATUS[0]]);
       setFrequencyDays("");
       setNotes("");
       setDefaultPrice("");
     }
-  }, [open, mode, initial]);
+  }, [open, mode, initial, defaultPropertyId]);
 
   const propertyItems = useMemo(() => {
     const items = properties.map((p) => {

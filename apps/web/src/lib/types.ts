@@ -196,7 +196,7 @@ export type ContactStatus = (typeof CONTACT_STATUS)[number];
 
 // ---- Jobs ----
 
-export const JOB_KIND = ["ENTIRE_SITE", "SINGLE_ADDRESS"] as const;
+export const JOB_KIND = ["SINGLE_ADDRESS", "ENTIRE_SITE"] as const;
 export type JobKind = (typeof JOB_KIND)[number];
 
 export const JOB_STATUS = ["PROPOSED", "ACCEPTED", "ARCHIVED"] as const;

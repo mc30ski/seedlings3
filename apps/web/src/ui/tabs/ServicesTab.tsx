@@ -567,7 +567,9 @@ export default function ServicesTab({
                     size="xs"
                     onClick={() => toggleExpand(job.id)}
                   >
-                    {expanded ? "Hide occurrences ▲" : "Show occurrences ▼"}
+                    {expanded
+                      ? `Hide occurrences (${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▲`
+                      : `Show occurrences (${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▼`}
                   </Button>
                 )}
 

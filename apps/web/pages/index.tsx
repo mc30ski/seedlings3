@@ -21,6 +21,10 @@ import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import InlineMessage from "@/src/ui/components/InlineMessage";
+import WorkflowToolbar, {
+  type WorkflowDef,
+} from "@/src/ui/components/WorkflowToolbar";
+import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 
 import { Me, Role, AdminTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
@@ -57,6 +61,17 @@ export default function HomePage() {
 
   const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("jobs");
   const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("jobs");
+
+  const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
+
+  const adminWorkflows: WorkflowDef[] = [
+    {
+      id: "new-job-setup",
+      label: "New Job Setup",
+      colorPalette: "green",
+      onClick: () => setActiveWorkflow("new-job-setup"),
+    },
+  ];
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -199,15 +214,25 @@ export default function HomePage() {
       icon: GrUserAdmin,
       visible: () => isAdmin,
       content: (
-        <ScrollableUnderlineTabs
-          tabs={adminTabs}
-          value={adminInnerTab}
-          onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={2}
-          unmountOnExit
-        />
+        <>
+          <WorkflowToolbar workflows={adminWorkflows} />
+          <NewJobSetupWorkflow
+            active={activeWorkflow === "new-job-setup"}
+            onDone={() => {
+              setActiveWorkflow(null);
+              window.location.reload();
+            }}
+          />
+          <ScrollableUnderlineTabs
+            tabs={adminTabs}
+            value={adminInnerTab}
+            onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
+            edgeMode="overlay"
+            edgeSize={16}
+            headerPaddingY={2}
+            unmountOnExit
+          />
+        </>
       ),
     },
   ];
