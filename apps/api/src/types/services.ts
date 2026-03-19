@@ -359,7 +359,6 @@ export type ServicesProperties = {
     id: string,
     payload: PropertyUpsert
   ): Promise<Property>;
-  approve(currentUserId: string, id: string): Promise<{ updated: true }>;
   archive(currentUserId: string, id: string): Promise<{ archived: true }>;
   unarchive(currentUserId: string, id: string): Promise<{ unarchived: true }>;
   hardDelete(currentUserId: string, id: string): Promise<{ deleted: true }>;

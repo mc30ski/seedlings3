@@ -163,24 +163,6 @@ export default function PropertiesTab({
     setDialogOpen(true);
   }
 
-  async function approve(p: Property) {
-    try {
-      await apiPost(`/api/admin/properties/${p.id}/approve`, {});
-      await load(false);
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: `Property '${p.displayName}' approved and made active.`,
-      });
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage(
-          `Property '${p.displayName}' approved failed.`,
-          err,
-        ),
-      });
-    }
-  }
   async function archive(p: Property) {
     try {
       await apiPost(`/api/admin/properties/${p.id}/archive`, {});
@@ -379,21 +361,7 @@ export default function PropertiesTab({
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
                     />
-                    {p.status === "PENDING" && (
-                      <StatusButton
-                        id={"properties-pending"}
-                        itemId={p.id}
-                        label={"Approve"}
-                        onClick={async () => {
-                          await approve(p);
-                        }}
-                        variant={"outline"}
-                        disabled={loading}
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {p.status === "ACTIVE" || p.status === "PENDING" ? (
+                    {p.status === "ACTIVE" ? (
                       <StatusButton
                         id={"properties-archive"}
                         itemId={p.id}

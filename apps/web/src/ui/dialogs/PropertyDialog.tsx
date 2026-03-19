@@ -70,9 +70,7 @@ export default function PropertyDialog({
   const [contacts, setContacts] = useState<ContactLite[]>([]);
 
   // --- Form state
-  const [statusValue, setStatusValue] = useState<string[]>([
-    PROPERTY_STATUS[0],
-  ]);
+  const [statusValue, setStatusValue] = useState<string[]>(["ACTIVE"]);
   const [kindValue, setKindValue] = useState<string[]>([PROPERTY_KIND[0]]);
 
   const [clientValue, setClientValue] = useState<string[]>([]);

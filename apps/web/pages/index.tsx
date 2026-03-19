@@ -274,6 +274,7 @@ export default function HomePage() {
   setupSearchEvent("propertyTabToClientTabContactSearch", "clients");
   setupSearchEvent("activityTavToEquipmentTabQRCodeSearch", "equipment");
   setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
+  setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");

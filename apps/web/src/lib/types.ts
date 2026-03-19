@@ -23,6 +23,7 @@ export type EventTypes =
   | "propertyTabToClientTabContactSearch"
   | "activityTavToEquipmentTabQRCodeSearch"
   | "jobsTabToPropertiesTabSearch"
+  | "jobsTabToClientsTabSearch"
   | "paymentsTabToPropertiesTabSearch"
   | "paymentsTabToClientsTabSearch"
   | "paymentsTabToServicesTabSearch";
@@ -110,7 +111,7 @@ export type Equipment = {
 export const PROPERTY_KIND = ["SINGLE", "AGGREGATE_SITE"] as const;
 export type PropertyKind = (typeof PROPERTY_KIND)[number];
 
-export const PROPERTY_STATUS = ["PENDING", "ACTIVE", "ARCHIVED"] as const;
+export const PROPERTY_STATUS = ["ACTIVE", "ARCHIVED"] as const;
 export type PropertyStatus = (typeof PROPERTY_STATUS)[number];
 
 export type Property = {
@@ -378,6 +379,7 @@ export type WorkerOccurrence = {
       street1: string;
       city: string;
       state: string;
+      client?: { id: string; displayName: string };
     };
   };
   assignees?: {

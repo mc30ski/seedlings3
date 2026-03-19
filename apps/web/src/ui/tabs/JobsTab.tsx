@@ -183,6 +183,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           occ.job?.property?.street1,
           occ.job?.property?.city,
           occ.job?.property?.state,
+          occ.job?.property?.client?.displayName,
           occ.status,
           occ.notes,
         ]
@@ -305,9 +306,16 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <Card.Header pb="2">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontWeight="semibold">
-                        {occ.job?.property?.displayName}
-                      </Text>
+                      <HStack gap={2} align="baseline" flexWrap="wrap">
+                        <Text fontWeight="semibold">
+                          {occ.job?.property?.displayName}
+                        </Text>
+                        {occ.job?.property?.client?.displayName && (
+                          <Text fontSize="sm" color="fg.muted">
+                            — {occ.job.property.client.displayName}
+                          </Text>
+                        )}
+                      </HStack>
                       <MapLink address={[
                           occ.job?.property?.street1,
                           occ.job?.property?.city,
@@ -315,18 +323,32 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         ]
                           .filter(Boolean)
                           .join(", ")} />
-                      {occ.job?.property?.displayName && (
-                        <TextLink
-                          text="View Property"
-                          onClick={() =>
-                            openEventSearch(
-                              "jobsTabToPropertiesTabSearch",
-                              occ.job?.property?.displayName ?? "",
-                              forAdmin,
-                            )
-                          }
-                        />
-                      )}
+                      <HStack gap={3}>
+                        {occ.job?.property?.displayName && (
+                          <TextLink
+                            text="View Property"
+                            onClick={() =>
+                              openEventSearch(
+                                "jobsTabToPropertiesTabSearch",
+                                occ.job?.property?.displayName ?? "",
+                                forAdmin,
+                              )
+                            }
+                          />
+                        )}
+                        {occ.job?.property?.client?.displayName && (
+                          <TextLink
+                            text="View Client"
+                            onClick={() =>
+                              openEventSearch(
+                                "jobsTabToClientsTabSearch",
+                                occ.job?.property?.client?.displayName ?? "",
+                                forAdmin,
+                              )
+                            }
+                          />
+                        )}
+                      </HStack>
                     </VStack>
                     <StatusBadge
                       status={occ.status}

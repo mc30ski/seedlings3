@@ -181,7 +181,6 @@ enum ContactStatus {
 }
 
 enum PropertyStatus {
-   PENDING
    ACTIVE
    ARCHIVED
 }
@@ -284,7 +283,7 @@ model Property {
   updatedAt          DateTime       @updatedAt
   archivedAt         DateTime?
 
-  status            PropertyStatus @default(PENDING)
+  status            PropertyStatus @default(ACTIVE)
 
   jobs              Job[]
 

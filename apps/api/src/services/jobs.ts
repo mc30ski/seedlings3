@@ -415,7 +415,10 @@ export const jobs: ServicesJobs = {
         job: {
           include: {
             property: {
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: {
+                id: true, displayName: true, street1: true, city: true, state: true,
+                client: { select: { id: true, displayName: true } },
+              },
             },
           },
         },
@@ -447,7 +450,10 @@ export const jobs: ServicesJobs = {
         job: {
           include: {
             property: {
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: {
+                id: true, displayName: true, street1: true, city: true, state: true,
+                client: { select: { id: true, displayName: true } },
+              },
             },
           },
         },
@@ -479,7 +485,10 @@ export const jobs: ServicesJobs = {
         job: {
           include: {
             property: {
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: {
+                id: true, displayName: true, street1: true, city: true, state: true,
+                client: { select: { id: true, displayName: true } },
+              },
             },
           },
         },
