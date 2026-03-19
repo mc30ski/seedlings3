@@ -2,6 +2,7 @@ import { Prisma, PropertyStatus, PropertyKind } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { ServiceError } from "../lib/errors";
 import type {
   ServicesProperties,
   PropertyUpsert,
@@ -170,6 +171,15 @@ export const properties: ServicesProperties = {
   },
 
   async hardDelete(currentUserId: string, id: string) {
+    const jobCount = await prisma.job.count({ where: { propertyId: id } });
+    if (jobCount > 0) {
+      throw new ServiceError(
+        "HAS_DEPENDENCIES",
+        `Cannot delete this property because it has ${jobCount} associated ${jobCount === 1 ? "job" : "jobs"}. Please delete the ${jobCount === 1 ? "job" : "jobs"} first.`,
+        409
+      );
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.property.delete({ where: { id } });
       await writeAudit(tx, AUDIT.PROPERTY.DELETED, currentUserId, {

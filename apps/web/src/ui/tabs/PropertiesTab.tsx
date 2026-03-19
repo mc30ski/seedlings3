@@ -227,6 +227,7 @@ export default function PropertiesTab({
         text: `Property '${displayName}' deleted.`,
       });
     } catch (err) {
+      setLoading(false);
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage(`Property '${displayName}' delete failed.`, err),
@@ -425,16 +426,30 @@ export default function PropertiesTab({
                         itemId={p.id}
                         label={"Delete"}
                         onClick={async () => {
+                          let hasJobs = false;
+                          try {
+                            const jobs = await apiGet<any[]>(
+                              `/api/admin/jobs?propertyId=${p.id}&limit=500`
+                            );
+                            hasJobs = Array.isArray(jobs) && jobs.length > 0;
+                          } catch { /* proceed; server will guard */ }
+
+                          const superRequired = !isSuper;
+
                           void setToDelete({
                             id: p.id,
                             title: "Delete property?",
                             summary: p.displayName,
-                            disabled: !isSuper,
-                            details: (
+                            disabled: hasJobs || superRequired,
+                            details: hasJobs ? (
+                              <Text color="red.500">
+                                This property has associated jobs. Delete all jobs before deleting the property.
+                              </Text>
+                            ) : superRequired ? (
                               <Text color="red.500">
                                 You must be a Super Admin to delete.
                               </Text>
-                            ),
+                            ) : undefined,
                             extra: p.displayName,
                           });
                         }}

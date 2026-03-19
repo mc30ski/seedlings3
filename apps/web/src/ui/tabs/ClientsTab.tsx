@@ -393,17 +393,39 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           itemId={c.id}
                           label={"Delete"}
                           onClick={async () => {
+                            const hasContacts = (c.contacts?.length ?? 0) > 0;
+
+                            let hasProperties = false;
+                            if (!hasContacts) {
+                              try {
+                                const props = await apiGet<any[]>(
+                                  `/api/admin/properties?clientId=${c.id}&limit=500`
+                                );
+                                hasProperties = Array.isArray(props) && props.length > 0;
+                              } catch { /* proceed; server will guard */ }
+                            }
+
+                            const hasDeps = hasContacts || hasProperties;
+                            const superRequired = !isSuper;
+
                             void setToDelete({
                               id: c.id,
-                              title:
-                                "Delete client and and all related contacts?",
+                              title: "Delete client?",
                               summary: c.displayName,
-                              disabled: !isSuper,
-                              details: (
+                              disabled: hasDeps || superRequired,
+                              details: hasContacts ? (
+                                <Text color="red.500">
+                                  This client has associated contacts. Delete all contacts before deleting the client.
+                                </Text>
+                              ) : hasProperties ? (
+                                <Text color="red.500">
+                                  This client has associated properties. Delete all properties before deleting the client.
+                                </Text>
+                              ) : superRequired ? (
                                 <Text color="red.500">
                                   You must be a Super Admin to delete.
                                 </Text>
-                              ),
+                              ) : undefined,
                               extra: c.displayName,
                             });
                           }}
@@ -421,7 +443,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <Accordion.Item key={"contacts_" + c.id} value={"Contacts"}>
                     <Accordion.ItemTrigger>
                       <Icon as={FiUsers} boxSize="3" />
-                      Contacts
+                      Contacts ({c.contacts?.length ?? 0})
                     </Accordion.ItemTrigger>
                     <Accordion.ItemContent>
                       <Accordion.ItemBody>
@@ -609,7 +631,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   >
                     <Accordion.ItemTrigger>
                       <Icon as={FiMapPin} boxSize="3" />
-                      Properties
+                      Properties ({(c as any)?.properties?.length ?? 0})
                     </Accordion.ItemTrigger>
                     <Accordion.ItemContent>
                       <Accordion.ItemBody>

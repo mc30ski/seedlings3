@@ -9,6 +9,7 @@ import type { ServicesClients } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { action } from "../lib/services";
+import { ServiceError } from "../lib/errors";
 
 function normalizePhone(raw?: string | null): string | null {
   const s = (raw ?? "").replace(/[^\d+]/g, "");
@@ -249,6 +250,25 @@ export const clients: ServicesClients = {
   },
 
   async delete(currentUserId: string, id: string) {
+    // Check for related records that would block deletion
+    const contactCount = await prisma.clientContact.count({ where: { clientId: id } });
+    if (contactCount > 0) {
+      throw new ServiceError(
+        "HAS_DEPENDENCIES",
+        `Cannot delete this client because it has ${contactCount} associated ${contactCount === 1 ? "contact" : "contacts"}. Please delete the ${contactCount === 1 ? "contact" : "contacts"} first.`,
+        409
+      );
+    }
+
+    const propertyCount = await prisma.property.count({ where: { clientId: id } });
+    if (propertyCount > 0) {
+      throw new ServiceError(
+        "HAS_DEPENDENCIES",
+        `Cannot delete this client because it has ${propertyCount} associated ${propertyCount === 1 ? "property" : "properties"}. Please delete the ${propertyCount === 1 ? "property" : "properties"} first.`,
+        409
+      );
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.client.delete({ where: { id } });
       await writeAudit(tx, AUDIT.CLIENT.DELETED, currentUserId, { id: id });
