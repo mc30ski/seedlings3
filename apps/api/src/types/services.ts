@@ -562,6 +562,22 @@ export type ServicesPayments = {
   }>;
 
   getPaymentByOccurrence(occurrenceId: string): Promise<any | null>;
+
+  updatePayment(
+    currentUserId: string,
+    paymentId: string,
+    input: {
+      amountPaid?: number;
+      method?: string;
+      note?: string | null;
+      splits?: Array<{ userId: string; amount: number }>;
+    }
+  ): Promise<any>;
+
+  deletePayment(
+    currentUserId: string,
+    paymentId: string
+  ): Promise<void>;
 };
 
 export type Services = {

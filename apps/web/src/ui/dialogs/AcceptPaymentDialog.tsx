@@ -48,6 +48,7 @@ export default function AcceptPaymentDialog({
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showMismatchConfirm, setShowMismatchConfirm] = useState(false);
 
   const [amountPaid, setAmountPaid] = useState("");
   const [method, setMethod] = useState<string[]>(["CASH"]);
@@ -61,6 +62,7 @@ export default function AcceptPaymentDialog({
     setAmountPaid(amt);
     setMethod(["CASH"]);
     setNote("");
+    setShowMismatchConfirm(false);
 
     // Even split
     if (assignees.length > 0 && defaultAmount != null && defaultAmount > 0) {
@@ -100,13 +102,10 @@ export default function AcceptPaymentDialog({
       amount: parseFloat(splits[a.userId] || "0"),
     }));
 
-    // Validate splits sum
+    // Check splits sum — warn but allow proceeding
     const sum = splitArr.reduce((s, sp) => s + sp.amount, 0);
-    if (Math.abs(sum - amt) > 0.01) {
-      publishInlineMessage({
-        type: "WARNING",
-        text: `Splits total ($${sum.toFixed(2)}) does not match amount paid ($${amt.toFixed(2)}).`,
-      });
+    if (Math.abs(sum - amt) > 0.01 && !showMismatchConfirm) {
+      setShowMismatchConfirm(true);
       return;
     }
 
@@ -154,6 +153,15 @@ export default function AcceptPaymentDialog({
                     value={amountPaid}
                     onChange={(v) => {
                       setAmountPaid(v);
+                      setShowMismatchConfirm(false);
+                      // Auto-recalculate even splits when amount changes
+                      const total = parseFloat(v);
+                      if (!isNaN(total) && total > 0 && assignees.length > 0) {
+                        const even = (total / assignees.length).toFixed(2);
+                        const map: Record<string, string> = {};
+                        assignees.forEach((a) => { map[a.userId] = even; });
+                        setSplits(map);
+                      }
                     }}
                     size="sm"
                   />
@@ -211,9 +219,10 @@ export default function AcceptPaymentDialog({
                           </Text>
                           <CurrencyInput
                             value={splits[a.userId] || ""}
-                            onChange={(v) =>
-                              setSplits((prev) => ({ ...prev, [a.userId]: v }))
-                            }
+                            onChange={(v) => {
+                              setSplits((prev) => ({ ...prev, [a.userId]: v }));
+                              setShowMismatchConfirm(false);
+                            }}
                             size="sm"
                           />
                         </HStack>
@@ -223,6 +232,14 @@ export default function AcceptPaymentDialog({
                 )}
               </VStack>
             </Dialog.Body>
+
+            {showMismatchConfirm && (
+              <VStack align="stretch" px="4" pb="2" gap={1}>
+                <Text fontSize="sm" color="orange.600" fontWeight="medium">
+                  The split total does not match the amount paid. Are you sure you want to proceed?
+                </Text>
+              </VStack>
+            )}
 
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
@@ -235,12 +252,12 @@ export default function AcceptPaymentDialog({
                   Cancel
                 </Button>
                 <Button
-                  colorPalette="green"
+                  colorPalette={showMismatchConfirm ? "orange" : "green"}
                   onClick={handleSubmit}
                   loading={busy}
                   disabled={!amountPaid || !method[0]}
                 >
-                  Accept Payment
+                  {showMismatchConfirm ? "Yes, Accept Payment" : "Accept Payment"}
                 </Button>
               </HStack>
             </Dialog.Footer>
