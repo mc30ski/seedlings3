@@ -242,6 +242,10 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [deletePayment, setDeletePayment] = useState<PaymentListItem | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  // Delete expense state
+  const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
+  const [deleteExpenseBusy, setDeleteExpenseBusy] = useState(false);
+
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
   // Build person collection from personTotals
@@ -499,9 +503,19 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       return expTotal > 0 ? (
                         <VStack align="start" gap={0} mt={0.5}>
                           {(p.occurrence?.expenses ?? []).map((exp) => (
-                            <Text key={exp.id} fontSize="xs" color="orange.600">
-                              Expense: ${exp.cost.toFixed(2)} — {exp.description}
-                            </Text>
+                            <HStack key={exp.id} gap={1} w="full">
+                              <Text fontSize="xs" color="orange.600" flex="1">
+                                Expense: ${exp.cost.toFixed(2)} — {exp.description}
+                              </Text>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="red"
+                                onClick={() => setDeleteExpenseId(exp.id)}
+                              >
+                                ✕
+                              </Button>
+                            </HStack>
                           ))}
                         </VStack>
                       ) : null;
@@ -696,6 +710,53 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   </Button>
                   <Button colorPalette="red" onClick={handleDelete} loading={deleteBusy}>
                     Delete Payment
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* ── Delete Expense Confirmation ── */}
+      <Dialog.Root open={!!deleteExpenseId} onOpenChange={(e) => { if (!e.open) setDeleteExpenseId(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Delete Expense</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text>
+                  This job is closed. Are you sure you want to delete this expense?
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setDeleteExpenseId(null)} disabled={deleteExpenseBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="red"
+                    loading={deleteExpenseBusy}
+                    onClick={async () => {
+                      if (!deleteExpenseId) return;
+                      setDeleteExpenseBusy(true);
+                      try {
+                        await apiDelete(`/api/admin/expenses/${deleteExpenseId}`);
+                        publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
+                        setDeleteExpenseId(null);
+                        void load();
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete expense.", err) });
+                      } finally {
+                        setDeleteExpenseBusy(false);
+                      }
+                    }}
+                  >
+                    Delete Expense
                   </Button>
                 </HStack>
               </Dialog.Footer>

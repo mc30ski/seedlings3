@@ -409,7 +409,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                               <Text fontSize="xs" color="orange.600" flex="1">
                                 ${exp.cost.toFixed(2)} — {exp.description}
                               </Text>
-                              {isClaimer && (
+                              {isClaimer && occ.status !== "CLOSED" && (
                                 <Button
                                   size="xs"
                                   variant="ghost"
