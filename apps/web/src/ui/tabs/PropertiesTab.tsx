@@ -150,6 +150,14 @@ export default function PropertiesTab({
       });
     }
 
+    rows.sort((a, b) => {
+      const ca = (a.client?.displayName ?? "").toLowerCase();
+      const cb = (b.client?.displayName ?? "").toLowerCase();
+      if (ca < cb) return -1;
+      if (ca > cb) return 1;
+      return (a.displayName ?? "").toLowerCase().localeCompare((b.displayName ?? "").toLowerCase());
+    });
+
     return rows;
   }, [items, q, kind, status]);
 
@@ -280,7 +288,11 @@ export default function PropertiesTab({
             No properties match current filters.
           </Box>
         )}
-        {filtered.map((p: Property) => {
+        {filtered.map((p: Property, idx: number) => {
+          const clientName = p.client?.displayName ?? "No Client";
+          const prevClient = idx > 0 ? (filtered[idx - 1].client?.displayName ?? "No Client") : null;
+          const showHeader = clientName !== prevClient;
+
           const address = [
             p.street1,
             p.street2,
@@ -292,7 +304,13 @@ export default function PropertiesTab({
             .filter(Boolean)
             .join(", ");
           return (
-            <Card.Root key={p.id} variant="outline">
+            <Box key={p.id}>
+              {showHeader && (
+                <Text fontSize="sm" fontWeight="semibold" color="fg.muted" mt={idx > 0 ? 4 : 0} mb={1}>
+                  {clientName}
+                </Text>
+              )}
+            <Card.Root variant="outline">
               <Card.Header pb="2">
                 <HStack gap={3} justify="space-between" align="center">
                   <HStack gap={3} flex="1" minW={0}>
@@ -434,6 +452,7 @@ export default function PropertiesTab({
                 </Card.Footer>
               )}
             </Card.Root>
+            </Box>
           );
         })}
       </VStack>
