@@ -461,7 +461,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   style={{ rowGap: "0.25rem" }}
                 >
                   {item.longDesc && (
-                    <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Description:{" "}
                       </Text>
@@ -469,7 +469,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Text>
                   )}
                   {item.features && (
-                    <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Features:{" "}
                       </Text>
@@ -477,7 +477,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Text>
                   )}
                   {item.condition && (
-                    <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Condition:{" "}
                       </Text>
@@ -485,7 +485,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Text>
                   )}
                   {item.issues && (
-                    <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Issues:{" "}
                       </Text>
@@ -493,7 +493,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Text>
                   )}
                   {item.age && (
-                    <Text fontSize="sm" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
                       <Text as="span" fontWeight="bold">
                         Age:{" "}
                       </Text>
@@ -577,7 +577,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             <Card.Header pb="2">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
-                  <Text fontWeight="semibold">{e.shortDesc}</Text>
+                  <Text fontSize="md" fontWeight="semibold">{e.shortDesc}</Text>
                   <StatusBadge
                     status={e.status ?? ""}
                     palette={equipmentStatusColor(e.status ?? "")}
@@ -594,7 +594,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   {e.model ? `${e.model} ` : ""}
                 </Text>
                 {e.qrSlug && (
-                  <Text fontSize="sm" color="gray.500" mt={0}>
+                  <Text fontSize="xs" color="gray.500" mt={0}>
                     <Text as="span" fontWeight="bold">
                       ID:{" "}
                     </Text>
@@ -602,7 +602,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </Text>
                 )}
                 {e.energy && (
-                  <Text fontSize="sm" color="gray.500" mt={0}>
+                  <Text fontSize="xs" color="gray.500" mt={0}>
                     <Text as="span" fontWeight="bold">
                       Power:{" "}
                     </Text>

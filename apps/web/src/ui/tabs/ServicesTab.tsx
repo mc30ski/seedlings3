@@ -518,26 +518,26 @@ export default function ServicesTab({
                 <HStack gap={3} justify="space-between" align="center">
                   <HStack gap={3} flex="1" minW={0}>
                     <VStack align="start" gap={0}>
-                      <Text fontWeight="semibold">
+                      <Text fontSize="md" fontWeight="semibold">
                         {job.property?.displayName ?? job.propertyId}
+                        {job.property?.client?.displayName && (
+                          <> — {job.property.client.displayName}</>
+                        )}
                       </Text>
-                      {job.property?.displayName && (
-                        <TextLink
-                          text="View Property"
-                          onClick={() =>
-                            openEventSearch(
-                              "jobsTabToPropertiesTabSearch",
-                              job.property?.displayName ?? "",
-                              forAdmin,
-                            )
-                          }
-                        />
-                      )}
-                      {job.property?.client?.displayName && (
-                        <Text fontSize="xs" color="fg.muted">
-                          Client: {job.property.client.displayName}
-                        </Text>
-                      )}
+                      <HStack gap={3} fontSize="xs">
+                        {job.property?.displayName && (
+                          <TextLink
+                            text="View Property"
+                            onClick={() =>
+                              openEventSearch(
+                                "jobsTabToPropertiesTabSearch",
+                                job.property?.displayName ?? "",
+                                forAdmin,
+                              )
+                            }
+                          />
+                        )}
+                      </HStack>
                     </VStack>
                     <StatusBadge
                       status={job.status}
@@ -548,7 +548,7 @@ export default function ServicesTab({
                   <StatusBadge status={job.kind} palette="gray" variant="outline" />
                 </HStack>
                 {(job.property?.street1 || job.property?.city) && (
-                  <Box mt="1">
+                  <Box mt="1" fontSize="sm">
                     <MapLink address={[job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ")} />
                   </Box>
                 )}
@@ -556,7 +556,7 @@ export default function ServicesTab({
 
               <Card.Body pt="0">
                 <VStack align="start" gap={0} mb={2}>
-                  <Text fontSize="sm" color="fg.muted">
+                  <Text fontSize="xs" color="fg.muted">
                     Default price:{" "}
                     {job.defaultPrice != null ? (
                       <b>${job.defaultPrice.toFixed(2)}</b>
@@ -565,18 +565,18 @@ export default function ServicesTab({
                     )}
                   </Text>
                   {job.frequencyDays && (
-                    <Text fontSize="sm" color="fg.muted">
+                    <Text fontSize="xs" color="fg.muted">
                       Frequency: every {job.frequencyDays} day{job.frequencyDays !== 1 ? "s" : ""}
                     </Text>
                   )}
                   {job.notes && (
-                    <Text fontSize="sm" color="fg.muted">
+                    <Text fontSize="xs" color="fg.muted">
                       {job.notes}
                     </Text>
                   )}
                 </VStack>
                 {(detail ? detail.occurrences.length === 0 : (job.occurrenceCount ?? 0) === 0) ? (
-                  <Text fontSize="sm" color="fg.muted">No occurrences</Text>
+                  <Text fontSize="xs" color="fg.muted">No occurrences</Text>
                 ) : (
                   <Button
                     variant="ghost"
@@ -592,17 +592,17 @@ export default function ServicesTab({
                 {expanded && (
                   <Box mt={2}>
                     {isLoadingDetail && !detail && (
-                      <Text fontSize="sm" color="fg.muted">
+                      <Text fontSize="xs" color="fg.muted">
                         Loading…
                       </Text>
                     )}
                     {detail && detail.occurrences.length === 0 && (
-                      <Text fontSize="sm" color="fg.muted">
+                      <Text fontSize="xs" color="fg.muted">
                         No occurrences.
                       </Text>
                     )}
                     {detail && detail.occurrences.length > 0 && visibleOccs.length === 0 && (
-                      <Text fontSize="sm" color="fg.muted">
+                      <Text fontSize="xs" color="fg.muted">
                         No occurrences match the current status filters.
                       </Text>
                     )}
@@ -616,7 +616,7 @@ export default function ServicesTab({
                       >
                         <HStack justify="space-between" align="center">
                           <VStack align="start" gap={0}>
-                            <Text fontSize="sm" fontWeight="medium">
+                            <Text fontSize="xs" fontWeight="medium">
                               {occ.startAt
                                 ? new Date(occ.startAt).toLocaleDateString()
                                 : "—"}

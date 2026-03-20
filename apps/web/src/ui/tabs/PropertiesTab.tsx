@@ -296,7 +296,7 @@ export default function PropertiesTab({
               <Card.Header pb="2">
                 <HStack gap={3} justify="space-between" align="center">
                   <HStack gap={3} flex="1" minW={0}>
-                    <Text fontWeight="semibold">{p.displayName}</Text>
+                    <Text fontSize="md" fontWeight="semibold">{p.displayName}</Text>
                     <StatusBadge
                       status={p.status}
                       palette={propertyStatusColor(p.status)}
@@ -313,8 +313,10 @@ export default function PropertiesTab({
 
               <Card.Body pt="0">
                 <VStack align="start" gap={1}>
-                  <MapLink address={address} />
-                  <Text fontSize="sm">
+                  <Box fontSize="sm">
+                    <MapLink address={address} />
+                  </Box>
+                  <Text fontSize="xs">
                     Client:{" "}
                     <TextLink
                       text={p.client?.displayName ?? p.clientId}
@@ -327,7 +329,7 @@ export default function PropertiesTab({
                       }
                     />
                   </Text>
-                  <Text fontSize="sm">
+                  <Text fontSize="xs">
                     Default contact:{" "}
                     {p.pointOfContactId ? (
                       <TextLink

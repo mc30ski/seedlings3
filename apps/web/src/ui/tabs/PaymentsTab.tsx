@@ -119,10 +119,13 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
               <Card.Body py="3" px="4">
                 <HStack justify="space-between" align="start">
                   <VStack align="start" gap={0}>
-                    <Text fontWeight="semibold">
+                    <Text fontSize="md" fontWeight="semibold">
                       {prop?.displayName ?? "Unknown property"}
+                      {client?.displayName && (
+                        <> — {client.displayName}</>
+                      )}
                     </Text>
-                    <HStack gap={2} wrap="wrap">
+                    <HStack gap={2} wrap="wrap" fontSize="xs">
                       {prop?.displayName && (
                         <TextLink
                           text="Property"
@@ -447,10 +450,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
               <Card.Body py="3" px="4">
                 <HStack justify="space-between" align="start">
                   <VStack align="start" gap={0}>
-                    <Text fontWeight="semibold">
+                    <Text fontSize="md" fontWeight="semibold">
                       {prop?.displayName ?? "Unknown property"}
+                      {client?.displayName && (
+                        <> — {client.displayName}</>
+                      )}
                     </Text>
-                    <HStack gap={2} wrap="wrap">
+                    <HStack gap={2} wrap="wrap" fontSize="xs">
                       {prop?.displayName && (
                         <TextLink
                           text="Property"

@@ -297,7 +297,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             <Card.Header pb="2">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
-                  <Text fontWeight="semibold">{c.displayName}</Text>
+                  <Text fontSize="md" fontWeight="semibold">{c.displayName}</Text>
                   <StatusBadge
                     status={c.status}
                     palette={clientStatusColor(c.status)}
@@ -309,7 +309,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Card.Header>
             <Card.Body pt="0">
               <VStack align="start" gap={1}>
-                <Text fontSize="sm" color="fg.muted">
+                <Text fontSize="xs" color="fg.muted">
                   {c.notesInternal ?? ""}
                 </Text>
               </VStack>
@@ -449,7 +449,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       <Accordion.ItemBody>
                         <VStack mt={2}>
                           {(c as any)?.contacts?.length === 0 && (
-                            <Text fontSize="sm" color="fg.muted">
+                            <Text fontSize="xs" color="fg.muted">
                               No contacts added.
                             </Text>
                           )}
@@ -491,14 +491,14 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                       variant="outline"
                                     />
                                   </HStack>
-                                  <Text fontSize="sm" color="fg.muted">
+                                  <Text fontSize="xs" color="fg.muted">
                                     <MailLink
                                       to={ct.email}
                                       subject=""
                                       body=""
                                     />
                                   </Text>
-                                  <Text fontSize="sm" color="fg.muted">
+                                  <Text fontSize="xs" color="fg.muted">
                                     <CallLink
                                       to={ct.normalizedPhone ?? ct.phone ?? ""}
                                     />
@@ -637,7 +637,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       <Accordion.ItemBody>
                         <VStack mt={2}>
                           {(c as any)?.properties?.length === 0 && (
-                            <Text fontSize="sm" color="fg.muted">
+                            <Text fontSize="xs" color="fg.muted">
                               No properties added.
                             </Text>
                           )}
