@@ -48,7 +48,12 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   function toggleFilter(val: string) {
     setActiveFilters((prev) => {
+      if (val === "OVERDUE") {
+        if (prev.has("OVERDUE")) return new Set<string>();
+        return new Set(["OVERDUE"]);
+      }
       const next = new Set(prev);
+      next.delete("OVERDUE");
       if (next.has(val)) next.delete(val);
       else next.add(val);
       return next;
