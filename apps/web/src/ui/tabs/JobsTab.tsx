@@ -329,16 +329,12 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <Card.Header pb="2">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
-                      <HStack gap={2} align="baseline" flexWrap="wrap">
-                        <Text fontWeight="semibold">
-                          {occ.job?.property?.displayName}
-                        </Text>
+                      <Text fontWeight="semibold">
+                        {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
-                          <Text fontSize="sm" color="fg.muted">
-                            — {occ.job.property.client.displayName}
-                          </Text>
+                          <> — {occ.job.property.client.displayName}</>
                         )}
-                      </HStack>
+                      </Text>
                       <MapLink address={[
                           occ.job?.property?.street1,
                           occ.job?.property?.city,
@@ -402,9 +398,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {occ.startAt && (
                       <Text fontSize="sm">
                         {new Date(occ.startAt).toLocaleDateString()}
-                        {occ.endAt
+                        {occ.endAt && new Date(occ.endAt).toLocaleDateString() !== new Date(occ.startAt).toLocaleDateString()
                           ? ` – ${new Date(occ.endAt).toLocaleDateString()}`
                           : ""}
+                      </Text>
+                    )}
+                    {occ.price != null && (
+                      <Text fontSize="sm" fontWeight="medium">
+                        ${occ.price.toFixed(2)}
                       </Text>
                     )}
                     {occ.notes && (
