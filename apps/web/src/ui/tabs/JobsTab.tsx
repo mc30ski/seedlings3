@@ -364,20 +364,22 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <Card.Header pb="2">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontWeight="semibold">
+                      <Text fontSize="md" fontWeight="semibold">
                         {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
                           <> — {occ.job.property.client.displayName}</>
                         )}
                       </Text>
-                      <MapLink address={[
-                          occ.job?.property?.street1,
-                          occ.job?.property?.city,
-                          occ.job?.property?.state,
-                        ]
-                          .filter(Boolean)
-                          .join(", ")} />
-                      <HStack gap={3}>
+                      <Box fontSize="sm">
+                        <MapLink address={[
+                            occ.job?.property?.street1,
+                            occ.job?.property?.city,
+                            occ.job?.property?.state,
+                          ]
+                            .filter(Boolean)
+                            .join(", ")} />
+                      </Box>
+                      <HStack gap={3} fontSize="xs">
                         {occ.job?.property?.displayName && (
                           <TextLink
                             text="View Property"
@@ -431,7 +433,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <Card.Body pt="0">
                   <VStack align="start" gap={1}>
                     {occ.startAt && (
-                      <Text fontSize="sm">
+                      <Text fontSize="xs">
                         {new Date(occ.startAt).toLocaleDateString()}
                         {occ.endAt && new Date(occ.endAt).toLocaleDateString() !== new Date(occ.startAt).toLocaleDateString()
                           ? ` – ${new Date(occ.endAt).toLocaleDateString()}`
@@ -439,12 +441,12 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       </Text>
                     )}
                     {occ.price != null && (
-                      <Text fontSize="sm" fontWeight="medium">
+                      <Text fontSize="xs" fontWeight="medium">
                         ${occ.price.toFixed(2)}
                       </Text>
                     )}
                     {occ.notes && (
-                      <Text fontSize="sm" color="fg.muted">
+                      <Text fontSize="xs" color="fg.muted">
                         {occ.notes}
                       </Text>
                     )}
