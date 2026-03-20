@@ -246,6 +246,22 @@ export default function ServicesTab({
     }
   }
 
+  async function toggleTentative(occurrenceId: string, jobId: string, currentlyTentative: boolean) {
+    try {
+      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, { isTentative: !currentlyTentative });
+      void loadDetail(jobId, true);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: currentlyTentative ? "Occurrence confirmed." : "Occurrence marked as tentative.",
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Update occurrence failed.", err),
+      });
+    }
+  }
+
   async function deleteJob(jobId: string) {
     try {
       await apiDelete(`/api/admin/jobs/${jobId}`);
@@ -675,11 +691,20 @@ export default function ServicesTab({
                               </Box>
                             )}
                           </VStack>
-                          <StatusBadge
-                            status={occ.status}
-                            palette={occurrenceStatusColor(occ.status)}
-                            variant="subtle"
-                          />
+                          <VStack gap={1} align="end">
+                            <StatusBadge
+                              status={occ.status}
+                              palette={occurrenceStatusColor(occ.status)}
+                              variant="subtle"
+                            />
+                            {occ.isTentative && (
+                              <StatusBadge
+                                status="Tentative"
+                                palette="orange"
+                                variant="subtle"
+                              />
+                            )}
+                          </VStack>
                         </HStack>
 
                         {forAdmin && (
@@ -697,6 +722,18 @@ export default function ServicesTab({
                               busyId={statusButtonBusyId}
                               setBusyId={setStatusButtonBusyId}
                             />
+                            {occ.status === "SCHEDULED" && (
+                              <StatusButton
+                                id="occ-tentative"
+                                itemId={occ.id}
+                                label={occ.isTentative ? "Confirm" : "Mark Tentative"}
+                                onClick={async () => void toggleTentative(occ.id, job.id, !!occ.isTentative)}
+                                variant="outline"
+                                colorPalette={occ.isTentative ? "green" : "orange"}
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
                             {occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
                               <StatusButton
                                 id="occ-assignees"

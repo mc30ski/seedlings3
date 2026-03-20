@@ -289,8 +289,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             const myAssignee = assignees.find((a) => a.userId === myId);
             const isClaimer = !!myAssignee && myAssignee.assignedById === myId;
 
-            const cardBorderColor = isAssignedToMe ? "teal.400" : "gray.200";
-            const cardBg = isAssignedToMe
+            const isTentative = !!occ.isTentative;
+
+            const cardBorderColor = isTentative
+              ? "orange.300"
+              : isAssignedToMe ? "teal.400" : "gray.200";
+            const cardBg = isTentative
+              ? "orange.50"
+              : isAssignedToMe
               ? "teal.50"
               : isAssignedToOthers
               ? "gray.50"
@@ -350,11 +356,20 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         )}
                       </HStack>
                     </VStack>
-                    <StatusBadge
-                      status={occ.status}
-                      palette={occurrenceStatusColor(occ.status)}
-                      variant="subtle"
-                    />
+                    <VStack gap={1} align="end">
+                      <StatusBadge
+                        status={occ.status}
+                        palette={occurrenceStatusColor(occ.status)}
+                        variant="subtle"
+                      />
+                      {isTentative && (
+                        <StatusBadge
+                          status="Tentative"
+                          palette="orange"
+                          variant="subtle"
+                        />
+                      )}
+                    </VStack>
                   </HStack>
                 </Card.Header>
 
@@ -396,7 +411,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                     )}
                     {isUnassigned && occ.status !== "ARCHIVED" && (
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
-                        Unclaimed — available to pick up
+                        {isTentative
+                          ? "Tentative — awaiting admin confirmation"
+                          : "Unclaimed — available to pick up"}
                       </Text>
                     )}
                     {occ.payment && (
@@ -449,7 +466,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </VStack>
                 </Card.Body>
 
-                {(isUnassigned || isAssignedToMe) && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
+                {(isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer>
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && (
