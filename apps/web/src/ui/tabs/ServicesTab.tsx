@@ -49,6 +49,10 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
+function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 const kindStates = ["ALL", ...JOB_KIND] as const;
 
 export default function ServicesTab({
@@ -85,14 +89,11 @@ export default function ServicesTab({
     });
   }
 
-  const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 14);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return localDate(d);
   });
 
   const kindItems = useMemo(
@@ -434,18 +435,52 @@ export default function ServicesTab({
           }}
           maxW="160px"
         />
-        {(dateFrom || dateTo) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setDateFrom("");
-              setDateTo("");
-            }}
-          >
-            Clear
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            setDateFrom(localDate(yesterday));
+            setDateTo(localDate(yesterday));
+          }}
+        >
+          Yesterday
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const today = localDate(new Date());
+            setDateFrom(today);
+            setDateTo(today);
+          }}
+        >
+          Today
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const today = new Date();
+            const future = new Date(today);
+            future.setDate(future.getDate() + 2);
+            setDateFrom(localDate(today));
+            setDateTo(localDate(future));
+          }}
+        >
+          Next 3 days
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setDateFrom(localDate(new Date()));
+            setDateTo("");
+          }}
+        >
+          Future
+        </Button>
       </HStack>
 
       <HStack mb={1} gap={2} align="center" wrap="wrap">
@@ -487,6 +522,14 @@ export default function ServicesTab({
             {prettyStatus(s)}
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant={activeOccFilters.has("OVERDUE") ? "solid" : "outline"}
+          colorPalette="red"
+          onClick={() => toggleOccFilter("OVERDUE")}
+        >
+          Overdue
+        </Button>
       </HStack>
 
       <VStack align="stretch" gap={3}>
@@ -500,8 +543,13 @@ export default function ServicesTab({
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
+          const today = localDate(new Date());
           const visibleOccs = detail
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
+                if (activeOccFilters.has("OVERDUE")) {
+                  const d = o.startAt ? o.startAt.slice(0, 10) : "";
+                  return d < today && o.status !== "CLOSED" && o.status !== "ARCHIVED";
+                }
                 if (o.startAt) {
                   const d = o.startAt.slice(0, 10);
                   if (dateFrom && d < dateFrom) return false;
