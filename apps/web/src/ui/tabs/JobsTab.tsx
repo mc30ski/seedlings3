@@ -260,18 +260,53 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           }}
           maxW="160px"
         />
-        {(dateFrom || dateTo) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setDateFrom("");
-              setDateTo("");
-            }}
-          >
-            Clear
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const val = yesterday.toISOString().slice(0, 10);
+            setDateFrom(val);
+            setDateTo(val);
+          }}
+        >
+          Yesterday
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const today = new Date().toISOString().slice(0, 10);
+            setDateFrom(today);
+            setDateTo(today);
+          }}
+        >
+          Today
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const today = new Date();
+            const future = new Date(today);
+            future.setDate(future.getDate() + 2);
+            setDateFrom(today.toISOString().slice(0, 10));
+            setDateTo(future.toISOString().slice(0, 10));
+          }}
+        >
+          Next 3 days
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setDateFrom(new Date().toISOString().slice(0, 10));
+            setDateTo("");
+          }}
+        >
+          Future
+        </Button>
       </HStack>
 
       <HStack mb={3} gap={2} wrap="wrap">
