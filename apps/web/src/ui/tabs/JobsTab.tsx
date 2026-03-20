@@ -50,6 +50,10 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     setActiveFilters((prev) => {
       if (val === "OVERDUE") {
         if (prev.has("OVERDUE")) return new Set<string>();
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        setDateFrom("");
+        setDateTo(localDate(yesterday));
         return new Set(["OVERDUE"]);
       }
       const next = new Set(prev);
