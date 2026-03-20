@@ -31,6 +31,10 @@ import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 
+function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
@@ -54,14 +58,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 14);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return localDate(d);
   });
 
   const [manageOpen, setManageOpen] = useState(false);
@@ -266,9 +267,8 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           onClick={() => {
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
-            const val = yesterday.toISOString().slice(0, 10);
-            setDateFrom(val);
-            setDateTo(val);
+            setDateFrom(localDate(yesterday));
+            setDateTo(localDate(yesterday));
           }}
         >
           Yesterday
@@ -277,7 +277,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           size="sm"
           variant="ghost"
           onClick={() => {
-            const today = new Date().toISOString().slice(0, 10);
+            const today = localDate(new Date());
             setDateFrom(today);
             setDateTo(today);
           }}
@@ -291,8 +291,8 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             const today = new Date();
             const future = new Date(today);
             future.setDate(future.getDate() + 2);
-            setDateFrom(today.toISOString().slice(0, 10));
-            setDateTo(future.toISOString().slice(0, 10));
+            setDateFrom(localDate(today));
+            setDateTo(localDate(future));
           }}
         >
           Next 3 days
@@ -301,7 +301,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           size="sm"
           variant="ghost"
           onClick={() => {
-            setDateFrom(new Date().toISOString().slice(0, 10));
+            setDateFrom(localDate(new Date()));
             setDateTo("");
           }}
         >

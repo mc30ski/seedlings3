@@ -8,8 +8,8 @@ export const audit: ServicesAudit = {
     if (params.action) where.action = params.action;
     if (params.from || params.to) {
       where.createdAt = {
-        gte: params.from ? new Date(params.from) : undefined,
-        lte: params.to ? new Date(params.to) : undefined,
+        gte: params.from ? new Date(params.from + "T00:00:00") : undefined,
+        lte: params.to ? new Date(params.to + "T23:59:59.999") : undefined,
       };
     }
     const page = params.page ?? 1;
