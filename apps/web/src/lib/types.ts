@@ -246,6 +246,7 @@ export type JobOccurrenceFull = {
   price?: number | null;
   isOneOff?: boolean;
   isTentative?: boolean;
+  isEstimate?: boolean;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
@@ -369,6 +370,7 @@ export type WorkerOccurrence = {
   price?: number | null;
   isOneOff?: boolean;
   isTentative?: boolean;
+  isEstimate?: boolean;
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
   job: {

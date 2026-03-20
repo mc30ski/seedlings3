@@ -411,6 +411,7 @@ export type CreateOccurrenceInput = {
 
   isOneOff?: boolean;
   isTentative?: boolean;
+  isEstimate?: boolean;
 
   // optional assignees at creation time
   assigneeUserIds?: string[];
@@ -484,6 +485,7 @@ export type ServicesJobs = {
       notes?: string | null;
       price?: number | null;
       isTentative?: boolean;
+      isEstimate?: boolean;
     }
   ): Promise<JobOccurrence>;
 

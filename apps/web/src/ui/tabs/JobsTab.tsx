@@ -150,14 +150,31 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
-  async function updateStatus(occurrenceId: string, action: "start" | "complete") {
+  async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete") {
     try {
-      await apiPost(`/api/occurrences/${occurrenceId}/${action}`, {});
+      await apiPost(`/api/occurrences/${occ.id}/${action}`, {});
       await load(false);
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: action === "start" ? "Job started." : "Job marked as pending payment.",
-      });
+
+      // For estimates, "complete" goes straight to CLOSED — prompt schedule next
+      if (action === "complete" && occ.isEstimate && occ.job?.frequencyDays && !occ.isOneOff) {
+        publishInlineMessage({ type: "SUCCESS", text: "Estimate completed." });
+        setScheduleNextData({
+          jobId: occ.job.id,
+          frequencyDays: occ.job.frequencyDays,
+          closedOccurrence: {
+            startAt: occ.startAt,
+            endAt: occ.endAt,
+            notes: occ.notes,
+            price: occ.price,
+          },
+        });
+        setScheduleNextOpen(true);
+      } else {
+        publishInlineMessage({
+          type: "SUCCESS",
+          text: action === "start" ? "Job started." : "Job marked as pending payment.",
+        });
+      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -369,6 +386,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           variant="subtle"
                         />
                       )}
+                      {occ.isEstimate && (
+                        <StatusBadge
+                          status="Estimate"
+                          palette="purple"
+                          variant="subtle"
+                        />
+                      )}
                     </VStack>
                   </HStack>
                 </Card.Header>
@@ -497,7 +521,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                             message: "Are you sure you want to start this job?",
                             confirmLabel: "Start",
                             colorPalette: "blue",
-                            onConfirm: () => void updateStatus(occ.id, "start"),
+                            onConfirm: () => void updateStatus(occ, "start"),
                           })}
                           variant="outline"
                           busyId={statusButtonBusyId}
@@ -510,11 +534,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           itemId={occ.id}
                           label="Complete"
                           onClick={async () => setConfirmAction({
-                            title: "Complete Job?",
-                            message: "Are you sure you want to mark this job as complete?",
+                            title: occ.isEstimate ? "Complete Estimate?" : "Complete Job?",
+                            message: occ.isEstimate
+                              ? "This estimate will be closed (no payment step)."
+                              : "Are you sure you want to mark this job as complete?",
                             confirmLabel: "Complete",
                             colorPalette: "green",
-                            onConfirm: () => void updateStatus(occ.id, "complete"),
+                            onConfirm: () => void updateStatus(occ, "complete"),
                           })}
                           variant="outline"
                           colorPalette="green"
@@ -522,7 +548,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && (
+                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && !occ.isEstimate && (
                         <StatusButton
                           id="occ-accept-payment"
                           itemId={occ.id}

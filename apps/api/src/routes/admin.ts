@@ -557,6 +557,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     if (body.isTentative != null) input.isTentative = !!body.isTentative;
+    if (body.isEstimate != null) input.isEstimate = !!body.isEstimate;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
@@ -658,6 +659,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("notes" in body) patch.notes = body.notes;
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
+      if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(

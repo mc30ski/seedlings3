@@ -704,6 +704,13 @@ export default function ServicesTab({
                                 variant="subtle"
                               />
                             )}
+                            {occ.isEstimate && (
+                              <StatusBadge
+                                status="Estimate"
+                                palette="purple"
+                                variant="subtle"
+                              />
+                            )}
                           </VStack>
                         </HStack>
 
@@ -773,11 +780,13 @@ export default function ServicesTab({
                                 itemId={occ.id}
                                 label="Complete"
                                 onClick={async () => setConfirmAction({
-                                  title: "Complete Occurrence?",
-                                  message: "Are you sure you want to mark this occurrence as complete?",
+                                  title: occ.isEstimate ? "Complete Estimate?" : "Complete Occurrence?",
+                                  message: occ.isEstimate
+                                    ? "This estimate will be closed (no payment step)."
+                                    : "Are you sure you want to mark this occurrence as complete?",
                                   confirmLabel: "Complete",
                                   colorPalette: "green",
-                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT"),
+                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, occ.isEstimate ? "CLOSED" : "PENDING_PAYMENT"),
                                 })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
