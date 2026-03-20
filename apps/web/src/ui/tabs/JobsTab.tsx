@@ -383,10 +383,10 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontSize="md" fontWeight="semibold">
-                        {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
-                          <> — {occ.job.property.client.displayName}</>
+                          <>{occ.job.property.client.displayName} — </>
                         )}
+                        {occ.job?.property?.displayName}
                       </Text>
                       <Box fontSize="sm">
                         <MapLink address={[
