@@ -82,7 +82,12 @@ export default function ServicesTab({
 
   function toggleOccFilter(val: string) {
     setActiveOccFilters((prev) => {
+      if (val === "OVERDUE") {
+        if (prev.has("OVERDUE")) return new Set<string>();
+        return new Set(["OVERDUE"]);
+      }
       const next = new Set(prev);
+      next.delete("OVERDUE");
       if (next.has(val)) next.delete(val);
       else next.add(val);
       return next;
