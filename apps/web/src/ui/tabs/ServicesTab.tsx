@@ -55,6 +55,18 @@ function localDate(d: Date): string {
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
 
+const quickDateItems = [
+  { label: "Yesterday", value: "yesterday" },
+  { label: "Today", value: "today" },
+  { label: "Last week", value: "lastWeek" },
+  { label: "Next 3 days", value: "next3" },
+  { label: "Next 7 days", value: "next7" },
+  { label: "Next 14 days", value: "next14" },
+  { label: "Future", value: "future" },
+  { label: "All time", value: "all" },
+];
+const quickDateCollection = createListCollection({ items: quickDateItems });
+
 export default function ServicesTab({
   me,
   purpose = "ADMIN",
@@ -370,7 +382,7 @@ export default function ServicesTab({
   }, [items, q, kind, activeJobStatuses]);
 
   if (!isAvail) return <UnavailableNotice />;
-  if (loading) return <LoadingCenter />;
+  if (loading && items.length === 0) return <LoadingCenter />;
 
   return (
     <Box w="full">
@@ -405,6 +417,14 @@ export default function ServicesTab({
           </Select.Positioner>
         </Select.Root>
         <Spacer />
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => void load()}
+          loading={loading}
+        >
+          Refresh
+        </Button>
         {forAdmin && (
           <Button
             onClick={() => {
@@ -444,52 +464,67 @@ export default function ServicesTab({
           }}
           maxW="160px"
         />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            setDateFrom(localDate(yesterday));
-            setDateTo(localDate(yesterday));
-          }}
-        >
-          Yesterday
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const today = localDate(new Date());
-            setDateFrom(today);
-            setDateTo(today);
-          }}
-        >
-          Today
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
+        <Select.Root
+          collection={quickDateCollection}
+          value={[]}
+          onValueChange={(e) => {
+            const val = e.value[0];
+            if (!val) return;
             const today = new Date();
-            const future = new Date(today);
-            future.setDate(future.getDate() + 2);
-            setDateFrom(localDate(today));
-            setDateTo(localDate(future));
+            if (val === "yesterday") {
+              const d = new Date(today);
+              d.setDate(d.getDate() - 1);
+              setDateFrom(localDate(d));
+              setDateTo(localDate(d));
+            } else if (val === "today") {
+              setDateFrom(localDate(today));
+              setDateTo(localDate(today));
+            } else if (val === "next3") {
+              const d = new Date(today);
+              d.setDate(d.getDate() + 2);
+              setDateFrom(localDate(today));
+              setDateTo(localDate(d));
+            } else if (val === "lastWeek") {
+              const d = new Date(today);
+              d.setDate(d.getDate() - 7);
+              setDateFrom(localDate(d));
+              setDateTo(localDate(today));
+            } else if (val === "next7") {
+              const d = new Date(today);
+              d.setDate(d.getDate() + 6);
+              setDateFrom(localDate(today));
+              setDateTo(localDate(d));
+            } else if (val === "next14") {
+              const d = new Date(today);
+              d.setDate(d.getDate() + 13);
+              setDateFrom(localDate(today));
+              setDateTo(localDate(d));
+            } else if (val === "future") {
+              setDateFrom(localDate(today));
+              setDateTo("");
+            } else if (val === "all") {
+              setDateFrom("");
+              setDateTo("");
+            }
           }}
-        >
-          Next 3 days
-        </Button>
-        <Button
           size="sm"
-          variant="ghost"
-          onClick={() => {
-            setDateFrom(localDate(new Date()));
-            setDateTo("");
-          }}
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
         >
-          Future
-        </Button>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder="Quick…" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {quickDateItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
       </HStack>
 
       <HStack mb={1} gap={2} align="center" wrap="wrap">
