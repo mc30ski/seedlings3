@@ -276,6 +276,7 @@ export const jobs: ServicesJobs = {
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           isOneOff: input.isOneOff ?? false,
           isTentative: input.isTentative ?? false,
+          isEstimate: input.isEstimate ?? false,
         } as any,
       });
 
@@ -328,6 +329,7 @@ export const jobs: ServicesJobs = {
       if ("notes" in patch) data.notes = patch.notes ?? null;
       if ("price" in patch) data.price = patch.price ?? null;
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
+      if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
@@ -667,9 +669,15 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
       }
 
+      // For estimates, skip PENDING_PAYMENT and go straight to CLOSED
+      const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+      const finalStatus = (occ.isEstimate && status === JobOccurrenceStatus.PENDING_PAYMENT)
+        ? JobOccurrenceStatus.CLOSED
+        : status;
+
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { status },
+        data: { status: finalStatus },
       });
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {

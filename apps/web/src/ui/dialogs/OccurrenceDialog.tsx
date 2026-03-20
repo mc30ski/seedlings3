@@ -84,6 +84,7 @@ export default function OccurrenceDialog({
   const [price, setPrice] = useState("");
   const [isOneOff, setIsOneOff] = useState(false);
   const [isTentative, setIsTentative] = useState(false);
+  const [isEstimate, setIsEstimate] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -95,6 +96,7 @@ export default function OccurrenceDialog({
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
     setIsOneOff(false);
     setIsTentative(false);
+    setIsEstimate(false);
   }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
 
   async function handleSave() {
@@ -119,6 +121,7 @@ export default function OccurrenceDialog({
           price: priceVal ?? undefined,
           ...(isOneOff ? { isOneOff: true } : {}),
           ...(isTentative ? { isTentative: true } : {}),
+          ...(isEstimate ? { isEstimate: true } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
@@ -250,6 +253,16 @@ export default function OccurrenceDialog({
                     <Checkbox.HiddenInput />
                     <Checkbox.Control />
                     <Checkbox.Label>One-off (skip next occurrence prompt)</Checkbox.Label>
+                  </Checkbox.Root>
+                )}
+                {mode === "CREATE" && (
+                  <Checkbox.Root
+                    checked={isEstimate}
+                    onCheckedChange={(e) => setIsEstimate(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label>Estimate (no payment step)</Checkbox.Label>
                   </Checkbox.Root>
                 )}
                 {mode === "CREATE" && (

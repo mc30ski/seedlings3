@@ -436,6 +436,7 @@ model JobOccurrence {
   price       Float?
   isOneOff    Boolean @default(false)
   isTentative Boolean @default(false)
+  isEstimate  Boolean @default(false)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
