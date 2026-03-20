@@ -114,6 +114,7 @@ export default function ServicesTab({
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
+  const [promptOccurrenceOpen, setPromptOccurrenceOpen] = useState(false);
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
@@ -995,9 +996,23 @@ export default function ServicesTab({
               setOccurrenceDefaultNotes(created.notes ?? null);
               setOccurrenceDefaultPrice(created.defaultPrice ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
-              setOccurrenceDialogOpen(true);
+              setPromptOccurrenceOpen(true);
             }
           }}
+        />
+      )}
+
+      {forAdmin && (
+        <ConfirmDialog
+          open={promptOccurrenceOpen}
+          title="Create First Occurrence?"
+          message="Would you like to create the first occurrence for this job now?"
+          confirmLabel="Yes, create"
+          onConfirm={() => {
+            setPromptOccurrenceOpen(false);
+            setOccurrenceDialogOpen(true);
+          }}
+          onCancel={() => setPromptOccurrenceOpen(false)}
         />
       )}
 
