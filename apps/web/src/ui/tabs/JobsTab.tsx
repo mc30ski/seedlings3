@@ -186,8 +186,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const filtered = useMemo(() => {
     let rows = items;
+    const today = localDate(new Date());
     rows = rows.filter((occ) => {
       if (activeFilters.size === 0) return false;
+      if (activeFilters.has("OVERDUE")) {
+        const d = occ.startAt ? occ.startAt.slice(0, 10) : "";
+        if (d < today && occ.status !== "CLOSED" && occ.status !== "ARCHIVED") return true;
+      }
       const hasAssignees = (occ.assignees ?? []).length > 0;
       if (activeFilters.has("UNCLAIMED") && !hasAssignees) return true;
       if (hasAssignees && activeFilters.has(occ.status)) return true;
@@ -320,6 +325,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             {s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s)}
           </Button>
         ))}
+        <Button
+          size="sm"
+          variant={activeFilters.has("OVERDUE") ? "solid" : "outline"}
+          colorPalette="red"
+          onClick={() => toggleFilter("OVERDUE")}
+        >
+          Overdue
+        </Button>
       </HStack>
 
       {loading && <LoadingCenter />}
