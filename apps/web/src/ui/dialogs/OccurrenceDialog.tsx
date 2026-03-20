@@ -83,6 +83,7 @@ export default function OccurrenceDialog({
   const [notes, setNotes] = useState("");
   const [price, setPrice] = useState("");
   const [isOneOff, setIsOneOff] = useState(false);
+  const [isTentative, setIsTentative] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -93,6 +94,7 @@ export default function OccurrenceDialog({
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
     setIsOneOff(false);
+    setIsTentative(false);
   }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
 
   async function handleSave() {
@@ -116,6 +118,7 @@ export default function OccurrenceDialog({
           notes: notesVal ?? undefined,
           price: priceVal ?? undefined,
           ...(isOneOff ? { isOneOff: true } : {}),
+          ...(isTentative ? { isTentative: true } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
@@ -247,6 +250,16 @@ export default function OccurrenceDialog({
                     <Checkbox.HiddenInput />
                     <Checkbox.Control />
                     <Checkbox.Label>One-off (skip next occurrence prompt)</Checkbox.Label>
+                  </Checkbox.Root>
+                )}
+                {mode === "CREATE" && (
+                  <Checkbox.Root
+                    checked={isTentative}
+                    onCheckedChange={(e) => setIsTentative(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label>Tentative (must be confirmed before workers can claim)</Checkbox.Label>
                   </Checkbox.Root>
                 )}
               </VStack>

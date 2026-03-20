@@ -275,6 +275,7 @@ export const jobs: ServicesJobs = {
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           isOneOff: input.isOneOff ?? false,
+          isTentative: input.isTentative ?? false,
         } as any,
       });
 
@@ -326,6 +327,7 @@ export const jobs: ServicesJobs = {
         data.endAt = patch.endAt ? new Date(patch.endAt) : null;
       if ("notes" in patch) data.notes = patch.notes ?? null;
       if ("price" in patch) data.price = patch.price ?? null;
+      if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
@@ -638,6 +640,9 @@ export const jobs: ServicesJobs = {
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
       if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
         throw new ServiceError("INVALID_STATUS", "Only SCHEDULED occurrences can be claimed.", 409);
+      }
+      if (occ.isTentative) {
+        throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by an admin.", 409);
       }
 
       await tx.jobOccurrenceAssignee.create({
