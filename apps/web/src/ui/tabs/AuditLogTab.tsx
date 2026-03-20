@@ -92,11 +92,8 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
 
   const hasMore = useMemo(() => items.length < total, [items.length, total]);
 
-  function toIsoStart(d: string) {
-    return d ? new Date(`${d}T00:00:00`).toISOString() : undefined;
-  }
-  function toIsoEnd(d: string) {
-    return d ? new Date(`${d}T23:59:59.999`).toISOString() : undefined;
+  function toDateParam(d: string) {
+    return d || undefined;
   }
 
   async function loadLookups() {
@@ -123,10 +120,10 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
       const params = new URLSearchParams();
       params.set("page", String(p));
       params.set("pageSize", String(ps));
-      const fromIso = toIsoStart(from);
-      if (fromIso) params.set("from", fromIso);
-      const toIso = toIsoEnd(to);
-      if (toIso) params.set("to", toIso);
+      const fromParam = toDateParam(from);
+      if (fromParam) params.set("from", fromParam);
+      const toParam = toDateParam(to);
+      if (toParam) params.set("to", toParam);
 
       const res = await apiGet<AuditResp>(
         `/api/admin/audit?${params.toString()}`
