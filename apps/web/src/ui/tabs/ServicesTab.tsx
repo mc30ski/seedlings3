@@ -769,6 +769,13 @@ export default function ServicesTab({
                                 variant="subtle"
                               />
                             )}
+                            {occ.isOneOff && (
+                              <StatusBadge
+                                status="One-off"
+                                palette="gray"
+                                variant="subtle"
+                              />
+                            )}
                           </VStack>
                         </HStack>
 

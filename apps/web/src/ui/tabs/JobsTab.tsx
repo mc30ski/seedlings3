@@ -448,6 +448,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           variant="subtle"
                         />
                       )}
+                      {occ.isOneOff && (
+                        <StatusBadge
+                          status="One-off"
+                          palette="gray"
+                          variant="subtle"
+                        />
+                      )}
                     </VStack>
                   </HStack>
                 </Card.Header>
