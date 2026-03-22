@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Card,
@@ -12,7 +13,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, LayoutList, RefreshCw } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   determineRoles,
@@ -54,6 +55,8 @@ function localDate(d: Date): string {
 }
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
+const jobStatusStates = ["ALL", ...JOB_STATUS] as const;
+const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItems = [
   { label: "Yesterday", value: "yesterday" },
@@ -76,30 +79,8 @@ export default function ServicesTab({
 
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<string[]>(["ALL"]);
-  const [activeJobStatuses, setActiveJobStatuses] = useState<Set<string>>(
-    new Set(["PROPOSED", "ACCEPTED"])
-  );
-
-  function toggleJobStatus(val: string) {
-    setActiveJobStatuses((prev) => {
-      const next = new Set(prev);
-      if (next.has(val)) next.delete(val);
-      else next.add(val);
-      return next;
-    });
-  }
-  const [activeOccFilters, setActiveOccFilters] = useState<Set<string>>(
-    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT", "CLOSED"])
-  );
-
-  function toggleOccFilter(val: string) {
-    setActiveOccFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(val)) next.delete(val);
-      else next.add(val);
-      return next;
-    });
-  }
+  const [jobStatusFilter, setJobStatusFilter] = useState<string[]>(["ALL"]);
+  const [occStatusFilter, setOccStatusFilter] = useState<string[]>(["ALL"]);
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
@@ -115,6 +96,22 @@ export default function ServicesTab({
   const kindCollection = useMemo(
     () => createListCollection({ items: kindItems }),
     [kindItems]
+  );
+  const jobStatusItems = useMemo(
+    () => jobStatusStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    []
+  );
+  const jobStatusCollection = useMemo(
+    () => createListCollection({ items: jobStatusItems }),
+    [jobStatusItems]
+  );
+  const occStatusItems = useMemo(
+    () => occStatusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
+    []
+  );
+  const occStatusCollection = useMemo(
+    () => createListCollection({ items: occStatusItems }),
+    [occStatusItems]
   );
   const [items, setItems] = useState<JobListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -359,7 +356,8 @@ export default function ServicesTab({
 
   const filtered = useMemo(() => {
     let rows = items;
-    if (activeJobStatuses.size > 0) rows = rows.filter((i) => activeJobStatuses.has(i.status));
+    const jsf = jobStatusFilter[0];
+    if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
     const qlc = q.trim().toLowerCase();
     if (qlc) {
@@ -370,7 +368,7 @@ export default function ServicesTab({
       );
     }
     return rows;
-  }, [items, q, kind, activeJobStatuses]);
+  }, [items, q, kind, jobStatusFilter]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
@@ -394,7 +392,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -409,6 +407,68 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={jobStatusCollection}
+          value={jobStatusFilter}
+          onValueChange={(e) => setJobStatusFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {jobStatusItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Select.Root
+          collection={occStatusCollection}
+          value={occStatusFilter}
+          onValueChange={(e) => setOccStatusFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-teal-100)", borderRadius: "6px" }}>
+              <Layers size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {occStatusItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          minW="0"
+          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL"}
+          onClick={() => {
+            setKind(["ALL"]);
+            setJobStatusFilter(["ALL"]);
+            setOccStatusFilter(["ALL"]);
+          }}
+        >
+          <X size={14} />
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -420,12 +480,18 @@ export default function ServicesTab({
         </Button>
         {forAdmin && (
           <Button
+            size="sm"
+            px="2"
+            minW="0"
+            variant="solid"
+            bg="black"
+            color="white"
             onClick={() => {
               setEditingJob(null);
               setJobDialogOpen(true);
             }}
           >
-            New Job
+            <Plus size={16} strokeWidth={2.5} />
           </Button>
         )}
       </HStack>
@@ -526,53 +592,32 @@ export default function ServicesTab({
             yesterday.setDate(yesterday.getDate() - 1);
             setDateFrom("");
             setDateTo(localDate(yesterday));
-            setActiveOccFilters(new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"]));
+            setOccStatusFilter(["ALL"]);
           }}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
         </Button>
       </HStack>
 
-      <HStack mb={1} gap={2} align="center" wrap="wrap">
-        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
-          Jobs:
-        </Text>
-        {JOB_STATUS.map((s) => (
-          <Button
-            key={s}
-            size="sm"
-            variant={activeJobStatuses.has(s) ? "solid" : "outline"}
-            colorPalette={s === "ARCHIVED" ? "gray" : undefined}
-            onClick={() => toggleJobStatus(s)}
-          >
-            {prettyStatus(s)}
-          </Button>
-        ))}
-      </HStack>
-
-      <HStack mb={3} gap={2} align="center" wrap="wrap">
-        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
-          Occurrences:
-        </Text>
-        <Button
-          key="UNCLAIMED"
-          size="sm"
-          variant={activeOccFilters.has("UNCLAIMED") ? "solid" : "outline"}
-          onClick={() => toggleOccFilter("UNCLAIMED")}
-        >
-          Unclaimed
-        </Button>
-        {JOB_OCCURRENCE_STATUS.map((s) => (
-          <Button
-            key={s}
-            size="sm"
-            variant={activeOccFilters.has(s) ? "solid" : "outline"}
-            onClick={() => toggleOccFilter(s)}
-          >
-            {prettyStatus(s)}
-          </Button>
-        ))}
-      </HStack>
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL") && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {kind[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {jobStatusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {jobStatusItems.find((i) => i.value === jobStatusFilter[0])?.label}
+            </Badge>
+          )}
+          {occStatusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="teal" variant="solid">
+              {occStatusItems.find((i) => i.value === occStatusFilter[0])?.label}
+            </Badge>
+          )}
+        </HStack>
+      )}
 
       <VStack align="stretch" gap={3}>
         {filtered.length === 0 && (
@@ -585,6 +630,7 @@ export default function ServicesTab({
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
+          const osf = occStatusFilter[0];
           const visibleOccs = detail
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
                 if (o.startAt) {
@@ -592,9 +638,10 @@ export default function ServicesTab({
                   if (dateFrom && d < dateFrom) return false;
                   if (dateTo && d > dateTo) return false;
                 }
+                if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
-                if (isUnclaimed) return activeOccFilters.has("UNCLAIMED");
-                return activeOccFilters.has(o.status);
+                if (osf === "UNCLAIMED") return isUnclaimed;
+                return !isUnclaimed && o.status === osf;
               })
             : [];
 

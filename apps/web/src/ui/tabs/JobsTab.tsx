@@ -2,17 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Card,
   HStack,
   Input,
   Select,
+  Spinner,
   Text,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, LayoutList, RefreshCw } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, LayoutList, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -37,7 +39,7 @@ function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const filterButtons = ["UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
+const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItems = [
   { label: "Yesterday", value: "yesterday" },
@@ -68,28 +70,21 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     () => createListCollection({ items: kindItems }),
     [kindItems]
   );
-  const [activeFilters, setActiveFilters] = useState<Set<string>>(
-    new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"])
+  const [statusFilter, setStatusFilter] = useState<string[]>(["SCHEDULED"]);
+  const statusItems = useMemo(
+    () => statusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
+    []
   );
-
-  function toggleFilter(val: string) {
-    setActiveFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(val)) next.delete(val);
-      else next.add(val);
-      return next;
-    });
-  }
+  const statusCollection = useMemo(
+    () => createListCollection({ items: statusItems }),
+    [statusItems]
+  );
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 14);
-    return localDate(d);
-  });
+  const [dateTo, setDateTo] = useState(() => localDate(new Date()));
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
@@ -213,13 +208,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const filtered = useMemo(() => {
     let rows = items;
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
-    rows = rows.filter((occ) => {
-      if (activeFilters.size === 0) return false;
-      const hasAssignees = (occ.assignees ?? []).length > 0;
-      if (activeFilters.has("UNCLAIMED") && !hasAssignees) return true;
-      if (hasAssignees && activeFilters.has(occ.status)) return true;
-      return false;
-    });
+    const sf = statusFilter[0];
+    if (sf !== "ALL") {
+      rows = rows.filter((occ) => {
+        const hasAssignees = (occ.assignees ?? []).length > 0;
+        if (sf === "UNCLAIMED") return !hasAssignees;
+        return hasAssignees && occ.status === sf;
+      });
+    }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((occ) =>
@@ -237,7 +233,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       );
     }
     return rows;
-  }, [items, q, kind, activeFilters]);
+  }, [items, q, kind, statusFilter]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -259,7 +255,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2">
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -274,6 +270,43 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={statusCollection}
+          value={statusFilter}
+          onValueChange={(e) => setStatusFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {statusItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          minW="0"
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          onClick={() => {
+            setKind(["ALL"]);
+            setStatusFilter(["ALL"]);
+          }}
+        >
+          <X size={14} />
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -317,7 +350,6 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             if (!val) return;
             const today = new Date();
             if (val === "yesterday") {
-
               const d = new Date(today);
               d.setDate(d.getDate() - 1);
               setDateFrom(localDate(d));
@@ -382,29 +414,36 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             yesterday.setDate(yesterday.getDate() - 1);
             setDateFrom("");
             setDateTo(localDate(yesterday));
-            setActiveFilters(new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"]));
+            setStatusFilter(["ALL"]);
           }}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
         </Button>
       </HStack>
 
-      <HStack mb={3} gap={2} wrap="wrap">
-        {filterButtons.map((s) => (
-          <Button
-            key={s}
-            size="sm"
-            variant={activeFilters.has(s) ? "solid" : "outline"}
-            onClick={() => toggleFilter(s)}
-          >
-            {s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s)}
-          </Button>
-        ))}
-      </HStack>
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {kind[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {statusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+        </HStack>
+      )}
 
       {loading && items.length === 0 && <LoadingCenter />}
 
-      {(
+      <Box position="relative">
+        {loading && items.length > 0 && (
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" display="flex" alignItems="center" justifyContent="center">
+            <Spinner size="lg" />
+          </Box>
+        )}
         <VStack align="stretch" gap={3}>
           {filtered.length === 0 && (
             <Box p="8" color="fg.muted">
@@ -490,27 +529,27 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                       <StatusBadge
                         status={occ.status}
                         palette={occurrenceStatusColor(occ.status)}
-                        variant="subtle"
+                        variant="solid"
                       />
                       {isTentative && (
                         <StatusBadge
                           status="Tentative"
                           palette="orange"
-                          variant="subtle"
+                          variant="solid"
                         />
                       )}
                       {occ.isEstimate && (
                         <StatusBadge
                           status="Estimate"
                           palette="purple"
-                          variant="subtle"
+                          variant="solid"
                         />
                       )}
                       {occ.isOneOff && (
                         <StatusBadge
                           status="One-off"
                           palette="gray"
-                          variant="subtle"
+                          variant="solid"
                         />
                       )}
                     </VStack>
@@ -739,7 +778,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             );
           })}
         </VStack>
-      )}
+      </Box>
 
       {manageOccurrence && (
         <AddAssigneeDialog

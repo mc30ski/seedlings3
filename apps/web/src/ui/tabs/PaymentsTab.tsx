@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Card,
@@ -14,6 +15,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
+import { CreditCard, Filter, RefreshCw, User, X } from "lucide-react";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
 import { determineRoles, prettyStatus } from "@/src/lib/lib";
@@ -30,6 +32,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import StatusButton from "@/src/ui/components/StatusButton";
 import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
@@ -40,6 +43,23 @@ const methodFilterItems = [
 ];
 const methodFilterCollection = createListCollection({ items: methodFilterItems });
 
+function defaultDateFrom() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const typeFilterItems = [
+  { label: "All", value: "ALL" },
+  { label: "Jobs", value: "JOBS" },
+  { label: "Equipment", value: "EQUIPMENT" },
+];
+const typeFilterCollection = createListCollection({ items: typeFilterItems });
+
 // ─── Worker Payments ─────────────────────────────────────────────────
 
 function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: boolean }) {
@@ -48,9 +68,10 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"ALL" | "JOBS" | "EQUIPMENT">("ALL");
+  const [q, setQ] = useState("");
+  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
+  const [dateTo, setDateTo] = useState(todayStr);
+  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
 
   async function load() {
     setLoading(true);
@@ -80,24 +101,100 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
     void load();
   }, [dateFrom, dateTo]);
 
-  const showJobs = typeFilter === "ALL" || typeFilter === "JOBS";
-  const showEquip = typeFilter === "ALL" || typeFilter === "EQUIPMENT";
+  const showJobs = typeFilter[0] === "ALL" || typeFilter[0] === "JOBS";
+  const showEquip = typeFilter[0] === "ALL" || typeFilter[0] === "EQUIPMENT";
+
+  const filteredItems = useMemo(() => {
+    if (!q.trim()) return items;
+    const qlc = q.trim().toLowerCase();
+    return items.filter((p) => {
+      const prop = p.occurrence?.job?.property;
+      const arr = [
+        prop?.displayName || "",
+        prop?.client?.displayName || "",
+        p.payment?.method || "",
+        p.payment?.note || "",
+        p.payment?.collectedBy?.displayName || "",
+      ];
+      return arr.some((v) => v.toLowerCase().includes(qlc));
+    });
+  }, [items, q]);
+
+  const filteredCharges = useMemo(() => {
+    if (!q.trim()) return equipCharges;
+    const qlc = q.trim().toLowerCase();
+    return equipCharges.filter((c) => {
+      const arr = [c.equipment?.shortDesc || "", c.equipment?.brand || "", c.equipment?.model || ""];
+      return arr.some((v) => v.toLowerCase().includes(qlc));
+    });
+  }, [equipCharges, q]);
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={2} align="center">
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">From:</Text>
-        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} maxW="160px" />
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">To:</Text>
-        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} maxW="160px" />
+      <HStack mb={2} gap={2}>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          inputId="worker-payments-search"
+          placeholder="Search…"
+        />
+        <Select.Root
+          collection={typeFilterCollection}
+          value={typeFilter}
+          onValueChange={(e) => setTypeFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {typeFilterItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          disabled={typeFilter[0] === "ALL"}
+          onClick={() => setTypeFilter(["ALL"])}
+        >
+          <X size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => void load()}
+          loading={loading}
+        >
+          <RefreshCw size={14} />
+        </Button>
       </HStack>
-      <HStack mb={3} gap={2}>
-        {(["ALL", "JOBS", "EQUIPMENT"] as const).map((v) => (
-          <Button key={v} size="sm" variant={typeFilter === v ? "solid" : "outline"} onClick={() => setTypeFilter(v)}>
-            {v === "ALL" ? "All" : v === "JOBS" ? "Jobs" : "Equipment"}
-          </Button>
-        ))}
+      <HStack mb={2} gap={2} align="center">
+        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <Text fontSize="sm">–</Text>
+        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
       </HStack>
+      {typeFilter[0] !== "ALL" && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          <Badge size="sm" colorPalette="purple" variant="solid">
+            {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
+          </Badge>
+        </HStack>
+      )}
 
       {(() => {
         const totalExpenses = showJobs ? items.reduce(
@@ -139,16 +236,16 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         );
       })()}
 
-      {loading && <LoadingCenter />}
-      {!loading && showJobs && items.length === 0 && equipCharges.length === 0 && (
+      {loading && items.length === 0 && equipCharges.length === 0 && <LoadingCenter />}
+      {showJobs && filteredItems.length === 0 && filteredCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
 
-      {showJobs && items.length > 0 && (
+      {showJobs && filteredItems.length > 0 && (
         <Text fontSize="sm" fontWeight="semibold" mb={1}>Job Payments</Text>
       )}
       {showJobs && <VStack align="stretch" gap={2}>
-        {items.map((item) => {
+        {filteredItems.map((item) => {
           const prop = item.occurrence?.job?.property;
           const client = prop?.client;
           return (
@@ -251,11 +348,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         })}
       </VStack>}
 
-      {showEquip && equipCharges.length > 0 && (
+      {showEquip && filteredCharges.length > 0 && (
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>
-            {equipCharges.map((c) => (
+            {filteredCharges.map((c) => (
               <Card.Root key={c.id} variant="outline">
                 <Card.Body py="3" px="4">
                   <HStack justify="space-between" align="start">
@@ -302,11 +399,12 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [q, setQ] = useState("");
+  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
+  const [dateTo, setDateTo] = useState(todayStr);
   const [methodFilter, setMethodFilter] = useState<string[]>(["ALL"]);
   const [personFilter, setPersonFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"ALL" | "JOBS" | "EQUIPMENT">("ALL");
+  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
 
   // Edit state
   const [editPayment, setEditPayment] = useState<PaymentListItem | null>(null);
@@ -385,6 +483,30 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     [items]
   );
 
+  const filteredItems = useMemo(() => {
+    if (!q.trim()) return items;
+    const qlc = q.trim().toLowerCase();
+    return items.filter((p) => {
+      const prop = p.occurrence?.job?.property;
+      const arr = [
+        prop?.displayName || "",
+        prop?.client?.displayName || "",
+        p.method || "",
+        p.note || "",
+      ];
+      return arr.some((v) => v.toLowerCase().includes(qlc));
+    });
+  }, [items, q]);
+
+  const filteredCharges = useMemo(() => {
+    if (!q.trim()) return equipCharges;
+    const qlc = q.trim().toLowerCase();
+    return equipCharges.filter((c) => {
+      const arr = [c.equipment?.shortDesc || "", c.equipment?.brand || "", c.equipment?.model || ""];
+      return arr.some((v) => v.toLowerCase().includes(qlc));
+    });
+  }, [equipCharges, q]);
+
   function openEdit(p: PaymentListItem) {
     setEditPayment(p);
     setEditAmount(p.amountPaid.toFixed(2));
@@ -446,21 +568,49 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={2} align="center" wrap="wrap">
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">From:</Text>
-        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} maxW="160px" />
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">To:</Text>
-        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} maxW="160px" />
+      <HStack mb={2} gap={2}>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          inputId="admin-payments-search"
+          placeholder="Search…"
+        />
+        <Select.Root
+          collection={typeFilterCollection}
+          value={typeFilter}
+          onValueChange={(e) => setTypeFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {typeFilterItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         <Select.Root
           collection={methodFilterCollection}
           value={methodFilter}
           onValueChange={(e) => setMethodFilter(e.value)}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Method" />
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+              <CreditCard size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -479,10 +629,12 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           onValueChange={(e) => setPersonFilter(e.value[0] ?? "")}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Person" />
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-teal-100)", borderRadius: "6px" }}>
+              <User size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -495,18 +647,59 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          disabled={typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && !personFilter}
+          onClick={() => {
+            setTypeFilter(["ALL"]);
+            setMethodFilter(["ALL"]);
+            setPersonFilter("");
+          }}
+        >
+          <X size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => void load()}
+          loading={loading}
+        >
+          <RefreshCw size={14} />
+        </Button>
       </HStack>
-      <HStack mb={3} gap={2}>
-        {(["ALL", "JOBS", "EQUIPMENT"] as const).map((v) => (
-          <Button key={v} size="sm" variant={typeFilter === v ? "solid" : "outline"} onClick={() => setTypeFilter(v)}>
-            {v === "ALL" ? "All" : v === "JOBS" ? "Jobs" : "Equipment"}
-          </Button>
-        ))}
+      <HStack mb={2} gap={2} align="center">
+        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <Text fontSize="sm">–</Text>
+        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
       </HStack>
+      {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter) && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {methodFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {methodFilterItems.find((i) => i.value === methodFilter[0])?.label}
+            </Badge>
+          )}
+          {personFilter && (
+            <Badge size="sm" colorPalette="teal" variant="solid">
+              {personItems.find((i) => i.value === personFilter)?.label}
+            </Badge>
+          )}
+        </HStack>
+      )}
 
       {(() => {
-        const showJobs = typeFilter === "ALL" || typeFilter === "JOBS";
-        const showEquip = typeFilter === "ALL" || typeFilter === "EQUIPMENT";
+        const showJobs = typeFilter[0] === "ALL" || typeFilter[0] === "JOBS";
+        const showEquip = typeFilter[0] === "ALL" || typeFilter[0] === "EQUIPMENT";
         const visibleExpenses = showJobs ? totalExpenses : 0;
         const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
         const visibleTotal = showJobs ? grandTotal : 0;
@@ -552,13 +745,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         );
       })()}
 
-      {loading && <LoadingCenter />}
-      {!loading && (typeFilter === "ALL" || typeFilter === "JOBS") && items.length === 0 && equipCharges.length === 0 && (
+      {loading && items.length === 0 && equipCharges.length === 0 && <LoadingCenter />}
+      {(typeFilter[0] === "ALL" || typeFilter[0] === "JOBS") && filteredItems.length === 0 && filteredCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
 
-      {(typeFilter === "ALL" || typeFilter === "JOBS") && <VStack align="stretch" gap={2}>
-        {items.map((p) => {
+      {(typeFilter[0] === "ALL" || typeFilter[0] === "JOBS") && <VStack align="stretch" gap={2}>
+        {filteredItems.map((p) => {
           const prop = p.occurrence?.job?.property;
           const client = prop?.client;
           return (
@@ -694,11 +887,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         })}
       </VStack>}
 
-      {(typeFilter === "ALL" || typeFilter === "EQUIPMENT") && equipCharges.length > 0 && (
+      {(typeFilter[0] === "ALL" || typeFilter[0] === "EQUIPMENT") && filteredCharges.length > 0 && (
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>
-            {equipCharges.map((c) => (
+            {filteredCharges.map((c) => (
               <Card.Root key={c.id} variant="outline">
                 <Card.Body py="3" px="4">
                   <HStack justify="space-between" align="start">

@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
+  Badge,
   Box,
   Button,
   Card,
   HStack,
-  Spacer,
   Text,
   VStack,
   Select,
   createListCollection,
 } from "@chakra-ui/react";
+import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiDelete, apiPost } from "@/src/lib/api";
 import {
   determineRoles,
@@ -54,7 +55,7 @@ export default function PropertiesTab({
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string[]>(["ALL"]);
   const [kind, setKind] = useState<string[]>(["ALL"]);
 
   const [items, setItems] = useState<Property[]>([]);
@@ -77,6 +78,15 @@ export default function PropertiesTab({
   const kindCollection = useMemo(
     () => createListCollection({ items: kindItems }),
     [kindItems],
+  );
+
+  const statusItems = useMemo(
+    () => statusStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    []
+  );
+  const statusCollection = useMemo(
+    () => createListCollection({ items: statusItems }),
+    [statusItems]
   );
 
   // Main function to load all the items from the API.
@@ -122,8 +132,9 @@ export default function PropertiesTab({
     }
 
     // Filter based on entity status.
-    if (status !== "ALL") {
-      rows = rows.filter((i) => i.status === status);
+    const sf = statusFilter[0];
+    if (sf !== "ALL") {
+      rows = rows.filter((i) => i.status === sf);
     }
 
     // Filter based on free text.
@@ -159,7 +170,7 @@ export default function PropertiesTab({
     });
 
     return rows;
-  }, [items, q, kind, status]);
+  }, [items, q, kind, statusFilter]);
 
   function openCreate() {
     setEditing(null);
@@ -226,11 +237,11 @@ export default function PropertiesTab({
   }
 
   if (!isAvail) return <UnavailableNotice />;
-  if (loading) return <LoadingCenter />;
+  if (loading && items.length === 0) return <LoadingCenter />;
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={3}>
+      <HStack mb={2} gap={2}>
         <SearchWithClear
           ref={inputRef}
           value={q}
@@ -244,10 +255,12 @@ export default function PropertiesTab({
           onValueChange={(e) => setKind(e.value)}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Kind" />
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+              <LayoutList size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -260,30 +273,83 @@ export default function PropertiesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Spacer />
-        {forAdmin && <Button onClick={openCreate}>New</Button>}
+        <Select.Root
+          collection={statusCollection}
+          value={statusFilter}
+          onValueChange={(e) => setStatusFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {statusItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          onClick={() => {
+            setKind(["ALL"]);
+            setStatusFilter(["ALL"]);
+          }}
+        >
+          <X size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => void load()}
+          loading={loading}
+        >
+          <RefreshCw size={14} />
+        </Button>
+        {forAdmin && (
+          <Button
+            variant="solid"
+            size="sm"
+            px="2"
+            minW="0"
+            bg="black"
+            color="white"
+            onClick={openCreate}
+          >
+            <Plus size={16} strokeWidth={2.5} />
+          </Button>
+        )}
       </HStack>
-      <HStack mb={3} gap={2} wrap="wrap">
-        {statusStates
-          .map((s) => ({
-            label: prettyStatus(s),
-            val: s,
-          }))
-          .map(({ label, val }) => (
-            <Button
-              key={val}
-              size="sm"
-              variant={status === val ? "solid" : "outline"}
-              onClick={() => {
-                setStatus(val);
-              }}
-            >
-              {label}
-            </Button>
-          ))}
-      </HStack>
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {kind[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {statusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+        </HStack>
+      )}
       <VStack align="stretch" gap={3}>
-        {!loading && filtered.length === 0 && (
+        {filtered.length === 0 && (
           <Box p="8" color="fg.muted">
             No properties match current filters.
           </Box>
