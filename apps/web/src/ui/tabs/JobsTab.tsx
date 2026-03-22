@@ -8,14 +8,14 @@ import {
   HStack,
   Input,
   Select,
-  Spacer,
   Text,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
+import { AlertTriangle, CalendarRange, LayoutList, RefreshCw } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
-import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
   publishInlineMessage,
@@ -51,27 +51,30 @@ const quickDateItems = [
 ];
 const quickDateCollection = createListCollection({ items: quickDateItems });
 
+const kindStates = ["ALL", ...JOB_KIND] as const;
+
 export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const { isAvail, forAdmin } = determineRoles(me, purpose);
   const myId = me?.id ?? "";
 
   const [q, setQ] = useState("");
+  const [kind, setKind] = useState<string[]>(["ALL"]);
+
+  const kindItems = useMemo(
+    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    []
+  );
+  const kindCollection = useMemo(
+    () => createListCollection({ items: kindItems }),
+    [kindItems]
+  );
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"])
   );
 
   function toggleFilter(val: string) {
     setActiveFilters((prev) => {
-      if (val === "OVERDUE") {
-        if (prev.has("OVERDUE")) return new Set<string>();
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        setDateFrom("");
-        setDateTo(localDate(yesterday));
-        return new Set(["OVERDUE"]);
-      }
       const next = new Set(prev);
-      next.delete("OVERDUE");
       if (next.has(val)) next.delete(val);
       else next.add(val);
       return next;
@@ -209,13 +212,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const filtered = useMemo(() => {
     let rows = items;
-    const today = localDate(new Date());
+    if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
     rows = rows.filter((occ) => {
       if (activeFilters.size === 0) return false;
-      if (activeFilters.has("OVERDUE")) {
-        const d = occ.startAt ? occ.startAt.slice(0, 10) : "";
-        if (d < today && occ.status !== "CLOSED" && occ.status !== "ARCHIVED") return true;
-      }
       const hasAssignees = (occ.assignees ?? []).length > 0;
       if (activeFilters.has("UNCLAIMED") && !hasAssignees) return true;
       if (hasAssignees && activeFilters.has(occ.status)) return true;
@@ -238,34 +237,55 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       );
     }
     return rows;
-  }, [items, q, activeFilters]);
+  }, [items, q, kind, activeFilters]);
 
   if (!isAvail) return <UnavailableNotice />;
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={3}>
+      <HStack mb={3} gap={2}>
         <SearchWithClear
           value={q}
           onChange={setQ}
           inputId="jobs-search"
           placeholder="Search…"
         />
-        <Spacer />
+        <Select.Root
+          collection={kindCollection}
+          value={kind}
+          onValueChange={(e) => setKind(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <LayoutList size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {kindItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         <Button
           size="sm"
           variant="ghost"
           onClick={() => void load()}
           loading={loading}
+          px="2"
         >
-          Refresh
+          <RefreshCw size={14} />
         </Button>
       </HStack>
 
       <HStack mb={3} gap={2} align="center">
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">
-          Date range:
-        </Text>
         <Input
           type="date"
           size="sm"
@@ -275,7 +295,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             setDateFrom(val);
             if (dateTo && val && val > dateTo) setDateTo(val);
           }}
-          maxW="160px"
+          css={{ flex: 1, minWidth: 0 }}
         />
         <Text fontSize="sm">–</Text>
         <Input
@@ -287,7 +307,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             setDateTo(val);
             if (dateFrom && val && val < dateFrom) setDateFrom(val);
           }}
-          maxW="160px"
+          css={{ flex: 1, minWidth: 0 }}
         />
         <Select.Root
           collection={quickDateCollection}
@@ -297,6 +317,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             if (!val) return;
             const today = new Date();
             if (val === "yesterday") {
+
               const d = new Date(today);
               d.setDate(d.getDate() - 1);
               setDateFrom(localDate(d));
@@ -334,10 +355,12 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Quick…" />
+            <Select.Trigger w="auto" minW="0" px="2">
+              <CalendarRange size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -350,6 +373,20 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          onClick={() => {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            setDateFrom("");
+            setDateTo(localDate(yesterday));
+            setActiveFilters(new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"]));
+          }}
+        >
+          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+        </Button>
       </HStack>
 
       <HStack mb={3} gap={2} wrap="wrap">
@@ -363,14 +400,6 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             {s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s)}
           </Button>
         ))}
-        <Button
-          size="sm"
-          variant={activeFilters.has("OVERDUE") ? "solid" : "outline"}
-          colorPalette="red"
-          onClick={() => toggleFilter("OVERDUE")}
-        >
-          Overdue
-        </Button>
       </HStack>
 
       {loading && items.length === 0 && <LoadingCenter />}

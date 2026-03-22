@@ -50,6 +50,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "JOBS" | "EQUIPMENT">("ALL");
 
   async function load() {
     setLoading(true);
@@ -79,6 +80,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
     void load();
   }, [dateFrom, dateTo]);
 
+  const showJobs = typeFilter === "ALL" || typeFilter === "JOBS";
+  const showEquip = typeFilter === "ALL" || typeFilter === "EQUIPMENT";
+
   return (
     <Box w="full">
       <HStack mb={3} gap={2} align="center">
@@ -87,20 +91,30 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">To:</Text>
         <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} maxW="160px" />
       </HStack>
+      <HStack mb={3} gap={2}>
+        {(["ALL", "JOBS", "EQUIPMENT"] as const).map((v) => (
+          <Button key={v} size="sm" variant={typeFilter === v ? "solid" : "outline"} onClick={() => setTypeFilter(v)}>
+            {v === "ALL" ? "All" : v === "JOBS" ? "Jobs" : "Equipment"}
+          </Button>
+        ))}
+      </HStack>
 
       {(() => {
-        const totalExpenses = items.reduce(
+        const totalExpenses = showJobs ? items.reduce(
           (s, it) => s + (it.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0),
           0
-        );
-        const totalEquipCost = equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0);
+        ) : 0;
+        const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
+        const visibleTotal = showJobs ? totalAmount : 0;
         const totalDeductions = totalExpenses + totalEquipCost;
-        const net = totalAmount - totalDeductions;
+        const net = visibleTotal - totalDeductions;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
-            <Text fontSize="lg" fontWeight="bold" color="green.700">
-              Total: ${totalAmount.toFixed(2)}
-            </Text>
+            {showJobs && (
+              <Text fontSize="lg" fontWeight="bold" color="green.700">
+                Total: ${visibleTotal.toFixed(2)}
+              </Text>
+            )}
             {totalExpenses > 0 && (
               <Text fontSize="sm" color="orange.600">
                 Expenses: −${totalExpenses.toFixed(2)}
@@ -111,9 +125,14 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                 Equipment: −${totalEquipCost.toFixed(2)}
               </Text>
             )}
-            {totalDeductions > 0 && (
+            {totalDeductions > 0 && showJobs && (
               <Text fontSize="lg" fontWeight="bold" color="green.700">
                 Net: ${net.toFixed(2)}
+              </Text>
+            )}
+            {!showJobs && totalEquipCost > 0 && (
+              <Text fontSize="lg" fontWeight="bold" color="orange.600">
+                Equipment Total: −${totalEquipCost.toFixed(2)}
               </Text>
             )}
           </Box>
@@ -121,14 +140,14 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       })()}
 
       {loading && <LoadingCenter />}
-      {!loading && items.length === 0 && (
+      {!loading && showJobs && items.length === 0 && equipCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
 
-      {items.length > 0 && (
+      {showJobs && items.length > 0 && (
         <Text fontSize="sm" fontWeight="semibold" mb={1}>Job Payments</Text>
       )}
-      <VStack align="stretch" gap={2}>
+      {showJobs && <VStack align="stretch" gap={2}>
         {items.map((item) => {
           const prop = item.occurrence?.job?.property;
           const client = prop?.client;
@@ -230,9 +249,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             </Card.Root>
           );
         })}
-      </VStack>
+      </VStack>}
 
-      {equipCharges.length > 0 && (
+      {showEquip && equipCharges.length > 0 && (
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>
@@ -287,6 +306,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [dateTo, setDateTo] = useState("");
   const [methodFilter, setMethodFilter] = useState<string[]>(["ALL"]);
   const [personFilter, setPersonFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "JOBS" | "EQUIPMENT">("ALL");
 
   // Edit state
   const [editPayment, setEditPayment] = useState<PaymentListItem | null>(null);
@@ -476,35 +496,50 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           </Select.Positioner>
         </Select.Root>
       </HStack>
+      <HStack mb={3} gap={2}>
+        {(["ALL", "JOBS", "EQUIPMENT"] as const).map((v) => (
+          <Button key={v} size="sm" variant={typeFilter === v ? "solid" : "outline"} onClick={() => setTypeFilter(v)}>
+            {v === "ALL" ? "All" : v === "JOBS" ? "Jobs" : "Equipment"}
+          </Button>
+        ))}
+      </HStack>
 
+      {(() => {
+        const showJobs = typeFilter === "ALL" || typeFilter === "JOBS";
+        const showEquip = typeFilter === "ALL" || typeFilter === "EQUIPMENT";
+        const visibleExpenses = showJobs ? totalExpenses : 0;
+        const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
+        const visibleTotal = showJobs ? grandTotal : 0;
+        const totalDeductions = visibleExpenses + totalEquipCost;
+        const net = visibleTotal - totalDeductions;
+        return (
       <Box mb={3} p={3} bg="green.50" rounded="md">
+        {showJobs && (
         <Text fontSize="lg" fontWeight="bold" color="green.700">
-          Total: ${grandTotal.toFixed(2)}
+          Total: ${visibleTotal.toFixed(2)}
         </Text>
-        {totalExpenses > 0 && (
+        )}
+        {visibleExpenses > 0 && (
           <Text fontSize="sm" color="orange.600">
-            Expenses: −${totalExpenses.toFixed(2)}
+            Expenses: −${visibleExpenses.toFixed(2)}
           </Text>
         )}
-        {(() => {
-          const totalEquipCost = equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0);
-          const totalDeductions = totalExpenses + totalEquipCost;
-          return (
-            <>
               {totalEquipCost > 0 && (
                 <Text fontSize="sm" color="orange.600">
                   Equipment: −${totalEquipCost.toFixed(2)}
                 </Text>
               )}
-              {totalDeductions > 0 && (
+              {totalDeductions > 0 && showJobs && (
                 <Text fontSize="lg" fontWeight="bold" color="green.700">
-                  Net: ${(grandTotal - totalDeductions).toFixed(2)}
+                  Net: ${net.toFixed(2)}
                 </Text>
               )}
-            </>
-          );
-        })()}
-        {personTotals.length > 1 && (
+              {!showJobs && totalEquipCost > 0 && (
+                <Text fontSize="lg" fontWeight="bold" color="orange.600">
+                  Equipment Total: −${totalEquipCost.toFixed(2)}
+                </Text>
+              )}
+        {showJobs && personTotals.length > 1 && (
           <VStack align="start" gap={0} mt={1}>
             {personTotals.map((p) => (
               <Text key={p.userId} fontSize="sm" color="green.600">
@@ -514,13 +549,15 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           </VStack>
         )}
       </Box>
+        );
+      })()}
 
       {loading && <LoadingCenter />}
-      {!loading && items.length === 0 && (
+      {!loading && (typeFilter === "ALL" || typeFilter === "JOBS") && items.length === 0 && equipCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
 
-      <VStack align="stretch" gap={2}>
+      {(typeFilter === "ALL" || typeFilter === "JOBS") && <VStack align="stretch" gap={2}>
         {items.map((p) => {
           const prop = p.occurrence?.job?.property;
           const client = prop?.client;
@@ -655,9 +692,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             </Card.Root>
           );
         })}
-      </VStack>
+      </VStack>}
 
-      {equipCharges.length > 0 && (
+      {(typeFilter === "ALL" || typeFilter === "EQUIPMENT") && equipCharges.length > 0 && (
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>

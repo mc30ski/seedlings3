@@ -7,12 +7,12 @@ import {
   Card,
   HStack,
   Input,
-  Spacer,
   Select,
   Text,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
+import { AlertTriangle, CalendarRange, LayoutList, RefreshCw } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   determineRoles,
@@ -94,16 +94,7 @@ export default function ServicesTab({
 
   function toggleOccFilter(val: string) {
     setActiveOccFilters((prev) => {
-      if (val === "OVERDUE") {
-        if (prev.has("OVERDUE")) return new Set<string>();
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        setDateFrom("");
-        setDateTo(localDate(yesterday));
-        return new Set(["OVERDUE"]);
-      }
       const next = new Set(prev);
-      next.delete("OVERDUE");
       if (next.has(val)) next.delete(val);
       else next.add(val);
       return next;
@@ -386,7 +377,7 @@ export default function ServicesTab({
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={3}>
+      <HStack mb={3} gap={2}>
         <SearchWithClear
           ref={inputRef}
           value={q}
@@ -400,10 +391,12 @@ export default function ServicesTab({
           onValueChange={(e) => setKind(e.value)}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Kind" />
+            <Select.Trigger w="auto" minW="0" px="2">
+              <LayoutList size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -416,14 +409,14 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Spacer />
         <Button
           size="sm"
           variant="ghost"
           onClick={() => void load()}
           loading={loading}
+          px="2"
         >
-          Refresh
+          <RefreshCw size={14} />
         </Button>
         {forAdmin && (
           <Button
@@ -438,9 +431,6 @@ export default function ServicesTab({
       </HStack>
 
       <HStack mb={3} gap={2} align="center">
-        <Text fontSize="sm" color="fg.muted" whiteSpace="nowrap">
-          Date range:
-        </Text>
         <Input
           type="date"
           size="sm"
@@ -450,7 +440,7 @@ export default function ServicesTab({
             setDateFrom(val);
             if (dateTo && val && val > dateTo) setDateTo(val);
           }}
-          maxW="160px"
+          css={{ flex: 1, minWidth: 0 }}
         />
         <Text fontSize="sm">–</Text>
         <Input
@@ -462,7 +452,7 @@ export default function ServicesTab({
             setDateTo(val);
             if (dateFrom && val && val < dateFrom) setDateFrom(val);
           }}
-          maxW="160px"
+          css={{ flex: 1, minWidth: 0 }}
         />
         <Select.Root
           collection={quickDateCollection}
@@ -509,10 +499,12 @@ export default function ServicesTab({
           }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder="Quick…" />
+            <Select.Trigger w="auto" minW="0" px="2">
+              <CalendarRange size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -525,6 +517,20 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          onClick={() => {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            setDateFrom("");
+            setDateTo(localDate(yesterday));
+            setActiveOccFilters(new Set(["UNCLAIMED", "SCHEDULED", "IN_PROGRESS", "PENDING_PAYMENT"]));
+          }}
+        >
+          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+        </Button>
       </HStack>
 
       <HStack mb={1} gap={2} align="center" wrap="wrap">
@@ -566,14 +572,6 @@ export default function ServicesTab({
             {prettyStatus(s)}
           </Button>
         ))}
-        <Button
-          size="sm"
-          variant={activeOccFilters.has("OVERDUE") ? "solid" : "outline"}
-          colorPalette="red"
-          onClick={() => toggleOccFilter("OVERDUE")}
-        >
-          Overdue
-        </Button>
       </HStack>
 
       <VStack align="stretch" gap={3}>
@@ -587,13 +585,8 @@ export default function ServicesTab({
           const expanded = !!expandedMap[job.id];
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
-          const today = localDate(new Date());
           const visibleOccs = detail
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
-                if (activeOccFilters.has("OVERDUE")) {
-                  const d = o.startAt ? o.startAt.slice(0, 10) : "";
-                  return d < today && o.status !== "CLOSED" && o.status !== "ARCHIVED";
-                }
                 if (o.startAt) {
                   const d = o.startAt.slice(0, 10);
                   if (dateFrom && d < dateFrom) return false;
