@@ -101,6 +101,8 @@ model Equipment {
   issues     String?
   age        String?
 
+  dailyRate    Float?
+
   checkouts    Checkout[]
 
   createdAt  DateTime @default(now())
@@ -115,6 +117,8 @@ model Checkout {
   reservedAt   DateTime @default(now())
   checkedOutAt DateTime?
   releasedAt   DateTime?
+  rentalDays   Int?
+  rentalCost   Float?
 
   equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)

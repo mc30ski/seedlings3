@@ -770,6 +770,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.payments.listAllPayments({ from, to, userId, method });
   });
 
+  app.get("/admin/payments/equipment-charges", adminGuard, async (req: any) => {
+    const { from, to, userId } = (req.query || {}) as { from?: string; to?: string; userId?: string };
+    return services.equipment.listEquipmentCharges({ from, to, userId });
+  });
+
   // ── Admin Expenses ──
 
   app.get("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {

@@ -14,6 +14,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   Role,
   DialogMode,
@@ -61,6 +62,7 @@ export default function EquipmentDialog({
   const [condition, setCondition] = useState<string | undefined>("");
   const [issues, setIssues] = useState<string | undefined>("");
   const [age, setAge] = useState<string | undefined>("");
+  const [dailyRate, setDailyRate] = useState("");
 
   const typeItems = useMemo(
     () =>
@@ -109,6 +111,7 @@ export default function EquipmentDialog({
       setCondition(initial.condition ?? "");
       setIssues(initial.issues ?? "");
       setAge(initial.age ?? "");
+      setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
     } else {
       setType([EQUIPMENT_KIND[0]]);
       setQrSlug("");
@@ -121,6 +124,7 @@ export default function EquipmentDialog({
       setCondition("");
       setIssues("");
       setAge("");
+      setDailyRate("");
     }
   }, [open, mode, initial]);
 
@@ -137,6 +141,7 @@ export default function EquipmentDialog({
       condition: condition,
       issues: issues,
       age: age,
+      dailyRate: dailyRate ? parseFloat(dailyRate) : null,
     };
 
     setBusy(true);
@@ -243,6 +248,17 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
+                {isAdmin && (
+                  <div>
+                    <Text mb="1">Daily Rate ($)</Text>
+                    <CurrencyInput
+                      value={dailyRate}
+                      onChange={setDailyRate}
+                      size="sm"
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
                 <div>
                   <Text mb="1">Summary *</Text>
                   <Input

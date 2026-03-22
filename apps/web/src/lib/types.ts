@@ -101,6 +101,8 @@ export type Equipment = {
   issues?: string | undefined;
   age?: string | undefined;
 
+  dailyRate?: number | null;
+
   createdAt: string | undefined;
   updatedAt?: string | undefined;
   retiredAt?: string | undefined;
@@ -356,6 +358,29 @@ export type WorkerPaymentItem = {
       id: string;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };
     };
+  };
+};
+
+export type EquipmentCharge = {
+  id: string;
+  equipmentId: string;
+  userId: string;
+  reservedAt: string;
+  checkedOutAt: string | null;
+  releasedAt: string | null;
+  rentalDays: number | null;
+  rentalCost: number | null;
+  equipment: {
+    id: string;
+    shortDesc: string;
+    brand: string | null;
+    model: string | null;
+    dailyRate: number | null;
+  };
+  user: {
+    id: string;
+    displayName: string | null;
+    email: string | null;
   };
 };
 
