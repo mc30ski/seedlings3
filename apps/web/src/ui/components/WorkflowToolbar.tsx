@@ -25,8 +25,14 @@ export default function WorkflowToolbar({ workflows }: Props) {
         <Button
           key={w.id}
           size="sm"
-          variant="outline"
-          colorPalette={w.colorPalette ?? "green"}
+          variant="solid"
+          css={{
+            background: `var(--chakra-colors-${w.colorPalette ?? "green"}-500)`,
+            color: "white",
+            "&:hover": {
+              background: `var(--chakra-colors-${w.colorPalette ?? "green"}-600)`,
+            },
+          }}
           onClick={w.onClick}
         >
           {w.label}
