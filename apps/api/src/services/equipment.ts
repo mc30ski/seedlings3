@@ -9,6 +9,13 @@ type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
+function computeRentalCost(checkedOutAt: Date | null, releasedAt: Date, dailyRate: number | null): { rentalDays: number; rentalCost: number } | null {
+  if (!checkedOutAt || !dailyRate || dailyRate <= 0) return null;
+  const msPerDay = 86_400_000;
+  const rentalDays = Math.max(1, Math.ceil((releasedAt.getTime() - checkedOutAt.getTime()) / msPerDay));
+  return { rentalDays, rentalCost: rentalDays * dailyRate };
+}
+
 // Row-level lock helper
 async function lockEquipment(tx: Tx, id: string) {
   await tx.$queryRawUnsafe(
@@ -211,6 +218,7 @@ export const equipment: ServicesEquipment = {
       issues?: string;
       age?: string;
       qrSlug?: string | null;
+      dailyRate?: number | null;
     }
   ) {
     return prisma.$transaction(async (tx) => {
@@ -228,6 +236,7 @@ export const equipment: ServicesEquipment = {
           : {}),
         ...(input.issues !== undefined ? { issues: input.issues } : {}),
         ...(input.age !== undefined ? { age: input.age } : {}),
+        ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
       };
 
       const created = await tx.equipment.create({ data });
@@ -257,6 +266,7 @@ export const equipment: ServicesEquipment = {
         | "condition"
         | "issues"
         | "age"
+        | "dailyRate"
       >
     >
   ) {
@@ -277,6 +287,7 @@ export const equipment: ServicesEquipment = {
       if (patch.condition !== undefined) data.condition = patch.condition;
       if (patch.issues !== undefined) data.issues = patch.issues;
       if (patch.age !== undefined) data.age = patch.age;
+      if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
 
       const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -384,9 +395,15 @@ export const equipment: ServicesEquipment = {
       await lockEquipment(tx, id);
       const active = await getActiveCheckout(tx, id);
       if (active) {
+        const eq = await tx.equipment.findUnique({ where: { id } });
+        const releasedAt = now();
+        const rental = computeRentalCost(active.checkedOutAt, releasedAt, eq?.dailyRate ?? null);
         const checkout = await tx.checkout.update({
           where: { id: active.id },
-          data: { releasedAt: now() },
+          data: {
+            releasedAt,
+            ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
+          },
         });
         const updated = await tx.equipment.update({
           where: { id },
@@ -577,11 +594,15 @@ export const equipment: ServicesEquipment = {
         );
       }
 
-      // 3) Mark returned
+      // 3) Mark returned + compute rental cost
       const now = new Date();
+      const rental = computeRentalCost(active.checkedOutAt, now, eq.dailyRate);
       const returned = await tx.checkout.update({
         where: { id: active.id },
-        data: { releasedAt: now },
+        data: {
+          releasedAt: now,
+          ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
+        },
       });
 
       // 4) Flip equipment status back to AVAILABLE (adjust if your app uses a different state machine)
@@ -642,6 +663,24 @@ export const equipment: ServicesEquipment = {
       });
 
       return recomputeStatus(tx, id);
+    });
+  },
+
+  async listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }) {
+    const where: any = { rentalCost: { not: null } };
+    if (params?.userId) where.userId = params.userId;
+    if (params?.from || params?.to) {
+      where.releasedAt = {};
+      if (params.from) where.releasedAt.gte = new Date(params.from + "T00:00:00");
+      if (params.to) where.releasedAt.lte = new Date(params.to + "T23:59:59.999");
+    }
+    return prisma.checkout.findMany({
+      where,
+      orderBy: { releasedAt: "desc" },
+      include: {
+        equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
+        user: { select: { id: true, displayName: true, email: true } },
+      },
     });
   },
 };

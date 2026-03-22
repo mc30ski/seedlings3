@@ -609,6 +609,14 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.energy}
                   </Text>
                 )}
+                {e.dailyRate != null && e.dailyRate > 0 && (
+                  <Text fontSize="xs" color="gray.500" mt={0}>
+                    <Text as="span" fontWeight="bold">
+                      Rate:{" "}
+                    </Text>
+                    ${e.dailyRate.toFixed(2)}/day
+                  </Text>
+                )}
                 {/* Minimal collapsible for details */}
                 <ItemTile item={e} isMine={isMine(e)} />
                 {unavailableMessage(e)}

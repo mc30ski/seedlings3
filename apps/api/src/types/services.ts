@@ -172,6 +172,7 @@ export type ServicesEquipment = {
       issues?: string;
       age?: string;
       qrSlug?: string | null;
+      dailyRate?: number | null;
     }
   ): Promise<Equipment>;
 
@@ -192,6 +193,7 @@ export type ServicesEquipment = {
         | "condition"
         | "issues"
         | "age"
+        | "dailyRate"
       >
     >
   ): Promise<Equipment>;
@@ -229,6 +231,8 @@ export type ServicesEquipment = {
 
   maintenanceStart(currentUserId: string, id: string): Promise<Equipment>;
   maintenanceEnd(currentUserId: string, id: string): Promise<Equipment>;
+
+  listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }): Promise<any[]>;
 };
 
 export type ServicesUsers = {

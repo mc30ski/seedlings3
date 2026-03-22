@@ -189,6 +189,12 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.payments.listMyPayments(uid, { from, to });
   });
 
+  app.get("/payments/equipment-charges", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    return services.equipment.listEquipmentCharges({ userId: uid, from, to });
+  });
+
   app.post("/occurrences/:id/add-assignee", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const targetUserId = String(req.body?.userId ?? "");

@@ -21,6 +21,7 @@ import {
   type TabPropsType,
   type WorkerPaymentItem,
   type PaymentListItem,
+  type EquipmentCharge,
   PAYMENT_METHOD,
 } from "@/src/lib/types";
 import {
@@ -45,6 +46,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [items, setItems] = useState<WorkerPaymentItem[]>([]);
   const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -55,11 +57,17 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       const qs = new URLSearchParams();
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
-      const res = await apiGet<{ items: WorkerPaymentItem[]; totalAmount: number }>(
-        `/api/payments/mine${qs.toString() ? `?${qs}` : ""}`
-      );
+      const [res, charges] = await Promise.all([
+        apiGet<{ items: WorkerPaymentItem[]; totalAmount: number }>(
+          `/api/payments/mine${qs.toString() ? `?${qs}` : ""}`
+        ),
+        apiGet<EquipmentCharge[]>(
+          `/api/payments/equipment-charges${qs.toString() ? `?${qs}` : ""}`
+        ),
+      ]);
       setItems(res.items ?? []);
       setTotalAmount(res.totalAmount ?? 0);
+      setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
     } finally {
@@ -85,21 +93,28 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           (s, it) => s + (it.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0),
           0
         );
-        const net = totalAmount - totalExpenses;
+        const totalEquipCost = equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0);
+        const totalDeductions = totalExpenses + totalEquipCost;
+        const net = totalAmount - totalDeductions;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
             <Text fontSize="lg" fontWeight="bold" color="green.700">
               Total: ${totalAmount.toFixed(2)}
             </Text>
             {totalExpenses > 0 && (
-              <>
-                <Text fontSize="sm" color="orange.600">
-                  Expenses: −${totalExpenses.toFixed(2)}
-                </Text>
-                <Text fontSize="lg" fontWeight="bold" color="green.700">
-                  Net: ${net.toFixed(2)}
-                </Text>
-              </>
+              <Text fontSize="sm" color="orange.600">
+                Expenses: −${totalExpenses.toFixed(2)}
+              </Text>
+            )}
+            {totalEquipCost > 0 && (
+              <Text fontSize="sm" color="orange.600">
+                Equipment: −${totalEquipCost.toFixed(2)}
+              </Text>
+            )}
+            {totalDeductions > 0 && (
+              <Text fontSize="lg" fontWeight="bold" color="green.700">
+                Net: ${net.toFixed(2)}
+              </Text>
             )}
           </Box>
         );
@@ -110,6 +125,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
 
+      {items.length > 0 && (
+        <Text fontSize="sm" fontWeight="semibold" mb={1}>Job Payments</Text>
+      )}
       <VStack align="stretch" gap={2}>
         {items.map((item) => {
           const prop = item.occurrence?.job?.property;
@@ -213,6 +231,43 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           );
         })}
       </VStack>
+
+      {equipCharges.length > 0 && (
+        <>
+          <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
+          <VStack align="stretch" gap={2}>
+            {equipCharges.map((c) => (
+              <Card.Root key={c.id} variant="outline">
+                <Card.Body py="3" px="4">
+                  <HStack justify="space-between" align="start">
+                    <VStack align="start" gap={0}>
+                      <Text fontSize="md" fontWeight="semibold">
+                        {c.equipment.shortDesc}
+                      </Text>
+                      <Text fontSize="sm" color="fg.muted">
+                        {c.equipment.brand ? `${c.equipment.brand} ` : ""}
+                        {c.equipment.model ?? ""}
+                      </Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
+                        {c.equipment.dailyRate ? ` @ $${c.equipment.dailyRate.toFixed(2)}/day` : ""}
+                      </Text>
+                      {c.releasedAt && (
+                        <Text fontSize="xs" color="fg.muted">
+                          Returned {new Date(c.releasedAt).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </VStack>
+                    <Text fontWeight="bold" color="orange.600" fontSize="lg">
+                      −${(c.rentalCost ?? 0).toFixed(2)}
+                    </Text>
+                  </HStack>
+                </Card.Body>
+              </Card.Root>
+            ))}
+          </VStack>
+        </>
+      )}
     </Box>
   );
 }
@@ -226,6 +281,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [loading, setLoading] = useState(false);
+  const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -272,12 +328,22 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       if (dateTo) qs.set("to", dateTo);
       if (methodFilter[0] && methodFilter[0] !== "ALL") qs.set("method", methodFilter[0]);
       if (personFilter) qs.set("userId", personFilter);
-      const res = await apiGet<{
-        items: PaymentListItem[];
-        personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
-      }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`);
+      const eqs = new URLSearchParams();
+      if (dateFrom) eqs.set("from", dateFrom);
+      if (dateTo) eqs.set("to", dateTo);
+      if (personFilter) eqs.set("userId", personFilter);
+      const [res, charges] = await Promise.all([
+        apiGet<{
+          items: PaymentListItem[];
+          personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
+        }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
+        apiGet<EquipmentCharge[]>(
+          `/api/admin/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
+        ),
+      ]);
       setItems(res.items ?? []);
       setPersonTotals(res.personTotals ?? []);
+      setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
     } finally {
@@ -416,15 +482,28 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           Total: ${grandTotal.toFixed(2)}
         </Text>
         {totalExpenses > 0 && (
-          <>
-            <Text fontSize="sm" color="orange.600">
-              Expenses: −${totalExpenses.toFixed(2)}
-            </Text>
-            <Text fontSize="lg" fontWeight="bold" color="green.700">
-              Net: ${(grandTotal - totalExpenses).toFixed(2)}
-            </Text>
-          </>
+          <Text fontSize="sm" color="orange.600">
+            Expenses: −${totalExpenses.toFixed(2)}
+          </Text>
         )}
+        {(() => {
+          const totalEquipCost = equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0);
+          const totalDeductions = totalExpenses + totalEquipCost;
+          return (
+            <>
+              {totalEquipCost > 0 && (
+                <Text fontSize="sm" color="orange.600">
+                  Equipment: −${totalEquipCost.toFixed(2)}
+                </Text>
+              )}
+              {totalDeductions > 0 && (
+                <Text fontSize="lg" fontWeight="bold" color="green.700">
+                  Net: ${(grandTotal - totalDeductions).toFixed(2)}
+                </Text>
+              )}
+            </>
+          );
+        })()}
         {personTotals.length > 1 && (
           <VStack align="start" gap={0} mt={1}>
             {personTotals.map((p) => (
@@ -577,6 +656,46 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           );
         })}
       </VStack>
+
+      {equipCharges.length > 0 && (
+        <>
+          <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
+          <VStack align="stretch" gap={2}>
+            {equipCharges.map((c) => (
+              <Card.Root key={c.id} variant="outline">
+                <Card.Body py="3" px="4">
+                  <HStack justify="space-between" align="start">
+                    <VStack align="start" gap={0}>
+                      <Text fontSize="md" fontWeight="semibold">
+                        {c.equipment.shortDesc}
+                      </Text>
+                      <Text fontSize="sm" color="fg.muted">
+                        {c.equipment.brand ? `${c.equipment.brand} ` : ""}
+                        {c.equipment.model ?? ""}
+                      </Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {c.user.displayName ?? c.user.email ?? c.user.id}
+                      </Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
+                        {c.equipment.dailyRate ? ` @ $${c.equipment.dailyRate.toFixed(2)}/day` : ""}
+                      </Text>
+                      {c.releasedAt && (
+                        <Text fontSize="xs" color="fg.muted">
+                          Returned {new Date(c.releasedAt).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </VStack>
+                    <Text fontWeight="bold" color="orange.600" fontSize="lg">
+                      −${(c.rentalCost ?? 0).toFixed(2)}
+                    </Text>
+                  </HStack>
+                </Card.Body>
+              </Card.Root>
+            ))}
+          </VStack>
+        </>
+      )}
 
       {/* ── Edit Payment Dialog ── */}
       <Dialog.Root open={!!editPayment} onOpenChange={(e) => { if (!e.open) setEditPayment(null); }}>
