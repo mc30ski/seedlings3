@@ -12,6 +12,7 @@ import {
   VStack,
   Select,
   Icon,
+  Spinner,
   Accordion,
   createListCollection,
 } from "@chakra-ui/react";
@@ -353,6 +354,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           )}
         </HStack>
       )}
+      <Box position="relative">
+        {loading && items.length > 0 && (<>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>)}
       <VStack align="stretch" gap={3}>
         {filtered.length === 0 && (
           <Box p="8" color="fg.muted">
@@ -768,6 +774,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Card.Root>
         ))}
       </VStack>
+      </Box>
 
       {forAdmin && (
         <ClientDialog
