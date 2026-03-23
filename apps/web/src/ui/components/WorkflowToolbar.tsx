@@ -27,10 +27,11 @@ export default function WorkflowToolbar({ workflows }: Props) {
           size="sm"
           variant="solid"
           css={{
-            background: `var(--chakra-colors-${w.colorPalette ?? "green"}-500)`,
-            color: "white",
+            background: `var(--chakra-colors-${w.colorPalette ?? "green"}-100)`,
+            color: `var(--chakra-colors-${w.colorPalette ?? "green"}-800)`,
+            border: `1px solid var(--chakra-colors-${w.colorPalette ?? "green"}-400)`,
             "&:hover": {
-              background: `var(--chakra-colors-${w.colorPalette ?? "green"}-600)`,
+              background: `var(--chakra-colors-${w.colorPalette ?? "green"}-200)`,
             },
           }}
           onClick={w.onClick}

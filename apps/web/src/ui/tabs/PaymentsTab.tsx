@@ -11,6 +11,7 @@ import {
   Input,
   Portal,
   Select,
+  Spinner,
   Text,
   VStack,
   createListCollection,
@@ -237,6 +238,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       })()}
 
       {loading && items.length === 0 && equipCharges.length === 0 && <LoadingCenter />}
+      <Box position="relative">
+        {loading && (items.length > 0 || equipCharges.length > 0) && (<>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>)}
       {showJobs && filteredItems.length === 0 && filteredCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
@@ -384,6 +390,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           </VStack>
         </>
       )}
+      </Box>
     </Box>
   );
 }
@@ -746,6 +753,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       })()}
 
       {loading && items.length === 0 && equipCharges.length === 0 && <LoadingCenter />}
+      <Box position="relative">
+        {loading && (items.length > 0 || equipCharges.length > 0) && (<>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>)}
       {(typeFilter[0] === "ALL" || typeFilter[0] === "JOBS") && filteredItems.length === 0 && filteredCharges.length === 0 && (
         <Text color="fg.muted" p="8">No payments found.</Text>
       )}
@@ -926,6 +938,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           </VStack>
         </>
       )}
+      </Box>
 
       {/* ── Edit Payment Dialog ── */}
       <Dialog.Root open={!!editPayment} onOpenChange={(e) => { if (!e.open) setEditPayment(null); }}>

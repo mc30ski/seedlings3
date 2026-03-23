@@ -410,10 +410,10 @@ export default function HomePage() {
       <AppSplash show={meLoading} />
       <Box
         as="header"
-        bg="green.50"
-        bgGradient="linear(to-b, var(--chakra-colors-green-50), transparent)"
-        borderBottomWidth="1px"
-        borderColor="green.100"
+        bg="green.100"
+        bgGradient="linear(to-b, var(--chakra-colors-green-100), var(--chakra-colors-green-50))"
+        borderWidth="1px"
+        borderColor="green.400"
         px={{ base: 3, md: 4 }}
         py={{ base: 2, md: 3 }}
         borderRadius="md"
