@@ -14,7 +14,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
+import { Filter, LayoutList, List, Maximize2, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -59,6 +59,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
+  const [compact, setCompact] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string[]>(
     purpose === "WORKER" ? ["CLAIMED"] : ["ALL"]
   );
@@ -599,6 +601,19 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           <X size={14} />
         </Button>
         <Button
+          variant={compact ? "solid" : "ghost"}
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
+          css={compact ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+          } : undefined}
+        >
+          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+        <Button
           variant="ghost"
           size="sm"
           px="2"
@@ -647,12 +662,33 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             No equipment matches current filters.
           </Box>
         )}
-        {filtered.map((e: Equipment) => (
-          <Card.Root key={e.id} variant="outline">
+        {filtered.map((e: Equipment) => {
+          const isCardCompact = compact && !expandedCards.has(e.id);
+          const toggleCard = compact
+            ? () => setExpandedCards((prev) => {
+                const next = new Set(prev);
+                if (next.has(e.id)) next.delete(e.id);
+                else next.add(e.id);
+                return next;
+              })
+            : undefined;
+
+          return (
+          <Card.Root
+            key={e.id}
+            variant="outline"
+            css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
+            onClick={(ev: any) => {
+              if (!toggleCard) return;
+              const tag = (ev.target as HTMLElement)?.closest?.("a, button");
+              if (tag) return;
+              toggleCard();
+            }}
+          >
             <Card.Header pb="2">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
-                  <Text fontSize="md" fontWeight="semibold">{e.shortDesc}</Text>
+                  <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">{e.shortDesc}</Text>
                   <StatusBadge
                     status={e.status ?? ""}
                     palette={equipmentStatusColor(e.status ?? "")}
@@ -662,6 +698,22 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <StatusBadge status={e.type} palette="gray" variant="outline" />
               </HStack>
             </Card.Header>
+            {isCardCompact ? (
+              <Card.Body pt="0">
+                <HStack gap={2} fontSize="xs" color="fg.muted">
+                  <Text>
+                    {e.brand ? `${e.brand} ` : ""}
+                    {e.model ? `${e.model} ` : ""}
+                  </Text>
+                  {e.holder && (
+                    <Text color="orange.500" fontWeight="medium">
+                      {e.holder.state === "CHECKED_OUT" ? "Out: " : "Reserved: "}
+                      {e.holder.displayName || e.holder.email || e.holder.userId.slice(0, 8)}
+                    </Text>
+                  )}
+                </HStack>
+              </Card.Body>
+            ) : (
             <Card.Body pt="0">
               <VStack align="start" gap={0}>
                 <Text fontSize="sm" color="fg.muted">
@@ -697,6 +749,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {unavailableMessage(e)}
               </VStack>
             </Card.Body>
+            )}
+            {!isCardCompact && (
             <Card.Footer>
               <HStack gap={2} wrap="wrap" mb="2">
                 {forAdmin && (
@@ -848,8 +902,10 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 )}
               </HStack>
             </Card.Footer>
+            )}
           </Card.Root>
-        ))}
+          );
+        })}
       </VStack>
       </Box>
 
