@@ -7,6 +7,7 @@ export type AdminTabs =
   | "users"
   | "activity"
   | "jobs"
+  | "admin-jobs"
   | "payments"
   | "audit";
 

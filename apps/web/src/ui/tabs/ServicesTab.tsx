@@ -61,14 +61,14 @@ const jobStatusStates = ["ALL", ...JOB_STATUS] as const;
 const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItemsBase = [
-  { label: "Yesterday", value: "yesterday" },
   { label: "Today", value: "today" },
-  { label: "Last week", value: "lastWeek" },
   { label: "Next 3 days", value: "next3" },
-  { label: "Next 7 days", value: "next7" },
-  { label: "Next 14 days", value: "next14" },
-  { label: "Recent & Future", value: "recent" },
+  { label: "Next week", value: "nextWeek" },
+  { label: "Next month", value: "nextMonth" },
   { label: "Future", value: "future" },
+  { label: "Recent & Future", value: "recent" },
+  { label: "Yesterday", value: "yesterday" },
+  { label: "Last week", value: "lastWeek" },
 ];
 
 export default function ServicesTab({
@@ -89,7 +89,7 @@ export default function ServicesTab({
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 14);
+    d.setMonth(d.getMonth() + 1);
     return localDate(d);
   });
   const [quickDate, setQuickDate] = useState<string[]>([]);
@@ -628,14 +628,14 @@ export default function ServicesTab({
               d.setDate(d.getDate() - 7);
               setDateFrom(localDate(d));
               setDateTo(localDate(today));
-            } else if (val === "next7") {
+            } else if (val === "nextWeek") {
               const d = new Date(today);
               d.setDate(d.getDate() + 6);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
-            } else if (val === "next14") {
+            } else if (val === "nextMonth") {
               const d = new Date(today);
-              d.setDate(d.getDate() + 13);
+              d.setMonth(d.getMonth() + 1);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
             } else if (val === "recent") {
