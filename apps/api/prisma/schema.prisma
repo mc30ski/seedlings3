@@ -499,6 +499,8 @@ enum PaymentMethod {
   CHECK
   VENMO
   ZELLE
+  APPLE_PAY
+  CASH_APP
   OTHER
 }
 

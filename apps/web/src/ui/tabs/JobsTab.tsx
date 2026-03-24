@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, LayoutList, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, LayoutList, RefreshCw, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -70,6 +70,21 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     () => createListCollection({ items: kindItems }),
     [kindItems]
   );
+  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const typeItems = useMemo(
+    () => [
+      { label: "All Types", value: "ALL" },
+      { label: "One-off", value: "ONE_OFF" },
+      { label: "Estimate", value: "ESTIMATE" },
+      { label: "Tentative", value: "TENTATIVE" },
+    ],
+    []
+  );
+  const typeCollection = useMemo(
+    () => createListCollection({ items: typeItems }),
+    [typeItems]
+  );
+
   const [statusFilter, setStatusFilter] = useState<string[]>(["SCHEDULED"]);
   const statusItems = useMemo(
     () => statusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
@@ -208,12 +223,16 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const filtered = useMemo(() => {
     let rows = items;
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
+    const tf = typeFilter[0];
+    if (tf === "ONE_OFF") rows = rows.filter((occ) => occ.isOneOff);
+    else if (tf === "ESTIMATE") rows = rows.filter((occ) => occ.isEstimate);
+    else if (tf === "TENTATIVE") rows = rows.filter((occ) => occ.isTentative);
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
         const hasAssignees = (occ.assignees ?? []).length > 0;
         if (sf === "UNCLAIMED") return !hasAssignees;
-        return hasAssignees && occ.status === sf;
+        return occ.status === sf;
       });
     }
     const qlc = q.trim().toLowerCase();
@@ -233,7 +252,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       );
     }
     return rows;
-  }, [items, q, kind, statusFilter]);
+  }, [items, q, kind, statusFilter, typeFilter]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -294,15 +313,40 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={typeCollection}
+          value={typeFilter}
+          onValueChange={(e) => setTypeFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+              <Tag size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {typeItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         <Button
           size="sm"
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL"}
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
+            setTypeFilter(["ALL"]);
           }}
         >
           <X size={14} />
@@ -421,7 +465,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
@@ -431,6 +475,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           {statusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="solid">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="orange" variant="solid">
+              {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
         </HStack>
