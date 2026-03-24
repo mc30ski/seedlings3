@@ -139,19 +139,32 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
+    const body = req.body || {};
+    const location = (body.lat != null && body.lng != null)
+      ? { lat: Number(body.lat), lng: Number(body.lng) }
+      : undefined;
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
-      JobOccurrenceStatus.IN_PROGRESS
+      JobOccurrenceStatus.IN_PROGRESS,
+      undefined,
+      location
     );
   });
 
   app.post("/occurrences/:id/complete", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
+    const body = req.body || {};
+    const notes = body.notes != null ? String(body.notes) : undefined;
+    const location = (body.lat != null && body.lng != null)
+      ? { lat: Number(body.lat), lng: Number(body.lng) }
+      : undefined;
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
-      JobOccurrenceStatus.PENDING_PAYMENT
+      JobOccurrenceStatus.PENDING_PAYMENT,
+      notes,
+      location
     );
   });
 

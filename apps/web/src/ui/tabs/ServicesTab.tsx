@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   HStack,
-  Input,
   Select,
   Text,
   Spinner,
@@ -15,7 +14,9 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, Tag, X } from "lucide-react";
+import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { getLocation } from "@/src/lib/geo";
 import {
   determineRoles,
   jobStatusColor,
@@ -59,17 +60,16 @@ const kindStates = ["ALL", ...JOB_KIND] as const;
 const jobStatusStates = ["ALL", ...JOB_STATUS] as const;
 const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
-const quickDateItems = [
+const quickDateItemsBase = [
   { label: "Yesterday", value: "yesterday" },
   { label: "Today", value: "today" },
   { label: "Last week", value: "lastWeek" },
   { label: "Next 3 days", value: "next3" },
   { label: "Next 7 days", value: "next7" },
   { label: "Next 14 days", value: "next14" },
+  { label: "Recent & Future", value: "recent" },
   { label: "Future", value: "future" },
-  { label: "All time", value: "all" },
 ];
-const quickDateCollection = createListCollection({ items: quickDateItems });
 
 export default function ServicesTab({
   me,
@@ -84,12 +84,26 @@ export default function ServicesTab({
   const [occStatusFilter, setOccStatusFilter] = useState<string[]>(["ALL"]);
   const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
 
+  const [overdueActive, setOverdueActive] = useState(false);
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 14);
     return localDate(d);
   });
+  const [quickDate, setQuickDate] = useState<string[]>([]);
+
+  const quickDateItems = useMemo(
+    () =>
+      forAdmin
+        ? [...quickDateItemsBase, { label: "All time", value: "all" }]
+        : quickDateItemsBase,
+    [forAdmin]
+  );
+  const quickDateCollection = useMemo(
+    () => createListCollection({ items: quickDateItems }),
+    [quickDateItems]
+  );
 
   const kindItems = useMemo(
     () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
@@ -165,7 +179,9 @@ export default function ServicesTab({
     message: string;
     confirmLabel: string;
     colorPalette: string;
-    onConfirm: () => void;
+    onConfirm: ((inputValue: string) => void) | (() => void);
+    inputPlaceholder?: string;
+    inputLabel?: string;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -241,13 +257,22 @@ export default function ServicesTab({
     }
   }
 
-  async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string) {
+  async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string, notes?: string) {
     // Capture occurrence data before the API call for schedule-next prompt
     const detail = jobDetails[jobId];
     const occ = detail?.occurrences.find((o) => o.id === occurrenceId);
     const job = items.find((j) => j.id === jobId);
     try {
-      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, { status: newStatus });
+      const payload: Record<string, unknown> = { status: newStatus };
+      if (notes) payload.notes = notes;
+      if (newStatus === "IN_PROGRESS" || newStatus === "PENDING_PAYMENT" || newStatus === "CLOSED") {
+        const loc = await getLocation();
+        if (loc) {
+          if (newStatus === "IN_PROGRESS") { payload.startLat = loc.lat; payload.startLng = loc.lng; }
+          else { payload.completeLat = loc.lat; payload.completeLng = loc.lng; }
+        }
+      }
+      await apiPatch(`/api/admin/occurrences/${occurrenceId}`, payload);
       void loadDetail(jobId, true);
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
 
@@ -500,12 +525,15 @@ export default function ServicesTab({
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL"}
+          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive}
           onClick={() => {
             setKind(["ALL"]);
             setJobStatusFilter(["ALL"]);
             setOccStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
+            setOverdueActive(false);
+            setDateFrom(localDate(new Date()));
+            setDateTo("");
           }}
         >
           <X size={14} />
@@ -538,33 +566,26 @@ export default function ServicesTab({
       </HStack>
 
       <HStack mb={3} gap={2} align="center">
-        <Input
-          type="date"
-          size="sm"
+        <DateInput
           value={dateFrom}
-          onChange={(e) => {
-            const val = e.target.value;
+          onChange={(val) => {
             setDateFrom(val);
             if (dateTo && val && val > dateTo) setDateTo(val);
           }}
-          css={{ flex: 1, minWidth: 0 }}
         />
         <Text fontSize="sm">–</Text>
-        <Input
-          type="date"
-          size="sm"
+        <DateInput
           value={dateTo}
-          onChange={(e) => {
-            const val = e.target.value;
+          onChange={(val) => {
             setDateTo(val);
             if (dateFrom && val && val < dateFrom) setDateFrom(val);
           }}
-          css={{ flex: 1, minWidth: 0 }}
         />
         <Select.Root
           collection={quickDateCollection}
-          value={[]}
+          value={quickDate}
           onValueChange={(e) => {
+            setQuickDate(e.value);
             const val = e.value[0];
             if (!val) return;
             const today = new Date();
@@ -596,13 +617,31 @@ export default function ServicesTab({
               d.setDate(d.getDate() + 13);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
+            } else if (val === "recent") {
+              const d = new Date(today);
+              d.setDate(d.getDate() - 30);
+              setDateFrom(localDate(d));
+              setDateTo("");
             } else if (val === "future") {
               setDateFrom(localDate(today));
               setDateTo("");
             } else if (val === "all") {
-              setDateFrom("");
-              setDateTo("");
+              setConfirmAction({
+                title: "Load All Data",
+                message:
+                  "This will load all occurrences for all time. This may be slow. Are you sure?",
+                confirmLabel: "Load All",
+                colorPalette: "orange",
+                onConfirm: () => {
+                  setDateFrom("");
+                  setDateTo("");
+                },
+              });
+              requestAnimationFrame(() => setQuickDate([]));
+              return;
             }
+            setOverdueActive(false);
+            requestAnimationFrame(() => setQuickDate([]));
           }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
@@ -626,22 +665,38 @@ export default function ServicesTab({
         </Select.Root>
         <Button
           size="sm"
-          variant="ghost"
+          variant={overdueActive ? "solid" : "ghost"}
           px="2"
           onClick={() => {
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            setDateFrom("");
-            setDateTo(localDate(yesterday));
-            setOccStatusFilter(["ALL"]);
+            if (overdueActive) {
+              setOverdueActive(false);
+            } else {
+              const yesterday = new Date();
+              yesterday.setDate(yesterday.getDate() - 1);
+              setDateFrom("");
+              setDateTo(localDate(yesterday));
+              setOccStatusFilter(["ALL"]);
+              setOverdueActive(true);
+            }
           }}
+          css={overdueActive ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-400)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {overdueActive && (
+            <Badge size="sm" colorPalette="red" variant="solid">
+              Overdue
+            </Badge>
+          )}
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
               {kindItems.find((i) => i.value === kind[0])?.label}
@@ -693,6 +748,7 @@ export default function ServicesTab({
                 if (tf === "ONE_OFF" && !o.isOneOff) return false;
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
+                if (overdueActive && (o.status === "CLOSED" || o.status === "ARCHIVED")) return false;
                 if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
                 if (osf === "UNCLAIMED") return isUnclaimed;
@@ -703,15 +759,22 @@ export default function ServicesTab({
           return (
             <Card.Root key={job.id} variant="outline">
               <Card.Header pb="2">
-                <HStack gap={3} justify="space-between" align="center">
-                  <HStack gap={3} flex="1" minW={0}>
+                <HStack gap={3} justify="space-between" align="start">
+                  <HStack gap={3} flex="1" minW={0} align="center">
                     <VStack align="start" gap={0}>
-                      <Text fontSize="md" fontWeight="semibold">
-                        {job.property?.client?.displayName && (
-                          <>{job.property.client.displayName} — </>
-                        )}
-                        {job.property?.displayName ?? job.propertyId}
-                      </Text>
+                      <HStack gap={2} align="center">
+                        <Text fontSize="md" fontWeight="semibold">
+                          {job.property?.client?.displayName && (
+                            <>{job.property.client.displayName} — </>
+                          )}
+                          {job.property?.displayName ?? job.propertyId}
+                        </Text>
+                        <StatusBadge
+                          status={job.status}
+                          palette={jobStatusColor(job.status)}
+                          variant="subtle"
+                        />
+                      </HStack>
                       <HStack gap={3} fontSize="xs">
                         {job.property?.displayName && (
                           <TextLink
@@ -727,11 +790,6 @@ export default function ServicesTab({
                         )}
                       </HStack>
                     </VStack>
-                    <StatusBadge
-                      status={job.status}
-                      palette={jobStatusColor(job.status)}
-                      variant="subtle"
-                    />
                   </HStack>
                   <StatusBadge status={job.kind} palette="gray" variant="outline" />
                 </HStack>
@@ -843,6 +901,20 @@ export default function ServicesTab({
                               <Text fontSize="xs" color="fg.muted">
                                 {occ.notes}
                               </Text>
+                            )}
+                            {(occ.startLat != null || occ.completeLat != null) && (
+                              <HStack gap={3} fontSize="xs" color="fg.muted">
+                                {occ.startLat != null && occ.startLng != null && (
+                                  <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                                    Started: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
+                                  </a>
+                                )}
+                                {occ.completeLat != null && occ.completeLng != null && (
+                                  <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                                    Completed: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
+                                  </a>
+                                )}
+                              </HStack>
                             )}
                             {occ.payment && (
                               <Box mt={1} p={1} bg="green.50" rounded="sm">
@@ -981,7 +1053,13 @@ export default function ServicesTab({
                                     : "Are you sure you want to mark this occurrence as complete?",
                                   confirmLabel: "Complete",
                                   colorPalette: "green",
-                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, occ.isEstimate ? "CLOSED" : "PENDING_PAYMENT"),
+                                  ...(occ.isEstimate
+                                    ? {
+                                        inputLabel: "Comment (required)",
+                                        inputPlaceholder: "What happened and why is this estimate being completed?",
+                                        onConfirm: (comment: string) => void patchOccurrenceStatus(occ.id, job.id, "CLOSED", comment),
+                                      }
+                                    : { onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT") }),
                                 })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
@@ -1303,8 +1381,14 @@ export default function ServicesTab({
         message={confirmAction?.message ?? ""}
         confirmLabel={confirmAction?.confirmLabel}
         confirmColorPalette={confirmAction?.colorPalette}
-        onConfirm={() => {
-          confirmAction?.onConfirm();
+        inputPlaceholder={confirmAction?.inputPlaceholder}
+        inputLabel={confirmAction?.inputLabel}
+        onConfirm={(inputValue: string) => {
+          if (confirmAction?.inputPlaceholder) {
+            (confirmAction.onConfirm as (v: string) => void)(inputValue);
+          } else {
+            (confirmAction?.onConfirm as () => void)();
+          }
           setConfirmAction(null);
         }}
         onCancel={() => setConfirmAction(null)}

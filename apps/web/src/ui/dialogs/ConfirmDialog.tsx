@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef } from "react";
-import { Button, Dialog, HStack, Portal, Text } from "@chakra-ui/react";
+import { useRef, useState, useEffect } from "react";
+import { Button, Dialog, HStack, Portal, Text, Box } from "@chakra-ui/react";
 
 type Props = {
   open: boolean;
@@ -9,8 +9,12 @@ type Props = {
   message: string;
   confirmLabel?: string;
   confirmColorPalette?: string;
-  onConfirm: () => void;
+  onConfirm: ((inputValue: string) => void) | (() => void);
   onCancel: () => void;
+  /** If provided, shows a required text input with this placeholder */
+  inputPlaceholder?: string;
+  /** Label for the text input */
+  inputLabel?: string;
 };
 
 export default function ConfirmDialog({
@@ -21,8 +25,28 @@ export default function ConfirmDialog({
   confirmColorPalette = "green",
   onConfirm,
   onCancel,
+  inputPlaceholder,
+  inputLabel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const [inputValue, setInputValue] = useState("");
+
+  // Reset input when dialog opens/closes
+  useEffect(() => {
+    if (open) setInputValue("");
+  }, [open]);
+
+  const hasInput = !!inputPlaceholder;
+  const canConfirm = !hasInput || inputValue.trim().length > 0;
+
+  function handleConfirm() {
+    if (!canConfirm) return;
+    if (hasInput) {
+      (onConfirm as (v: string) => void)(inputValue.trim());
+    } else {
+      (onConfirm as () => void)();
+    }
+  }
 
   return (
     <Dialog.Root
@@ -44,13 +68,43 @@ export default function ConfirmDialog({
             </Dialog.Header>
             <Dialog.Body>
               <Text>{message}</Text>
+              {hasInput && (
+                <Box mt={3}>
+                  {inputLabel && (
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>
+                      {inputLabel}
+                    </Text>
+                  )}
+                  <textarea
+                    placeholder={inputPlaceholder}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      fontSize: "0.875rem",
+                      padding: "0.5rem",
+                      borderRadius: "0.375rem",
+                      border: "1px solid var(--chakra-colors-border)",
+                      background: "var(--chakra-colors-bg)",
+                      color: "var(--chakra-colors-fg)",
+                      outline: "none",
+                      resize: "vertical",
+                    }}
+                  />
+                </Box>
+              )}
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={onCancel}>
                   Cancel
                 </Button>
-                <Button colorPalette={confirmColorPalette} onClick={onConfirm}>
+                <Button
+                  colorPalette={confirmColorPalette}
+                  onClick={handleConfirm}
+                  disabled={!canConfirm}
+                >
                   {confirmLabel}
                 </Button>
               </HStack>

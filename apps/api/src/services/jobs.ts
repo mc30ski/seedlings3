@@ -660,7 +660,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async updateOccurrenceStatus(currentUserId, occurrenceId, status) {
+  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }) {
     return prisma.$transaction(async (tx) => {
       const assignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
@@ -675,9 +675,21 @@ export const jobs: ServicesJobs = {
         ? JobOccurrenceStatus.CLOSED
         : status;
 
+      const data: any = { status: finalStatus };
+      if (notes !== undefined) data.notes = notes;
+      if (location) {
+        if (status === JobOccurrenceStatus.IN_PROGRESS) {
+          data.startLat = location.lat;
+          data.startLng = location.lng;
+        } else {
+          data.completeLat = location.lat;
+          data.completeLng = location.lng;
+        }
+      }
+
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { status: finalStatus },
+        data,
       });
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {

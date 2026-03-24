@@ -444,7 +444,9 @@ export type ServicesJobs = {
   updateOccurrenceStatus(
     currentUserId: string,
     occurrenceId: string,
-    status: JobOccurrenceStatus
+    status: JobOccurrenceStatus,
+    notes?: string,
+    location?: { lat: number; lng: number }
   ): Promise<JobOccurrence>;
 
   get(id: string): Promise<

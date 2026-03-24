@@ -249,6 +249,10 @@ export type JobOccurrenceFull = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  startLat?: number | null;
+  startLng?: number | null;
+  completeLat?: number | null;
+  completeLng?: number | null;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
@@ -396,6 +400,10 @@ export type WorkerOccurrence = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  startLat?: number | null;
+  startLng?: number | null;
+  completeLat?: number | null;
+  completeLng?: number | null;
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
   job: {
