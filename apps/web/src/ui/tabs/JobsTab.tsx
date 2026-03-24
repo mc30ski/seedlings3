@@ -85,7 +85,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     [typeItems]
   );
 
-  const [statusFilter, setStatusFilter] = useState<string[]>(["SCHEDULED"]);
+  const [statusFilter, setStatusFilter] = useState<string[]>(["ALL"]);
   const statusItems = useMemo(
     () => statusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
     []
@@ -97,13 +97,10 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+  const [overdueCount, setOverdueCount] = useState(0);
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 6);
-    return localDate(d);
-  });
+  const [dateTo, setDateTo] = useState("");
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
 
@@ -180,6 +177,26 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   useEffect(() => {
     void load();
   }, [dateFrom, dateTo]);
+
+  async function refreshOverdueCount() {
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const list = await apiGet<WorkerOccurrence[]>(
+        `/api/occurrences?to=${localDate(yesterday)}`
+      );
+      const count = (Array.isArray(list) ? list : []).filter(
+        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED"
+      ).length;
+      setOverdueCount(count);
+    } catch {
+      // silently ignore
+    }
+  }
+
+  useEffect(() => {
+    void refreshOverdueCount();
+  }, [items]);
 
   async function claim(occurrenceId: string) {
     try {
@@ -279,8 +296,47 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           .some((s) => s!.toLowerCase().includes(qlc))
       );
     }
+    rows.sort((a, b) => {
+      const da = a.startAt ?? "";
+      const db = b.startAt ?? "";
+      return da < db ? -1 : da > db ? 1 : 0;
+    });
     return rows;
   }, [items, q, kind, statusFilter, typeFilter, overdueActive]);
+
+  const dayGroups = useMemo(() => {
+    const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    // day labels are relative to today
+
+    const dayLabel = (dateStr: string) => {
+      const d = new Date(dateStr + "T00:00:00");
+      const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+      if (diff === 0) return "Today";
+      if (diff === -1) return "Yesterday";
+      if (diff === 1) return "Tomorrow";
+      const dayName = d.toLocaleDateString(undefined, { weekday: "long" });
+      if (diff >= 2 && diff <= 6) return dayName;
+      if (diff <= -2 && diff >= -6) return `Last ${dayName}`;
+      return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
+    };
+
+    let current: (typeof groups)[number] | null = null;
+    for (const occ of filtered) {
+      const dateKey = occ.startAt?.slice(0, 10) ?? "no-date";
+      if (!current || current.key !== dateKey) {
+        current = {
+          key: dateKey,
+          label: dateKey === "no-date" ? "Unscheduled" : dayLabel(dateKey),
+          items: [],
+        };
+        groups.push(current);
+      }
+      current.items.push(occ);
+    }
+    return groups;
+  }, [filtered]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -515,6 +571,20 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           } : undefined}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+          {!overdueActive && overdueCount > 0 && (
+            <Badge
+              size="xs"
+              colorPalette="red"
+              variant="solid"
+              borderRadius="full"
+              px="1.5"
+              fontSize="2xs"
+              lineHeight="1"
+              minW="0"
+            >
+              {overdueCount}
+            </Badge>
+          )}
         </Button>
       </HStack>
 
@@ -551,13 +621,23 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
         </>)}
         <VStack align="stretch" gap={3}>
-          {filtered.length === 0 && (
+          {dayGroups.length === 0 && (
             <Box p="8" color="fg.muted">
               No job occurrences match current filters.
             </Box>
           )}
 
-          {filtered.map((occ) => {
+          {dayGroups.map((group) => (
+            <Box key={group.key}>
+              <HStack gap={2} align="center" my={1}>
+                <Box flex="1" borderBottomWidth="1px" borderColor="border.muted" />
+                <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
+                  {group.label}
+                </Text>
+                <Box flex="1" borderBottomWidth="1px" borderColor="border.muted" />
+              </HStack>
+              <VStack align="stretch" gap={3}>
+          {group.items.map((occ) => {
             const assignees = occ.assignees ?? [];
             const isAssignedToMe = !!myId && assignees.some((a) => a.userId === myId);
             const isUnassigned = assignees.length === 0;
@@ -903,6 +983,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
               </Card.Root>
             );
           })}
+              </VStack>
+            </Box>
+          ))}
         </VStack>
       </Box>
 

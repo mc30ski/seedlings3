@@ -85,6 +85,7 @@ export default function ServicesTab({
   const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
 
   const [overdueActive, setOverdueActive] = useState(false);
+  const [overdueCount, setOverdueCount] = useState(0);
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
     const d = new Date();
@@ -214,6 +215,26 @@ export default function ServicesTab({
   useEffect(() => {
     void load();
   }, []);
+
+  async function refreshOverdueCount() {
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const list = await apiGet<{ id: string; status: string }[]>(
+        `/api/occurrences?to=${localDate(yesterday)}`
+      );
+      const count = (Array.isArray(list) ? list : []).filter(
+        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED"
+      ).length;
+      setOverdueCount(count);
+    } catch {
+      // silently ignore
+    }
+  }
+
+  useEffect(() => {
+    void refreshOverdueCount();
+  }, [items]);
 
   useEffect(() => {
     onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef);
@@ -687,6 +708,20 @@ export default function ServicesTab({
           } : undefined}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+          {!overdueActive && overdueCount > 0 && (
+            <Badge
+              size="xs"
+              colorPalette="red"
+              variant="solid"
+              borderRadius="full"
+              px="1.5"
+              fontSize="2xs"
+              lineHeight="1"
+              minW="0"
+            >
+              {overdueCount}
+            </Badge>
+          )}
         </Button>
       </HStack>
 
