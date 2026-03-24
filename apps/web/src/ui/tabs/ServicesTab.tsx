@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -79,15 +80,15 @@ export default function ServicesTab({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
-  const [kind, setKind] = useState<string[]>(["ALL"]);
-  const [jobStatusFilter, setJobStatusFilter] = useState<string[]>(["ALL"]);
-  const [occStatusFilter, setOccStatusFilter] = useState<string[]>(["ALL"]);
-  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const [kind, setKind] = usePersistedState<string[]>("services_kind", ["ALL"]);
+  const [jobStatusFilter, setJobStatusFilter] = usePersistedState<string[]>("services_jobStatus", ["ALL"]);
+  const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
+  const [typeFilter, setTypeFilter] = usePersistedState<string[]>("services_type", ["ALL"]);
 
-  const [overdueActive, setOverdueActive] = useState(false);
+  const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [overdueCount, setOverdueCount] = useState(0);
-  const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
+  const [dateFrom, setDateFrom] = usePersistedState("services_dateFrom", () => localDate(new Date()));
+  const [dateTo, setDateTo] = usePersistedState("services_dateTo", () => {
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
     return localDate(d);

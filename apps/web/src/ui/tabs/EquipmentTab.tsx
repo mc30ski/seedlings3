@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -59,12 +60,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const [compact, setCompact] = useState(false);
+  const pfx = purpose === "WORKER" ? "equip_w" : "equip_a";
+  const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [statusFilter, setStatusFilter] = useState<string[]>(
-    purpose === "WORKER" ? ["CLAIMED"] : ["ALL"]
+  const [statusFilter, setStatusFilter] = usePersistedState<string[]>(
+    `${pfx}_status`, purpose === "WORKER" ? ["CLAIMED"] : ["ALL"]
   );
-  const [kind, setKind] = useState<string[]>(["ALL"]);
+  const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);

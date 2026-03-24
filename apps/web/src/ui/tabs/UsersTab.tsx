@@ -1,5 +1,6 @@
 // apps/web/src/components/AdminUsers.tsx
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Box,
   Button,
@@ -70,9 +71,9 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
 
   // simple filters
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<Status>("all");
-  const [accessRole, setAccessRole] = useState<"all" | "worker" | "admin">(
-    "all"
+  const [status, setStatus] = usePersistedState<Status>("users_status", "all");
+  const [accessRole, setAccessRole] = usePersistedState<"all" | "worker" | "admin">(
+    "users_role", "all"
   );
 
   // current holdings map (userId -> Holding[])

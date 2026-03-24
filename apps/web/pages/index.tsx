@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Box, Container, HStack } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
@@ -60,10 +61,10 @@ export default function HomePage() {
   const isWorker = hasRole(me?.roles, "WORKER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
-  const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
+  const [topTab, setTopTab] = usePersistedState<"worker" | "admin">("topTab", "worker");
 
-  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("admin-jobs");
-  const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("jobs");
+  const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
+  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "jobs");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
 
@@ -279,7 +280,7 @@ export default function HomePage() {
           onValueChange={(v) => setWorkerInnerTab(v as WorkerTabs)}
           edgeMode="overlay"
           edgeSize={16}
-          headerPaddingY={2}
+          headerPaddingY={0}
           unmountOnExit
         />
       ),
@@ -303,7 +304,7 @@ export default function HomePage() {
             onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
             edgeMode="overlay"
             edgeSize={16}
-            headerPaddingY={2}
+            headerPaddingY={0}
             unmountOnExit
           />
         </>
@@ -584,7 +585,7 @@ export default function HomePage() {
           onValueChange={(v) => setTopTab(v as typeof topTab)}
           edgeMode="overlay"
           edgeSize={16}
-          headerPaddingY={2}
+          headerPaddingY={0}
           unmountOnExit
         />
       )}

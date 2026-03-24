@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -53,11 +54,12 @@ export default function PropertiesTab({
   purpose = "WORKER",
 }: TabPropsType) {
   const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
+  const pfx = purpose === "ADMIN" ? "aprops" : "wprops";
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string[]>(["ALL"]);
-  const [kind, setKind] = useState<string[]>(["ALL"]);
+  const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
+  const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const [items, setItems] = useState<Property[]>([]);
   const [loading, setLoading] = useState(false);

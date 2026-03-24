@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -65,11 +66,12 @@ type JobsTabProps = TabPropsType & {
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSlot }: JobsTabProps) {
   const { isAvail, forAdmin } = determineRoles(me, purpose);
   const myId = viewAsUserId || me?.id || "";
+  const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
   const [q, setQ] = useState("");
-  const [compact, setCompact] = useState(false);
+  const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [kind, setKind] = useState<string[]>(["ALL"]);
+  const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const kindItems = useMemo(
     () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
@@ -79,7 +81,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
     () => createListCollection({ items: kindItems }),
     [kindItems]
   );
-  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const [typeFilter, setTypeFilter] = usePersistedState<string[]>(`${pfx}_type`, ["ALL"]);
   const typeItems = useMemo(
     () => [
       { label: "All Types", value: "ALL" },
@@ -94,7 +96,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
     [typeItems]
   );
 
-  const [statusFilter, setStatusFilter] = useState<string[]>(["ALL"]);
+  const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const statusItems = useMemo(
     () => statusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
     []
@@ -108,14 +110,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [overdueCount, setOverdueCount] = useState(0);
 
-  const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
+  const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, () => localDate(new Date()));
+  const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, () => {
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
     return localDate(d);
   });
   const [quickDate, setQuickDate] = useState<string[]>([]);
-  const [overdueActive, setOverdueActive] = useState(false);
+  const [overdueActive, setOverdueActive] = usePersistedState(`${pfx}_overdue`, false);
 
   const quickDateItems = useMemo(
     () =>
