@@ -273,6 +273,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           occ.job?.property?.client?.displayName,
           occ.status,
           occ.notes,
+          ...(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email),
         ]
           .filter(Boolean)
           .some((s) => s!.toLowerCase().includes(qlc))
