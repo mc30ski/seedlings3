@@ -450,8 +450,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
             setStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
             setOverdueActive(false);
-            setDateFrom(localDate(new Date()));
-            setDateTo("");
+            const today = new Date();
+            setDateFrom(localDate(today));
+            const nextMonth = new Date(today);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            setDateTo(localDate(nextMonth));
           }}
         >
           <X size={14} />
