@@ -25,6 +25,7 @@ import WorkflowToolbar, {
   type WorkflowDef,
 } from "@/src/ui/components/WorkflowToolbar";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { Me, Role, AdminTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
@@ -64,6 +65,45 @@ export default function HomePage() {
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
 
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    colorPalette: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  async function downloadSummary() {
+    try {
+      const { text } = await apiGet<{ text: string }>("/api/admin/export-summary");
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `seedlings-summary-${new Date().toISOString().slice(0, 10)}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Export failed. Please try again.");
+    }
+  }
+
+  async function downloadRaw() {
+    try {
+      const data = await apiGet<Record<string, unknown>>("/api/admin/export");
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `seedlings-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Export failed. Please try again.");
+    }
+  }
+
   const adminWorkflows: WorkflowDef[] = [
     {
       id: "new-job-setup",
@@ -76,41 +116,28 @@ export default function HomePage() {
       label: "Export Summary",
       colorPalette: "blue",
       shades: [50, 600, 300, 100] as [number, number, number, number],
-      onClick: async () => {
-        try {
-          const { text } = await apiGet<{ text: string }>("/api/admin/export-summary");
-          const blob = new Blob([text], { type: "text/plain" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `seedlings-summary-${new Date().toISOString().slice(0, 10)}.txt`;
-          a.click();
-          URL.revokeObjectURL(url);
-        } catch {
-          alert("Export failed. Please try again.");
-        }
-      },
+      onClick: () =>
+        setConfirmAction({
+          title: "Export Summary",
+          message: "This will download a human-readable summary of all your data. Continue?",
+          confirmLabel: "Download",
+          colorPalette: "blue",
+          onConfirm: downloadSummary,
+        }),
     },
     {
       id: "export-raw",
       label: "Export Raw Data",
       colorPalette: "blue",
       shades: [200, 900, 500, 300] as [number, number, number, number],
-      onClick: async () => {
-        try {
-          const data = await apiGet<Record<string, unknown>>("/api/admin/export");
-          const json = JSON.stringify(data, null, 2);
-          const blob = new Blob([json], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `seedlings-export-${new Date().toISOString().slice(0, 10)}.json`;
-          a.click();
-          URL.revokeObjectURL(url);
-        } catch {
-          alert("Export failed. Please try again.");
-        }
-      },
+      onClick: () =>
+        setConfirmAction({
+          title: "Export Raw Data",
+          message: "This will download all raw data as JSON. This may be a large file. Continue?",
+          confirmLabel: "Download",
+          colorPalette: "blue",
+          onConfirm: downloadRaw,
+        }),
     },
   ];
 
@@ -553,6 +580,18 @@ export default function HomePage() {
           unmountOnExit
         />
       )}
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title ?? ""}
+        message={confirmAction?.message ?? ""}
+        confirmLabel={confirmAction?.confirmLabel ?? "Confirm"}
+        confirmColorPalette={confirmAction?.colorPalette ?? "blue"}
+        onConfirm={() => {
+          confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </Container>
   );
 }
