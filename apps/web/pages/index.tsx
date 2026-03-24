@@ -15,6 +15,7 @@ import ClientsTab from "@/src/ui/tabs/ClientsTab";
 import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
+import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -30,6 +31,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { Me, Role, AdminTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
   FiBriefcase,
+  FiClipboard,
   FiTool,
   FiUser,
   FiUsers,
@@ -60,7 +62,7 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = useState<"worker" | "admin">("worker");
 
-  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("jobs");
+  const [adminInnerTab, setAdminInnerTab] = useState<AdminTabs>("admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = useState<WorkerTabs>("jobs");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
@@ -107,13 +109,13 @@ export default function HomePage() {
   const adminWorkflows: WorkflowDef[] = [
     {
       id: "new-job-setup",
-      label: "Setup Job",
+      label: "New Job",
       colorPalette: "green",
       onClick: () => setActiveWorkflow("new-job-setup"),
     },
     {
       id: "export-summary",
-      label: "Export Summary",
+      label: "Summary",
       colorPalette: "blue",
       shades: [50, 600, 300, 100] as [number, number, number, number],
       onClick: () =>
@@ -127,7 +129,7 @@ export default function HomePage() {
     },
     {
       id: "export-raw",
-      label: "Export Raw Data",
+      label: "Export All",
       colorPalette: "blue",
       shades: [200, 900, 500, 300] as [number, number, number, number],
       onClick: () =>
@@ -208,6 +210,12 @@ export default function HomePage() {
   ];
 
   const adminTabs: TabItem[] = [
+    {
+      value: "admin-jobs",
+      label: "Jobs",
+      icon: FiClipboard,
+      content: wrapWithInlineMessage(<AdminJobsTab me={me} purpose="ADMIN" />),
+    },
     {
       value: "jobs",
       label: "Services",

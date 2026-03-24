@@ -43,21 +43,28 @@ function localDate(d: Date): string {
 const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItemsBase = [
-  { label: "Yesterday", value: "yesterday" },
   { label: "Today", value: "today" },
-  { label: "Last week", value: "lastWeek" },
   { label: "Next 3 days", value: "next3" },
-  { label: "Next 7 days", value: "next7" },
-  { label: "Next 14 days", value: "next14" },
-  { label: "Recent & Future", value: "recent" },
+  { label: "Next week", value: "nextWeek" },
+  { label: "Next month", value: "nextMonth" },
   { label: "Future", value: "future" },
+  { label: "Recent & Future", value: "recent" },
+  { label: "Yesterday", value: "yesterday" },
+  { label: "Last week", value: "lastWeek" },
 ];
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
 
-export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
+type JobsTabProps = TabPropsType & {
+  /** When set, filter occurrences to only those assigned to this user */
+  viewAsUserId?: string;
+  /** Extra UI rendered above the filter bar (e.g. worker selector) */
+  headerSlot?: React.ReactNode;
+};
+
+export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSlot }: JobsTabProps) {
   const { isAvail, forAdmin } = determineRoles(me, purpose);
-  const myId = me?.id ?? "";
+  const myId = viewAsUserId || me?.id || "";
 
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<string[]>(["ALL"]);
@@ -100,7 +107,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [overdueCount, setOverdueCount] = useState(0);
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState("");
+  const [dateTo, setDateTo] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return localDate(d);
+  });
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
 
@@ -161,8 +172,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
-      const list = await apiGet<WorkerOccurrence[]>(url);
-      setItems(Array.isArray(list) ? list : []);
+      let list = await apiGet<WorkerOccurrence[]>(url);
+      if (!Array.isArray(list)) list = [];
+      if (viewAsUserId) {
+        list = list.filter((occ) =>
+          (occ.assignees ?? []).some((a) => a.userId === viewAsUserId)
+        );
+      }
+      setItems(list);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -176,7 +193,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   useEffect(() => {
     void load();
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, viewAsUserId]);
 
   async function refreshOverdueCount() {
     try {
@@ -342,6 +359,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   return (
     <Box w="full">
+      {headerSlot}
       <HStack mb={3} gap={2}>
         <SearchWithClear
           value={q}
@@ -491,14 +509,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
               d.setDate(d.getDate() - 7);
               setDateFrom(localDate(d));
               setDateTo(localDate(today));
-            } else if (val === "next7") {
+            } else if (val === "nextWeek") {
               const d = new Date(today);
               d.setDate(d.getDate() + 6);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
-            } else if (val === "next14") {
+            } else if (val === "nextMonth") {
               const d = new Date(today);
-              d.setDate(d.getDate() + 13);
+              d.setMonth(d.getMonth() + 1);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
             } else if (val === "recent") {
