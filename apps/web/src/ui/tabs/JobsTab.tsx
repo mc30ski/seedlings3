@@ -99,7 +99,11 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => localDate(new Date()));
+  const [dateTo, setDateTo] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 6);
+    return localDate(d);
+  });
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
 
