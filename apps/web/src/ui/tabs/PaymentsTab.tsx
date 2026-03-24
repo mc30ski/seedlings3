@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -71,10 +72,10 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
-  const [dateTo, setDateTo] = useState(todayStr);
-  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
-  const [compact, setCompact] = useState(false);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", defaultDateFrom);
+  const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", todayStr);
+  const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_w_type", ["ALL"]);
+  const [compact, setCompact] = usePersistedState("pay_w_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   async function load() {
@@ -481,12 +482,12 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
-  const [dateTo, setDateTo] = useState(todayStr);
-  const [methodFilter, setMethodFilter] = useState<string[]>(["ALL"]);
-  const [personFilter, setPersonFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
-  const [compact, setCompact] = useState(false);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", defaultDateFrom);
+  const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", todayStr);
+  const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
+  const [personFilter, setPersonFilter] = usePersistedState("pay_a_person", "");
+  const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_a_type", ["ALL"]);
+  const [compact, setCompact] = usePersistedState("pay_a_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   // Edit state

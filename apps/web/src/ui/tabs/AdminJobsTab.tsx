@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Box, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
@@ -10,7 +11,7 @@ type Worker = { id: string; displayName?: string | null; email?: string | null }
 
 export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [selectedWorker, setSelectedWorker] = useState<string[]>([]);
+  const [selectedWorker, setSelectedWorker] = usePersistedState<string[]>("adminjobs_worker", []);
 
   useEffect(() => {
     apiGet<Worker[]>("/api/workers")

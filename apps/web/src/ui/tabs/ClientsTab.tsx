@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -54,13 +55,14 @@ const statusStates = ["ALL", ...CLIENT_STATUS] as const;
 
 export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const { isSuper, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
+  const pfx = purpose === "ADMIN" ? "aclients" : "wclients";
 
   const router = useRouter();
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string[]>(["ALL"]);
-  const [kind, setKind] = useState<string[]>(["ALL"]);
+  const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
+  const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -367,7 +369,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         )}
         {filtered.map((c: Client) => (
           <Card.Root key={c.id} variant="outline">
-            <Card.Header pb="2">
+            <Card.Header pb="1.5">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
                   <Text fontSize="md" fontWeight="semibold">{c.displayName}</Text>
@@ -380,15 +382,15 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <StatusBadge status={c.type} palette="gray" variant="outline" />
               </HStack>
             </Card.Header>
-            <Card.Body pt="0">
-              <VStack align="start" gap={1}>
+            {c.notesInternal && (
+              <Card.Body pt="0" pb="1">
                 <Text fontSize="xs" color="fg.muted">
-                  {c.notesInternal ?? ""}
+                  {c.notesInternal}
                 </Text>
-              </VStack>
-            </Card.Body>
-            <Card.Footer>
-              <HStack gap={2} wrap="wrap" mb="2" w="full">
+              </Card.Body>
+            )}
+            <Card.Footer pt="1">
+              <HStack gap={2} wrap="wrap" mb="1" w="full">
                 {forAdmin && (
                   <>
                     <StatusButton
