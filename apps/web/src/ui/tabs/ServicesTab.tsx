@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, Tag, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   determineRoles,
@@ -82,6 +82,7 @@ export default function ServicesTab({
   const [kind, setKind] = useState<string[]>(["ALL"]);
   const [jobStatusFilter, setJobStatusFilter] = useState<string[]>(["ALL"]);
   const [occStatusFilter, setOccStatusFilter] = useState<string[]>(["ALL"]);
+  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => {
@@ -106,6 +107,20 @@ export default function ServicesTab({
     () => createListCollection({ items: jobStatusItems }),
     [jobStatusItems]
   );
+  const typeItems = useMemo(
+    () => [
+      { label: "All Types", value: "ALL" },
+      { label: "One-off", value: "ONE_OFF" },
+      { label: "Estimate", value: "ESTIMATE" },
+      { label: "Tentative", value: "TENTATIVE" },
+    ],
+    []
+  );
+  const typeCollection = useMemo(
+    () => createListCollection({ items: typeItems }),
+    [typeItems]
+  );
+
   const occStatusItems = useMemo(
     () => occStatusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
     []
@@ -456,16 +471,41 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={typeCollection}
+          value={typeFilter}
+          onValueChange={(e) => setTypeFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+              <Tag size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {typeItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         <Button
           size="sm"
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL"}
+          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL"}
           onClick={() => {
             setKind(["ALL"]);
             setJobStatusFilter(["ALL"]);
             setOccStatusFilter(["ALL"]);
+            setTypeFilter(["ALL"]);
           }}
         >
           <X size={14} />
@@ -600,7 +640,7 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
@@ -615,6 +655,11 @@ export default function ServicesTab({
           {occStatusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="teal" variant="solid">
               {occStatusItems.find((i) => i.value === occStatusFilter[0])?.label}
+            </Badge>
+          )}
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="orange" variant="solid">
+              {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
         </HStack>
@@ -637,6 +682,7 @@ export default function ServicesTab({
           const detail = jobDetails[job.id];
           const isLoadingDetail = !!detailLoading[job.id];
           const osf = occStatusFilter[0];
+          const tf = typeFilter[0];
           const visibleOccs = detail
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
                 if (o.startAt) {
@@ -644,10 +690,13 @@ export default function ServicesTab({
                   if (dateFrom && d < dateFrom) return false;
                   if (dateTo && d > dateTo) return false;
                 }
+                if (tf === "ONE_OFF" && !o.isOneOff) return false;
+                if (tf === "ESTIMATE" && !o.isEstimate) return false;
+                if (tf === "TENTATIVE" && !o.isTentative) return false;
                 if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
                 if (osf === "UNCLAIMED") return isUnclaimed;
-                return !isUnclaimed && o.status === osf;
+                return o.status === osf;
               })
             : [];
 

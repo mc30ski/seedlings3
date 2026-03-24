@@ -303,7 +303,7 @@ export type ExpenseItem = {
 
 // ---- Payments ----
 
-export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "OTHER"] as const;
+export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "APPLE_PAY", "CASH_APP", "OTHER"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
 
 export type PaymentSplitItem = {
