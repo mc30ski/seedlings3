@@ -403,7 +403,7 @@ export default function ServicesTab({
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((r) =>
-        [r.property?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status]
+        [r.property?.displayName, r.property?.client?.displayName, r.property?.street1, r.property?.city, r.property?.state, r.kind, r.status, r.notes]
           .filter(Boolean)
           .some((s) => s!.toLowerCase().includes(qlc))
       );
