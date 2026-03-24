@@ -6,6 +6,8 @@ export type WorkflowDef = {
   id: string;
   label: string;
   colorPalette?: string;
+  /** Override default shade numbers: [bg, text, border, hoverBg] e.g. [50, 600, 300, 100] */
+  shades?: [number, number, number, number];
   onClick: () => void;
 };
 
@@ -18,24 +20,28 @@ export default function WorkflowToolbar({ workflows }: Props) {
 
   return (
     <HStack gap={2} mb={3} ml={4} wrap="wrap" align="center">
-      {workflows.map((w) => (
+      {workflows.map((w) => {
+        const c = w.colorPalette ?? "green";
+        const [bg, text, border, hover] = w.shades ?? [100, 800, 400, 200];
+        return (
         <Button
           key={w.id}
           size="sm"
           variant="solid"
           css={{
-            background: `var(--chakra-colors-${w.colorPalette ?? "green"}-100)`,
-            color: `var(--chakra-colors-${w.colorPalette ?? "green"}-800)`,
-            border: `1px solid var(--chakra-colors-${w.colorPalette ?? "green"}-400)`,
+            background: `var(--chakra-colors-${c}-${bg})`,
+            color: `var(--chakra-colors-${c}-${text})`,
+            border: `1px solid var(--chakra-colors-${c}-${border})`,
             "&:hover": {
-              background: `var(--chakra-colors-${w.colorPalette ?? "green"}-200)`,
+              background: `var(--chakra-colors-${c}-${hover})`,
             },
           }}
           onClick={w.onClick}
         >
           {w.label}
         </Button>
-      ))}
+        );
+      })}
     </HStack>
   );
 }

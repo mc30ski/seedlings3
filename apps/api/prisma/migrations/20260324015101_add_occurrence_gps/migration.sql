@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "JobOccurrence" ADD COLUMN     "completeLat" DOUBLE PRECISION,
+ADD COLUMN     "completeLng" DOUBLE PRECISION,
+ADD COLUMN     "startLat" DOUBLE PRECISION,
+ADD COLUMN     "startLng" DOUBLE PRECISION;

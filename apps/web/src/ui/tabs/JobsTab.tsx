@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   HStack,
-  Input,
   Select,
   Spinner,
   Text,
@@ -15,7 +14,9 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { AlertTriangle, CalendarRange, Filter, LayoutList, RefreshCw, Tag, X } from "lucide-react";
+import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
+import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
@@ -41,17 +42,16 @@ function localDate(d: Date): string {
 
 const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
-const quickDateItems = [
+const quickDateItemsBase = [
   { label: "Yesterday", value: "yesterday" },
   { label: "Today", value: "today" },
   { label: "Last week", value: "lastWeek" },
   { label: "Next 3 days", value: "next3" },
   { label: "Next 7 days", value: "next7" },
   { label: "Next 14 days", value: "next14" },
+  { label: "Recent & Future", value: "recent" },
   { label: "Future", value: "future" },
-  { label: "All time", value: "all" },
 ];
-const quickDateCollection = createListCollection({ items: quickDateItems });
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
 
@@ -100,6 +100,20 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const [dateFrom, setDateFrom] = useState(() => localDate(new Date()));
   const [dateTo, setDateTo] = useState(() => localDate(new Date()));
+  const [quickDate, setQuickDate] = useState<string[]>([]);
+  const [overdueActive, setOverdueActive] = useState(false);
+
+  const quickDateItems = useMemo(
+    () =>
+      forAdmin
+        ? [...quickDateItemsBase, { label: "All time", value: "all" }]
+        : quickDateItemsBase,
+    [forAdmin]
+  );
+  const quickDateCollection = useMemo(
+    () => createListCollection({ items: quickDateItems }),
+    [quickDateItems]
+  );
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
@@ -109,7 +123,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     message: string;
     confirmLabel: string;
     colorPalette: string;
-    onConfirm: () => void;
+    onConfirm: ((inputValue: string) => void) | (() => void);
+    inputPlaceholder?: string;
+    inputLabel?: string;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -187,9 +203,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
-  async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete") {
+  async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string) {
     try {
-      await apiPost(`/api/occurrences/${occ.id}/${action}`, {});
+      const loc = await getLocation();
+      const body: Record<string, unknown> = {};
+      if (notes) body.notes = notes;
+      if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+      await apiPost(`/api/occurrences/${occ.id}/${action}`, body);
       await load(false);
 
       // For estimates, "complete" goes straight to CLOSED — prompt schedule next
@@ -235,6 +255,9 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         return occ.status === sf;
       });
     }
+    if (overdueActive) {
+      rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED");
+    }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((occ) =>
@@ -252,7 +275,7 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       );
     }
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -342,11 +365,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL"}
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive}
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
+            setOverdueActive(false);
+            setDateFrom(localDate(new Date()));
+            setDateTo("");
           }}
         >
           <X size={14} />
@@ -363,33 +389,26 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
       </HStack>
 
       <HStack mb={3} gap={2} align="center">
-        <Input
-          type="date"
-          size="sm"
+        <DateInput
           value={dateFrom}
-          onChange={(e) => {
-            const val = e.target.value;
+          onChange={(val) => {
             setDateFrom(val);
             if (dateTo && val && val > dateTo) setDateTo(val);
           }}
-          css={{ flex: 1, minWidth: 0 }}
         />
         <Text fontSize="sm">–</Text>
-        <Input
-          type="date"
-          size="sm"
+        <DateInput
           value={dateTo}
-          onChange={(e) => {
-            const val = e.target.value;
+          onChange={(val) => {
             setDateTo(val);
             if (dateFrom && val && val < dateFrom) setDateFrom(val);
           }}
-          css={{ flex: 1, minWidth: 0 }}
         />
         <Select.Root
           collection={quickDateCollection}
-          value={[]}
+          value={quickDate}
           onValueChange={(e) => {
+            setQuickDate(e.value);
             const val = e.value[0];
             if (!val) return;
             const today = new Date();
@@ -421,13 +440,31 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
               d.setDate(d.getDate() + 13);
               setDateFrom(localDate(today));
               setDateTo(localDate(d));
+            } else if (val === "recent") {
+              const d = new Date(today);
+              d.setDate(d.getDate() - 30);
+              setDateFrom(localDate(d));
+              setDateTo("");
             } else if (val === "future") {
               setDateFrom(localDate(today));
               setDateTo("");
             } else if (val === "all") {
-              setDateFrom("");
-              setDateTo("");
+              setConfirmAction({
+                title: "Load All Data",
+                message:
+                  "This will load all occurrences for all time. This may be slow. Are you sure?",
+                confirmLabel: "Load All",
+                colorPalette: "orange",
+                onConfirm: () => {
+                  setDateFrom("");
+                  setDateTo("");
+                },
+              });
+              requestAnimationFrame(() => setQuickDate([]));
+              return;
             }
+            setOverdueActive(false);
+            requestAnimationFrame(() => setQuickDate([]));
           }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
@@ -451,22 +488,38 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         </Select.Root>
         <Button
           size="sm"
-          variant="ghost"
+          variant={overdueActive ? "solid" : "ghost"}
           px="2"
           onClick={() => {
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            setDateFrom("");
-            setDateTo(localDate(yesterday));
-            setStatusFilter(["ALL"]);
+            if (overdueActive) {
+              setOverdueActive(false);
+            } else {
+              const yesterday = new Date();
+              yesterday.setDate(yesterday.getDate() - 1);
+              setDateFrom("");
+              setDateTo(localDate(yesterday));
+              setStatusFilter(["ALL"]);
+              setOverdueActive(true);
+            }
           }}
+          css={overdueActive ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-400)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {overdueActive && (
+            <Badge size="sm" colorPalette="red" variant="solid">
+              Overdue
+            </Badge>
+          )}
           {kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
               {kindItems.find((i) => i.value === kind[0])?.label}
@@ -624,6 +677,20 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                         {occ.notes}
                       </Text>
                     )}
+                    {(occ.startLat != null || occ.completeLat != null) && (
+                      <HStack gap={3} fontSize="xs" color="fg.muted">
+                        {occ.startLat != null && occ.startLng != null && (
+                          <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                            Started: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
+                          </a>
+                        )}
+                        {occ.completeLat != null && occ.completeLng != null && (
+                          <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
+                            Completed: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
+                          </a>
+                        )}
+                      </HStack>
+                    )}
 
                     {!isUnassigned && (
                       <VStack align="start" gap={0}>
@@ -752,7 +819,13 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
                               : "Are you sure you want to mark this job as complete?",
                             confirmLabel: "Complete",
                             colorPalette: "green",
-                            onConfirm: () => void updateStatus(occ, "complete"),
+                            ...(occ.isEstimate
+                              ? {
+                                  inputLabel: "Comment (required)",
+                                  inputPlaceholder: "What happened and why is this estimate being completed?",
+                                  onConfirm: (comment: string) => void updateStatus(occ, "complete", comment),
+                                }
+                              : { onConfirm: () => void updateStatus(occ, "complete") }),
                           })}
                           variant="outline"
                           colorPalette="green"
@@ -873,8 +946,14 @@ export default function JobsTab({ me, purpose = "WORKER" }: TabPropsType) {
         message={confirmAction?.message ?? ""}
         confirmLabel={confirmAction?.confirmLabel}
         confirmColorPalette={confirmAction?.colorPalette}
-        onConfirm={() => {
-          confirmAction?.onConfirm();
+        inputPlaceholder={confirmAction?.inputPlaceholder}
+        inputLabel={confirmAction?.inputLabel}
+        onConfirm={(inputValue: string) => {
+          if (confirmAction?.inputPlaceholder) {
+            (confirmAction.onConfirm as (v: string) => void)(inputValue);
+          } else {
+            (confirmAction?.onConfirm as () => void)();
+          }
           setConfirmAction(null);
         }}
         onCancel={() => setConfirmAction(null)}

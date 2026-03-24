@@ -17,6 +17,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { CreditCard, Filter, RefreshCw, User, X } from "lucide-react";
+import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
 import { determineRoles, prettyStatus } from "@/src/lib/lib";
@@ -185,9 +186,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         </Button>
       </HStack>
       <HStack mb={2} gap={2} align="center">
-        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
         <Text fontSize="sm">–</Text>
-        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <DateInput value={dateTo} onChange={(val) => setDateTo(val)} />
       </HStack>
       {typeFilter[0] !== "ALL" && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
@@ -680,9 +681,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         </Button>
       </HStack>
       <HStack mb={2} gap={2} align="center">
-        <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
         <Text fontSize="sm">–</Text>
-        <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} css={{ flex: 1, minWidth: 0 }} />
+        <DateInput value={dateTo} onChange={(val) => setDateTo(val)} />
       </HStack>
       {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">

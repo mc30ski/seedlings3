@@ -660,6 +660,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
+      if ("startLat" in body) patch.startLat = body.startLat != null ? Number(body.startLat) : null;
+      if ("startLng" in body) patch.startLng = body.startLng != null ? Number(body.startLng) : null;
+      if ("completeLat" in body) patch.completeLat = body.completeLat != null ? Number(body.completeLat) : null;
+      if ("completeLng" in body) patch.completeLng = body.completeLng != null ? Number(body.completeLng) : null;
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(
@@ -783,5 +787,235 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
     return services.expenses.adminDeleteExpense(String(req.params.id));
+  });
+
+  // ── Full Data Export ──
+
+  app.get("/admin/export", adminGuard, async (_req: any, reply: any) => {
+    const { prisma } = await import("../db/prisma");
+
+    const [
+      users,
+      userRoles,
+      equipment,
+      checkouts,
+      clients,
+      clientContacts,
+      properties,
+      jobs,
+      jobContacts,
+      jobClients,
+      jobSchedules,
+      jobOccurrences,
+      jobAssigneeDefaults,
+      jobOccurrenceAssignees,
+      payments,
+      paymentSplits,
+      expenses,
+      auditEvents,
+    ] = await Promise.all([
+      prisma.user.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.userRole.findMany(),
+      prisma.equipment.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.checkout.findMany(),
+      prisma.client.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.clientContact.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.property.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.job.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.jobContact.findMany(),
+      prisma.jobClient.findMany(),
+      prisma.jobSchedule.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.jobOccurrence.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.jobAssigneeDefault.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.jobOccurrenceAssignee.findMany(),
+      prisma.payment.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.paymentSplit.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.expense.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.auditEvent.findMany({ orderBy: { createdAt: "asc" } }),
+    ]);
+
+    const data = {
+      exportedAt: new Date().toISOString(),
+      users,
+      userRoles,
+      equipment,
+      checkouts,
+      clients,
+      clientContacts,
+      properties,
+      jobs,
+      jobContacts,
+      jobClients,
+      jobSchedules,
+      jobOccurrences,
+      jobAssigneeDefaults,
+      jobOccurrenceAssignees,
+      payments,
+      paymentSplits,
+      expenses,
+      auditEvents,
+    };
+
+    const filename = `seedlings-export-${new Date().toISOString().slice(0, 10)}.json`;
+    reply
+      .header("Content-Type", "application/json; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .send(JSON.stringify(data, null, 2));
+  });
+
+  // ── Human-Readable Summary Export ──
+
+  app.get("/admin/export-summary", adminGuard, async (_req: any) => {
+    const { prisma } = await import("../db/prisma");
+
+    const clients = await prisma.client.findMany({
+      orderBy: { displayName: "asc" },
+      include: {
+        contacts: { orderBy: { isPrimary: "desc" } },
+        properties: {
+          orderBy: { displayName: "asc" },
+          include: {
+            pointOfContact: true,
+            jobs: {
+              orderBy: { createdAt: "asc" },
+              include: {
+                schedule: true,
+                defaultAssignees: { include: { user: true } },
+                occurrences: {
+                  orderBy: { startAt: "asc" },
+                  include: {
+                    assignees: { include: { user: true } },
+                    payment: true,
+                    expenses: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const users = await prisma.user.findMany({
+      orderBy: { displayName: "asc" },
+      include: { roles: true },
+    });
+
+    const equipment = await prisma.equipment.findMany({
+      orderBy: { brand: "asc" },
+      include: {
+        checkouts: {
+          orderBy: { checkedOutAt: "desc" },
+          take: 5,
+          include: { user: true },
+        },
+      },
+    });
+
+    const lines: string[] = [];
+    const hr = "=".repeat(80);
+    const sr = "-".repeat(60);
+    const date = (d: Date | string | null | undefined) =>
+      d ? new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—";
+    const money = (n: number | null | undefined) =>
+      n != null ? `$${n.toFixed(2)}` : "—";
+
+    lines.push(`SEEDLINGS LAWN CARE — DATA SUMMARY`);
+    lines.push(`Exported: ${new Date().toLocaleString("en-US")}`);
+    lines.push(hr);
+    lines.push("");
+
+    // ── Users ──
+    lines.push("TEAM MEMBERS");
+    lines.push(sr);
+    for (const u of users) {
+      const roles = u.roles.map((r: any) => r.role).join(", ") || "No role";
+      lines.push(`  ${u.displayName || u.email || u.id}  (${roles})${u.email ? "  " + u.email : ""}`);
+    }
+    lines.push("");
+
+    // ── Equipment ──
+    lines.push("EQUIPMENT");
+    lines.push(sr);
+    for (const eq of equipment) {
+      const eqName = [eq.brand, eq.model].filter(Boolean).join(" ") || eq.shortDesc || eq.id;
+      lines.push(`  ${eqName}  [${eq.status}]${eq.type ? "  Type: " + eq.type : ""}`);
+      if (eq.shortDesc) lines.push(`    Desc: ${eq.shortDesc}`);
+      if (eq.issues) lines.push(`    Issues: ${eq.issues}`);
+    }
+    lines.push("");
+
+    // ── Clients → Properties → Jobs → Occurrences ──
+    lines.push("CLIENTS, PROPERTIES & JOBS");
+    lines.push(hr);
+    for (const client of clients) {
+      lines.push("");
+      lines.push(`CLIENT: ${client.displayName}  [${client.status}]  (${client.type})`);
+      if (client.notesInternal) lines.push(`  Notes: ${client.notesInternal}`);
+
+      // Contacts
+      if (client.contacts.length > 0) {
+        lines.push(`  Contacts:`);
+        for (const c of client.contacts) {
+          const primary = c.isPrimary ? " (PRIMARY)" : "";
+          lines.push(`    - ${c.firstName} ${c.lastName}${primary}${c.role ? " [" + c.role + "]" : ""}${c.phone ? "  " + c.phone : ""}${c.email ? "  " + c.email : ""}`);
+        }
+      }
+
+      // Properties
+      for (const prop of client.properties) {
+        lines.push("");
+        lines.push(`  PROPERTY: ${prop.displayName}  [${prop.status}]`);
+        lines.push(`    Address: ${prop.street1}${prop.street2 ? ", " + prop.street2 : ""}, ${prop.city}, ${prop.state} ${prop.postalCode}`);
+        if (prop.accessNotes) lines.push(`    Access: ${prop.accessNotes}`);
+        if (prop.pointOfContact) lines.push(`    POC: ${prop.pointOfContact.firstName} ${prop.pointOfContact.lastName}`);
+
+        // Jobs
+        for (const job of prop.jobs) {
+          lines.push("");
+          lines.push(`    JOB: ${job.kind}  [${job.status}]${job.frequencyDays ? "  Every " + job.frequencyDays + " days" : ""}${job.defaultPrice != null ? "  Default price: " + money(job.defaultPrice) : ""}`);
+          if (job.notes) lines.push(`      Notes: ${job.notes}`);
+
+          // Schedule
+          if (job.schedule) {
+            const s = job.schedule;
+            lines.push(`      Schedule: ${s.cadence || "custom"}${s.autoRenew ? " (auto-renew)" : ""}${s.active ? "" : " [INACTIVE]"}  Horizon: ${s.horizonDays} days`);
+          }
+
+          // Default assignees
+          if (job.defaultAssignees.length > 0) {
+            lines.push(`      Default crew: ${job.defaultAssignees.map((a: any) => a.user.displayName || a.user.email).join(", ")}`);
+          }
+
+          // Occurrences
+          if (job.occurrences.length > 0) {
+            lines.push(`      Occurrences (${job.occurrences.length}):`);
+            for (const occ of job.occurrences) {
+              const flags = [
+                occ.isOneOff && "one-off",
+                occ.isEstimate && "estimate",
+                occ.isTentative && "tentative",
+              ].filter(Boolean).join(", ");
+              const crew = occ.assignees.map((a: any) => a.user.displayName || a.user.email).join(", ");
+              lines.push(`        ${date(occ.startAt)}  [${occ.status}]${flags ? "  (" + flags + ")" : ""}  ${money(occ.price)}${crew ? "  Crew: " + crew : ""}`);
+              if (occ.notes) lines.push(`          Notes: ${occ.notes}`);
+              if (occ.payment) {
+                const p = occ.payment;
+                lines.push(`          Payment: ${money(p.amountPaid)} via ${p.method} on ${date(p.createdAt)}`);
+              }
+              if (occ.expenses.length > 0) {
+                for (const ex of occ.expenses) {
+                  lines.push(`          Expense: ${money(ex.cost)} — ${ex.description || "no description"}`);
+                }
+              }
+            }
+          }
+        }
+      }
+      lines.push(sr);
+    }
+
+    const text = lines.join("\n");
+    return { text };
   });
 }

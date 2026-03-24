@@ -442,6 +442,11 @@ model JobOccurrence {
   isTentative Boolean @default(false)
   isEstimate  Boolean @default(false)
 
+  startLat    Float?
+  startLng    Float?
+  completeLat Float?
+  completeLng Float?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
