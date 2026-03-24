@@ -750,6 +750,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                                   "jobsTabToPropertiesTabSearch",
                                   occ.job?.property?.displayName ?? "",
                                   forAdmin,
+                                  occ.job?.property?.id,
                                 )
                               }
                             />
@@ -762,6 +763,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                                   "jobsTabToClientsTabSearch",
                                   occ.job?.property?.client?.displayName ?? "",
                                   forAdmin,
+                                  occ.job?.property?.client?.id,
                                 )
                               }
                             />

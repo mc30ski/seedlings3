@@ -3,25 +3,25 @@ import { EventTypes } from "@/src/lib/types";
 export function openEventSearch(
   eventName: EventTypes,
   q: string,
-  forAdmin: boolean
+  forAdmin: boolean,
+  entityId?: string,
 ) {
   window.dispatchEvent(
-    new CustomEvent(`open:${eventName}`, { detail: { q, forAdmin } })
+    new CustomEvent(`open:${eventName}`, { detail: { q, forAdmin, entityId } })
   );
 }
 
 export function onEventSearchRun(
   eventName: EventTypes,
   setQ: (q: string) => void,
-  inputRef: React.RefObject<HTMLInputElement>
+  inputRef: React.RefObject<HTMLInputElement>,
+  setHighlightId?: (id: string | null) => void,
 ) {
-  console.log("HERE SETUP", eventName);
   const onRun = (ev: Event) => {
-    const { q } = (ev as CustomEvent<{ q?: string }>).detail || {};
+    const { q, entityId } = (ev as CustomEvent<{ q?: string; entityId?: string }>).detail || {};
     if (typeof q === "string") {
-      console.log("HERE", q);
-
       setQ(q);
+      setHighlightId?.(entityId ?? null);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
