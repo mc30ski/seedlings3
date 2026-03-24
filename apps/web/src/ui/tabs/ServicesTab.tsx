@@ -80,6 +80,7 @@ export default function ServicesTab({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [kind, setKind] = usePersistedState<string[]>("services_kind", ["ALL"]);
   const [jobStatusFilter, setJobStatusFilter] = usePersistedState<string[]>("services_jobStatus", ["ALL"]);
   const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
@@ -238,7 +239,7 @@ export default function ServicesTab({
   }, [items]);
 
   useEffect(() => {
-    onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef);
+    onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef, setHighlightId);
   }, []);
 
   async function loadDetail(jobId: string, force = false) {
@@ -418,6 +419,12 @@ export default function ServicesTab({
   }
 
   const filtered = useMemo(() => {
+    // If navigated here by ID, show only that entity
+    if (highlightId) {
+      const exact = items.find((r) => r.id === highlightId);
+      if (exact) return [exact];
+    }
+
     let rows = items;
     const jsf = jobStatusFilter[0];
     if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
@@ -442,7 +449,7 @@ export default function ServicesTab({
         <SearchWithClear
           ref={inputRef}
           value={q}
-          onChange={setQ}
+          onChange={(v) => { setQ(v); setHighlightId(null); }}
           inputId="services-search"
           placeholder="Search…"
         />

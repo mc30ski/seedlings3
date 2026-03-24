@@ -319,11 +319,14 @@ export default function HomePage() {
     useEffect(() => {
       if (typeof window === "undefined") return;
       const onEvent = (e: Event) => {
-        const { q, forAdmin } = (e as CustomEvent).detail || {};
+        const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
         if (!q) return;
         setTopTab(forAdmin ? "admin" : "worker");
         forAdmin ? setAdminInnerTab(tabName) : setWorkerInnerTab(tabName);
-        window.sessionStorage.setItem(`open:${eventName}Once`, String(q));
+        window.sessionStorage.setItem(
+          `open:${eventName}Once`,
+          JSON.stringify({ q, entityId }),
+        );
       };
       window.addEventListener(`open:${eventName}`, onEvent as EventListener);
       return () =>
@@ -335,11 +338,13 @@ export default function HomePage() {
     useEffect(() => {
       if (typeof window === "undefined") return;
       const key = `open:${eventName}Once`;
-      const q = window.sessionStorage.getItem(key);
-      if (!q) return;
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) return;
+      let payload: { q: string; entityId?: string };
+      try { payload = JSON.parse(raw); } catch { payload = { q: raw }; }
       requestAnimationFrame(() => {
         window.dispatchEvent(
-          new CustomEvent(`${eventName}:run`, { detail: { q } })
+          new CustomEvent(`${eventName}:run`, { detail: payload })
         );
         window.sessionStorage.removeItem(key);
       });

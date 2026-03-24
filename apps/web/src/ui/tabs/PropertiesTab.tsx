@@ -58,6 +58,7 @@ export default function PropertiesTab({
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
@@ -120,13 +121,19 @@ export default function PropertiesTab({
   }, [forAdmin]);
 
   useEffect(() => {
-    onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef);
-    onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef);
-    onEventSearchRun("paymentsTabToPropertiesTabSearch", setQ, inputRef);
+    onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
+    onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
+    onEventSearchRun("paymentsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
   }, []);
 
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
+    // If navigated here by ID, show only that entity
+    if (highlightId) {
+      const exact = items.find((r) => r.id === highlightId);
+      if (exact) return [exact];
+    }
+
     let rows = items;
 
     // Filter based on entity type.
@@ -248,7 +255,7 @@ export default function PropertiesTab({
         <SearchWithClear
           ref={inputRef}
           value={q}
-          onChange={setQ}
+          onChange={(v) => { setQ(v); setHighlightId(null); }}
           inputId="properties-search"
           placeholder="Search…"
         />
@@ -417,6 +424,7 @@ export default function PropertiesTab({
                           "propertyTabToClientTabSearch",
                           p.client?.displayName,
                           forAdmin,
+                          p.clientId,
                         )
                       }
                     />
@@ -431,6 +439,7 @@ export default function PropertiesTab({
                             "propertyTabToClientTabContactSearch",
                             `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
                             forAdmin,
+                            p.clientId,
                           )
                         }
                       />

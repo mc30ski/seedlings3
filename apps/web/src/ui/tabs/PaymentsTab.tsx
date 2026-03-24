@@ -313,19 +313,19 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       {prop?.displayName && (
                         <TextLink
                           text="Property"
-                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin, prop.id)}
                         />
                       )}
                       {client?.displayName && (
                         <TextLink
                           text="Client"
-                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin, client.id)}
                         />
                       )}
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin, item.occurrence?.job?.id)}
                         />
                       )}
                     </HStack>
@@ -898,19 +898,19 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       {prop?.displayName && (
                         <TextLink
                           text="Property"
-                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToPropertiesTabSearch", prop.displayName, forAdmin, prop.id)}
                         />
                       )}
                       {client?.displayName && (
                         <TextLink
                           text="Client"
-                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToClientsTabSearch", client.displayName, forAdmin, client.id)}
                         />
                       )}
                       {prop?.displayName && (
                         <TextLink
                           text="Job"
-                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin)}
+                          onClick={() => openEventSearch("paymentsTabToServicesTabSearch", prop.displayName, forAdmin, p.occurrence?.job?.id)}
                         />
                       )}
                     </HStack>
