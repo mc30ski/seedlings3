@@ -13,7 +13,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, LayoutList, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, LayoutList, List, Maximize2, RefreshCw, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -67,6 +67,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
   const myId = viewAsUserId || me?.id || "";
 
   const [q, setQ] = useState("");
+  const [compact, setCompact] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [kind, setKind] = useState<string[]>(["ALL"]);
 
   const kindItems = useMemo(
@@ -461,6 +463,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
         </Button>
         <Button
           size="sm"
+          variant={compact ? "solid" : "ghost"}
+          px="2"
+          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
+          css={compact ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+          } : undefined}
+        >
+          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+        <Button
+          size="sm"
           variant="ghost"
           onClick={() => void load()}
           loading={loading}
@@ -680,89 +694,142 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
               ? "gray.50"
               : undefined;
 
+            const isCardCompact = compact && !expandedCards.has(occ.id);
+            const toggleCard = compact
+              ? () => setExpandedCards((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(occ.id)) next.delete(occ.id);
+                  else next.add(occ.id);
+                  return next;
+                })
+              : undefined;
+
             return (
               <Card.Root
                 key={occ.id}
                 variant="outline"
                 borderColor={cardBorderColor}
                 bg={cardBg}
+                css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
+                onClick={(e: any) => {
+                  if (!toggleCard) return;
+                  const tag = (e.target as HTMLElement)?.closest?.("a, button");
+                  if (tag) return;
+                  toggleCard();
+                }}
               >
                 <Card.Header pb="2">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontSize="md" fontWeight="semibold">
+                      <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">
                         {occ.job?.property?.client?.displayName && (
                           <>{occ.job.property.client.displayName} — </>
                         )}
                         {occ.job?.property?.displayName}
                       </Text>
-                      <Box fontSize="sm">
-                        <MapLink address={[
-                            occ.job?.property?.street1,
-                            occ.job?.property?.city,
-                            occ.job?.property?.state,
-                          ]
-                            .filter(Boolean)
-                            .join(", ")} />
-                      </Box>
-                      <HStack gap={3} fontSize="xs">
-                        {occ.job?.property?.displayName && (
-                          <TextLink
-                            text="View Property"
-                            onClick={() =>
-                              openEventSearch(
-                                "jobsTabToPropertiesTabSearch",
-                                occ.job?.property?.displayName ?? "",
-                                forAdmin,
-                              )
-                            }
-                          />
-                        )}
-                        {occ.job?.property?.client?.displayName && (
-                          <TextLink
-                            text="View Client"
-                            onClick={() =>
-                              openEventSearch(
-                                "jobsTabToClientsTabSearch",
-                                occ.job?.property?.client?.displayName ?? "",
-                                forAdmin,
-                              )
-                            }
-                          />
-                        )}
+                      {!isCardCompact && (
+                        <Box fontSize="sm">
+                          <MapLink address={[
+                              occ.job?.property?.street1,
+                              occ.job?.property?.city,
+                              occ.job?.property?.state,
+                            ]
+                              .filter(Boolean)
+                              .join(", ")} />
+                        </Box>
+                      )}
+                      {!isCardCompact && (
+                        <HStack gap={3} fontSize="xs">
+                          {occ.job?.property?.displayName && (
+                            <TextLink
+                              text="View Property"
+                              onClick={() =>
+                                openEventSearch(
+                                  "jobsTabToPropertiesTabSearch",
+                                  occ.job?.property?.displayName ?? "",
+                                  forAdmin,
+                                )
+                              }
+                            />
+                          )}
+                          {occ.job?.property?.client?.displayName && (
+                            <TextLink
+                              text="View Client"
+                              onClick={() =>
+                                openEventSearch(
+                                  "jobsTabToClientsTabSearch",
+                                  occ.job?.property?.client?.displayName ?? "",
+                                  forAdmin,
+                                )
+                              }
+                            />
+                          )}
+                        </HStack>
+                      )}
+                    </VStack>
+                    {isCardCompact ? (
+                      <HStack gap={1} flexShrink={0}>
+                        <StatusBadge
+                          status={occ.status}
+                          palette={occurrenceStatusColor(occ.status)}
+                          variant="solid"
+                        />
+                        {isTentative && <StatusBadge status="Tentative" palette="orange" variant="solid" />}
+                        {occ.isEstimate && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
+                        {occ.isOneOff && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                       </HStack>
-                    </VStack>
-                    <VStack gap={1} align="end">
-                      <StatusBadge
-                        status={occ.status}
-                        palette={occurrenceStatusColor(occ.status)}
-                        variant="solid"
-                      />
-                      {isTentative && (
+                    ) : (
+                      <VStack gap={1} align="end">
                         <StatusBadge
-                          status="Tentative"
-                          palette="orange"
+                          status={occ.status}
+                          palette={occurrenceStatusColor(occ.status)}
                           variant="solid"
                         />
-                      )}
-                      {occ.isEstimate && (
-                        <StatusBadge
-                          status="Estimate"
-                          palette="purple"
-                          variant="solid"
-                        />
-                      )}
-                      {occ.isOneOff && (
-                        <StatusBadge
-                          status="One-off"
-                          palette="gray"
-                          variant="solid"
-                        />
-                      )}
-                    </VStack>
+                        {isTentative && (
+                          <StatusBadge
+                            status="Tentative"
+                            palette="orange"
+                            variant="solid"
+                          />
+                        )}
+                        {occ.isEstimate && (
+                          <StatusBadge
+                            status="Estimate"
+                            palette="purple"
+                            variant="solid"
+                          />
+                        )}
+                        {occ.isOneOff && (
+                          <StatusBadge
+                            status="One-off"
+                            palette="gray"
+                            variant="solid"
+                          />
+                        )}
+                      </VStack>
+                    )}
                   </HStack>
                 </Card.Header>
 
+                {isCardCompact ? (
+                  <Card.Body pt="0">
+                    <HStack gap={2} fontSize="xs">
+                      {occ.price != null && (
+                        <Text fontWeight="medium">${occ.price.toFixed(2)}</Text>
+                      )}
+                      {!isUnassigned && (
+                        <Text color="fg.muted">
+                          {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                        </Text>
+                      )}
+                      {isUnassigned && occ.status !== "ARCHIVED" && (
+                        <Text color="orange.500" fontWeight="medium">
+                          {isTentative ? "Tentative" : "Unclaimed"}
+                        </Text>
+                      )}
+                    </HStack>
+                  </Card.Body>
+                ) : (
                 <Card.Body pt="0">
                   <VStack align="start" gap={1}>
                     {occ.startAt && (
@@ -874,8 +941,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                     )}
                   </VStack>
                 </Card.Body>
+                )}
 
-                {(isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
+                {!isCardCompact && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer>
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && (
