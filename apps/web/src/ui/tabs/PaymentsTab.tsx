@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CreditCard, Filter, RefreshCw, User, X } from "lucide-react";
+import { CreditCard, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
@@ -74,6 +74,8 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [dateFrom, setDateFrom] = useState(defaultDateFrom);
   const [dateTo, setDateTo] = useState(todayStr);
   const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const [compact, setCompact] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true);
@@ -179,6 +181,15 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           size="sm"
           px="2"
           minW="0"
+          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
+        >
+          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
           onClick={() => void load()}
           loading={loading}
         >
@@ -255,9 +266,40 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         {filteredItems.map((item) => {
           const prop = item.occurrence?.job?.property;
           const client = prop?.client;
+          const cardId = `jp-${item.splitId}`;
+          const isCardCompact = compact && !expandedCards.has(cardId);
+          const toggleCard = compact ? () => setExpandedCards((prev) => {
+            const next = new Set(prev);
+            next.has(cardId) ? next.delete(cardId) : next.add(cardId);
+            return next;
+          }) : undefined;
           return (
-            <Card.Root key={item.splitId} variant="outline">
+            <Card.Root
+              key={item.splitId}
+              variant="outline"
+              css={compact ? { cursor: "pointer" } : undefined}
+              onClick={(e: any) => {
+                if (!toggleCard) return;
+                const tag = (e.target as HTMLElement)?.closest?.("a, button");
+                if (tag) return;
+                toggleCard();
+              }}
+            >
               <Card.Body py="3" px="4">
+                {isCardCompact ? (
+                  <HStack justify="space-between" align="center">
+                    <Text fontSize="md" fontWeight="semibold" truncate>
+                      {prop?.displayName ?? "Unknown property"}
+                      {client?.displayName && <> — {client.displayName}</>}
+                    </Text>
+                    <HStack gap={2} flexShrink={0}>
+                      <Badge size="sm" colorPalette="gray">{prettyStatus(item.payment.method)}</Badge>
+                      <Text fontWeight="bold" color="green.700" fontSize="lg">
+                        ${item.myAmount.toFixed(2)}
+                      </Text>
+                    </HStack>
+                  </HStack>
+                ) : (
                 <HStack justify="space-between" align="start">
                   <VStack align="start" gap={0}>
                     <Text fontSize="md" fontWeight="semibold">
@@ -349,6 +391,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     );
                   })()}
                 </HStack>
+                )}
               </Card.Body>
             </Card.Root>
           );
@@ -359,9 +402,37 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>
-            {filteredCharges.map((c) => (
-              <Card.Root key={c.id} variant="outline">
+            {filteredCharges.map((c) => {
+              const cardId = `ec-${c.id}`;
+              const isCardCompact = compact && !expandedCards.has(cardId);
+              const toggleCard = compact ? () => setExpandedCards((prev) => {
+                const next = new Set(prev);
+                next.has(cardId) ? next.delete(cardId) : next.add(cardId);
+                return next;
+              }) : undefined;
+              return (
+              <Card.Root
+                key={c.id}
+                variant="outline"
+                css={compact ? { cursor: "pointer" } : undefined}
+                onClick={(e: any) => {
+                  if (!toggleCard) return;
+                  const tag = (e.target as HTMLElement)?.closest?.("a, button");
+                  if (tag) return;
+                  toggleCard();
+                }}
+              >
                 <Card.Body py="3" px="4">
+                  {isCardCompact ? (
+                    <HStack justify="space-between" align="center">
+                      <Text fontSize="md" fontWeight="semibold" truncate>
+                        {c.equipment.shortDesc}
+                      </Text>
+                      <Text fontWeight="bold" color="orange.600" fontSize="lg" flexShrink={0}>
+                        −${(c.rentalCost ?? 0).toFixed(2)}
+                      </Text>
+                    </HStack>
+                  ) : (
                   <HStack justify="space-between" align="start">
                     <VStack align="start" gap={0}>
                       <Text fontSize="md" fontWeight="semibold">
@@ -385,9 +456,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       −${(c.rentalCost ?? 0).toFixed(2)}
                     </Text>
                   </HStack>
+                  )}
                 </Card.Body>
               </Card.Root>
-            ))}
+              );
+            })}
           </VStack>
         </>
       )}
@@ -413,6 +486,8 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [methodFilter, setMethodFilter] = useState<string[]>(["ALL"]);
   const [personFilter, setPersonFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const [compact, setCompact] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   // Edit state
   const [editPayment, setEditPayment] = useState<PaymentListItem | null>(null);
@@ -674,6 +749,15 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           size="sm"
           px="2"
           minW="0"
+          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
+        >
+          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
           onClick={() => void load()}
           loading={loading}
         >
@@ -767,9 +851,40 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         {filteredItems.map((p) => {
           const prop = p.occurrence?.job?.property;
           const client = prop?.client;
+          const cardId = `ap-${p.id}`;
+          const isCardCompact = compact && !expandedCards.has(cardId);
+          const toggleCard = compact ? () => setExpandedCards((prev) => {
+            const next = new Set(prev);
+            next.has(cardId) ? next.delete(cardId) : next.add(cardId);
+            return next;
+          }) : undefined;
           return (
-            <Card.Root key={p.id} variant="outline">
+            <Card.Root
+              key={p.id}
+              variant="outline"
+              css={compact ? { cursor: "pointer" } : undefined}
+              onClick={(e: any) => {
+                if (!toggleCard) return;
+                const tag = (e.target as HTMLElement)?.closest?.("a, button");
+                if (tag) return;
+                toggleCard();
+              }}
+            >
               <Card.Body py="3" px="4">
+                {isCardCompact ? (
+                  <HStack justify="space-between" align="center">
+                    <Text fontSize="md" fontWeight="semibold" truncate>
+                      {prop?.displayName ?? "Unknown property"}
+                      {client?.displayName && <> — {client.displayName}</>}
+                    </Text>
+                    <HStack gap={2} flexShrink={0}>
+                      <Badge size="sm" colorPalette="gray">{prettyStatus(p.method)}</Badge>
+                      <Text fontWeight="bold" color="green.700" fontSize="lg">
+                        ${p.amountPaid.toFixed(2)}
+                      </Text>
+                    </HStack>
+                  </HStack>
+                ) : (
                 <HStack justify="space-between" align="start">
                   <VStack align="start" gap={0}>
                     <Text fontSize="md" fontWeight="semibold">
@@ -871,7 +986,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     );
                   })()}
                 </HStack>
+                )}
               </Card.Body>
+              {!isCardCompact && (
               <Card.Footer>
                 <HStack gap={2} wrap="wrap">
                   <StatusButton
@@ -895,6 +1012,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   />
                 </HStack>
               </Card.Footer>
+              )}
             </Card.Root>
           );
         })}
@@ -904,9 +1022,37 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         <>
           <Text fontSize="sm" fontWeight="semibold" mt={4} mb={1}>Equipment Charges</Text>
           <VStack align="stretch" gap={2}>
-            {filteredCharges.map((c) => (
-              <Card.Root key={c.id} variant="outline">
+            {filteredCharges.map((c) => {
+              const cardId = `aec-${c.id}`;
+              const isCardCompact = compact && !expandedCards.has(cardId);
+              const toggleCard = compact ? () => setExpandedCards((prev) => {
+                const next = new Set(prev);
+                next.has(cardId) ? next.delete(cardId) : next.add(cardId);
+                return next;
+              }) : undefined;
+              return (
+              <Card.Root
+                key={c.id}
+                variant="outline"
+                css={compact ? { cursor: "pointer" } : undefined}
+                onClick={(e: any) => {
+                  if (!toggleCard) return;
+                  const tag = (e.target as HTMLElement)?.closest?.("a, button");
+                  if (tag) return;
+                  toggleCard();
+                }}
+              >
                 <Card.Body py="3" px="4">
+                  {isCardCompact ? (
+                    <HStack justify="space-between" align="center">
+                      <Text fontSize="md" fontWeight="semibold" truncate>
+                        {c.equipment.shortDesc}
+                      </Text>
+                      <Text fontWeight="bold" color="orange.600" fontSize="lg" flexShrink={0}>
+                        −${(c.rentalCost ?? 0).toFixed(2)}
+                      </Text>
+                    </HStack>
+                  ) : (
                   <HStack justify="space-between" align="start">
                     <VStack align="start" gap={0}>
                       <Text fontSize="md" fontWeight="semibold">
@@ -933,9 +1079,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       −${(c.rentalCost ?? 0).toFixed(2)}
                     </Text>
                   </HStack>
+                  )}
                 </Card.Body>
               </Card.Root>
-            ))}
+              );
+            })}
           </VStack>
         </>
       )}
