@@ -41,6 +41,17 @@ function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function actualMinutes(occ: { startedAt?: string | null; completedAt?: string | null }): number | null {
+  if (!occ.startedAt || !occ.completedAt) return null;
+  return (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000;
+}
+
 const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItemsBase = [
@@ -720,7 +731,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                   toggleCard();
                 }}
               >
-                <Card.Header pb="2">
+                <Card.Header py="3" px="4" pb="0">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">
@@ -816,11 +827,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                 </Card.Header>
 
                 {isCardCompact ? (
-                  <Card.Body pt="0">
+                  <Card.Body py="3" px="4" pt="0">
                     <HStack gap={2} fontSize="xs">
                       {occ.price != null && (
                         <Text fontWeight="medium">${occ.price.toFixed(2)}</Text>
                       )}
+                      {(() => {
+                        const actual = actualMinutes(occ);
+                        if (actual != null && occ.estimatedMinutes) {
+                          const color = actual <= occ.estimatedMinutes ? "green.600" : "red.600";
+                          return <Text color={color} fontWeight="medium">{formatDuration(actual)}</Text>;
+                        }
+                        if (occ.estimatedMinutes != null) return <Text color="fg.muted">{formatDuration(occ.estimatedMinutes)}</Text>;
+                        return null;
+                      })()}
                       {!isUnassigned && (
                         <Text color="fg.muted">
                           {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
@@ -849,24 +869,49 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                         ${occ.price.toFixed(2)}
                       </Text>
                     )}
+                    {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
+                      <HStack fontSize="xs" gap={2}>
+                        {occ.estimatedMinutes != null && (
+                          <Text color="fg.muted">Est: {formatDuration(occ.estimatedMinutes)}</Text>
+                        )}
+                        {(() => {
+                          const actual = actualMinutes(occ);
+                          if (actual == null) return null;
+                          const color = occ.estimatedMinutes
+                            ? actual <= occ.estimatedMinutes ? "green.600" : "red.600"
+                            : "fg.muted";
+                          return <Text color={color} fontWeight="medium">Actual: {formatDuration(actual)}</Text>;
+                        })()}
+                      </HStack>
+                    )}
+                    {occ.startedAt && (
+                      <Text fontSize="xs" color="fg.muted">
+                        Start Time: {new Date(occ.startedAt).toLocaleString()}
+                      </Text>
+                    )}
+                    {occ.completedAt && (
+                      <Text fontSize="xs" color="fg.muted">
+                        Complete Time: {new Date(occ.completedAt).toLocaleString()}
+                      </Text>
+                    )}
                     {occ.notes && (
                       <Text fontSize="xs" color="fg.muted">
                         {occ.notes}
                       </Text>
                     )}
                     {(occ.startLat != null || occ.completeLat != null) && (
-                      <HStack gap={3} fontSize="xs" color="fg.muted">
+                      <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                         {occ.startLat != null && occ.startLng != null && (
                           <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
-                            Started: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
+                            Start Location: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
                           </a>
                         )}
                         {occ.completeLat != null && occ.completeLng != null && (
                           <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
-                            Completed: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
+                            Complete Location: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
                           </a>
                         )}
-                      </HStack>
+                      </VStack>
                     )}
 
                     {!isUnassigned && (
@@ -948,7 +993,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                 )}
 
                 {!isCardCompact && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
-                  <Card.Footer>
+                  <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && (
                         <StatusButton

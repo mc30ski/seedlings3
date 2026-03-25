@@ -412,6 +412,7 @@ export type CreateOccurrenceInput = {
   endAt?: string | Date | null;
   notes?: string | null;
   price?: number | null;
+  estimatedMinutes?: number | null;
 
   isOneOff?: boolean;
   isTentative?: boolean;

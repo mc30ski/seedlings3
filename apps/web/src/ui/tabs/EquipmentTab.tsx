@@ -687,7 +687,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               toggleCard();
             }}
           >
-            <Card.Header pb="2">
+            <Card.Header py="3" px="4" pb="0">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
                   <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">{e.shortDesc}</Text>
@@ -701,7 +701,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               </HStack>
             </Card.Header>
             {isCardCompact ? (
-              <Card.Body pt="0">
+              <Card.Body py="3" px="4" pt="0">
                 <HStack gap={2} fontSize="xs" color="fg.muted">
                   <Text>
                     {e.brand ? `${e.brand} ` : ""}
@@ -716,7 +716,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 </HStack>
               </Card.Body>
             ) : (
-            <Card.Body pt="0">
+            <Card.Body py="3" px="4" pt="0">
               <VStack align="start" gap={0}>
                 <Text fontSize="sm" color="fg.muted">
                   {e.brand ? `${e.brand} ` : ""}
@@ -753,8 +753,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Card.Body>
             )}
             {!isCardCompact && (
-            <Card.Footer>
-              <HStack gap={2} wrap="wrap" mb="2">
+            <Card.Footer py="3" px="4" pt="0">
+              <HStack gap={2} wrap="wrap">
                 {forAdmin && (
                   <StatusButton
                     id={"equipment-edit"}

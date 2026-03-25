@@ -393,7 +393,7 @@ export default function PropertiesTab({
                 </Text>
               )}
             <Card.Root variant="outline">
-              <Card.Header pb="2">
+              <Card.Header py="3" px="4" pb="0">
                 <HStack gap={3} justify="space-between" align="center">
                   <HStack gap={3} flex="1" minW={0}>
                     <Text fontSize="md" fontWeight="semibold">{p.displayName}</Text>
@@ -411,7 +411,7 @@ export default function PropertiesTab({
                 </HStack>
               </Card.Header>
 
-              <Card.Body pt="0">
+              <Card.Body py="3" px="4" pt="0">
                 <VStack align="start" gap={1}>
                   <Box fontSize="sm">
                     <MapLink address={address} />
@@ -451,8 +451,8 @@ export default function PropertiesTab({
                 </VStack>
               </Card.Body>
               {forAdmin && (
-                <Card.Footer>
-                  <HStack gap={2} wrap="wrap" mb="2">
+                <Card.Footer py="3" px="4" pt="0">
+                  <HStack gap={2} wrap="wrap">
                     <StatusButton
                       id={"properties-edit"}
                       itemId={p.id}

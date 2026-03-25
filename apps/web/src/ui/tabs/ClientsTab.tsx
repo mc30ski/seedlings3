@@ -377,7 +377,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         )}
         {filtered.map((c: Client) => (
           <Card.Root key={c.id} variant="outline">
-            <Card.Header pb="1.5">
+            <Card.Header py="3" px="4" pb="0">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
                   <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
@@ -391,14 +391,14 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
               </HStack>
             </Card.Header>
             {c.notesInternal && (
-              <Card.Body pt="0" pb="1">
+              <Card.Body py="3" px="4" pt="0" pb="0">
                 <Text fontSize="xs" color="fg.muted">
                   {c.notesInternal}
                 </Text>
               </Card.Body>
             )}
-            <Card.Footer pt="1">
-              <HStack gap={2} wrap="wrap" mb="1" w="full">
+            <Card.Footer py="3" px="4" pt="0">
+              <HStack gap={2} wrap="wrap" w="full">
                 {forAdmin && (
                   <>
                     <StatusButton
@@ -556,12 +556,12 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                   p={3}
                                 >
                                   <HStack w="100%">
-                                    {ct.isPrimary && (
-                                      <Icon as={FiStar} boxSize="4" />
-                                    )}
                                     <Text fontWeight="medium">
                                       {`${ct.firstName} ${ct.lastName}`}
                                     </Text>
+                                    {ct.isPrimary && (
+                                      <Icon as={FiStar} boxSize="4" />
+                                    )}
                                     <StatusBadge
                                       status={ct.status}
                                       palette={clientStatusColor(ct.status)}

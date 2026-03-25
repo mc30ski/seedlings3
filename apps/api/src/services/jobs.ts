@@ -181,6 +181,7 @@ export const jobs: ServicesJobs = {
           frequencyDays: (payload as any).frequencyDays ?? null,
           notes: payload.notes ?? null,
           defaultPrice: payload.defaultPrice ?? null,
+          estimatedMinutes: (payload as any).estimatedMinutes ?? null,
         } as any,
       });
 
@@ -204,6 +205,7 @@ export const jobs: ServicesJobs = {
           frequencyDays: "frequencyDays" in (payload as any) ? ((payload as any).frequencyDays ?? null) : undefined,
           notes: payload.notes ?? undefined,
           defaultPrice: payload.defaultPrice ?? undefined,
+          estimatedMinutes: "estimatedMinutes" in (payload as any) ? ((payload as any).estimatedMinutes ?? null) : undefined,
         } as any,
       });
 
@@ -274,6 +276,7 @@ export const jobs: ServicesJobs = {
           source: JobOccurrenceSource.MANUAL,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
+          estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
           isOneOff: input.isOneOff ?? false,
           isTentative: input.isTentative ?? false,
           isEstimate: input.isEstimate ?? false,
@@ -328,8 +331,11 @@ export const jobs: ServicesJobs = {
         data.endAt = patch.endAt ? new Date(patch.endAt) : null;
       if ("notes" in patch) data.notes = patch.notes ?? null;
       if ("price" in patch) data.price = patch.price ?? null;
+      if ("estimatedMinutes" in patch) data.estimatedMinutes = patch.estimatedMinutes ?? null;
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
+      if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
+      if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },
@@ -676,6 +682,16 @@ export const jobs: ServicesJobs = {
         : status;
 
       const data: any = { status: finalStatus };
+      if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
+        data.startedAt = new Date();
+      }
+      if (
+        (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
+         finalStatus === JobOccurrenceStatus.CLOSED) &&
+        !occ.completedAt
+      ) {
+        data.completedAt = new Date();
+      }
       if (notes !== undefined) data.notes = notes;
       if (location) {
         if (status === JobOccurrenceStatus.IN_PROGRESS) {
@@ -727,6 +743,7 @@ export const jobs: ServicesJobs = {
           source: JobOccurrenceSource.GENERATED,
           notes: (job as any).notes ?? null,
           price: (job as any).defaultPrice ?? null,
+          estimatedMinutes: (job as any).estimatedMinutes ?? null,
         } as any,
       });
 

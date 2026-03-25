@@ -46,6 +46,10 @@ type Props = {
   defaultEndAt?: string | null;
   defaultNotes?: string | null;
   defaultPrice?: number | null;
+  defaultEstimatedMinutes?: number | null;
+  defaultStartedAt?: string | null;
+  defaultCompletedAt?: string | null;
+  isAdmin?: boolean;
   // optional overrides
   createEndpoint?: string;
   createBody?: Record<string, unknown>;
@@ -67,6 +71,10 @@ export default function OccurrenceDialog({
   defaultEndAt,
   defaultNotes,
   defaultPrice,
+  defaultEstimatedMinutes,
+  defaultStartedAt,
+  defaultCompletedAt,
+  isAdmin,
   createEndpoint,
   createBody,
   title,
@@ -82,9 +90,20 @@ export default function OccurrenceDialog({
   const [endAt, setEndAt] = useState("");
   const [notes, setNotes] = useState("");
   const [price, setPrice] = useState("");
+  const [estimatedMinutes, setEstimatedMinutes] = useState("");
+  const [startedAt, setStartedAt] = useState("");
+  const [completedAt, setCompletedAt] = useState("");
   const [isOneOff, setIsOneOff] = useState(false);
   const [isTentative, setIsTentative] = useState(false);
   const [isEstimate, setIsEstimate] = useState(false);
+
+  function toDateTimeLocal(iso: string | null | undefined): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -94,10 +113,13 @@ export default function OccurrenceDialog({
     setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
     setNotes(defaultNotes ?? "");
     setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
+    setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
+    setStartedAt(toDateTimeLocal(defaultStartedAt));
+    setCompletedAt(toDateTimeLocal(defaultCompletedAt));
     setIsOneOff(false);
     setIsTentative(false);
     setIsEstimate(false);
-  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice]);
+  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt]);
 
   async function handleSave() {
     if (!startAt) {
@@ -119,6 +141,7 @@ export default function OccurrenceDialog({
           endAt: endAtIso ?? undefined,
           notes: notesVal ?? undefined,
           price: priceVal ?? undefined,
+          estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
           ...(isOneOff ? { isOneOff: true } : {}),
           ...(isTentative ? { isTentative: true } : {}),
           ...(isEstimate ? { isEstimate: true } : {}),
@@ -130,9 +153,14 @@ export default function OccurrenceDialog({
           endAt: endAtIso,
           notes: notesVal,
           price: priceVal,
+          estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
         };
         if (status) body.status = status;
         if (kind) body.kind = kind;
+        if (isAdmin) {
+          body.startedAt = startedAt ? new Date(startedAt).toISOString() : null;
+          body.completedAt = completedAt ? new Date(completedAt).toISOString() : null;
+        }
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
       }
@@ -229,13 +257,45 @@ export default function OccurrenceDialog({
                     }}
                   />
                 </div>
-                <div>
-                  <Text mb="1">Price</Text>
-                  <CurrencyInput
-                    value={price}
-                    onChange={setPrice}
-                  />
-                </div>
+                <HStack gap={3}>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Price</Text>
+                    <CurrencyInput
+                      value={price}
+                      onChange={setPrice}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Est. minutes</Text>
+                    <Input
+                      type="number"
+                      value={estimatedMinutes}
+                      onChange={(e) => setEstimatedMinutes(e.target.value)}
+                      placeholder="e.g. 45"
+                      min={1}
+                    />
+                  </div>
+                </HStack>
+                {isAdmin && mode === "UPDATE" && (
+                  <>
+                    <div>
+                      <Text mb="1">Started at</Text>
+                      <Input
+                        type="datetime-local"
+                        value={startedAt}
+                        onChange={(e) => setStartedAt(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Text mb="1">Completed at</Text>
+                      <Input
+                        type="datetime-local"
+                        value={completedAt}
+                        onChange={(e) => setCompletedAt(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
                 <div>
                   <Text mb="1">Notes</Text>
                   <Textarea
