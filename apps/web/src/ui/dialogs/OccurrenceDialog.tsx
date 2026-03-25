@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
+  Box,
   Button,
   Checkbox,
   Dialog,
@@ -13,7 +15,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { apiPatch, apiPost } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -50,6 +52,8 @@ type Props = {
   defaultStartedAt?: string | null;
   defaultCompletedAt?: string | null;
   isAdmin?: boolean;
+  /** Pre-selected assignees (carried from previous occurrence) */
+  defaultAssignees?: { userId: string; displayName?: string | null }[];
   // optional overrides
   createEndpoint?: string;
   createBody?: Record<string, unknown>;
@@ -75,6 +79,7 @@ export default function OccurrenceDialog({
   defaultStartedAt,
   defaultCompletedAt,
   isAdmin,
+  defaultAssignees,
   createEndpoint,
   createBody,
   title,
@@ -96,6 +101,10 @@ export default function OccurrenceDialog({
   const [isOneOff, setIsOneOff] = useState(false);
   const [isTentative, setIsTentative] = useState(false);
   const [isEstimate, setIsEstimate] = useState(false);
+
+  type WorkerItem = { id: string; displayName?: string | null; email?: string | null };
+  const [workers, setWorkers] = useState<WorkerItem[]>([]);
+  const [selectedAssignees, setSelectedAssignees] = useState<Set<string>>(new Set());
 
   function toDateTimeLocal(iso: string | null | undefined): string {
     if (!iso) return "";
@@ -119,7 +128,15 @@ export default function OccurrenceDialog({
     setIsOneOff(false);
     setIsTentative(false);
     setIsEstimate(false);
-  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt]);
+    setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
+  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt, defaultAssignees]);
+
+  useEffect(() => {
+    if (!open) return;
+    apiGet<WorkerItem[]>("/api/workers")
+      .then((list) => setWorkers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [open]);
 
   async function handleSave() {
     if (!startAt) {
@@ -142,6 +159,7 @@ export default function OccurrenceDialog({
           notes: notesVal ?? undefined,
           price: priceVal ?? undefined,
           estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
+          ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
           ...(isOneOff ? { isOneOff: true } : {}),
           ...(isTentative ? { isTentative: true } : {}),
           ...(isEstimate ? { isEstimate: true } : {}),
@@ -305,6 +323,30 @@ export default function OccurrenceDialog({
                     rows={2}
                   />
                 </div>
+                {mode === "CREATE" && workers.length > 0 && (
+                  <div>
+                    <Text mb="1">Assignees <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
+                    <VStack align="stretch" gap={1} maxH="150px" overflowY="auto">
+                      {workers.map((w) => (
+                        <Checkbox.Root
+                          key={w.id}
+                          checked={selectedAssignees.has(w.id)}
+                          onCheckedChange={(e) => {
+                            setSelectedAssignees((prev) => {
+                              const next = new Set(prev);
+                              e.checked ? next.add(w.id) : next.delete(w.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          <Checkbox.HiddenInput />
+                          <Checkbox.Control />
+                          <Checkbox.Label fontSize="sm">{w.displayName || w.email || w.id}</Checkbox.Label>
+                        </Checkbox.Root>
+                      ))}
+                    </VStack>
+                  </div>
+                )}
                 {showOneOff && mode === "CREATE" && (
                   <Checkbox.Root
                     checked={isOneOff}
