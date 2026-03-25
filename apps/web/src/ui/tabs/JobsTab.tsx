@@ -169,7 +169,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   const [scheduleNextData, setScheduleNextData] = useState<{
     jobId: string;
     frequencyDays: number;
-    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null };
+    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null; estimatedMinutes?: number | null; assignees?: { userId: string; displayName?: string | null }[] };
   } | null>(null);
 
   const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
@@ -309,6 +309,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
             endAt: occ.endAt,
             notes: occ.notes,
             price: occ.price,
+            estimatedMinutes: occ.estimatedMinutes,
+            assignees: (occ.assignees ?? []).map((a) => ({ userId: a.userId, displayName: a.user?.displayName })),
           },
         });
         setScheduleNextOpen(true);
@@ -1273,6 +1275,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                   endAt: occ.endAt,
                   notes: occ.notes,
                   price: occ.price,
+                  estimatedMinutes: occ.estimatedMinutes,
+                  assignees: (occ.assignees ?? []).map((a) => ({ userId: a.userId, displayName: a.user?.displayName })),
                 },
               });
               setScheduleNextOpen(true);

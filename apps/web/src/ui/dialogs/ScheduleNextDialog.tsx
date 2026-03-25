@@ -25,6 +25,8 @@ type ClosedOccurrence = {
   endAt?: string | null;
   notes?: string | null;
   price?: number | null;
+  estimatedMinutes?: number | null;
+  assignees?: { userId: string; displayName?: string | null }[];
 };
 
 type Props = {
@@ -98,6 +100,8 @@ export default function ScheduleNextDialog({
         defaultEndAt={nextEndAt ? nextEndAt + "T00:00:00" : null}
         defaultNotes={closedOccurrence.notes}
         defaultPrice={closedOccurrence.price}
+        defaultEstimatedMinutes={closedOccurrence.estimatedMinutes}
+        defaultAssignees={closedOccurrence.assignees}
         onSaved={() => {
           handleClose();
           onCreated?.(nextStartAt);
