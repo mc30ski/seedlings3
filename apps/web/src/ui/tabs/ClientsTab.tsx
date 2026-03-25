@@ -18,7 +18,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { Filter, LayoutList, Plus, RefreshCw, X } from "lucide-react";
-import { determineRoles, prettyStatus, clientStatusColor } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientStatusColor, clientLabel } from "@/src/lib/lib";
 import {
   type TabPropsType,
   type Client,
@@ -380,7 +380,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             <Card.Header pb="1.5">
               <HStack gap={3} justify="space-between" align="center">
                 <HStack gap={3} flex="1" minW={0}>
-                  <Text fontSize="md" fontWeight="semibold">{c.displayName}</Text>
+                  <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
                   <StatusBadge
                     status={c.status}
                     palette={clientStatusColor(c.status)}

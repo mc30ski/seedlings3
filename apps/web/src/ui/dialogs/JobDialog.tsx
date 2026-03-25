@@ -22,7 +22,7 @@ import {
   JOB_KIND,
   JOB_STATUS,
 } from "@/src/lib/types";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/lib";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -105,7 +105,7 @@ export default function JobDialog({
       const location = [p.city, p.state].filter(Boolean).join(", ");
       const parts = [p.displayName];
       if (location) parts.push(location);
-      if (p.client?.displayName) parts.push(`(${p.client.displayName})`);
+      if (p.client?.displayName) parts.push(`(${clientLabel(p.client.displayName)})`);
       return { label: parts.join(" — "), value: p.id };
     });
     const cur = propertyValue[0];

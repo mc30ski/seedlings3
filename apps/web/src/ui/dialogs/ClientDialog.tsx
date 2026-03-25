@@ -242,11 +242,15 @@ export default function ClientDialog({
                 </HStack>
                 <div>
                   <Text mb="1">Client display name *</Text>
-                  <Input
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="e.g., John Smith"
-                  />
+                  <HStack gap={2} align="center">
+                    <Input
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      placeholder="e.g., John Smith"
+                      flex="1"
+                    />
+                    <Text fontWeight="semibold" color="fg.muted" flexShrink={0}>JOB</Text>
+                  </HStack>
                 </div>
                 <div>
                   <Text mb="1">Notes</Text>

@@ -3,6 +3,12 @@ import { Me, Role } from "@/src/lib/types";
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Append " JOB" to client display names for display purposes. */
+export function clientLabel(name: string | null | undefined): string {
+  if (!name) return "";
+  return `${name} JOB`;
+}
+
 export function notifyEquipmentUpdated() {
   try {
     window.dispatchEvent(new CustomEvent("seedlings3:equipment-updated"));

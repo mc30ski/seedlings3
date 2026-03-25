@@ -18,7 +18,7 @@ import { AlertTriangle, CalendarRange, Filter, LayoutList, List, Maximize2, Refr
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -725,7 +725,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">
                         {occ.job?.property?.client?.displayName && (
-                          <>{occ.job.property.client.displayName} — </>
+                          <>{clientLabel(occ.job.property.client.displayName)} — </>
                         )}
                         {occ.job?.property?.displayName}
                       </Text>

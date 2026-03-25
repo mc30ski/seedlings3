@@ -23,6 +23,7 @@ import {
   jobStatusColor,
   occurrenceStatusColor,
   prettyStatus,
+  clientLabel,
 } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -811,7 +812,7 @@ export default function ServicesTab({
                       <HStack gap={2} align="center">
                         <Text fontSize="md" fontWeight="semibold">
                           {job.property?.client?.displayName && (
-                            <>{job.property.client.displayName} — </>
+                            <>{clientLabel(job.property.client.displayName)} — </>
                           )}
                           {job.property?.displayName ?? job.propertyId}
                         </Text>

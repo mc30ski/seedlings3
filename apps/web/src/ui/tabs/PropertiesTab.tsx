@@ -20,6 +20,7 @@ import {
   determineRoles,
   propertyStatusColor,
   prettyStatus,
+  clientLabel,
 } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -370,8 +371,8 @@ export default function PropertiesTab({
           </Box>
         )}
         {filtered.map((p: Property, idx: number) => {
-          const clientName = p.client?.displayName ?? "No Client";
-          const prevClient = idx > 0 ? (filtered[idx - 1].client?.displayName ?? "No Client") : null;
+          const clientName = p.client?.displayName ? clientLabel(p.client.displayName) : "No Client";
+          const prevClient = idx > 0 ? (filtered[idx - 1].client?.displayName ? clientLabel(filtered[idx - 1].client!.displayName) : "No Client") : null;
           const showHeader = clientName !== prevClient;
 
           const address = [
@@ -418,7 +419,7 @@ export default function PropertiesTab({
                   <Text fontSize="xs">
                     Client:{" "}
                     <TextLink
-                      text={p.client?.displayName ?? p.clientId}
+                      text={clientLabel(p.client?.displayName) || p.clientId || ""}
                       onClick={() =>
                         openEventSearch(
                           "propertyTabToClientTabSearch",
