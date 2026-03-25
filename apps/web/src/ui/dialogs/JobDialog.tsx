@@ -42,7 +42,7 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
   initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
-  onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null }) => void;
+  onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null; estimatedMinutes?: number | null }) => void;
   defaultPropertyId?: string;
 };
 
@@ -64,6 +64,7 @@ export default function JobDialog({
   const [frequencyDays, setFrequencyDays] = useState("");
   const [notes, setNotes] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
+  const [estimatedMinutes, setEstimatedMinutes] = useState("");
 
   // Load active properties when dialog opens
   useEffect(() => {
@@ -90,6 +91,7 @@ export default function JobDialog({
       setFrequencyDays(initial.frequencyDays != null ? String(initial.frequencyDays) : "");
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
+      setEstimatedMinutes((initial as any).estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
     } else {
       setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
       setKindValue([JOB_KIND[0]]);
@@ -97,6 +99,7 @@ export default function JobDialog({
       setFrequencyDays("");
       setNotes("");
       setDefaultPrice("");
+      setEstimatedMinutes("");
     }
   }, [open, mode, initial, defaultPropertyId]);
 
@@ -150,6 +153,7 @@ export default function JobDialog({
       frequencyDays: frequencyDays !== "" ? Number(frequencyDays) : null,
       notes: notes.trim() || null,
       defaultPrice: defaultPrice !== "" ? Number(defaultPrice) : null,
+      estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
     };
     setBusy(true);
     try {
@@ -162,6 +166,7 @@ export default function JobDialog({
           defaultPrice: payload.defaultPrice,
           notes: payload.notes,
           frequencyDays: payload.frequencyDays,
+          estimatedMinutes: payload.estimatedMinutes,
         });
       } else {
         if (!initial?.id) throw new Error("Missing job id");
@@ -298,6 +303,17 @@ export default function JobDialog({
                       value={frequencyDays}
                       onChange={(e) => setFrequencyDays(e.target.value)}
                       placeholder="e.g. 14"
+                      min={1}
+                      size="sm"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Est. minutes</Text>
+                    <Input
+                      type="number"
+                      value={estimatedMinutes}
+                      onChange={(e) => setEstimatedMinutes(e.target.value)}
+                      placeholder="e.g. 45"
                       min={1}
                       size="sm"
                     />

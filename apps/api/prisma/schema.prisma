@@ -350,9 +350,10 @@ model Job {
   kind        JobKind   @default(SINGLE_ADDRESS) // REQUIRED
   status      JobStatus @default(PROPOSED)
 
-  frequencyDays Int?
-  notes         String?
-  defaultPrice  Float?
+  frequencyDays    Int?
+  notes            String?
+  defaultPrice     Float?
+  estimatedMinutes Int?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -436,11 +437,15 @@ model JobOccurrence {
   status      JobOccurrenceStatus @default(SCHEDULED)
   source      JobOccurrenceSource @default(GENERATED)
 
-  notes       String?
-  price       Float?
-  isOneOff    Boolean @default(false)
-  isTentative Boolean @default(false)
-  isEstimate  Boolean @default(false)
+  notes            String?
+  price            Float?
+  estimatedMinutes Int?
+  isOneOff         Boolean @default(false)
+  isTentative      Boolean @default(false)
+  isEstimate       Boolean @default(false)
+
+  startedAt   DateTime?
+  completedAt DateTime?
 
   startLat    Float?
   startLng    Float?

@@ -247,9 +247,12 @@ export type JobOccurrenceFull = {
   endAt?: string | null;
   notes?: string | null;
   price?: number | null;
+  estimatedMinutes?: number | null;
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  startedAt?: string | null;
+  completedAt?: string | null;
   startLat?: number | null;
   startLng?: number | null;
   completeLat?: number | null;
@@ -286,6 +289,7 @@ export type JobListItem = {
   occurrenceCount?: number;
   notes?: string | null;
   defaultPrice?: number | null;
+  estimatedMinutes?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -398,9 +402,12 @@ export type WorkerOccurrence = {
   endAt?: string | null;
   notes?: string | null;
   price?: number | null;
+  estimatedMinutes?: number | null;
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  startedAt?: string | null;
+  completedAt?: string | null;
   startLat?: number | null;
   startLng?: number | null;
   completeLat?: number | null;

@@ -162,6 +162,7 @@ export default function ServicesTab({
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
+  const [occurrenceDefaultEstMins, setOccurrenceDefaultEstMins] = useState<number | null>(null);
   const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
@@ -805,7 +806,7 @@ export default function ServicesTab({
 
           return (
             <Card.Root key={job.id} variant="outline">
-              <Card.Header pb="2">
+              <Card.Header py="3" px="4" pb="0">
                 <HStack gap={3} justify="space-between" align="start">
                   <HStack gap={3} flex="1" minW={0} align="center">
                     <VStack align="start" gap={0}>
@@ -847,7 +848,7 @@ export default function ServicesTab({
                 )}
               </Card.Header>
 
-              <Card.Body pt="0">
+              <Card.Body py="3" px="4" pt="0">
                 <VStack align="start" gap={0} mb={2}>
                   <Text fontSize="xs" color="fg.muted">
                     Default price:{" "}
@@ -857,6 +858,13 @@ export default function ServicesTab({
                       <span>Not set</span>
                     )}
                   </Text>
+                  {job.estimatedMinutes != null && (
+                    <Text fontSize="xs" color="fg.muted">
+                      Est. duration: {job.estimatedMinutes >= 60
+                        ? `${Math.floor(job.estimatedMinutes / 60)}h ${job.estimatedMinutes % 60}m`
+                        : `${job.estimatedMinutes}m`}
+                    </Text>
+                  )}
                   {job.frequencyDays && (
                     <Text fontSize="xs" color="fg.muted">
                       Frequency: every {job.frequencyDays} day{job.frequencyDays !== 1 ? "s" : ""}
@@ -944,24 +952,49 @@ export default function ServicesTab({
                                 <span>Not set</span>
                               )}
                             </Text>
+                            {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
+                              <HStack fontSize="xs" gap={2}>
+                                {occ.estimatedMinutes != null && (
+                                  <Text color="fg.muted">Est: {occ.estimatedMinutes >= 60 ? `${Math.floor(occ.estimatedMinutes / 60)}h ${occ.estimatedMinutes % 60}m` : `${occ.estimatedMinutes}m`}</Text>
+                                )}
+                                {occ.startedAt && occ.completedAt && (() => {
+                                  const actual = (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000;
+                                  const fmt = actual >= 60 ? `${Math.floor(actual / 60)}h ${Math.round(actual % 60)}m` : `${Math.round(actual)}m`;
+                                  const color = occ.estimatedMinutes
+                                    ? actual <= occ.estimatedMinutes ? "green.600" : "red.600"
+                                    : "fg.muted";
+                                  return <Text color={color} fontWeight="medium">Actual: {fmt}</Text>;
+                                })()}
+                              </HStack>
+                            )}
+                            {occ.startedAt && (
+                              <Text fontSize="xs" color="fg.muted">
+                                Start Time: {new Date(occ.startedAt).toLocaleString()}
+                              </Text>
+                            )}
+                            {occ.completedAt && (
+                              <Text fontSize="xs" color="fg.muted">
+                                Complete Time: {new Date(occ.completedAt).toLocaleString()}
+                              </Text>
+                            )}
                             {occ.notes && (
                               <Text fontSize="xs" color="fg.muted">
                                 {occ.notes}
                               </Text>
                             )}
                             {(occ.startLat != null || occ.completeLat != null) && (
-                              <HStack gap={3} fontSize="xs" color="fg.muted">
+                              <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                                 {occ.startLat != null && occ.startLng != null && (
                                   <a href={`https://maps.google.com/?q=${occ.startLat},${occ.startLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
-                                    Started: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
+                                    Start Location: {occ.startLat.toFixed(4)}, {occ.startLng.toFixed(4)}
                                   </a>
                                 )}
                                 {occ.completeLat != null && occ.completeLng != null && (
                                   <a href={`https://maps.google.com/?q=${occ.completeLat},${occ.completeLng}`} target="_blank" rel="noopener" style={{ color: "var(--chakra-colors-blue-600)" }}>
-                                    Completed: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
+                                    Complete Location: {occ.completeLat.toFixed(4)}, {occ.completeLng.toFixed(4)}
                                   </a>
                                 )}
-                              </HStack>
+                              </VStack>
                             )}
                             {occ.payment && (
                               <Box mt={1} p={1} bg="green.50" rounded="sm">
@@ -1229,8 +1262,8 @@ export default function ServicesTab({
               </Card.Body>
 
               {forAdmin && (
-                <Card.Footer>
-                  <HStack gap={2} wrap="wrap" mb="2">
+                <Card.Footer py="3" px="4" pt="0">
+                  <HStack gap={2} wrap="wrap">
                     <StatusButton
                       id="job-edit"
                       itemId={job.id}
@@ -1252,6 +1285,7 @@ export default function ServicesTab({
                           setOccurrenceJobId(job.id);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
+                          setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
                           setOccurrenceJobHasFrequency(!!job.frequencyDays);
                           setOccurrenceDialogOpen(true);
                         }}
@@ -1315,6 +1349,7 @@ export default function ServicesTab({
               setOccurrenceJobId(created.id);
               setOccurrenceDefaultNotes(created.notes ?? null);
               setOccurrenceDefaultPrice(created.defaultPrice ?? null);
+              setOccurrenceDefaultEstMins(created.estimatedMinutes ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
               setPromptOccurrenceOpen(true);
             }
@@ -1343,6 +1378,7 @@ export default function ServicesTab({
           jobId={occurrenceJobId}
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
+          defaultEstimatedMinutes={occurrenceDefaultEstMins}
           showOneOff={occurrenceJobHasFrequency}
           onSaved={() => {
             if (occurrenceJobId) {
@@ -1368,6 +1404,10 @@ export default function ServicesTab({
           defaultEndAt={editingOccurrence.endAt}
           defaultNotes={editingOccurrence.notes}
           defaultPrice={editingOccurrence.price}
+          defaultEstimatedMinutes={editingOccurrence.estimatedMinutes}
+          defaultStartedAt={editingOccurrence.startedAt}
+          defaultCompletedAt={editingOccurrence.completedAt}
+          isAdmin={forAdmin}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
           }}

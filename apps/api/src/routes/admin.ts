@@ -410,6 +410,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       frequencyDays,
       notes: body.notes != null ? String(body.notes) : null,
       defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
+      estimatedMinutes: body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null,
     } as any);
   });
 
@@ -447,6 +448,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
     if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
+    if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
 
     return services.jobs.update(await currentUserId(req), id, patch);
   });
@@ -563,6 +565,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.endAt != null) input.endAt = body.endAt;
     if (body.notes != null) input.notes = body.notes;
     if (body.price != null) input.price = Number(body.price);
+    if (body.estimatedMinutes != null) input.estimatedMinutes = Math.round(Number(body.estimatedMinutes));
 
     if (body.assigneeUserIds != null) {
       if (!Array.isArray(body.assigneeUserIds)) {
@@ -658,8 +661,11 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("endAt" in body) patch.endAt = body.endAt || null;
       if ("notes" in body) patch.notes = body.notes;
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
+      if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
+      if ("startedAt" in body) patch.startedAt = body.startedAt || null;
+      if ("completedAt" in body) patch.completedAt = body.completedAt || null;
       if ("startLat" in body) patch.startLat = body.startLat != null ? Number(body.startLat) : null;
       if ("startLng" in body) patch.startLng = body.startLng != null ? Number(body.startLng) : null;
       if ("completeLat" in body) patch.completeLat = body.completeLat != null ? Number(body.completeLat) : null;
