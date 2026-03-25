@@ -250,6 +250,89 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.expenses.deleteExpense(uid, String(req.params.id));
   });
 
+  // ── Photos ──
+
+  app.post("/occurrences/:id/photos/upload-url", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+
+    const { prisma } = await import("../db/prisma");
+    const count = await prisma.jobOccurrencePhoto.count({ where: { occurrenceId } });
+    if (count >= 10) throw app.httpErrors.badRequest("Maximum 10 photos per occurrence");
+
+    const body = req.body || {};
+    const fileName = String(body.fileName ?? "photo.jpg");
+    const contentType = String(body.contentType ?? "image/jpeg");
+
+    const { getUploadUrl } = await import("../lib/r2");
+    const key = `photos/${occurrenceId}/${uid}-${Date.now()}-${fileName}`;
+    const uploadUrl = await getUploadUrl(key, contentType);
+
+    return { uploadUrl, key, contentType };
+  });
+
+  app.post("/occurrences/:id/photos/confirm", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+
+    if (!body.key) throw app.httpErrors.badRequest("key is required");
+
+    const { prisma } = await import("../db/prisma");
+    const photo = await prisma.jobOccurrencePhoto.create({
+      data: {
+        occurrenceId,
+        r2Key: String(body.key),
+        fileName: body.fileName ? String(body.fileName) : null,
+        contentType: body.contentType ? String(body.contentType) : null,
+        uploadedById: uid,
+      },
+    });
+
+    return photo;
+  });
+
+  app.get("/occurrences/:id/photos", workerGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const { prisma } = await import("../db/prisma");
+    const { getDownloadUrl } = await import("../lib/r2");
+
+    const photos = await prisma.jobOccurrencePhoto.findMany({
+      where: { occurrenceId },
+      orderBy: { createdAt: "asc" },
+      include: { uploadedBy: { select: { id: true, displayName: true } } },
+    });
+
+    const result = await Promise.all(
+      photos.map(async (p) => ({
+        id: p.id,
+        fileName: p.fileName,
+        contentType: p.contentType,
+        uploadedBy: p.uploadedBy,
+        createdAt: p.createdAt,
+        url: await getDownloadUrl(p.r2Key),
+      }))
+    );
+
+    return result;
+  });
+
+  app.delete("/occurrences/:id/photos/:photoId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const photoId = String(req.params.photoId);
+    const { prisma } = await import("../db/prisma");
+    const { deleteObject } = await import("../lib/r2");
+
+    const photo = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
+    if (!photo) throw app.httpErrors.notFound("Photo not found");
+    if (photo.uploadedById !== uid) throw app.httpErrors.forbidden("You can only delete your own photos");
+
+    await deleteObject(photo.r2Key);
+    await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
+
+    return { ok: true };
+  });
+
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });

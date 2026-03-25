@@ -18,6 +18,8 @@
     "schema": "./prisma/schema.prisma"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1016.0",
+    "@aws-sdk/s3-request-presigner": "^3.1016.0",
     "@clerk/clerk-sdk-node": "^5.1.6",
     "@clerk/types": "4.26.0",
     "@fastify/cors": "^8.5.0",

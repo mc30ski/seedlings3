@@ -74,6 +74,7 @@ model User {
   paymentsCollected         Payment[]
   paymentSplits             PaymentSplit[]
   expenses                  Expense[]
+  photos                    JobOccurrencePhoto[]
 }
 
 model UserRole {
@@ -457,10 +458,29 @@ model JobOccurrence {
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]
+  photos      JobOccurrencePhoto[]
 
   @@index([jobId, status])
   @@index([startAt])
   @@index([kind])
+}
+
+model JobOccurrencePhoto {
+  id            String        @id @default(cuid())
+
+  occurrenceId  String
+  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  r2Key         String        // object key in R2 bucket
+  fileName      String?       // original file name
+  contentType   String?       // e.g. image/jpeg
+
+  uploadedById  String
+  uploadedBy    User          @relation(fields: [uploadedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  createdAt     DateTime      @default(now())
+
+  @@index([occurrenceId])
 }
 
 model JobAssigneeDefault {
