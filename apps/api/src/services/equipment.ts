@@ -440,6 +440,16 @@ export const equipment: ServicesEquipment = {
           409
         );
 
+      // Contractors must have valid insurance to reserve equipment
+      const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+      if (user.workerType === "CONTRACTOR") {
+        const now = new Date();
+        const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
+        if (!insured) {
+          throw new ServiceError("INSURANCE_REQUIRED", "Contractors must have valid insurance to reserve equipment.", 403);
+        }
+      }
+
       const reserve = await tx.checkout.create({
         data: { equipmentId: id, userId },
       });

@@ -12,7 +12,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { Filter, RefreshCw, Shield, X } from "lucide-react";
-import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
@@ -32,6 +32,12 @@ type ApiUser = {
   displayName?: string | null;
   isApproved: boolean;
   roles: { role: Role }[];
+  workerType?: string | null;
+  insuranceCertR2Key?: string | null;
+  insuranceExpiresAt?: string | null;
+  contractorAgreedAt?: string | null;
+  w9Collected?: boolean;
+  w9CollectedAt?: string | null;
 };
 
 type Me = {
@@ -274,6 +280,26 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
+  async function setWorkerType(userId: string, workerType: string) {
+    try {
+      await apiPatch(`/api/admin/users/${userId}/worker-type`, { workerType });
+      publishInlineMessage({ type: "SUCCESS", text: `Set as ${workerType.toLowerCase()}` });
+      load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Set worker type failed", err) });
+    }
+  }
+
+  async function toggleW9(userId: string, current: boolean) {
+    try {
+      await apiPatch(`/api/admin/users/${userId}/w9`, { collected: !current });
+      publishInlineMessage({ type: "SUCCESS", text: !current ? "W-9 marked collected" : "W-9 unmarked" });
+      load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("W-9 update failed", err) });
+    }
+  }
+
   // Hard delete (DB + Clerk) — used for both Delete and Decline confirmations
   async function deleteUser(userId: string) {
     try {
@@ -399,11 +425,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           const isAdmin = s.has("ADMIN");
           const isWorker = s.has("WORKER");
           const isSuper = s.has("SUPER");
-          const hasAnyRole = isAdmin || isWorker;
           const isMe = !!me?.id && u.id === me.id;
-          const holdings = holdingsByUser[u.id] ?? [];
-
-          const showDelete = u.isApproved && !hasAnyRole && !isMe;
           const showDecline = !u.isApproved && !isMe;
 
           const isConfirming = confirm?.userId === u.id;
@@ -417,6 +439,11 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           const confirmCTA =
             confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
 
+          const isContractor = u.workerType === "CONTRACTOR";
+          const isEmployee = u.workerType === "EMPLOYEE";
+          const isTrainee = u.workerType === "TRAINEE";
+          const insuranceExpired = isContractor && u.insuranceExpiresAt && new Date(u.insuranceExpiresAt) < new Date();
+          const noInsurance = isContractor && !u.insuranceCertR2Key;
           const displayName = u.displayName || u.email;
 
           return (
@@ -463,6 +490,25 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && <Badge>Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                     {isSuper && <Badge colorPalette="yellow">Super</Badge>}
+                    {isEmployee && <Badge colorPalette="blue">Employee</Badge>}
+                    {isContractor && <Badge colorPalette="orange">Contractor</Badge>}
+                    {isTrainee && <Badge colorPalette="cyan">Trainee</Badge>}
+                    {!u.workerType && isWorker && <Badge colorPalette="gray" variant="outline">Unclassified</Badge>}
+                    {isContractor && !noInsurance && !insuranceExpired && (
+                      <Badge colorPalette="green" variant="subtle">Insured · {new Date(u.insuranceExpiresAt!).toLocaleDateString()}</Badge>
+                    )}
+                    {insuranceExpired && (
+                      <Badge colorPalette="red" variant="solid">Insurance Expired</Badge>
+                    )}
+                    {noInsurance && (
+                      <Badge colorPalette="red" variant="solid">No Insurance</Badge>
+                    )}
+                    {isContractor && u.contractorAgreedAt && (
+                      <Badge colorPalette="teal" variant="subtle">Agreement Signed</Badge>
+                    )}
+                    {isContractor && u.w9Collected && (
+                      <Badge colorPalette="teal" variant="subtle">W-9</Badge>
+                    )}
                   </HStack>
                 </Box>
 
@@ -561,6 +607,47 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                           </>
                         )}
                       </>
+                    )}
+                    {/* Worker type & W-9 — available for all users including self */}
+                    {isWorker && u.workerType !== "TRAINEE" && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => setWorkerType(u.id, "TRAINEE")}
+                        variant="outline"
+                        colorPalette="cyan"
+                      >
+                        Set Trainee
+                      </Button>
+                    )}
+                    {isWorker && u.workerType !== "CONTRACTOR" && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => setWorkerType(u.id, "CONTRACTOR")}
+                        variant="outline"
+                        colorPalette="orange"
+                      >
+                        Set Contractor
+                      </Button>
+                    )}
+                    {isWorker && u.workerType !== "EMPLOYEE" && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => setWorkerType(u.id, "EMPLOYEE")}
+                        variant="outline"
+                        colorPalette="blue"
+                      >
+                        Set Employee
+                      </Button>
+                    )}
+                    {isContractor && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => toggleW9(u.id, !!u.w9Collected)}
+                        variant={u.w9Collected ? "subtle" : "outline"}
+                        colorPalette={u.w9Collected ? "teal" : "gray"}
+                      >
+                        {u.w9Collected ? "W-9 ✓" : "Collect W-9"}
+                      </Button>
                     )}
                   </Stack>
                 )}

@@ -6,6 +6,10 @@ export const AUDIT = {
     ROLE_ASSIGNED: [AuditScope.USER, AuditVerb.ROLE_ASSIGNED] as const,
     ROLE_REMOVED: [AuditScope.USER, AuditVerb.ROLE_REMOVED] as const,
     DELETED: [AuditScope.USER, AuditVerb.DELETED] as const,
+    WORKER_TYPE_SET: [AuditScope.USER, AuditVerb.WORKER_TYPE_SET] as const,
+    INSURANCE_UPLOADED: [AuditScope.USER, AuditVerb.INSURANCE_UPLOADED] as const,
+    CONTRACTOR_AGREED: [AuditScope.USER, AuditVerb.CONTRACTOR_AGREED] as const,
+    W9_COLLECTED: [AuditScope.USER, AuditVerb.W9_COLLECTED] as const,
   },
   EQUIPMENT: {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,

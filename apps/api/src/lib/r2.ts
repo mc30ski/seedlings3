@@ -5,6 +5,7 @@ const R2_ENDPOINT = process.env.R2_ENDPOINT!;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID!;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY!;
 const R2_BUCKET = process.env.R2_BUCKET_NAME!;
+const R2_DOCS_BUCKET = process.env.R2_DOCS_BUCKET_NAME!;
 
 const s3 = new S3Client({
   region: "auto",
@@ -18,10 +19,16 @@ const s3 = new S3Client({
   responseChecksumValidation: "WHEN_REQUIRED",
 });
 
+type BucketType = "photos" | "docs";
+
+function bucketName(type: BucketType): string {
+  return type === "docs" ? R2_DOCS_BUCKET : R2_BUCKET;
+}
+
 /** Generate a presigned PUT URL for direct client upload. */
-export async function getUploadUrl(key: string, contentType: string, expiresIn = 300): Promise<string> {
+export async function getUploadUrl(key: string, contentType: string, expiresIn = 300, bucket: BucketType = "photos"): Promise<string> {
   const command = new PutObjectCommand({
-    Bucket: R2_BUCKET,
+    Bucket: bucketName(bucket),
     Key: key,
     ContentType: contentType,
   });
@@ -32,19 +39,19 @@ export async function getUploadUrl(key: string, contentType: string, expiresIn =
   });
 }
 
-/** Generate a presigned GET URL for viewing a photo. */
-export async function getDownloadUrl(key: string, expiresIn = 3600): Promise<string> {
+/** Generate a presigned GET URL for viewing/downloading. */
+export async function getDownloadUrl(key: string, expiresIn = 3600, bucket: BucketType = "photos"): Promise<string> {
   const command = new GetObjectCommand({
-    Bucket: R2_BUCKET,
+    Bucket: bucketName(bucket),
     Key: key,
   });
   return getSignedUrl(s3, command, { expiresIn });
 }
 
 /** Delete an object from R2. */
-export async function deleteObject(key: string): Promise<void> {
+export async function deleteObject(key: string, bucket: BucketType = "photos"): Promise<void> {
   const command = new DeleteObjectCommand({
-    Bucket: R2_BUCKET,
+    Bucket: bucketName(bucket),
     Key: key,
   });
   await s3.send(command);

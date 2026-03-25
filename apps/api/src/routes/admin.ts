@@ -795,6 +795,28 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.expenses.adminDeleteExpense(String(req.params.id));
   });
 
+  // ── Worker Type & Compliance ──
+
+  app.patch("/admin/users/:id/worker-type", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    const wt = String(body.workerType ?? "").toUpperCase();
+    if (wt !== "EMPLOYEE" && wt !== "CONTRACTOR" && wt !== "TRAINEE") {
+      throw app.httpErrors.badRequest("workerType must be EMPLOYEE, CONTRACTOR, or TRAINEE");
+    }
+    await services.users.setWorkerType(uid, userId, wt);
+    return { ok: true };
+  });
+
+  app.patch("/admin/users/:id/w9", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    await services.users.setW9Collected(uid, userId, !!body.collected);
+    return { ok: true };
+  });
+
   // ── Admin Photos ──
 
   app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {

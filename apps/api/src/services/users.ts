@@ -1,6 +1,6 @@
 import { prisma } from "../db/prisma";
 
-import { Role as RoleVal } from "@prisma/client";
+import { Role as RoleVal, WorkerType } from "@prisma/client";
 import { verifyToken, createClerkClient } from "@clerk/backend";
 import type { ServicesUsers, Role } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
@@ -21,7 +21,11 @@ export const users: ServicesUsers = {
     const where: any = {};
     if (params?.approved !== undefined) where.isApproved = params.approved;
     if (params?.role) where.roles = { some: { role: params.role as any } };
-    return prisma.user.findMany({ where, include: { roles: true } });
+    return prisma.user.findMany({
+      where,
+      include: { roles: true },
+      orderBy: { displayName: "asc" },
+    });
   },
 
   async listHoldings() {
@@ -298,14 +302,83 @@ export const users: ServicesUsers = {
     }
 
     // Respond
+    const now = new Date();
+    const isInsuranceValid = !!(user!.insuranceCertR2Key && user!.insuranceExpiresAt && user!.insuranceExpiresAt > now);
     const me = {
       id: user!.id,
       isApproved: !!user!.isApproved,
       roles: (user!.roles ?? []).map((r) => r.role) as Role[],
       email: user!.email ?? null,
       displayName: user!.displayName ?? null,
+      workerType: user!.workerType ?? null,
+      hasInsuranceCert: !!user!.insuranceCertR2Key,
+      isInsuranceValid,
+      insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,
+      contractorAgreedAt: user!.contractorAgreedAt?.toISOString() ?? null,
+      w9Collected: !!user!.w9Collected,
     };
 
     return me;
+  },
+
+  async setWorkerType(currentUserId: string, userId: string, workerType: string) {
+    if (workerType !== "EMPLOYEE" && workerType !== "CONTRACTOR" && workerType !== "TRAINEE") {
+      throw new ServiceError("BAD_REQUEST", "Invalid worker type", 400);
+    }
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { workerType: workerType as WorkerType },
+      });
+      await writeAudit(tx, AUDIT.USER.WORKER_TYPE_SET, currentUserId, {
+        userId, workerType,
+      });
+      return updated;
+    });
+  },
+
+  async updateInsuranceCert(userId: string, r2Key: string, fileName: string | null, contentType: string | null, expiresAt: string) {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          insuranceCertR2Key: r2Key,
+          insuranceCertFileName: fileName,
+          insuranceCertContentType: contentType,
+          insuranceExpiresAt: new Date(expiresAt),
+        },
+      });
+      await writeAudit(tx, AUDIT.USER.INSURANCE_UPLOADED, userId, {
+        r2Key, expiresAt,
+      });
+      return updated;
+    });
+  },
+
+  async recordContractorAgreement(userId: string) {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { contractorAgreedAt: new Date() },
+      });
+      await writeAudit(tx, AUDIT.USER.CONTRACTOR_AGREED, userId, {});
+      return updated;
+    });
+  },
+
+  async setW9Collected(currentUserId: string, userId: string, collected: boolean) {
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          w9Collected: collected,
+          w9CollectedAt: collected ? new Date() : null,
+        },
+      });
+      await writeAudit(tx, AUDIT.USER.W9_COLLECTED, currentUserId, {
+        userId, collected,
+      });
+      return updated;
+    });
   },
 };
