@@ -21,7 +21,7 @@ import { CreditCard, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
-import { determineRoles, prettyStatus } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel } from "@/src/lib/lib";
 import {
   type TabPropsType,
   type WorkerPaymentItem,
@@ -291,7 +291,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                   <HStack justify="space-between" align="center">
                     <Text fontSize="md" fontWeight="semibold" truncate>
                       {prop?.displayName ?? "Unknown property"}
-                      {client?.displayName && <> — {client.displayName}</>}
+                      {client?.displayName && <> — {clientLabel(client.displayName)}</>}
                     </Text>
                     <HStack gap={2} flexShrink={0}>
                       <Badge size="sm" colorPalette="gray">{prettyStatus(item.payment.method)}</Badge>
@@ -306,7 +306,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     <Text fontSize="md" fontWeight="semibold">
                       {prop?.displayName ?? "Unknown property"}
                       {client?.displayName && (
-                        <> — {client.displayName}</>
+                        <> — {clientLabel(client.displayName)}</>
                       )}
                     </Text>
                     <HStack gap={2} wrap="wrap" fontSize="xs">
@@ -876,7 +876,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   <HStack justify="space-between" align="center">
                     <Text fontSize="md" fontWeight="semibold" truncate>
                       {prop?.displayName ?? "Unknown property"}
-                      {client?.displayName && <> — {client.displayName}</>}
+                      {client?.displayName && <> — {clientLabel(client.displayName)}</>}
                     </Text>
                     <HStack gap={2} flexShrink={0}>
                       <Badge size="sm" colorPalette="gray">{prettyStatus(p.method)}</Badge>
@@ -891,7 +891,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     <Text fontSize="md" fontWeight="semibold">
                       {prop?.displayName ?? "Unknown property"}
                       {client?.displayName && (
-                        <> — {client.displayName}</>
+                        <> — {clientLabel(client.displayName)}</>
                       )}
                     </Text>
                     <HStack gap={2} wrap="wrap" fontSize="xs">

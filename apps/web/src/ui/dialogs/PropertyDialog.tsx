@@ -24,7 +24,7 @@ import {
   PROPERTY_KIND,
   PROPERTY_STATUS,
 } from "@/src/lib/types";
-import { prettyStatus } from "@/src/lib/lib";
+import { prettyStatus, clientLabel } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -87,7 +87,7 @@ export default function PropertyDialog({
 
   const clientItems = useMemo(() => {
     const items = clients.map((c) => ({
-      label: c.displayName || c.id,
+      label: clientLabel(c.displayName) || c.id,
       value: c.id,
     }));
     const current = clientValue[0];
