@@ -219,6 +219,7 @@ export const equipment: ServicesEquipment = {
       age?: string;
       qrSlug?: string | null;
       dailyRate?: number | null;
+      requiresInsurance?: boolean;
     }
   ) {
     return prisma.$transaction(async (tx) => {
@@ -237,6 +238,7 @@ export const equipment: ServicesEquipment = {
         ...(input.issues !== undefined ? { issues: input.issues } : {}),
         ...(input.age !== undefined ? { age: input.age } : {}),
         ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
+        ...(input.requiresInsurance !== undefined ? { requiresInsurance: input.requiresInsurance } : {}),
       };
 
       const created = await tx.equipment.create({ data });
@@ -267,6 +269,7 @@ export const equipment: ServicesEquipment = {
         | "issues"
         | "age"
         | "dailyRate"
+        | "requiresInsurance"
       >
     >
   ) {
@@ -288,6 +291,7 @@ export const equipment: ServicesEquipment = {
       if (patch.issues !== undefined) data.issues = patch.issues;
       if (patch.age !== undefined) data.age = patch.age;
       if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
+      if (patch.requiresInsurance !== undefined) data.requiresInsurance = patch.requiresInsurance;
 
       const updated = await tx.equipment.update({ where: { id }, data });
 
@@ -440,13 +444,18 @@ export const equipment: ServicesEquipment = {
           409
         );
 
-      // Contractors must have valid insurance to reserve equipment
+      // Trainees cannot reserve any equipment
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-      if (user.workerType === "CONTRACTOR") {
+      if (user.workerType === "TRAINEE") {
+        throw new ServiceError("TRAINEE_NOT_ALLOWED", "Trainees cannot reserve equipment.", 403);
+      }
+
+      // If this equipment requires insurance, check the user has valid coverage
+      if (eq.requiresInsurance) {
         const now = new Date();
         const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
         if (!insured) {
-          throw new ServiceError("INSURANCE_REQUIRED", "Contractors must have valid insurance to reserve equipment.", 403);
+          throw new ServiceError("INSURANCE_REQUIRED", "Valid insurance is required to reserve this equipment.", 403);
         }
       }
 

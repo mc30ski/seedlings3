@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   HStack,
   Input,
@@ -63,6 +64,7 @@ export default function EquipmentDialog({
   const [issues, setIssues] = useState<string | undefined>("");
   const [age, setAge] = useState<string | undefined>("");
   const [dailyRate, setDailyRate] = useState("");
+  const [requiresInsurance, setRequiresInsurance] = useState(false);
 
   const typeItems = useMemo(
     () =>
@@ -112,6 +114,7 @@ export default function EquipmentDialog({
       setIssues(initial.issues ?? "");
       setAge(initial.age ?? "");
       setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
+      setRequiresInsurance(!!initial.requiresInsurance);
     } else {
       setType([EQUIPMENT_KIND[0]]);
       setQrSlug("");
@@ -125,6 +128,7 @@ export default function EquipmentDialog({
       setIssues("");
       setAge("");
       setDailyRate("");
+      setRequiresInsurance(false);
     }
   }, [open, mode, initial]);
 
@@ -142,6 +146,7 @@ export default function EquipmentDialog({
       issues: issues,
       age: age,
       dailyRate: dailyRate ? parseFloat(dailyRate) : null,
+      requiresInsurance,
     };
 
     setBusy(true);
@@ -249,15 +254,28 @@ export default function EquipmentDialog({
                   />
                 </div>
                 {isAdmin && (
-                  <div>
-                    <Text mb="1">Daily Rate ($)</Text>
-                    <CurrencyInput
-                      value={dailyRate}
-                      onChange={setDailyRate}
-                      size="sm"
-                      placeholder="0.00"
-                    />
-                  </div>
+                  <HStack gap={3}>
+                    <div style={{ flex: 1 }}>
+                      <Text mb="1">Daily Rate ($)</Text>
+                      <CurrencyInput
+                        value={dailyRate}
+                        onChange={setDailyRate}
+                        size="sm"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Text mb="1">Requires Insurance</Text>
+                      <Checkbox.Root
+                        checked={requiresInsurance}
+                        onCheckedChange={(e) => setRequiresInsurance(!!e.checked)}
+                      >
+                        <Checkbox.HiddenInput />
+                        <Checkbox.Control />
+                        <Checkbox.Label fontSize="sm">Yes</Checkbox.Label>
+                      </Checkbox.Root>
+                    </div>
+                  </HStack>
                 )}
                 <div>
                   <Text mb="1">Summary *</Text>

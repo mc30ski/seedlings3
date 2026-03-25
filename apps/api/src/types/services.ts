@@ -173,6 +173,7 @@ export type ServicesEquipment = {
       age?: string;
       qrSlug?: string | null;
       dailyRate?: number | null;
+      requiresInsurance?: boolean;
     }
   ): Promise<Equipment>;
 
@@ -194,6 +195,7 @@ export type ServicesEquipment = {
         | "issues"
         | "age"
         | "dailyRate"
+        | "requiresInsurance"
       >
     >
   ): Promise<Equipment>;

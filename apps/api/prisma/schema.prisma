@@ -121,7 +121,8 @@ model Equipment {
   issues     String?
   age        String?
 
-  dailyRate    Float?
+  dailyRate          Float?
+  requiresInsurance  Boolean  @default(false)
 
   checkouts    Checkout[]
 

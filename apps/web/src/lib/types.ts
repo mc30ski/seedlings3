@@ -112,6 +112,7 @@ export type Equipment = {
   age?: string | undefined;
 
   dailyRate?: number | null;
+  requiresInsurance?: boolean;
 
   createdAt: string | undefined;
   updatedAt?: string | undefined;
