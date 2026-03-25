@@ -391,13 +391,13 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
               </HStack>
             </Card.Header>
             {c.notesInternal && (
-              <Card.Body py="3" px="4" pt="0" pb="0">
+              <Card.Body py="3" px="4" pt="1" pb="0">
                 <Text fontSize="xs" color="fg.muted">
                   {c.notesInternal}
                 </Text>
               </Card.Body>
             )}
-            <Card.Footer py="3" px="4" pt="0">
+            <Card.Footer py="3" px="4" pt="2">
               <HStack gap={2} wrap="wrap" w="full">
                 {forAdmin && (
                   <>

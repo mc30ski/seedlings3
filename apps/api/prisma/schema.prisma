@@ -150,8 +150,6 @@ model AuditEvent {
 
 enum ClientType {
   PERSON
-  INDIVIDUAL
-  HOUSEHOLD
   ORGANIZATION
   COMMUNITY
 }

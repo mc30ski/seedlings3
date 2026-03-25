@@ -157,8 +157,6 @@ export type Client = {
 
 export const CLIENT_KIND = [
   "PERSON",
-  "INDIVIDUAL",
-  "HOUSEHOLD",
   "ORGANIZATION",
   "COMMUNITY",
 ] as const;
