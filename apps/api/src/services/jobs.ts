@@ -154,7 +154,7 @@ export const jobs: ServicesJobs = {
           include: {
             assignees: {
               include: {
-                user: { select: { id: true, displayName: true, email: true } },
+                user: { select: { id: true, displayName: true, email: true, workerType: true } },
               },
             },
             payment: {
@@ -438,7 +438,7 @@ export const jobs: ServicesJobs = {
           },
         },
         assignees: {
-          include: { user: { select: { id: true, displayName: true, email: true } } },
+          include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } },
         },
         payment: {
           include: {
@@ -474,7 +474,7 @@ export const jobs: ServicesJobs = {
           },
         },
         assignees: {
-          include: { user: { select: { id: true, displayName: true, email: true } } },
+          include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } },
         },
         payment: {
           include: {
@@ -652,12 +652,44 @@ export const jobs: ServicesJobs = {
     return prisma.$transaction(async (tx) => {
       await assertWorkerAssignable(tx, currentUserId);
 
-      const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+      // Trainees cannot claim jobs — they must be added to a team by someone else
+      const claimUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
+      if (claimUser.workerType === "TRAINEE") {
+        throw new ServiceError("TRAINEE_CANNOT_CLAIM", "Trainees cannot claim jobs. A team lead must add you to the occurrence.", 403);
+      }
+
+      const occ = await tx.jobOccurrence.findUniqueOrThrow({
+        where: { id: occurrenceId },
+        include: { job: { select: { defaultPrice: true } } },
+      });
       if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
         throw new ServiceError("INVALID_STATUS", "Only SCHEDULED occurrences can be claimed.", 409);
       }
       if (occ.isTentative) {
         throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by an admin.", 409);
+      }
+
+      // Tier gating for high-value jobs
+      const threshold = Number(process.env.HIGH_VALUE_JOB_THRESHOLD ?? 200);
+      const effectivePrice = occ.price ?? (occ.job as any).defaultPrice ?? 0;
+      if (effectivePrice >= threshold) {
+        const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
+        if (user.workerType === "CONTRACTOR") {
+          const now = new Date();
+          const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
+          if (!insured) {
+            throw new ServiceError("INSURANCE_REQUIRED", "Contractors must have valid insurance to claim high-value jobs.", 403);
+          }
+        }
+        if (!user.workerType) {
+          throw new ServiceError("WORKER_TYPE_REQUIRED", "Your worker type must be assigned before claiming high-value jobs. Contact your admin.", 403);
+        }
+      }
+
+      // Contractor agreement check
+      const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
+      if (user.workerType === "CONTRACTOR" && !user.contractorAgreedAt) {
+        throw new ServiceError("CONTRACTOR_AGREEMENT_REQUIRED", "You must acknowledge the contractor agreement before claiming jobs.", 403);
       }
 
       await tx.jobOccurrenceAssignee.create({
@@ -680,6 +712,12 @@ export const jobs: ServicesJobs = {
       });
       if (!assignee) {
         throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
+      }
+
+      // Trainees cannot take actions — only the claimer/lead can
+      const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
+      if (actionUser.workerType === "TRAINEE") {
+        throw new ServiceError("TRAINEE_CANNOT_ACT", "Trainees cannot start, complete, or manage jobs. The team lead must take this action.", 403);
       }
 
       // For estimates, skip PENDING_PAYMENT and go straight to CLOSED

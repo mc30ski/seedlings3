@@ -31,12 +31,21 @@ export type EventTypes =
 
 export type DialogMode = "CREATE" | "UPDATE";
 
+export const WORKER_TYPE = ["EMPLOYEE", "CONTRACTOR", "TRAINEE"] as const;
+export type WorkerType = (typeof WORKER_TYPE)[number];
+
 export type Me = {
   id: string;
   isApproved?: boolean;
   roles?: Role[];
   email?: string | null;
   displayName?: string | null;
+  workerType?: WorkerType | null;
+  hasInsuranceCert?: boolean;
+  isInsuranceValid?: boolean;
+  insuranceExpiresAt?: string | null;
+  contractorAgreedAt?: string | null;
+  w9Collected?: boolean;
 };
 
 export type TabPropsType = {
@@ -431,7 +440,7 @@ export type WorkerOccurrence = {
   assignees?: {
     userId: string;
     assignedById?: string | null;
-    user: { id: string; displayName?: string | null; email?: string | null };
+    user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
   }[];
 };
 

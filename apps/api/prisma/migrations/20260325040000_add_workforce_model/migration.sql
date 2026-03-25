@@ -1,0 +1,18 @@
+-- CreateEnum
+CREATE TYPE "WorkerType" AS ENUM ('EMPLOYEE', 'CONTRACTOR');
+
+-- AlterEnum
+ALTER TYPE "AuditVerb" ADD VALUE 'WORKER_TYPE_SET';
+ALTER TYPE "AuditVerb" ADD VALUE 'INSURANCE_UPLOADED';
+ALTER TYPE "AuditVerb" ADD VALUE 'CONTRACTOR_AGREED';
+ALTER TYPE "AuditVerb" ADD VALUE 'W9_COLLECTED';
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "workerType" "WorkerType",
+ADD COLUMN "insuranceCertR2Key" TEXT,
+ADD COLUMN "insuranceCertFileName" TEXT,
+ADD COLUMN "insuranceCertContentType" TEXT,
+ADD COLUMN "insuranceExpiresAt" TIMESTAMP(3),
+ADD COLUMN "contractorAgreedAt" TIMESTAMP(3),
+ADD COLUMN "w9Collected" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "w9CollectedAt" TIMESTAMP(3);

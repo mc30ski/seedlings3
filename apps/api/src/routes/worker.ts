@@ -186,6 +186,9 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
+    const { prisma } = await import("../db/prisma");
+    const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid } });
+    if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments. The team lead must take this action.");
     const body = req.body || {};
     return services.payments.createPayment(uid, {
       occurrenceId: String(req.params.id),
@@ -330,6 +333,72 @@ export default async function workerRoutes(app: FastifyInstance) {
     await deleteObject(photo.r2Key);
     await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
 
+    return { ok: true };
+  });
+
+  // ── Insurance ──
+
+  app.post("/insurance/upload-url", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const fileName = String(body.fileName ?? "certificate.pdf");
+    const contentType = String(body.contentType ?? "application/pdf");
+
+    const { getUploadUrl } = await import("../lib/r2");
+    const key = `insurance/${uid}/${Date.now()}-${fileName}`;
+    const uploadUrl = await getUploadUrl(key, contentType, 300, "docs");
+
+    return { uploadUrl, key, contentType };
+  });
+
+  app.post("/insurance/confirm", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.key) throw app.httpErrors.badRequest("key is required");
+    if (!body.expiresAt) throw app.httpErrors.badRequest("expiresAt is required");
+
+    await services.users.updateInsuranceCert(
+      uid,
+      String(body.key),
+      body.fileName ? String(body.fileName) : null,
+      body.contentType ? String(body.contentType) : null,
+      String(body.expiresAt),
+    );
+
+    return { ok: true };
+  });
+
+  app.get("/insurance", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const { prisma } = await import("../db/prisma");
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: uid },
+      select: {
+        insuranceCertR2Key: true,
+        insuranceCertFileName: true,
+        insuranceExpiresAt: true,
+      },
+    });
+
+    let url: string | null = null;
+    if (user.insuranceCertR2Key) {
+      const { getDownloadUrl } = await import("../lib/r2");
+      url = await getDownloadUrl(user.insuranceCertR2Key, 3600, "docs");
+    }
+
+    return {
+      hasCert: !!user.insuranceCertR2Key,
+      fileName: user.insuranceCertFileName,
+      expiresAt: user.insuranceExpiresAt,
+      url,
+    };
+  });
+
+  // ── Contractor Agreement ──
+
+  app.post("/contractor-agreement", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    await services.users.recordContractorAgreement(uid);
     return { ok: true };
   });
 

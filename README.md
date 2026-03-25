@@ -121,11 +121,15 @@ Job occurrence photos are stored in **Cloudflare R2** (S3-compatible object stor
 ### Setup
 
 - **Cloudflare account** with R2 enabled (free tier: 10GB storage, 10M reads, 1M writes/month)
-- **Two buckets** for environment separation:
-  - `seedlings-photos-dev` — development
-  - `seedlings-photos` — production
-- **Lifecycle rules**: each bucket has an object lifecycle rule to auto-delete photos after 90 days (configurable in Cloudflare dashboard → bucket → Settings → Object lifecycle rules)
-- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to both buckets
+- **Four buckets** across two categories:
+  - **Photos** (auto-delete after 90 days via lifecycle rules):
+    - `seedlings-photos-dev` — development
+    - `seedlings-photos` — production
+  - **Documents** (permanent — no lifecycle rules):
+    - `seedlings-documents-dev` — development
+    - `seedlings-documents` — production
+- **Lifecycle rules**: photo buckets have an object lifecycle rule to auto-delete after 90 days. Document buckets have NO lifecycle rules (insurance certs, W-9s, etc. are permanent).
+- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to all four buckets
 
 ### Environment Variables
 
@@ -135,7 +139,8 @@ Set these in `apps/api/.env` (dev) and Vercel environment variables (production)
 R2_ACCOUNT_ID=<your-cloudflare-account-id>
 R2_ACCESS_KEY_ID=<your-r2-api-token-access-key>
 R2_SECRET_ACCESS_KEY=<your-r2-api-token-secret-key>
-R2_BUCKET_NAME=seedlings-photos-dev   # or seedlings-photos for production
+R2_BUCKET_NAME=seedlings-photos-dev         # or seedlings-photos for production
+R2_DOCS_BUCKET_NAME=seedlings-documents-dev # or seedlings-documents for production
 R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 ```
 

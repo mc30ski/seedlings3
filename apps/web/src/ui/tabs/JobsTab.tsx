@@ -37,6 +37,8 @@ import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
+import ContractorAgreementDialog from "@/src/ui/dialogs/ContractorAgreementDialog";
+import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -144,6 +146,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   );
 
   const [manageOpen, setManageOpen] = useState(false);
+  const [agreementDialogOpen, setAgreementDialogOpen] = useState(false);
+  const [pendingClaimOccId, setPendingClaimOccId] = useState<string | null>(null);
+  const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
+  const isContractor = me?.workerType === "CONTRACTOR";
+  const isTrainee = me?.workerType === "TRAINEE";
+  const needsInsurance = isContractor && !me?.isInsuranceValid;
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{
@@ -245,11 +253,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
       await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Job claimed." });
       await load(false);
-    } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Claim failed.", err),
-      });
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      if (msg.includes("CONTRACTOR_AGREEMENT_REQUIRED") || msg.includes("contractor agreement")) {
+        setPendingClaimOccId(occurrenceId);
+        setAgreementDialogOpen(true);
+      } else if (msg.includes("INSURANCE_REQUIRED") || msg.includes("valid insurance")) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: "This is a high-value job that requires valid insurance. Upload your insurance certificate to claim it.",
+        });
+        setInsuranceDialogOpen(true);
+      } else if (msg.includes("WORKER_TYPE_REQUIRED") || msg.includes("worker type")) {
+        publishInlineMessage({
+          type: "ERROR",
+          text: "Your worker type hasn't been assigned yet. Ask your admin to set you as an Employee or Contractor before claiming this job.",
+        });
+      } else {
+        publishInlineMessage({
+          type: "ERROR",
+          text: getErrorMessage("Claim failed.", err),
+        });
+      }
     }
   }
 
@@ -385,6 +410,33 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   return (
     <Box w="full">
       {headerSlot}
+      {!forAdmin && isTrainee && (
+        <Box mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
+          <Text fontSize="sm" color="blue.700">
+            You are currently a Trainee. You can view job details and be added to a team, but you cannot claim jobs or take actions on them.
+          </Text>
+        </Box>
+      )}
+      {!forAdmin && !me?.workerType && me?.isApproved && (
+        <Box mb={3} p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+          <Text fontSize="sm" color="orange.700">
+            Your worker type has not been assigned yet. Some jobs may be restricted until your admin sets you as an Employee or Contractor.
+          </Text>
+        </Box>
+      )}
+      {needsInsurance && !forAdmin && (
+        <Box mb={3} p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
+          <HStack justify="space-between" align="center">
+            <Text fontSize="sm" color="red.700">
+              {me?.hasInsuranceCert ? "Your insurance certificate has expired." : "No insurance certificate on file."}
+              {" "}You cannot claim high-value jobs until this is resolved.
+            </Text>
+            <Button size="xs" colorPalette="red" onClick={() => setInsuranceDialogOpen(true)}>
+              Upload Insurance
+            </Button>
+          </HStack>
+        </Box>
+      )}
       <HStack mb={3} gap={2}>
         <SearchWithClear
           value={q}
@@ -802,6 +854,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                         {isTentative && <StatusBadge status="Tentative" palette="orange" variant="solid" />}
                         {occ.isEstimate && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {occ.isOneOff && <StatusBadge status="One-off" palette="gray" variant="solid" />}
+                        {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
                       </HStack>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
@@ -830,6 +883,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                             palette="gray"
                             variant="solid"
                           />
+                        )}
+                        {(occ.price ?? 0) >= 200 && (
+                          <span title="Only employees or insured contractors can claim this job">
+                            <StatusBadge
+                              status="Insured Only"
+                              palette="red"
+                              variant="outline"
+                            />
+                          </span>
                         )}
                       </Box>
                     )}
@@ -937,6 +999,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                               color={isMe ? "teal.600" : "fg.muted"}
                             >
                               {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
                               {isMe ? " (you)" : ""}
                               {isClaimer ? " · Claimer" : ""}
                             </Text>
@@ -1010,7 +1073,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                 </Card.Body>
                 )}
 
-                {!isCardCompact && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
+                {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && (
@@ -1247,6 +1310,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
           }}
         />
       )}
+      <InsuranceUploadDialog
+        open={insuranceDialogOpen}
+        onOpenChange={setInsuranceDialogOpen}
+        onUploaded={() => {
+          // Refresh me data by reloading the page — simplest approach
+          window.location.reload();
+        }}
+      />
+      <ContractorAgreementDialog
+        open={agreementDialogOpen}
+        onOpenChange={setAgreementDialogOpen}
+        onAgreed={async () => {
+          if (pendingClaimOccId) {
+            await claim(pendingClaimOccId);
+            setPendingClaimOccId(null);
+          }
+        }}
+      />
     </Box>
   );
 }

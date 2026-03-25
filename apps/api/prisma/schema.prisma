@@ -50,7 +50,17 @@ enum AuditVerb {
   RETURNED
   FORCE_RELEASED
   PRIMARY_CONTACT_SET
+  WORKER_TYPE_SET
+  INSURANCE_UPLOADED
+  CONTRACTOR_AGREED
+  W9_COLLECTED
   // add new verbs as needed
+}
+
+enum WorkerType {
+  EMPLOYEE
+  CONTRACTOR
+  TRAINEE
 }
 
 model User {
@@ -59,6 +69,15 @@ model User {
   email        String?
   displayName  String?
   isApproved   Boolean      @default(false)
+
+  workerType              WorkerType?
+  insuranceCertR2Key      String?
+  insuranceCertFileName   String?
+  insuranceCertContentType String?
+  insuranceExpiresAt      DateTime?
+  contractorAgreedAt      DateTime?
+  w9Collected             Boolean     @default(false)
+  w9CollectedAt           DateTime?
 
   roles        UserRole[]
   checkouts    Checkout[]
