@@ -404,8 +404,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     purpose === "WORKER" && statusFilter[0] === "CLAIMED" && e.status === "RESERVED";
   const canWorkerReturn = (e: Equipment) =>
     purpose === "WORKER" && statusFilter[0] === "CLAIMED" && e.status === "CHECKED_OUT";
+  const isTrainee = me?.workerType === "TRAINEE";
   const canWorkerReserve = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "AVAILABLE";
+    purpose === "WORKER" &&
+    e.status === "AVAILABLE" &&
+    !isTrainee &&
+    (!e.requiresInsurance || me?.isInsuranceValid);
 
   const canAdminForceRelease = (e: Equipment) =>
     purpose === "ADMIN" && !!e.holder;
@@ -697,6 +701,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     variant="subtle"
                   />
                   <StatusBadge status={e.type} palette="gray" variant="outline" />
+                  {e.requiresInsurance && (
+                    <span title="Valid insurance required to reserve this equipment">
+                      <StatusBadge status="Insured" palette="orange" variant="subtle" />
+                    </span>
+                  )}
                 </Box>
               </HStack>
             </Card.Header>
@@ -816,6 +825,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
                   />
+                )}
+                {purpose === "WORKER" && e.status === "AVAILABLE" && isTrainee && (
+                  <Text fontSize="xs" color="gray.500">Trainees cannot reserve equipment</Text>
+                )}
+                {purpose === "WORKER" && e.status === "AVAILABLE" && !isTrainee && e.requiresInsurance && !me?.isInsuranceValid && (
+                  <Text fontSize="xs" color="orange.500">Insurance required to reserve</Text>
                 )}
                 {canAdminForceRelease(e) && (
                   <StatusButton
