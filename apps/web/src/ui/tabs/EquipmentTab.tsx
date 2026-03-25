@@ -682,8 +682,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
             onClick={(ev: any) => {
               if (!toggleCard) return;
-              const tag = (ev.target as HTMLElement)?.closest?.("a, button");
-              if (tag) return;
+              const el = ev.target as HTMLElement;
+              if (el?.closest?.("a, button")) return;
               toggleCard();
             }}
           >

@@ -281,8 +281,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
               css={compact ? { cursor: "pointer" } : undefined}
               onClick={(e: any) => {
                 if (!toggleCard) return;
-                const tag = (e.target as HTMLElement)?.closest?.("a, button");
-                if (tag) return;
+                if ((e.target as HTMLElement)?.closest?.("a, button")) return;
                 toggleCard();
               }}
             >
@@ -866,8 +865,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
               css={compact ? { cursor: "pointer" } : undefined}
               onClick={(e: any) => {
                 if (!toggleCard) return;
-                const tag = (e.target as HTMLElement)?.closest?.("a, button");
-                if (tag) return;
+                if ((e.target as HTMLElement)?.closest?.("a, button")) return;
                 toggleCard();
               }}
             >

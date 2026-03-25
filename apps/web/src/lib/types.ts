@@ -259,6 +259,7 @@ export type JobOccurrenceFull = {
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
+  _count?: { photos: number };
   createdAt?: string;
 };
 
@@ -413,6 +414,7 @@ export type WorkerOccurrence = {
   completeLng?: number | null;
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
+  _count?: { photos: number };
   job: {
     id: string;
     kind: JobKind;
@@ -431,4 +433,13 @@ export type WorkerOccurrence = {
     assignedById?: string | null;
     user: { id: string; displayName?: string | null; email?: string | null };
   }[];
+};
+
+export type OccurrencePhoto = {
+  id: string;
+  fileName?: string | null;
+  contentType?: string | null;
+  uploadedBy?: { id: string; displayName?: string | null };
+  createdAt: string;
+  url: string;
 };

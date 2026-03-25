@@ -795,6 +795,45 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.expenses.adminDeleteExpense(String(req.params.id));
   });
 
+  // ── Admin Photos ──
+
+  app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.occurrenceId);
+    const { prisma } = await import("../db/prisma");
+    const { getDownloadUrl } = await import("../lib/r2");
+
+    const photos = await prisma.jobOccurrencePhoto.findMany({
+      where: { occurrenceId },
+      orderBy: { createdAt: "asc" },
+      include: { uploadedBy: { select: { id: true, displayName: true } } },
+    });
+
+    return Promise.all(
+      photos.map(async (p) => ({
+        id: p.id,
+        fileName: p.fileName,
+        contentType: p.contentType,
+        uploadedBy: p.uploadedBy,
+        createdAt: p.createdAt,
+        url: await getDownloadUrl(p.r2Key),
+      }))
+    );
+  });
+
+  app.delete("/admin/photos/:id", adminGuard, async (req: any) => {
+    const photoId = String(req.params.id);
+    const { prisma } = await import("../db/prisma");
+    const { deleteObject } = await import("../lib/r2");
+
+    const photo = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
+    if (!photo) throw app.httpErrors.notFound("Photo not found");
+
+    await deleteObject(photo.r2Key);
+    await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
+
+    return { ok: true };
+  });
+
   // ── Full Data Export ──
 
   app.get("/admin/export", adminGuard, async (_req: any, reply: any) => {

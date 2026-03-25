@@ -52,6 +52,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
+import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 function localDate(d: Date): string {
@@ -1027,6 +1028,13 @@ export default function ServicesTab({
                                   ))}
                                 </VStack>
                               </Box>
+                            )}
+                            {(occ as any)._count?.photos > 0 && (
+                              <OccurrencePhotos
+                                occurrenceId={occ.id}
+                                isAdmin={forAdmin}
+                                photoCount={(occ as any)._count?.photos ?? 0}
+                              />
                             )}
                           </VStack>
                           <VStack gap={1} align="end">

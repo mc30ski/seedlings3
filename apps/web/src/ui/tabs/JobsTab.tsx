@@ -36,6 +36,7 @@ import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
+import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -735,8 +736,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                 css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
-                  const tag = (e.target as HTMLElement)?.closest?.("a, button");
-                  if (tag) return;
+                  const el = e.target as HTMLElement;
+                  if (el?.closest?.("a, button")) return;
                   toggleCard();
                 }}
               >
@@ -996,6 +997,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                           ))}
                         </VStack>
                       </Box>
+                    )}
+                    {((occ._count?.photos ?? 0) > 0 || isAssignedToMe) && (
+                      <OccurrencePhotos
+                        occurrenceId={occ.id}
+                        isAdmin={forAdmin}
+                        canUpload={isAssignedToMe}
+                        photoCount={occ._count?.photos ?? 0}
+                      />
                     )}
                   </VStack>
                 </Card.Body>

@@ -114,6 +114,49 @@ You can run these promotion steps manually from your laptop or later automate th
 
 ---
 
+## Photo Storage (Cloudflare R2)
+
+Job occurrence photos are stored in **Cloudflare R2** (S3-compatible object storage).
+
+### Setup
+
+- **Cloudflare account** with R2 enabled (free tier: 10GB storage, 10M reads, 1M writes/month)
+- **Two buckets** for environment separation:
+  - `seedlings-photos-dev` — development
+  - `seedlings-photos` — production
+- **Lifecycle rules**: each bucket has an object lifecycle rule to auto-delete photos after 90 days (configurable in Cloudflare dashboard → bucket → Settings → Object lifecycle rules)
+- **API token**: created in Cloudflare dashboard → R2 → Manage R2 API Tokens → Object Read & Write, scoped to both buckets
+
+### Environment Variables
+
+Set these in `apps/api/.env` (dev) and Vercel environment variables (production):
+
+```
+R2_ACCOUNT_ID=<your-cloudflare-account-id>
+R2_ACCESS_KEY_ID=<your-r2-api-token-access-key>
+R2_SECRET_ACCESS_KEY=<your-r2-api-token-secret-key>
+R2_BUCKET_NAME=seedlings-photos-dev   # or seedlings-photos for production
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+```
+
+### How It Works
+
+1. Worker completes a job and taps "Add Photos"
+2. Browser compresses images client-side (max 1200px, 80% JPEG quality) before upload
+3. Frontend requests presigned upload URLs from the API
+4. Frontend uploads directly to R2 (API never handles image bytes)
+5. API saves photo metadata (`JobOccurrencePhoto` table) with the R2 object key
+6. R2 lifecycle rule auto-deletes files after the configured retention period
+
+### Key Points
+
+- **No image data in Postgres** — only metadata (R2 key, uploader, timestamp)
+- **Presigned URLs** — uploads/downloads go directly to R2, not through your API/Vercel functions
+- **Client-side compression** — reduces 5MB phone photos to ~150KB before upload
+- **Auto-expiration** — Cloudflare lifecycle rules handle cleanup, no cron needed
+
+---
+
 ## Summary Workflow
 
 **Development**
