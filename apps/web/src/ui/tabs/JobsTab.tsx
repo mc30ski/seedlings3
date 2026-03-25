@@ -190,9 +190,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
       if (viewAsUserId) {
-        list = list.filter((occ) =>
-          (occ.assignees ?? []).some((a) => a.userId === viewAsUserId)
-        );
+        // Admin "View as" — show only that worker's jobs + unassigned
+        list = list.filter((occ) => {
+          const assignees = occ.assignees ?? [];
+          return assignees.length === 0 || assignees.some((a) => a.userId === viewAsUserId);
+        });
+      } else if (!forAdmin && myId) {
+        // Worker view — show only my jobs + unassigned (claimable)
+        list = list.filter((occ) => {
+          const assignees = occ.assignees ?? [];
+          return assignees.length === 0 || assignees.some((a) => a.userId === myId);
+        });
       }
       setItems(list);
     } catch (err) {
