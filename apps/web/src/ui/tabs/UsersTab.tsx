@@ -17,6 +17,7 @@ import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -280,10 +281,21 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
-  async function setWorkerType(userId: string, workerType: string) {
+  const [workerTypeConfirm, setWorkerTypeConfirm] = useState<{ userId: string; workerType: string | null } | null>(null);
+
+  function promptWorkerType(userId: string, workerType: string | null) {
+    setWorkerTypeConfirm({ userId, workerType });
+  }
+
+  async function confirmWorkerType() {
+    if (!workerTypeConfirm) return;
+    const { userId, workerType } = workerTypeConfirm;
+    setWorkerTypeConfirm(null);
     try {
       await apiPatch(`/api/admin/users/${userId}/worker-type`, { workerType });
-      publishInlineMessage({ type: "SUCCESS", text: `Set as ${workerType.toLowerCase()}` });
+      const label = workerType ? workerType.toLowerCase() : "unclassified";
+      publishInlineMessage({ type: "SUCCESS", text: `Set as ${label}` });
+      try { window.dispatchEvent(new Event("seedlings3:users-changed")); } catch {}
       load();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Set worker type failed", err) });
@@ -612,7 +624,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && u.workerType !== "TRAINEE" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
-                        onClick={() => setWorkerType(u.id, "TRAINEE")}
+                        onClick={() => promptWorkerType(u.id, "TRAINEE")}
                         variant="outline"
                         colorPalette="cyan"
                       >
@@ -622,7 +634,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && u.workerType !== "CONTRACTOR" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
-                        onClick={() => setWorkerType(u.id, "CONTRACTOR")}
+                        onClick={() => promptWorkerType(u.id, "CONTRACTOR")}
                         variant="outline"
                         colorPalette="orange"
                       >
@@ -632,11 +644,21 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && u.workerType !== "EMPLOYEE" && (
                       <Button
                         size={{ base: "xs", md: "sm" }}
-                        onClick={() => setWorkerType(u.id, "EMPLOYEE")}
+                        onClick={() => promptWorkerType(u.id, "EMPLOYEE")}
                         variant="outline"
                         colorPalette="blue"
                       >
                         Set Employee
+                      </Button>
+                    )}
+                    {isWorker && u.workerType != null && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => promptWorkerType(u.id, null)}
+                        variant="outline"
+                        colorPalette="gray"
+                      >
+                        Unclassify
                       </Button>
                     )}
                     {isContractor && (
@@ -714,6 +736,14 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
             </Box>
           );
         })}
+      <ConfirmDialog
+        open={!!workerTypeConfirm}
+        title="Change Worker Type"
+        message={`Are you sure you want to set this worker as ${workerTypeConfirm?.workerType?.toLowerCase() ?? "unclassified"}?`}
+        confirmLabel="Confirm"
+        onConfirm={confirmWorkerType}
+        onCancel={() => setWorkerTypeConfirm(null)}
+      />
     </Box>
   );
 }

@@ -321,17 +321,17 @@ export const users: ServicesUsers = {
     return me;
   },
 
-  async setWorkerType(currentUserId: string, userId: string, workerType: string) {
-    if (workerType !== "EMPLOYEE" && workerType !== "CONTRACTOR" && workerType !== "TRAINEE") {
+  async setWorkerType(currentUserId: string, userId: string, workerType: string | null) {
+    if (workerType !== null && workerType !== "EMPLOYEE" && workerType !== "CONTRACTOR" && workerType !== "TRAINEE") {
       throw new ServiceError("BAD_REQUEST", "Invalid worker type", 400);
     }
     return prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({
         where: { id: userId },
-        data: { workerType: workerType as WorkerType },
+        data: { workerType: workerType as WorkerType | null },
       });
       await writeAudit(tx, AUDIT.USER.WORKER_TYPE_SET, currentUserId, {
-        userId, workerType,
+        userId, workerType: workerType ?? "UNCLASSIFIED",
       });
       return updated;
     });
