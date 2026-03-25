@@ -379,15 +379,15 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           <Card.Root key={c.id} variant="outline">
             <Card.Header py="3" px="4" pb="0">
               <HStack gap={3} justify="space-between" align="center">
-                <HStack gap={3} flex="1" minW={0}>
-                  <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
+                <Text fontSize="md" fontWeight="semibold" flex="1" minW={0}>{clientLabel(c.displayName)}</Text>
+                <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
                   <StatusBadge
                     status={c.status}
                     palette={clientStatusColor(c.status)}
                     variant="subtle"
                   />
-                </HStack>
-                <StatusBadge status={c.type} palette="gray" variant="outline" />
+                  <StatusBadge status={c.type} palette="gray" variant="outline" />
+                </Box>
               </HStack>
             </Card.Header>
             {c.notesInternal && (

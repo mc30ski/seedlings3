@@ -808,38 +808,36 @@ export default function ServicesTab({
             <Card.Root key={job.id} variant="outline">
               <Card.Header py="3" px="4" pb="0">
                 <HStack gap={3} justify="space-between" align="start">
-                  <HStack gap={3} flex="1" minW={0} align="center">
-                    <VStack align="start" gap={0}>
-                      <HStack gap={2} align="center">
-                        <Text fontSize="md" fontWeight="semibold">
-                          {job.property?.client?.displayName && (
-                            <>{clientLabel(job.property.client.displayName)} — </>
-                          )}
-                          {job.property?.displayName ?? job.propertyId}
-                        </Text>
-                        <StatusBadge
-                          status={job.status}
-                          palette={jobStatusColor(job.status)}
-                          variant="subtle"
+                  <VStack align="start" gap={0} flex="1" minW={0}>
+                    <Text fontSize="md" fontWeight="semibold">
+                      {job.property?.client?.displayName && (
+                        <>{clientLabel(job.property.client.displayName)} — </>
+                      )}
+                      {job.property?.displayName ?? job.propertyId}
+                    </Text>
+                    <HStack gap={3} fontSize="xs">
+                      {job.property?.displayName && (
+                        <TextLink
+                          text="View Property"
+                          onClick={() =>
+                            openEventSearch(
+                              "jobsTabToPropertiesTabSearch",
+                              job.property?.displayName ?? "",
+                              forAdmin,
+                            )
+                          }
                         />
-                      </HStack>
-                      <HStack gap={3} fontSize="xs">
-                        {job.property?.displayName && (
-                          <TextLink
-                            text="View Property"
-                            onClick={() =>
-                              openEventSearch(
-                                "jobsTabToPropertiesTabSearch",
-                                job.property?.displayName ?? "",
-                                forAdmin,
-                              )
-                            }
-                          />
-                        )}
-                      </HStack>
-                    </VStack>
-                  </HStack>
-                  <StatusBadge status={job.kind} palette="gray" variant="outline" />
+                      )}
+                    </HStack>
+                  </VStack>
+                  <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
+                    <StatusBadge
+                      status={job.status}
+                      palette={jobStatusColor(job.status)}
+                      variant="subtle"
+                    />
+                    <StatusBadge status={job.kind} palette="gray" variant="outline" />
+                  </Box>
                 </HStack>
                 {(job.property?.street1 || job.property?.city) && (
                   <Box mt="1" fontSize="sm">
