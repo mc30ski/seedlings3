@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Box, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
+import { Badge, Box, Button, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
+import { X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -11,7 +12,7 @@ type Worker = { id: string; displayName?: string | null; email?: string | null }
 
 export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [selectedWorker, setSelectedWorker] = usePersistedState<string[]>("adminjobs_worker", []);
+  const [selectedWorkers, setSelectedWorkers] = usePersistedState<string[]>("adminjobs_workers", []);
 
   useEffect(() => {
     apiGet<Worker[]>("/api/workers")
@@ -20,13 +21,11 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   }, []);
 
   const workerItems = useMemo(
-    () => [
-      { label: "All Workers", value: "" },
-      ...workers.map((w) => ({
+    () =>
+      workers.map((w) => ({
         label: w.displayName || w.email || w.id,
         value: w.id,
       })),
-    ],
     [workers]
   );
 
@@ -35,18 +34,26 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     [workerItems]
   );
 
-  const viewAsUserId = selectedWorker[0] || undefined;
+  const workerNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const w of workers) map[w.id] = w.displayName || w.email || w.id;
+    return map;
+  }, [workers]);
+
+  // Pass selected IDs or undefined (all) to JobsTab
+  const viewAsUserIds = selectedWorkers.length > 0 ? selectedWorkers : undefined;
 
   const header = (
-    <HStack mb={3} gap={2} align="center">
+    <HStack mb={3} gap={2} align="center" wrap="wrap">
       <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
         View as:
       </Text>
       <Select.Root
         collection={workerCollection}
-        value={selectedWorker}
-        onValueChange={(e) => setSelectedWorker(e.value)}
+        value={selectedWorkers}
+        onValueChange={(e) => setSelectedWorkers(e.value)}
         size="sm"
+        multiple
         positioning={{ strategy: "fixed", hideWhenDetached: true }}
         css={{ width: "auto", flex: "0 0 auto" }}
       >
@@ -65,6 +72,26 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           </Select.Content>
         </Select.Positioner>
       </Select.Root>
+      {selectedWorkers.length > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => setSelectedWorkers([])}
+        >
+          <X size={14} />
+        </Button>
+      )}
+      {selectedWorkers.length > 0 && (
+        <HStack gap={1} wrap="wrap">
+          {selectedWorkers.map((id) => (
+            <Badge key={id} size="sm" colorPalette="blue" variant="solid">
+              {workerNameMap[id] || id}
+            </Badge>
+          ))}
+        </HStack>
+      )}
     </HStack>
   );
 
@@ -72,7 +99,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     <JobsTab
       me={me}
       purpose={purpose}
-      viewAsUserId={viewAsUserId}
+      viewAsUserIds={viewAsUserIds}
       headerSlot={header}
     />
   );

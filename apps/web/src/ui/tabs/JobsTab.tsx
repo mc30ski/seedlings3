@@ -68,15 +68,15 @@ const quickDateItemsBase = [
 const kindStates = ["ALL", ...JOB_KIND] as const;
 
 type JobsTabProps = TabPropsType & {
-  /** When set, filter occurrences to only those assigned to this user */
-  viewAsUserId?: string;
+  /** When set, filter occurrences to only those assigned to these users */
+  viewAsUserIds?: string[];
   /** Extra UI rendered above the filter bar (e.g. worker selector) */
   headerSlot?: React.ReactNode;
 };
 
-export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSlot }: JobsTabProps) {
+export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerSlot }: JobsTabProps) {
   const { isAvail, forAdmin } = determineRoles(me, purpose);
-  const myId = viewAsUserId || me?.id || "";
+  const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
   const [q, setQ] = useState("");
@@ -189,11 +189,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
-      if (viewAsUserId) {
-        // Admin "View as" — show only that worker's jobs + unassigned
+      if (viewAsUserIds?.length) {
+        // Admin "View as" — show only selected workers' jobs + unassigned
+        const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
           const assignees = occ.assignees ?? [];
-          return assignees.length === 0 || assignees.some((a) => a.userId === viewAsUserId);
+          return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
       } else if (!forAdmin && myId) {
         // Worker view — show only my jobs + unassigned (claimable)
@@ -216,7 +217,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserId, headerSl
 
   useEffect(() => {
     void load();
-  }, [dateFrom, dateTo, viewAsUserId]);
+  }, [dateFrom, dateTo, viewAsUserIds]);
 
   async function refreshOverdueCount() {
     try {
