@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
   Badge,
+  VStack,
   createListCollection,
 } from "@chakra-ui/react";
 import { Filter, RefreshCw, Shield, X } from "lucide-react";
@@ -467,32 +468,13 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
               mb={3}
               w="full"
             >
-              <Stack
-                direction={{ base: "column", md: "row" }}
-                align={{ base: "stretch", md: "start" }}
-                justify="space-between"
-                gap="3"
-                w="full"
-              >
-                <Box flex="1 1 0" minW={0}>
-                  <HStack
-                    justify="space-between"
-                    w="100%"
-                    align="center"
-                    wrap="wrap"
-                    gap="6px"
-                  >
-                    <HStack gap="8px" minW="0">
-                      <Text
-                        fontSize="sm"
-                        fontWeight="semibold"
-                        overflow="hidden"
-                        textOverflow="ellipsis"
-                      >
-                        {displayName || "(no name)"}
-                      </Text>
-                      {displayName !== u.email && <Badge>{u.email}</Badge>}
-                    </HStack>
+              <VStack align="stretch" gap="3" w="full">
+                <Box>
+                  <HStack gap="8px" wrap="wrap" align="center">
+                    <Text fontSize="sm" fontWeight="semibold">
+                      {displayName || "(no name)"}
+                    </Text>
+                    {displayName !== u.email && <Badge>{u.email}</Badge>}
                   </HStack>
 
                   <HStack gap="2" mt={2} flexWrap="wrap">
@@ -673,7 +655,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     )}
                   </Stack>
                 )}
-              </Stack>
+              </VStack>
 
               {isConfirming && (
                 <HStack
