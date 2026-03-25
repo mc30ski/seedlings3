@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Box, Container, HStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Container, HStack, Text } from "@chakra-ui/react";
+import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -156,6 +157,14 @@ export default function HomePage() {
     }
   }, []);
 
+  // Silent refresh — updates me without showing loading spinner
+  const refreshMe = useCallback(async () => {
+    try {
+      const data = await apiGet<Me>("/api/me");
+      setMe(data);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     void loadMe();
   }, [loadMe]);
@@ -165,6 +174,11 @@ export default function HomePage() {
       setTopTab(isWorker ? "worker" : "worker");
     if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
   }, [isAdmin, isWorker, topTab]);
+
+  // Re-fetch me silently when switching top tabs so admin changes are reflected
+  useEffect(() => {
+    if (!meLoading) void refreshMe();
+  }, [topTab]);
 
   function wrapWithInlineMessage(tab: ReactNode) {
     return (
@@ -274,15 +288,48 @@ export default function HomePage() {
       icon: FiUser,
       visible: true,
       content: (
-        <ScrollableUnderlineTabs
-          tabs={workerTabs}
-          value={workerInnerTab}
-          onValueChange={(v) => setWorkerInnerTab(v as WorkerTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
-        />
+        <>
+          {me && !me.workerType && (
+            <Box mb={2} p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+              <HStack gap={2} align="start">
+                <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-orange-500)" /></Box>
+                <Text fontSize="sm" color="orange.700">
+                  Your worker type has not been assigned yet. Some features may be restricted until assigned by your administrator.
+                </Text>
+              </HStack>
+            </Box>
+          )}
+          {me?.workerType === "TRAINEE" && (
+            <Box mb={2} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
+              <HStack gap={2} align="start">
+                <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-blue-500)" /></Box>
+                <Text fontSize="sm" color="blue.700">
+                  You are currently a Trainee. You can view details and be added to a team, but you cannot claim jobs, take actions, or reserve equipment. Contact your team manager to take these actions on your behalf.
+                </Text>
+              </HStack>
+            </Box>
+          )}
+          {me?.workerType === "CONTRACTOR" && !me.isInsuranceValid && (
+            <Box mb={2} p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
+              <HStack gap={2} align="start">
+                <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-red-500)" /></Box>
+                <Text fontSize="sm" color="red.700">
+                  {me.hasInsuranceCert ? "Your insurance certificate has expired." : "No insurance certificate on file."}
+                  {" "}Some jobs and equipment may be restricted until this is resolved.
+                </Text>
+              </HStack>
+            </Box>
+          )}
+          <ScrollableUnderlineTabs
+            tabs={workerTabs}
+            value={workerInnerTab}
+            onValueChange={(v) => setWorkerInnerTab(v as WorkerTabs)}
+            edgeMode="overlay"
+            edgeSize={16}
+            headerPaddingY={0}
+            unmountOnExit
+          />
+        </>
       ),
     },
     {
@@ -473,7 +520,7 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const onUsersChanged = () => void loadPending();
+    const onUsersChanged = () => { void loadPending(); void refreshMe(); };
     window.addEventListener("seedlings3:users-changed", onUsersChanged);
     return () =>
       window.removeEventListener("seedlings3:users-changed", onUsersChanged);
@@ -492,10 +539,10 @@ export default function HomePage() {
       <AppSplash show={meLoading} />
       <Box
         as="header"
-        bg="green.100"
-        bgGradient="linear(to-b, var(--chakra-colors-green-100), var(--chakra-colors-green-50))"
+        bg="#f4f7f0"
+        bgGradient="linear(to-b, #f4f7f0, #f9faf7)"
         borderWidth="1px"
-        borderColor="green.400"
+        borderColor="#b5c4a3"
         px={{ base: 3, md: 4 }}
         py={{ base: 2, md: 3 }}
         borderRadius="md"
@@ -556,8 +603,29 @@ export default function HomePage() {
               </Box>
             )}
 
-            {/* Clerk SECOND (order 1) */}
-            <Box style={{ order: 1 }} display="flex" alignItems="center">
+            {/* Worker type badge (order 1) */}
+            {me && (
+              <Badge
+                style={{ order: 1 }}
+                size="sm"
+                variant="subtle"
+                colorPalette={
+                  me.workerType === "EMPLOYEE" ? "blue"
+                  : me.workerType === "CONTRACTOR" ? "orange"
+                  : me.workerType === "TRAINEE" ? "cyan"
+                  : "gray"
+                }
+                lineHeight="normal"
+              >
+                {me.workerType === "EMPLOYEE" ? "W-2"
+                  : me.workerType === "CONTRACTOR" ? "1099"
+                  : me.workerType === "TRAINEE" ? "Trainee"
+                  : "Unclassified"}
+              </Badge>
+            )}
+
+            {/* Clerk (order 2) */}
+            <Box style={{ order: 2 }} display="flex" alignItems="center">
               {mounted && showLocalUserBtn ? (
                 <UserButton
                   appearance={{

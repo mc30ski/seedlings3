@@ -801,7 +801,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const userId = String(req.params.id);
     const body = req.body || {};
-    const wt = String(body.workerType ?? "").toUpperCase();
+    if (body.workerType === null || body.workerType === "") {
+      await services.users.setWorkerType(uid, userId, null);
+      return { ok: true };
+    }
+    const wt = String(body.workerType).toUpperCase();
     if (wt !== "EMPLOYEE" && wt !== "CONTRACTOR" && wt !== "TRAINEE") {
       throw app.httpErrors.badRequest("workerType must be EMPLOYEE, CONTRACTOR, or TRAINEE");
     }

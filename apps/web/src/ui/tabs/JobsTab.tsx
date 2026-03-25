@@ -149,9 +149,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   const [agreementDialogOpen, setAgreementDialogOpen] = useState(false);
   const [pendingClaimOccId, setPendingClaimOccId] = useState<string | null>(null);
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
-  const isContractor = me?.workerType === "CONTRACTOR";
   const isTrainee = me?.workerType === "TRAINEE";
-  const needsInsurance = isContractor && !me?.isInsuranceValid;
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{
@@ -267,7 +265,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
       } else if (msg.includes("WORKER_TYPE_REQUIRED") || msg.includes("worker type")) {
         publishInlineMessage({
           type: "ERROR",
-          text: "Your worker type hasn't been assigned yet. Ask your admin to set you as an Employee or Contractor before claiming this job.",
+          text: "Your worker type hasn't been assigned yet. Some jobs are restricted until assigned by your administrator.",
         });
       } else {
         publishInlineMessage({
@@ -410,33 +408,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   return (
     <Box w="full">
       {headerSlot}
-      {!forAdmin && isTrainee && (
-        <Box mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
-          <Text fontSize="sm" color="blue.700">
-            You are currently a Trainee. You can view job details and be added to a team, but you cannot claim jobs or take actions on them.
-          </Text>
-        </Box>
-      )}
-      {!forAdmin && !me?.workerType && me?.isApproved && (
-        <Box mb={3} p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
-          <Text fontSize="sm" color="orange.700">
-            Your worker type has not been assigned yet. Some jobs may be restricted until your admin sets you as an Employee or Contractor.
-          </Text>
-        </Box>
-      )}
-      {needsInsurance && !forAdmin && (
-        <Box mb={3} p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-          <HStack justify="space-between" align="center">
-            <Text fontSize="sm" color="red.700">
-              {me?.hasInsuranceCert ? "Your insurance certificate has expired." : "No insurance certificate on file."}
-              {" "}You cannot claim high-value jobs until this is resolved.
-            </Text>
-            <Button size="xs" colorPalette="red" onClick={() => setInsuranceDialogOpen(true)}>
-              Upload Insurance
-            </Button>
-          </HStack>
-        </Box>
-      )}
       <HStack mb={3} gap={2}>
         <SearchWithClear
           value={q}

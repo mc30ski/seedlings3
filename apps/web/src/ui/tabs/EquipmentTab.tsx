@@ -15,7 +15,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, List, Maximize2, Plus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Filter, LayoutList, List, Maximize2, Plus, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -827,10 +827,10 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   />
                 )}
                 {purpose === "WORKER" && e.status === "AVAILABLE" && isTrainee && (
-                  <Text fontSize="xs" color="gray.500">Trainees cannot reserve equipment</Text>
+                  <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
                 )}
                 {purpose === "WORKER" && e.status === "AVAILABLE" && !isTrainee && e.requiresInsurance && !me?.isInsuranceValid && (
-                  <Text fontSize="xs" color="orange.500">Insurance required to reserve</Text>
+                  <HStack gap={1} fontSize="xs" color="orange.500"><AlertTriangle size={12} /><Text>Insurance required to reserve</Text></HStack>
                 )}
                 {canAdminForceRelease(e) && (
                   <StatusButton
