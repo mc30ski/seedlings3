@@ -1,15 +1,17 @@
 // apps/web/src/components/AdminUsers.tsx
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Box,
   Button,
-  Heading,
   HStack,
+  Select,
   Stack,
   Text,
   Badge,
+  createListCollection,
 } from "@chakra-ui/react";
+import { Filter, RefreshCw, Shield, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
@@ -59,6 +61,20 @@ type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 // Status filter type for this page
 type Status = "all" | "pending" | "approved";
 
+const statusFilterItems = [
+  { label: "All", value: "all" },
+  { label: "Pending", value: "pending" },
+  { label: "Approved", value: "approved" },
+];
+const statusFilterCollection = createListCollection({ items: statusFilterItems });
+
+const roleFilterItems = [
+  { label: "All Roles", value: "all" },
+  { label: "Worker", value: "worker" },
+  { label: "Admin", value: "admin" },
+];
+const roleFilterCollection = createListCollection({ items: roleFilterItems });
+
 export default function UsersTab({ role = "worker" }: TabRolePropType) {
   if (role !== "admin") return <UnavailableNotice />;
 
@@ -84,28 +100,12 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   // confirm bar state (for Delete or Decline)
   const [confirm, setConfirm] = useState<ConfirmState>(null);
 
-  // Refs for focusing the status buttons when opened via event
-  const allBtnRef = useRef<HTMLButtonElement | null>(null);
-  const pendingBtnRef = useRef<HTMLButtonElement | null>(null);
-  const approvedBtnRef = useRef<HTMLButtonElement | null>(null);
-
-  // Listen for programmatic open: set status and focus corresponding button
+  // Listen for programmatic open: set status filter
   useEffect(() => {
     const onOpen = (e: Event) => {
       const { status } = (e as CustomEvent<{ status?: Status }>).detail || {};
       if (status === "pending" || status === "approved" || status === "all") {
         setStatus(status);
-        // focus the relevant button on the next frame
-        requestAnimationFrame(() => {
-          const target =
-            status === "pending"
-              ? pendingBtnRef.current
-              : status === "approved"
-                ? approvedBtnRef.current
-                : allBtnRef.current;
-          target?.focus();
-        });
-        // If you want to immediately reload here instead of waiting for the normal effect, you could call: void load();
       }
     };
     window.addEventListener("seedlings3:open-users", onOpen as EventListener);
@@ -297,75 +297,97 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
 
   return (
     <Box w="full">
-      <Heading size="md" mb={4}>
-        Users & Access
-      </Heading>
       {/* Filters */}
-      <Stack mb={4}>
-        <HStack gap={2} wrap="wrap">
-          <Text fontSize="sm" color="gray.600">
-            Status:
-          </Text>
-          <Button
-            ref={allBtnRef}
-            size="sm"
-            variant={status === "all" ? "solid" : "outline"}
-            onClick={() => setStatus("all")}
-          >
-            All
-          </Button>
-          <Button
-            ref={pendingBtnRef}
-            size="sm"
-            variant={status === "pending" ? "solid" : "outline"}
-            onClick={() => setStatus("pending")}
-          >
-            Pending
-          </Button>
-          <Button
-            ref={approvedBtnRef}
-            size="sm"
-            variant={status === "approved" ? "solid" : "outline"}
-            onClick={() => setStatus("approved")}
-          >
-            Approved
-          </Button>
-
-          <HStack gap={2} wrap="wrap">
-            <Text fontSize="sm" color="gray.600">
-              Role:
-            </Text>
-            <Button
-              size="sm"
-              variant={accessRole === "all" ? "solid" : "outline"}
-              onClick={() => setAccessRole("all")}
-            >
-              All
-            </Button>
-            <Button
-              size="sm"
-              variant={accessRole === "worker" ? "solid" : "outline"}
-              onClick={() => setAccessRole("worker")}
-            >
-              Worker
-            </Button>
-            <Button
-              size="sm"
-              variant={accessRole === "admin" ? "solid" : "outline"}
-              onClick={() => setAccessRole("admin")}
-            >
-              Admin
-            </Button>
-          </HStack>
-
-          <SearchWithClear
-            value={q}
-            onChange={setQ}
-            inputId="user-search"
-            placeholder="Search name or email…"
-          />
+      <HStack mb={2} gap={2}>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          inputId="user-search"
+          placeholder="Search name or email…"
+        />
+        <Select.Root
+          collection={statusFilterCollection}
+          value={[status]}
+          onValueChange={(e) => setStatus(e.value[0] as Status)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+              <Filter size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {statusFilterItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Select.Root
+          collection={roleFilterCollection}
+          value={[accessRole]}
+          onValueChange={(e) => setAccessRole(e.value[0] as "all" | "worker" | "admin")}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+              <Shield size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {roleFilterItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          disabled={status === "all" && accessRole === "all"}
+          onClick={() => { setStatus("all"); setAccessRole("all"); }}
+        >
+          <X size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => void load()}
+          loading={loading}
+        >
+          <RefreshCw size={14} />
+        </Button>
+      </HStack>
+      {(status !== "all" || accessRole !== "all") && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {status !== "all" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {statusFilterItems.find((i) => i.value === status)?.label}
+            </Badge>
+          )}
+          {accessRole !== "all" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {roleFilterItems.find((i) => i.value === accessRole)?.label}
+            </Badge>
+          )}
         </HStack>
-      </Stack>
+      )}
       {/* List */}
       {loading && <LoadingCenter />}
       {!loading && filtered.length === 0 && (
