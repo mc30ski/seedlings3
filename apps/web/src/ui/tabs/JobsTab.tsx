@@ -803,7 +803,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                         {occ.isOneOff && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                       </HStack>
                     ) : (
-                      <VStack gap={1} align="end">
+                      <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
                         <StatusBadge
                           status={occ.status}
                           palette={occurrenceStatusColor(occ.status)}
@@ -830,7 +830,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                             variant="solid"
                           />
                         )}
-                      </VStack>
+                      </Box>
                     )}
                   </HStack>
                 </Card.Header>

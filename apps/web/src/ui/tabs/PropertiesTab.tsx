@@ -395,19 +395,19 @@ export default function PropertiesTab({
             <Card.Root variant="outline">
               <Card.Header py="3" px="4" pb="0">
                 <HStack gap={3} justify="space-between" align="center">
-                  <HStack gap={3} flex="1" minW={0}>
-                    <Text fontSize="md" fontWeight="semibold">{p.displayName}</Text>
+                  <Text fontSize="md" fontWeight="semibold" flex="1" minW={0}>{p.displayName}</Text>
+                  <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
                     <StatusBadge
                       status={p.status}
                       palette={propertyStatusColor(p.status)}
                       variant="subtle"
                     />
-                  </HStack>
-                  <StatusBadge
-                    status={p.kind}
-                    palette="gray"
-                    variant="outline"
-                  />
+                    <StatusBadge
+                      status={p.kind}
+                      palette="gray"
+                      variant="outline"
+                    />
+                  </Box>
                 </HStack>
               </Card.Header>
 
