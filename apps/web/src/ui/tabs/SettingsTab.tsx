@@ -38,6 +38,9 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [test, setTest] = useState(false);
+  setTest(true);
+
   async function load() {
     setLoading(true);
     try {
@@ -58,11 +61,17 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     setSaving(true);
     try {
       await apiPatch(`/api/admin/settings/${key}`, { value: editValue });
-      publishInlineMessage({ type: "SUCCESS", text: `Setting "${key}" updated.` });
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Setting "${key}" updated.`,
+      });
       setEditingKey(null);
       void load();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Update failed.", err),
+      });
     } finally {
       setSaving(false);
     }
@@ -81,17 +90,25 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                 <HStack justify="space-between" w="full" align="start">
                   <VStack align="start" gap={0}>
                     <Text fontSize="sm" fontWeight="semibold">
-                      {s.key.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+                      {s.key
+                        .split("_")
+                        .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+                        .join(" ")}
                     </Text>
                     {s.description && (
-                      <Text fontSize="xs" color="fg.muted">{s.description}</Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        {s.description}
+                      </Text>
                     )}
                   </VStack>
                   {isSuper && editingKey !== s.key && (
                     <Button
                       size="xs"
                       variant="outline"
-                      onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}
+                      onClick={() => {
+                        setEditingKey(s.key);
+                        setEditValue(s.value);
+                      }}
                     >
                       Edit
                     </Button>
@@ -125,12 +142,15 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                     </Button>
                   </HStack>
                 ) : (
-                  <Text fontSize="md" fontWeight="medium">{s.value}</Text>
+                  <Text fontSize="md" fontWeight="medium">
+                    {s.value}
+                  </Text>
                 )}
 
                 {s.updatedBy && (
                   <Text fontSize="xs" color="fg.muted">
-                    Last updated by {s.updatedBy.displayName ?? "unknown"} on {new Date(s.updatedAt).toLocaleString()}
+                    Last updated by {s.updatedBy.displayName ?? "unknown"} on{" "}
+                    {new Date(s.updatedAt).toLocaleString()}
                   </Text>
                 )}
               </VStack>
@@ -138,7 +158,9 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           </Card.Root>
         ))}
         {settings.length === 0 && !loading && (
-          <Text color="fg.muted" p="8">No settings configured.</Text>
+          <Text color="fg.muted" p="8">
+            No settings configured.
+          </Text>
         )}
       </VStack>
     </Box>
