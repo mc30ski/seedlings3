@@ -52,6 +52,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
+import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
@@ -90,13 +91,20 @@ export default function ServicesTab({
 
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [overdueCount, setOverdueCount] = useState(0);
-  const [dateFrom, setDateFrom] = usePersistedState("services_dateFrom", () => localDate(new Date()));
-  const [dateTo, setDateTo] = usePersistedState("services_dateTo", () => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 1);
-    return localDate(d);
-  });
+  const presetBeforeOverdueRef = useRef<DatePreset>("nextMonth");
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("services_datePreset", "nextMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
+  const [dateFrom, setDateFrom] = useState(presetDates.from);
+  const [dateTo, setDateTo] = useState(presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (datePreset) {
+      const d = computeDatesFromPreset(datePreset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+    }
+  }, [datePreset]);
 
   const quickDateItems = useMemo(
     () =>
@@ -564,11 +572,7 @@ export default function ServicesTab({
             setOccStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
             setOverdueActive(false);
-            const today = new Date();
-            setDateFrom(localDate(today));
-            const nextMonth = new Date(today);
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
-            setDateTo(localDate(nextMonth));
+            setDatePreset("nextMonth");
           }}
         >
           <X size={14} />
@@ -605,6 +609,8 @@ export default function ServicesTab({
           value={dateFrom}
           onChange={(val) => {
             setDateFrom(val);
+            setDatePreset(null);
+            setOverdueActive(false);
             if (dateTo && val && val > dateTo) setDateTo(val);
           }}
         />
@@ -613,6 +619,8 @@ export default function ServicesTab({
           value={dateTo}
           onChange={(val) => {
             setDateTo(val);
+            setDatePreset(null);
+            setOverdueActive(false);
             if (dateFrom && val && val < dateFrom) setDateFrom(val);
           }}
         />
@@ -621,46 +629,9 @@ export default function ServicesTab({
           value={quickDate}
           onValueChange={(e) => {
             setQuickDate(e.value);
-            const val = e.value[0];
+            const val = e.value[0] as DatePreset;
             if (!val) return;
-            const today = new Date();
-            if (val === "yesterday") {
-              const d = new Date(today);
-              d.setDate(d.getDate() - 1);
-              setDateFrom(localDate(d));
-              setDateTo(localDate(d));
-            } else if (val === "today") {
-              setDateFrom(localDate(today));
-              setDateTo(localDate(today));
-            } else if (val === "next3") {
-              const d = new Date(today);
-              d.setDate(d.getDate() + 2);
-              setDateFrom(localDate(today));
-              setDateTo(localDate(d));
-            } else if (val === "lastWeek") {
-              const d = new Date(today);
-              d.setDate(d.getDate() - 7);
-              setDateFrom(localDate(d));
-              setDateTo(localDate(today));
-            } else if (val === "nextWeek") {
-              const d = new Date(today);
-              d.setDate(d.getDate() + 6);
-              setDateFrom(localDate(today));
-              setDateTo(localDate(d));
-            } else if (val === "nextMonth") {
-              const d = new Date(today);
-              d.setMonth(d.getMonth() + 1);
-              setDateFrom(localDate(today));
-              setDateTo(localDate(d));
-            } else if (val === "recent") {
-              const d = new Date(today);
-              d.setDate(d.getDate() - 30);
-              setDateFrom(localDate(d));
-              setDateTo("");
-            } else if (val === "future") {
-              setDateFrom(localDate(today));
-              setDateTo("");
-            } else if (val === "all") {
+            if (val === "all") {
               setConfirmAction({
                 title: "Load All Data",
                 message:
@@ -668,13 +639,13 @@ export default function ServicesTab({
                 confirmLabel: "Load All",
                 colorPalette: "orange",
                 onConfirm: () => {
-                  setDateFrom("");
-                  setDateTo("");
+                  setDatePreset("all");
                 },
               });
               requestAnimationFrame(() => setQuickDate([]));
               return;
             }
+            setDatePreset(val);
             setOverdueActive(false);
             requestAnimationFrame(() => setQuickDate([]));
           }}
@@ -705,9 +676,12 @@ export default function ServicesTab({
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
+              setDatePreset(presetBeforeOverdueRef.current ?? "nextMonth");
             } else {
+              presetBeforeOverdueRef.current = datePreset;
               const yesterday = new Date();
               yesterday.setDate(yesterday.getDate() - 1);
+              setDatePreset(null);
               setDateFrom("");
               setDateTo(localDate(yesterday));
               setOccStatusFilter(["ALL"]);
@@ -739,8 +713,18 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {datePreset && (
+            <Badge size="sm" colorPalette="green" variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!datePreset && !overdueActive && (dateFrom || dateTo) && (
+            <Badge size="sm" colorPalette="gray" variant="subtle">
+              Custom dates
+            </Badge>
+          )}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="solid">
               Overdue
