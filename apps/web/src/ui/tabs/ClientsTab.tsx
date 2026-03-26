@@ -42,7 +42,6 @@ import DeleteDialog, {
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
-import { useRouter } from "next/navigation";
 import { apiGet, apiDelete } from "@/src/lib/api";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
@@ -58,8 +57,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const pfx = purpose === "ADMIN" ? "aclients" : "wclients";
   const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
   const [traineeClientIds, setTraineeClientIds] = useState<Set<string> | null>(null);
-
-  const router = useRouter();
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
@@ -429,16 +426,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {forAdmin && (
                   <>
                     <StatusButton
-                      id={"client-addcontact"}
-                      itemId={c.id}
-                      label={"Add"}
-                      onClick={async () => openContactCreate(c.id)}
-                      variant={"solid"}
-                      disabled={loading}
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                    <StatusButton
                       id={"client-edit"}
                       itemId={c.id}
                       label={"Edit"}
@@ -584,7 +571,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 >
                                   <HStack w="100%" wrap="wrap">
                                     <Text fontWeight="medium">
-                                      {ct.firstName}{ct.lastName ? ` ${ct.lastName}` : ""}
+                                      {ct.firstName}{ct.nickname ? ` "${ct.nickname}"` : ""}{ct.lastName ? ` ${ct.lastName}` : ""}
                                     </Text>
                                     {ct.isPrimary && (
                                       <Icon as={FiStar} boxSize="4" />
@@ -745,6 +732,17 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 </VStack>
                               ) : undefined;
                             })}
+                          {forAdmin && (
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => openContactCreate(c.id)}
+                              disabled={loading}
+                            >
+                              <Plus size={14} />
+                              Add Contact
+                            </Button>
+                          )}
                         </VStack>
                       </Accordion.ItemBody>
                     </Accordion.ItemContent>
@@ -790,7 +788,18 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 p={3}
                               >
                                 <HStack w="100%">
-                                  <Text fontWeight="medium">
+                                  <Text
+                                    fontWeight="medium"
+                                    color="blue.600"
+                                    cursor="pointer"
+                                    _hover={{ textDecoration: "underline" }}
+                                    onClick={() => openEventSearch(
+                                      "clientTabToPropertiesTabSearch",
+                                      p.displayName,
+                                      forAdmin,
+                                      p.id,
+                                    )}
+                                  >
                                     {p.displayName}
                                   </Text>
                                   <Spacer />

@@ -23,6 +23,7 @@ function normalizeContactPayload(payload: any): {
   status: ContactStatus;
   firstName: string;
   lastName: string;
+  nickname: string | null;
   email: string | null;
   phone: string | null;
   normalizedPhone: string | null;
@@ -54,6 +55,7 @@ function normalizeContactPayload(payload: any): {
     status: payload.status ?? "ACTIVE",
     firstName: first,
     lastName: last,
+    nickname: (payload.nickname ?? "").trim() || null,
     email: (payload.email ?? "").trim() || null,
     phone: (payload.phone ?? "").trim() || null,
     normalizedPhone,
@@ -106,6 +108,7 @@ export const clients: ServicesClients = {
             status: true,
             firstName: true,
             lastName: true,
+            nickname: true,
             role: true,
             email: true,
             phone: true,
@@ -283,6 +286,7 @@ export const clients: ServicesClients = {
       status: cp.status ?? "ACTIVE",
       firstName: cp.firstName,
       lastName: cp.lastName,
+      nickname: cp.nickname,
       email: cp.email,
       phone: cp.phone,
       normalizedPhone: cp.normalizedPhone,
@@ -317,6 +321,7 @@ export const clients: ServicesClients = {
       status: cp.status,
       firstName: cp.firstName,
       lastName: cp.lastName,
+      nickname: cp.nickname,
       email: cp.email,
       phone: cp.phone,
       normalizedPhone: cp.normalizedPhone,

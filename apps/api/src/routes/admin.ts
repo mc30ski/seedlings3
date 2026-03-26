@@ -795,6 +795,15 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.expenses.listExpensesByOccurrence(String(req.params.occurrenceId));
   });
 
+  app.post("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    return services.expenses.addExpense(uid, String(req.params.occurrenceId), {
+      cost: Number(body.cost),
+      description: String(body.description ?? ""),
+    });
+  });
+
   app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
     return services.expenses.adminDeleteExpense(String(req.params.id));
   });

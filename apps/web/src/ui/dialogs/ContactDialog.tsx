@@ -63,6 +63,7 @@ export default function ClientDialog({
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
@@ -117,6 +118,7 @@ export default function ClientDialog({
       setStatusValue([initial.status ?? CONTACT_STATUS[0]]);
       setFirstName(initial.firstName ?? "");
       setLastName(initial.lastName ?? "");
+      setNickname(initial.nickname ?? "");
       setEmail(initial.email ?? "");
       setPhone(initial.phone ?? "");
       setIsPrimary(!!initial.isPrimary);
@@ -126,6 +128,7 @@ export default function ClientDialog({
       setStatusValue([CONTACT_STATUS[0]]);
       setFirstName("");
       setLastName("");
+      setNickname("");
       setEmail("");
       setPhone("");
       setIsPrimary(false);
@@ -154,6 +157,7 @@ export default function ClientDialog({
       status: (statusValue[0] as ContactStatus) ?? CONTACT_STATUS[0],
       firstName: firstName.trim(),
       lastName: lastName.trim(),
+      nickname: nickname.trim() || null,
       email: email.trim(),
       phone: phone.trim(),
       isPrimary,
@@ -283,15 +287,25 @@ export default function ClientDialog({
                     </Select.Root>
                   </div>
                 </HStack>
-                <div style={{ flex: 1 }}>
-                  <Text mb="1">First name</Text>
-                  <Input
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="First name"
-                    autoFocus
-                  />
-                </div>
+                <HStack gap={3}>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">First name</Text>
+                    <Input
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="First name"
+                      autoFocus
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Text mb="1">Nickname</Text>
+                    <Input
+                      value={nickname}
+                      onChange={(e) => setNickname(e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                </HStack>
                 <div style={{ flex: 1 }}>
                   <Text mb="1">Last name</Text>
                   <Input
