@@ -56,6 +56,8 @@ export default function PropertiesTab({
 }: TabPropsType) {
   const { isSuper, isAvail, forAdmin } = determineRoles(me, purpose);
   const pfx = purpose === "ADMIN" ? "aprops" : "wprops";
+  const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
+  const [traineePropertyIds, setTraineePropertyIds] = useState<Set<string> | null>(null);
 
   // Variables for filtering the items.
   const [q, setQ] = useState("");
@@ -121,6 +123,23 @@ export default function PropertiesTab({
     void load();
   }, [forAdmin]);
 
+  // For trainees: fetch their assigned property IDs
+  useEffect(() => {
+    if (!isTrainee) { setTraineePropertyIds(null); return; }
+    apiGet<any[]>("/api/occurrences")
+      .then((occs) => {
+        const myId = me?.id;
+        const ids = new Set<string>();
+        for (const occ of occs) {
+          if ((occ.assignees ?? []).some((a: any) => a.userId === myId)) {
+            if (occ.job?.property?.id) ids.add(occ.job.property.id);
+          }
+        }
+        setTraineePropertyIds(ids);
+      })
+      .catch(() => setTraineePropertyIds(new Set()));
+  }, [isTrainee, me?.id]);
+
   useEffect(() => {
     onEventSearchRun("clientTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
     onEventSearchRun("jobsTabToPropertiesTabSearch", setQ, inputRef, setHighlightId);
@@ -135,7 +154,13 @@ export default function PropertiesTab({
       if (exact) return [exact];
     }
 
+    // Trainees only see properties they are assigned to
     let rows = items;
+
+    // Trainees only see properties they are assigned to
+    if (isTrainee && traineePropertyIds) {
+      rows = rows.filter((r) => traineePropertyIds.has(r.id));
+    }
 
     // Filter based on entity type.
     if (kind[0] !== "ALL") {
@@ -181,7 +206,7 @@ export default function PropertiesTab({
     });
 
     return rows;
-  }, [items, q, kind, statusFilter]);
+  }, [items, q, kind, statusFilter, highlightId, isTrainee, traineePropertyIds]);
 
   function openCreate() {
     setEditing(null);
