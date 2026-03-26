@@ -191,11 +191,17 @@ export default function OccurrenceDialog({
         // Create any inline expenses against the new occurrence
         const newOccId = created?.id;
         if (newOccId && expenses.length > 0) {
-          const expEndpoint = isAdmin
+          // Use admin endpoint if this dialog was opened in admin context
+          const useAdmin = isAdmin || (createEndpoint ?? "").includes("/admin/");
+          const expEndpoint = useAdmin
             ? `/api/admin/occurrences/${newOccId}/expenses`
             : `/api/occurrences/${newOccId}/expenses`;
           for (const exp of expenses) {
-            try { await apiPost(expEndpoint, { cost: exp.cost, description: exp.description }); } catch {}
+            try {
+              await apiPost(expEndpoint, { cost: exp.cost, description: exp.description });
+            } catch (err) {
+              console.error("Failed to create expense:", err);
+            }
           }
         }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });

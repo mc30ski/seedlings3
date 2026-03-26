@@ -580,6 +580,9 @@ model Payment {
   method         PaymentMethod
   note           String?
 
+  platformFeePercent  Float?    // % charged to contractor/unclassified
+  platformFeeAmount   Float?    // calculated: (amountPaid - expenses) * percent / 100
+
   collectedById  String
   collectedBy    User          @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 

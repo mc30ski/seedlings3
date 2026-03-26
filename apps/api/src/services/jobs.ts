@@ -472,8 +472,8 @@ export const jobs: ServicesJobs = {
         },
         payment: {
           include: {
-            splits: { include: { user: { select: { id: true, displayName: true } } } },
-            collectedBy: { select: { id: true, displayName: true } },
+            splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+            collectedBy: { select: { id: true, displayName: true, email: true } },
           },
         },
         expenses: {
@@ -508,8 +508,8 @@ export const jobs: ServicesJobs = {
         },
         payment: {
           include: {
-            splits: { include: { user: { select: { id: true, displayName: true } } } },
-            collectedBy: { select: { id: true, displayName: true } },
+            splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+            collectedBy: { select: { id: true, displayName: true, email: true } },
           },
         },
         expenses: {

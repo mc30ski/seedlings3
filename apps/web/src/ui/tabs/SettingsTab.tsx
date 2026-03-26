@@ -80,7 +80,9 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               <VStack align="start" gap={1}>
                 <HStack justify="space-between" w="full" align="start">
                   <VStack align="start" gap={0}>
-                    <Text fontSize="sm" fontWeight="semibold">{s.key}</Text>
+                    <Text fontSize="sm" fontWeight="semibold">
+                      {s.key.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+                    </Text>
                     {s.description && (
                       <Text fontSize="xs" color="fg.muted">{s.description}</Text>
                     )}

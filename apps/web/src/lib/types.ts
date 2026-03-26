@@ -350,6 +350,8 @@ export type PaymentInfo = {
   amountPaid: number;
   method: PaymentMethod;
   note?: string | null;
+  platformFeePercent?: number | null;
+  platformFeeAmount?: number | null;
   collectedBy?: { id: string; displayName?: string | null };
   splits: PaymentSplitItem[];
   createdAt: string;
@@ -376,6 +378,8 @@ export type WorkerPaymentItem = {
     amountPaid: number;
     method: PaymentMethod;
     note?: string | null;
+    platformFeePercent?: number | null;
+    platformFeeAmount?: number | null;
     collectedBy?: { id: string; displayName?: string | null };
     createdAt: string;
     splits: PaymentSplitItem[];

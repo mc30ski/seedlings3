@@ -72,8 +72,8 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", defaultDateFrom);
-  const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", todayStr);
+  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
+  const [dateTo, setDateTo] = useState(todayStr);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_w_type", ["ALL"]);
   const [compact, setCompact] = usePersistedState("pay_w_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -215,9 +215,13 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           (s, it) => s + (it.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0),
           0
         ) : 0;
+        const totalFees = showJobs ? items.reduce(
+          (s, it) => s + (it.payment.platformFeeAmount ?? 0),
+          0
+        ) : 0;
         const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
         const visibleTotal = showJobs ? totalAmount : 0;
-        const totalDeductions = totalExpenses + totalEquipCost;
+        const totalDeductions = totalExpenses + totalEquipCost + totalFees;
         const net = visibleTotal - totalDeductions;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
@@ -229,6 +233,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             {totalExpenses > 0 && (
               <Text fontSize="sm" color="orange.600">
                 Expenses: −${totalExpenses.toFixed(2)}
+              </Text>
+            )}
+            {totalFees > 0 && (
+              <Text fontSize="sm" color="orange.600">
+                Platform Fees: −${totalFees.toFixed(2)}
               </Text>
             )}
             {totalEquipCost > 0 && (
@@ -346,7 +355,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       <VStack align="start" gap={0} mt={0.5}>
                         {item.payment.splits.map((sp) => (
                           <Text key={sp.userId} fontSize="xs" color="fg.muted">
-                            {sp.user?.displayName ?? sp.userId}: ${sp.amount.toFixed(2)}
+                            {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
                           </Text>
                         ))}
                       </VStack>
@@ -378,14 +387,19 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                           </Text>
                         )}
                         {expTotal > 0 && (
-                          <>
-                            <Text fontSize="xs" color="orange.600">
-                              −${expTotal.toFixed(2)} expenses
-                            </Text>
-                            <Text fontWeight="bold" color="green.700" fontSize="sm">
-                              Net: ${net.toFixed(2)}
-                            </Text>
-                          </>
+                          <Text fontSize="xs" color="orange.600">
+                            −${expTotal.toFixed(2)} expenses
+                          </Text>
+                        )}
+                        {item.payment.platformFeeAmount != null && item.payment.platformFeeAmount > 0 && (
+                          <Text fontSize="xs" color="orange.600">
+                            −${item.payment.platformFeeAmount.toFixed(2)} fee ({item.payment.platformFeePercent}%)
+                          </Text>
+                        )}
+                        {(expTotal > 0 || (item.payment.platformFeeAmount ?? 0) > 0) && (
+                          <Text fontWeight="bold" color="green.700" fontSize="sm">
+                            Net: ${(net - (item.payment.platformFeeAmount ?? 0)).toFixed(2)}
+                          </Text>
                         )}
                       </VStack>
                     );
@@ -477,12 +491,13 @@ const editMethodCollection = createListCollection({ items: editMethodItems });
 function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
+  const [totalPlatformFees, setTotalPlatformFees] = useState(0);
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", defaultDateFrom);
-  const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", todayStr);
+  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
+  const [dateTo, setDateTo] = useState(todayStr);
   const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
   const [personFilter, setPersonFilter] = usePersistedState("pay_a_person", "");
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_a_type", ["ALL"]);
@@ -537,6 +552,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         apiGet<{
           items: PaymentListItem[];
           personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
+          totalPlatformFees: number;
         }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
         apiGet<EquipmentCharge[]>(
           `/api/admin/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
@@ -544,6 +560,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       ]);
       setItems(res.items ?? []);
       setPersonTotals(res.personTotals ?? []);
+      setTotalPlatformFees(res.totalPlatformFees ?? 0);
       setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
@@ -824,8 +841,14 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   Equipment Total: −${totalEquipCost.toFixed(2)}
                 </Text>
               )}
-        {showJobs && personTotals.length > 1 && (
+        {showJobs && totalPlatformFees > 0 && (
+          <Text fontSize="sm" fontWeight="medium" color="blue.600" mt={1}>
+            Platform Fees Collected: ${totalPlatformFees.toFixed(2)}
+          </Text>
+        )}
+        {showJobs && personTotals.length > 0 && (
           <VStack align="start" gap={0} mt={1}>
+            <Text fontSize="xs" color="fg.muted" fontWeight="medium">Per-person (net of expenses & fees):</Text>
             {personTotals.map((p) => (
               <Text key={p.userId} fontSize="sm" color="green.600">
                 {p.displayName ?? p.userId}: ${p.total.toFixed(2)}
@@ -923,7 +946,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     </Text>
                     {p.collectedBy && (
                       <Text fontSize="xs" color="fg.muted">
-                        Collected by {p.collectedBy.displayName ?? "unknown"}
+                        Collected by {p.collectedBy.displayName ?? (p.collectedBy as any).email ?? "unknown"}
                       </Text>
                     )}
                     {p.createdAt && (
@@ -931,15 +954,42 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                         {new Date(p.createdAt).toLocaleDateString()}
                       </Text>
                     )}
-                    {p.splits && p.splits.length > 0 && (
-                      <VStack align="start" gap={0} mt={0.5}>
-                        {p.splits.map((sp) => (
-                          <Text key={sp.userId} fontSize="xs" color="fg.muted">
-                            {sp.user?.displayName ?? sp.userId}: ${sp.amount.toFixed(2)}
-                          </Text>
-                        ))}
-                      </VStack>
-                    )}
+                    {p.splits && p.splits.length > 0 && (() => {
+                      const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const fee = p.platformFeeAmount ?? 0;
+                      const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+                      return (
+                        <VStack align="start" gap={1} mt={0.5}>
+                          {p.splits.map((sp) => {
+                            const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
+                            const expShare = expTotal * ratio;
+                            const feeShare = fee * ratio;
+                            const personNet = sp.amount - expShare - feeShare;
+                            const hasDeductions = expShare > 0 || feeShare > 0;
+                            return (
+                              <Box key={sp.userId} fontSize="xs">
+                                <Text fontWeight="medium" color="fg.muted">
+                                  {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
+                                </Text>
+                                {hasDeductions && (
+                                  <Box pl={2}>
+                                    {expShare > 0 && (
+                                      <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>
+                                    )}
+                                    {feeShare > 0 && (
+                                      <Text color="orange.600">−${feeShare.toFixed(2)} fee</Text>
+                                    )}
+                                    <Text fontWeight="medium" color="green.600">
+                                      Net: ${personNet.toFixed(2)}
+                                    </Text>
+                                  </Box>
+                                )}
+                              </Box>
+                            );
+                          })}
+                        </VStack>
+                      );
+                    })()}
                     {(() => {
                       const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                       return expTotal > 0 ? (
@@ -949,14 +999,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                               <Text fontSize="xs" color="orange.600" flex="1">
                                 Expense: ${exp.cost.toFixed(2)} — {exp.description}
                               </Text>
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                colorPalette="red"
-                                onClick={() => setDeleteExpenseId(exp.id)}
-                              >
-                                ✕
-                              </Button>
                             </HStack>
                           ))}
                         </VStack>
@@ -972,14 +1014,19 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                           ${p.amountPaid.toFixed(2)}
                         </Text>
                         {expTotal > 0 && (
-                          <>
-                            <Text fontSize="xs" color="orange.600">
-                              −${expTotal.toFixed(2)} expenses
-                            </Text>
-                            <Text fontWeight="bold" color="green.700" fontSize="sm">
-                              Net: ${net.toFixed(2)}
-                            </Text>
-                          </>
+                          <Text fontSize="xs" color="orange.600">
+                            −${expTotal.toFixed(2)} expenses
+                          </Text>
+                        )}
+                        {p.platformFeeAmount != null && p.platformFeeAmount > 0 && (
+                          <Text fontSize="xs" color="orange.600">
+                            −${p.platformFeeAmount.toFixed(2)} fee ({p.platformFeePercent}%)
+                          </Text>
+                        )}
+                        {(expTotal > 0 || (p.platformFeeAmount ?? 0) > 0) && (
+                          <Text fontWeight="bold" color="green.700" fontSize="sm">
+                            Net: ${(net - (p.platformFeeAmount ?? 0)).toFixed(2)}
+                          </Text>
                         )}
                       </VStack>
                     );
@@ -1160,7 +1207,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                         {editPayment.splits.map((sp) => (
                           <HStack key={sp.userId} gap={2}>
                             <Text fontSize="sm" flex="1" minW={0} truncate>
-                              {sp.user?.displayName ?? sp.userId}
+                              {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
                             </Text>
                             <CurrencyInput
                               value={editSplits[sp.userId] || ""}

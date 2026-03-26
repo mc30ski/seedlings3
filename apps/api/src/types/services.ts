@@ -622,6 +622,12 @@ export type ServicesExpenses = {
     expenseId: string
   ): Promise<{ deleted: true }>;
 
+  adminAddExpense(
+    currentUserId: string,
+    occurrenceId: string,
+    input: { cost: number; description: string }
+  ): Promise<any>;
+
   adminDeleteExpense(
     expenseId: string
   ): Promise<{ deleted: true }>;
