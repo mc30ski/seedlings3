@@ -11,6 +11,7 @@ import { UserButton } from "@clerk/clerk-react";
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import AuditLogTab from "@/src/ui/tabs/AuditLogTab";
+import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -38,6 +39,7 @@ import {
   FiFileText,
   FiMapPin,
   FiActivity,
+  FiSettings,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -279,6 +281,12 @@ export default function HomePage() {
       label: "Audit",
       icon: FiFileText,
       content: wrapWithInlineMessage(<AuditLogTab role="admin" />),
+    },
+    {
+      value: "settings",
+      label: "Settings",
+      icon: FiSettings,
+      content: wrapWithInlineMessage(<SettingsTab me={me} purpose="ADMIN" />),
     },
   ];
 

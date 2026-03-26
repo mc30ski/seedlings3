@@ -640,4 +640,12 @@ export type Services = {
   jobs: ServicesJobs;
   payments: ServicesPayments;
   expenses: ServicesExpenses;
+  settings: ServicesSettings;
+};
+
+export type ServicesSettings = {
+  getAll(): Promise<any[]>;
+  get(key: string): Promise<{ key: string; value: string } | null>;
+  getValue(key: string, fallback: string): Promise<string>;
+  set(actorUserId: string, key: string, value: string): Promise<any>;
 };

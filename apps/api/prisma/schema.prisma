@@ -29,6 +29,7 @@ enum AuditScope {
   CLIENT
   JOB
   PROPERTY
+  SETTING
   // add more scopes as you expand the schema
 }
 
@@ -50,6 +51,7 @@ enum AuditVerb {
   RETURNED
   FORCE_RELEASED
   PRIMARY_CONTACT_SET
+  SETTING_UPDATED
   WORKER_TYPE_SET
   INSURANCE_UPLOADED
   CONTRACTOR_AGREED
@@ -94,6 +96,7 @@ model User {
   paymentSplits             PaymentSplit[]
   expenses                  Expense[]
   photos                    JobOccurrencePhoto[]
+  settingsUpdated           Setting[]
 }
 
 model UserRole {
@@ -622,4 +625,14 @@ model Expense {
 
   @@index([occurrenceId])
   @@index([createdById])
+}
+
+model Setting {
+  id            String    @id @default(cuid())
+  key           String    @unique
+  value         String
+  description   String?
+  updatedAt     DateTime  @updatedAt
+  updatedById   String?
+  updatedBy     User?     @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 }

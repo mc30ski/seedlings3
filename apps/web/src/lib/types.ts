@@ -9,7 +9,8 @@ export type AdminTabs =
   | "jobs"
   | "admin-jobs"
   | "payments"
-  | "audit";
+  | "audit"
+  | "settings";
 
 export type WorkerTabs =
   | "equipment"
