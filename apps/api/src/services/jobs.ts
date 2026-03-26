@@ -700,7 +700,8 @@ export const jobs: ServicesJobs = {
       }
 
       // Tier gating for high-value jobs
-      const threshold = Number(process.env.HIGH_VALUE_JOB_THRESHOLD ?? 200);
+      const thresholdSetting = await prisma.setting.findUnique({ where: { key: "HIGH_VALUE_JOB_THRESHOLD" } });
+      const threshold = Number(thresholdSetting?.value ?? 200);
       const effectivePrice = occ.price ?? (occ.job as any).defaultPrice ?? 0;
       if (effectivePrice >= threshold) {
         const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });

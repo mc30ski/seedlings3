@@ -126,6 +126,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [overdueCount, setOverdueCount] = useState(0);
+  const [highValueThreshold, setHighValueThreshold] = useState(200);
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "nextMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
@@ -245,6 +246,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   useEffect(() => {
     void load();
+    // Fetch high-value threshold setting
+    apiGet<{ value: string } | null>("/api/admin/settings")
+      .then((list: any) => {
+        const s = Array.isArray(list) ? list.find((r: any) => r.key === "HIGH_VALUE_JOB_THRESHOLD") : null;
+        if (s?.value) setHighValueThreshold(Number(s.value));
+      })
+      .catch(() => {});
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
 
   async function refreshOverdueCount() {
@@ -856,7 +864,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
-                        {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
+                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
                       </HStack>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
@@ -894,7 +902,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             variant="solid"
                           />
                         )}
-                        {(occ.price ?? 0) >= 200 && (
+                        {(occ.price ?? 0) >= highValueThreshold && (
                           <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
                             <StatusBadge
                               status="Insured Only"

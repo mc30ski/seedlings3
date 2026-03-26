@@ -17,6 +17,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
       app.requireRole(req, reply, RoleVal.ADMIN),
   };
+  const superGuard = {
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireRole(req, reply, RoleVal.SUPER),
+  };
 
   app.get("/admin/equipment", adminGuard, async () =>
     services.equipment.listAllAdmin()
@@ -929,6 +933,20 @@ export default async function adminRoutes(app: FastifyInstance) {
     await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
 
     return { ok: true };
+  });
+
+  // ── Settings ──
+
+  app.get("/admin/settings", adminGuard, async () => {
+    return services.settings.getAll();
+  });
+
+  app.patch("/admin/settings/:key", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const key = String(req.params.key);
+    const body = req.body || {};
+    if (body.value === undefined) throw app.httpErrors.badRequest("value is required");
+    return services.settings.set(uid, key, String(body.value));
   });
 
   // ── Full Data Export ──

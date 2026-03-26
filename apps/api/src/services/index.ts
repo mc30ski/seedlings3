@@ -10,6 +10,7 @@ import { properties } from "./properties";
 import { jobs } from "./jobs";
 import { payments } from "./payments";
 import { expenses } from "./expenses";
+import { settings } from "./settings";
 
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
@@ -26,4 +27,5 @@ export const services: Services = {
   jobs,
   payments,
   expenses,
+  settings,
 };

@@ -72,6 +72,9 @@ export const AUDIT = {
     OCCURRENCES_GENERATED: [AuditScope.JOB, AuditVerb.CREATED] as const,
     ASSIGNEES_UPDATED: [AuditScope.JOB, AuditVerb.UPDATED] as const,
   },
+  SETTING: {
+    UPDATED: [AuditScope.SETTING, AuditVerb.SETTING_UPDATED] as const,
+  },
 } as const;
 
 // Useful types
