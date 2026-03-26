@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Button,
   Dialog,
@@ -39,6 +39,11 @@ export default function AddExpenseDialog({
     setCost("");
     setDescription("");
   }
+
+  // Reset fields whenever the dialog opens
+  useEffect(() => {
+    if (open) reset();
+  }, [open]);
 
   async function handleSubmit() {
     const amt = parseFloat(cost);

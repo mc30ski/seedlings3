@@ -244,6 +244,7 @@ model ClientContact {
   // Identity
   firstName        String
   lastName         String
+  nickname         String?
   email            String?
   phone            String?                 // raw as entered
   normalizedPhone  String?     @db.VarChar(20) // E.164 for dedupe/lookup

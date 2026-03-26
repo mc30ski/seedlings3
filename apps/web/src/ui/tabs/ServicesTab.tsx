@@ -50,6 +50,7 @@ import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog"
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
+import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
@@ -200,6 +201,8 @@ export default function ServicesTab({
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
   const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<JobOccurrenceFull | null>(null);
+  const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
+  const [expenseDialogJobId, setExpenseDialogJobId] = useState<string | null>(null);
   const [acceptPaymentJobId, setAcceptPaymentJobId] = useState<string>("");
 
   const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
@@ -1023,9 +1026,29 @@ export default function ServicesTab({
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {occ.expenses.map((exp: any) => (
-                                    <Text key={exp.id} fontSize="xs" color="orange.600">
-                                      ${exp.cost.toFixed(2)} — {exp.description}
-                                    </Text>
+                                    <HStack key={exp.id} gap={1} w="full">
+                                      <Text fontSize="xs" color="orange.600" flex="1">
+                                        ${exp.cost.toFixed(2)} — {exp.description}
+                                      </Text>
+                                      {forAdmin && (
+                                        <Button
+                                          size="xs"
+                                          variant="ghost"
+                                          colorPalette="red"
+                                          onClick={async () => {
+                                            try {
+                                              await apiDelete(`/api/admin/expenses/${exp.id}`);
+                                              publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
+                                              void loadDetail(job.id, true);
+                                            } catch (err: any) {
+                                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete expense failed.", err) });
+                                            }
+                                          }}
+                                        >
+                                          ✕
+                                        </Button>
+                                      )}
+                                    </HStack>
                                   ))}
                                 </VStack>
                               </Box>
@@ -1271,6 +1294,21 @@ export default function ServicesTab({
                                 })}
                                 variant="outline"
                                 colorPalette="gray"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status !== "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-add-expense"
+                                itemId={occ.id}
+                                label="Add Expense"
+                                onClick={async () => {
+                                  setExpenseDialogOccId(occ.id);
+                                  setExpenseDialogJobId(job.id);
+                                }}
+                                variant="outline"
+                                colorPalette="orange"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
@@ -1564,6 +1602,17 @@ export default function ServicesTab({
           }}
         />
       )}
+
+      <AddExpenseDialog
+        open={!!expenseDialogOccId}
+        onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); setExpenseDialogJobId(null); } }}
+        endpoint={`/api/admin/occurrences/${expenseDialogOccId}/expenses`}
+        onAdded={() => {
+          if (expenseDialogJobId) void loadDetail(expenseDialogJobId, true);
+          setExpenseDialogOccId(null);
+          setExpenseDialogJobId(null);
+        }}
+      />
     </Box>
   );
 }

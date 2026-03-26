@@ -856,7 +856,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
-                        {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
+                        {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
                       </HStack>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
@@ -895,7 +895,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           />
                         )}
                         {(occ.price ?? 0) >= 200 && (
-                          <span title="Only employees or insured contractors can claim this job">
+                          <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
                             <StatusBadge
                               status="Insured Only"
                               palette="red"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -17,18 +17,18 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { apiGet, apiDelete, apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { JOB_KIND, JOB_OCCURRENCE_STATUS, OCCURRENCE_WORKFLOW } from "@/src/lib/types";
+import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
 const workflowItems = [
+  { label: "Estimate", value: "ESTIMATE" },
   { label: "Repeating Job", value: "STANDARD" },
   { label: "One-Off Job", value: "ONE_OFF" },
-  { label: "Estimate", value: "ESTIMATE" },
 ];
 const workflowCollection = createListCollection({ items: workflowItems });
 import { prettyStatus } from "@/src/lib/lib";
@@ -94,7 +94,6 @@ export default function OccurrenceDialog({
   createBody,
   title,
   submitLabel,
-  showOneOff,
   preventOutsideClose,
   onSaved,
 }: Props) {
@@ -109,8 +108,14 @@ export default function OccurrenceDialog({
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
-  const [workflow, setWorkflow] = useState("STANDARD");
+  const [workflow, setWorkflow] = useState("ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
+
+  // Inline expenses
+  type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
+  const [expenses, setExpenses] = useState<InlineExpense[]>([]);
+  const [newExpCost, setNewExpCost] = useState("");
+  const [newExpDesc, setNewExpDesc] = useState("");
 
   type WorkerItem = { id: string; displayName?: string | null; email?: string | null };
   const [workers, setWorkers] = useState<WorkerItem[]>([]);
@@ -135,8 +140,11 @@ export default function OccurrenceDialog({
     setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
     setStartedAt(toDateTimeLocal(defaultStartedAt));
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
-    setWorkflow("STANDARD");
+    setWorkflow("ESTIMATE");
     setIsTentative(false);
+    setExpenses([]);
+    setNewExpCost("");
+    setNewExpDesc("");
     setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
   }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt, defaultAssignees]);
 
@@ -145,6 +153,14 @@ export default function OccurrenceDialog({
     apiGet<WorkerItem[]>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
+    // Load existing expenses for UPDATE mode
+    if (mode === "UPDATE" && occurrenceId && isAdmin) {
+      apiGet<any[]>(`/api/admin/occurrences/${occurrenceId}/expenses`)
+        .then((list) => setExpenses(
+          (Array.isArray(list) ? list : []).map((e) => ({ id: e.id, cost: e.cost, description: e.description }))
+        ))
+        .catch(() => {});
+    }
   }, [open]);
 
   async function handleSave() {
@@ -161,7 +177,7 @@ export default function OccurrenceDialog({
 
       if (mode === "CREATE") {
         const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
-        await apiPost(endpoint, {
+        const created = await apiPost<{ id: string }>(endpoint, {
           ...createBody,
           startAt: startAtIso,
           endAt: endAtIso ?? undefined,
@@ -172,6 +188,16 @@ export default function OccurrenceDialog({
           workflow,
           ...(isTentative ? { isTentative: true } : {}),
         });
+        // Create any inline expenses against the new occurrence
+        const newOccId = created?.id;
+        if (newOccId && expenses.length > 0) {
+          const expEndpoint = isAdmin
+            ? `/api/admin/occurrences/${newOccId}/expenses`
+            : `/api/occurrences/${newOccId}/expenses`;
+          for (const exp of expenses) {
+            try { await apiPost(expEndpoint, { cost: exp.cost, description: exp.description }); } catch {}
+          }
+        }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
         const body: Record<string, unknown> = {
@@ -188,6 +214,14 @@ export default function OccurrenceDialog({
           body.completedAt = completedAt ? new Date(completedAt).toISOString() : null;
         }
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
+        // Create new expenses, delete removed ones
+        if (isAdmin && occurrenceId) {
+          for (const exp of expenses) {
+            if (exp.isNew) {
+              try { await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description }); } catch {}
+            }
+          }
+        }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
       }
       onSaved?.();
@@ -331,6 +365,67 @@ export default function OccurrenceDialog({
                     placeholder="Optional notes…"
                     rows={2}
                   />
+                </div>
+                <div>
+                  <Text mb="1">Expenses <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
+                  {expenses.length > 0 && (
+                    <VStack align="stretch" gap={1} mb={2}>
+                      {expenses.map((exp, idx) => (
+                        <HStack key={exp.id ?? `new-${idx}`} gap={2} fontSize="xs">
+                          <Text color="orange.600" flex="1">
+                            ${exp.cost.toFixed(2)} — {exp.description}
+                          </Text>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette="red"
+                            onClick={async () => {
+                              if (exp.id && !exp.isNew && isAdmin) {
+                                try {
+                                  await apiDelete(`/api/admin/expenses/${exp.id}`);
+                                } catch {}
+                              }
+                              setExpenses((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                          >
+                            ✕
+                          </Button>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  )}
+                  <HStack gap={2}>
+                    <Box w="90px" flexShrink={0}>
+                      <CurrencyInput
+                        value={newExpCost}
+                        onChange={setNewExpCost}
+                        size="sm"
+                        placeholder="Cost"
+                      />
+                    </Box>
+                    <Input
+                      value={newExpDesc}
+                      onChange={(e) => setNewExpDesc(e.target.value)}
+                      placeholder="Description"
+                      size="sm"
+                      flex="1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      colorPalette="orange"
+                      disabled={!newExpCost || !newExpDesc.trim()}
+                      onClick={() => {
+                        const cost = parseFloat(newExpCost);
+                        if (isNaN(cost) || cost <= 0) return;
+                        setExpenses((prev) => [...prev, { cost, description: newExpDesc.trim(), isNew: true }]);
+                        setNewExpCost("");
+                        setNewExpDesc("");
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </HStack>
                 </div>
                 {mode === "CREATE" && workers.length > 0 && (
                   <div>

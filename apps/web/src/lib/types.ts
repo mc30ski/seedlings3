@@ -183,6 +183,7 @@ export type Contact = {
   active: boolean;
   firstName: string;
   lastName: string;
+  nickname?: string | null;
   email: string | null;
   phone?: string | null;
   normalizedPhone?: string | null;
