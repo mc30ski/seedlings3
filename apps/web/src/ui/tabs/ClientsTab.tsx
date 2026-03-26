@@ -555,9 +555,9 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                   gap={0}
                                   p={3}
                                 >
-                                  <HStack w="100%">
+                                  <HStack w="100%" wrap="wrap">
                                     <Text fontWeight="medium">
-                                      {`${ct.firstName} ${ct.lastName}`}
+                                      {ct.firstName}{ct.lastName ? ` ${ct.lastName}` : ""}
                                     </Text>
                                     {ct.isPrimary && (
                                       <Icon as={FiStar} boxSize="4" />
@@ -567,6 +567,18 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                       palette={clientStatusColor(ct.status)}
                                       variant="subtle"
                                     />
+                                    {!ct.lastName && (
+                                      <Badge size="xs" colorPalette="orange" variant="subtle">No last name</Badge>
+                                    )}
+                                    {!ct.email && !ct.phone && !ct.normalizedPhone && (
+                                      <Badge size="xs" colorPalette="red" variant="subtle">No contact info</Badge>
+                                    )}
+                                    {ct.email && !ct.phone && !ct.normalizedPhone && (
+                                      <Badge size="xs" colorPalette="orange" variant="subtle">No phone</Badge>
+                                    )}
+                                    {!ct.email && (ct.phone || ct.normalizedPhone) && (
+                                      <Badge size="xs" colorPalette="orange" variant="subtle">No email</Badge>
+                                    )}
                                     <Spacer />
                                     <StatusBadge
                                       status={ct.role}
@@ -574,18 +586,22 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                       variant="outline"
                                     />
                                   </HStack>
-                                  <Text fontSize="xs" color="fg.muted">
-                                    <MailLink
-                                      to={ct.email}
-                                      subject=""
-                                      body=""
-                                    />
-                                  </Text>
-                                  <Text fontSize="xs" color="fg.muted">
-                                    <CallLink
-                                      to={ct.normalizedPhone ?? ct.phone ?? ""}
-                                    />
-                                  </Text>
+                                  {ct.email && (
+                                    <Text fontSize="xs" color="fg.muted">
+                                      <MailLink
+                                        to={ct.email}
+                                        subject=""
+                                        body=""
+                                      />
+                                    </Text>
+                                  )}
+                                  {(ct.normalizedPhone || ct.phone) && (
+                                    <Text fontSize="xs" color="fg.muted">
+                                      <CallLink
+                                        to={ct.normalizedPhone ?? ct.phone ?? ""}
+                                      />
+                                    </Text>
+                                  )}
                                   {forAdmin && (
                                     <HStack gap={2} mt={3}>
                                       <StatusButton

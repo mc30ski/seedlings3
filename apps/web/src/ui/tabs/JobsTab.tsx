@@ -74,11 +74,13 @@ const kindStates = ["ALL", ...JOB_KIND] as const;
 type JobsTabProps = TabPropsType & {
   /** When set, filter occurrences to only those assigned to these users */
   viewAsUserIds?: string[];
+  /** Simulated worker type when admin is impersonating (for UI behavior like hiding tentative) */
+  viewAsWorkerType?: string | null;
   /** Extra UI rendered above the filter bar (e.g. worker selector) */
   headerSlot?: React.ReactNode;
 };
 
-export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerSlot }: JobsTabProps) {
+export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot }: JobsTabProps) {
   const { isAvail, forAdmin } = determineRoles(me, purpose);
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
@@ -158,7 +160,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
   const [agreementDialogOpen, setAgreementDialogOpen] = useState(false);
   const [pendingClaimOccId, setPendingClaimOccId] = useState<string | null>(null);
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
-  const isTrainee = me?.workerType === "TRAINEE";
+  const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{
@@ -354,6 +356,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
 
   const filtered = useMemo(() => {
     let rows = items;
+    // Trainees should not see tentative jobs
+    if (isTrainee) rows = rows.filter((occ) => !occ.isTentative);
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
     const tf = typeFilter[0];
     if (tf === "ONE_OFF") rows = rows.filter((occ) => occ.isOneOff);
@@ -393,7 +397,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, isTrainee]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];

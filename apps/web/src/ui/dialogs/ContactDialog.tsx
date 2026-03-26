@@ -91,15 +91,20 @@ export default function ClientDialog({
     [kindItems]
   );
 
+  const [showMissingWarning, setShowMissingWarning] = useState(false);
+
   function ableToSave() {
     return (
       statusValue &&
       kindValue &&
       firstName &&
-      lastName &&
       (!email || EMAIL_RE.test(email)) &&
       (!phone || E164.test(phone))
     );
+  }
+
+  function hasMissingInfo() {
+    return !lastName.trim() || (!email.trim() && !phone.trim());
   }
 
   // seed form when opening/switching modes/records
@@ -113,6 +118,7 @@ export default function ClientDialog({
       setEmail(initial.email ?? "");
       setPhone(initial.phone ?? "");
       setIsPrimary(!!initial.isPrimary);
+      setShowMissingWarning(false);
     } else {
       setKindValue([CONTACT_KIND[0]]);
       setStatusValue([CONTACT_STATUS[0]]);
@@ -121,17 +127,25 @@ export default function ClientDialog({
       setEmail("");
       setPhone("");
       setIsPrimary(false);
+      setShowMissingWarning(false);
     }
   }, [open, mode, initial]);
 
   async function handleSave() {
-    if (!firstName.trim() && !lastName.trim()) {
+    if (!firstName.trim()) {
       publishInlineMessage({
         type: "WARNING",
-        text: "Enter at least a first or last name for the contact.",
+        text: "First name is required.",
       });
       return;
     }
+
+    // Show warning if missing last name or contact info
+    if (hasMissingInfo() && !showMissingWarning) {
+      setShowMissingWarning(true);
+      return;
+    }
+    setShowMissingWarning(false);
 
     const payload = {
       role: (kindValue[0] as ContactKind) ?? CONTACT_KIND[0],
@@ -311,12 +325,26 @@ export default function ClientDialog({
                 </Checkbox.Root>
               </VStack>
             </Dialog.Body>
+            {showMissingWarning && (
+              <VStack align="stretch" px="4" pb="2" gap={1}>
+                <Text fontSize="sm" color="orange.600" fontWeight="medium">
+                  This contact is missing{" "}
+                  {[
+                    !lastName.trim() && "a last name",
+                    !email.trim() && !phone.trim() && "an email or phone number",
+                  ]
+                    .filter(Boolean)
+                    .join(" and ")}
+                  . You can still save, but this should be updated later.
+                </Text>
+              </VStack>
+            )}
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button
                   variant="ghost"
                   ref={cancelRef}
-                  onClick={() => onOpenChange(false)}
+                  onClick={() => { onOpenChange(false); setShowMissingWarning(false); }}
                   disabled={busy}
                 >
                   Cancel
@@ -325,8 +353,9 @@ export default function ClientDialog({
                   onClick={handleSave}
                   loading={busy}
                   disabled={!ableToSave()}
+                  colorPalette={showMissingWarning ? "orange" : undefined}
                 >
-                  {mode === "CREATE" ? "Create" : "Save"}
+                  {showMissingWarning ? "Save Anyway" : mode === "CREATE" ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>
