@@ -354,6 +354,15 @@ enum JobOccurrenceStatus {
   CLOSED
   CANCELED
   ARCHIVED
+  PROPOSAL_SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+enum OccurrenceWorkflow {
+  STANDARD
+  ONE_OFF
+  ESTIMATE
 }
 
 enum JobOccurrenceSource {
@@ -456,13 +465,17 @@ model JobOccurrence {
 
   status      JobOccurrenceStatus @default(SCHEDULED)
   source      JobOccurrenceSource @default(GENERATED)
+  workflow    OccurrenceWorkflow  @default(STANDARD)
 
   notes            String?
   price            Float?
   estimatedMinutes Int?
-  isOneOff         Boolean @default(false)
+  proposalAmount   Float?
+  proposalNotes    String?
+  rejectionReason  String?
+  isOneOff         Boolean @default(false)   // @deprecated — use workflow
   isTentative      Boolean @default(false)
-  isEstimate       Boolean @default(false)
+  isEstimate       Boolean @default(false)   // @deprecated — use workflow
 
   startedAt   DateTime?
   completedAt DateTime?

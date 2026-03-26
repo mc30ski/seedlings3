@@ -557,6 +557,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       input.kind = kind as JobKind;
     }
 
+    if (body.workflow != null) {
+      const wf = String(body.workflow).toUpperCase();
+      if (wf === "STANDARD" || wf === "ONE_OFF" || wf === "ESTIMATE") input.workflow = wf;
+    }
     if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     if (body.isTentative != null) input.isTentative = !!body.isTentative;
     if (body.isEstimate != null) input.isEstimate = !!body.isEstimate;
@@ -793,6 +797,64 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete("/admin/expenses/:id", adminGuard, async (req: any) => {
     return services.expenses.adminDeleteExpense(String(req.params.id));
+  });
+
+  // ── Estimate Proposal Actions ──
+
+  app.post("/admin/occurrences/:occurrenceId/accept-proposal", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.occurrenceId);
+    const { prisma } = await import("../db/prisma");
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occurrenceId },
+      include: { job: { select: { id: true, defaultPrice: true, estimatedMinutes: true } }, assignees: true },
+    });
+
+    if (occ.status !== "PROPOSAL_SUBMITTED") {
+      throw app.httpErrors.badRequest("Only PROPOSAL_SUBMITTED occurrences can be accepted.");
+    }
+
+    // Accept the estimate
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data: { status: "ACCEPTED" },
+    });
+
+    // Auto-create a STANDARD occurrence from the estimate
+    const newOcc = await services.jobs.createOccurrence(uid, occ.jobId, {
+      kind: occ.kind,
+      startAt: occ.startAt?.toISOString() ?? undefined,
+      endAt: occ.endAt?.toISOString() ?? undefined,
+      notes: occ.proposalNotes ?? occ.notes ?? undefined,
+      price: occ.proposalAmount ?? occ.price ?? undefined,
+      estimatedMinutes: occ.estimatedMinutes ?? undefined,
+      workflow: "STANDARD",
+      assigneeUserIds: occ.assignees.map((a) => a.userId),
+    } as any);
+
+    return { accepted: true, newOccurrenceId: newOcc.id };
+  });
+
+  app.post("/admin/occurrences/:occurrenceId/reject-proposal", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.occurrenceId);
+    const body = req.body || {};
+    const { prisma } = await import("../db/prisma");
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+    if (occ.status !== "PROPOSAL_SUBMITTED") {
+      throw app.httpErrors.badRequest("Only PROPOSAL_SUBMITTED occurrences can be rejected.");
+    }
+
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data: {
+        status: "REJECTED",
+        rejectionReason: body.reason ? String(body.reason) : null,
+      },
+    });
+
+    return { rejected: true };
   });
 
   // ── Worker Type & Compliance ──

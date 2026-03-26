@@ -289,6 +289,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
     }
   }
 
+  async function submitProposal(occurrenceId: string, amount: string) {
+    try {
+      const proposalAmount = parseFloat(amount);
+      if (isNaN(proposalAmount) || proposalAmount <= 0) {
+        publishInlineMessage({ type: "WARNING", text: "Please enter a valid proposal amount." });
+        return;
+      }
+      await apiPost(`/api/occurrences/${occurrenceId}/submit-proposal`, { proposalAmount });
+      publishInlineMessage({ type: "SUCCESS", text: "Proposal submitted." });
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Submit proposal failed.", err) });
+    }
+  }
+
   async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string) {
     try {
       const loc = await getLocation();
@@ -825,8 +840,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                           variant="solid"
                         />
                         {isTentative && <StatusBadge status="Tentative" palette="orange" variant="solid" />}
-                        {occ.isEstimate && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
-                        {occ.isOneOff && <StatusBadge status="One-off" palette="gray" variant="solid" />}
+                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
+                        {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
                       </HStack>
                     ) : (
@@ -843,14 +858,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                             variant="solid"
                           />
                         )}
-                        {occ.isEstimate && (
+                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                           <StatusBadge
                             status="Estimate"
                             palette="purple"
                             variant="solid"
                           />
                         )}
-                        {occ.isOneOff && (
+                        {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
                           <StatusBadge
                             status="One-off"
                             palette="gray"
@@ -943,6 +958,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                       <Text fontSize="xs" color="fg.muted">
                         {occ.notes}
                       </Text>
+                    )}
+                    {occ.proposalAmount != null && (
+                      <Box p={2} bg="purple.50" rounded="sm" mt={1}>
+                        <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                          Proposal: ${occ.proposalAmount.toFixed(2)}
+                        </Text>
+                        {occ.proposalNotes && (
+                          <Text fontSize="xs" color="purple.600">{occ.proposalNotes}</Text>
+                        )}
+                      </Box>
+                    )}
+                    {occ.rejectionReason && (
+                      <Box p={2} bg="red.50" rounded="sm" mt={1}>
+                        <Text fontSize="xs" color="red.700">
+                          Rejected: {occ.rejectionReason}
+                        </Text>
+                      </Box>
                     )}
                     {(occ.startLat != null || occ.completeLat != null) && (
                       <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
@@ -1084,25 +1116,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "IN_PROGRESS" && (
+                      {isAssignedToMe && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                         <StatusButton
                           id="occ-complete"
                           itemId={occ.id}
                           label="Complete"
                           onClick={async () => setConfirmAction({
-                            title: occ.isEstimate ? "Complete Estimate?" : "Complete Job?",
-                            message: occ.isEstimate
-                              ? "This estimate will be closed (no payment step)."
-                              : "Are you sure you want to mark this job as complete?",
+                            title: "Complete Job?",
+                            message: "Are you sure you want to mark this job as complete?",
                             confirmLabel: "Complete",
                             colorPalette: "green",
-                            ...(occ.isEstimate
-                              ? {
-                                  inputLabel: "Comment (required)",
-                                  inputPlaceholder: "What happened and why is this estimate being completed?",
-                                  onConfirm: (comment: string) => void updateStatus(occ, "complete", comment),
-                                }
-                              : { onConfirm: () => void updateStatus(occ, "complete") }),
+                            onConfirm: () => void updateStatus(occ, "complete"),
                           })}
                           variant="outline"
                           colorPalette="green"
@@ -1110,7 +1134,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && !occ.isEstimate && (
+                      {isAssignedToMe && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                        <StatusButton
+                          id="occ-submit-proposal"
+                          itemId={occ.id}
+                          label="Submit Proposal"
+                          onClick={async () => setConfirmAction({
+                            title: "Submit Proposal?",
+                            message: "Submit this estimate as a proposal. An admin will review and accept or reject it.",
+                            confirmLabel: "Submit",
+                            colorPalette: "purple",
+                            inputLabel: "Proposal amount ($)",
+                            inputPlaceholder: "Enter proposed price",
+                            onConfirm: (amount: string) => void submitProposal(occ.id, amount),
+                          })}
+                          variant="outline"
+                          colorPalette="purple"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
+                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (
                         <StatusButton
                           id="occ-accept-payment"
                           itemId={occ.id}
