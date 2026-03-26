@@ -11,9 +11,11 @@ import {
   Input,
   NativeSelect,
   Portal,
+  Select,
   Text,
   Textarea,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
@@ -21,7 +23,14 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { JOB_KIND, JOB_OCCURRENCE_STATUS, OCCURRENCE_WORKFLOW } from "@/src/lib/types";
+
+const workflowItems = [
+  { label: "Repeating Job", value: "STANDARD" },
+  { label: "One-Off Job", value: "ONE_OFF" },
+  { label: "Estimate", value: "ESTIMATE" },
+];
+const workflowCollection = createListCollection({ items: workflowItems });
 import { prettyStatus } from "@/src/lib/lib";
 
 function toDateInput(iso: string | null | undefined): string {
@@ -347,16 +356,28 @@ export default function OccurrenceDialog({
                 {mode === "CREATE" && (
                   <div>
                     <Text mb="1">Type</Text>
-                    <NativeSelect.Root>
-                      <NativeSelect.Field
-                        value={workflow}
-                        onChange={(e) => setWorkflow(e.target.value)}
-                      >
-                        <option value="STANDARD">Repeating Job</option>
-                        <option value="ONE_OFF">One-Off Job</option>
-                        <option value="ESTIMATE">Estimate</option>
-                      </NativeSelect.Field>
-                    </NativeSelect.Root>
+                    <Select.Root
+                      collection={workflowCollection}
+                      value={[workflow]}
+                      onValueChange={(e) => setWorkflow(e.value[0] ?? "STANDARD")}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select type" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {workflowItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
                   </div>
                 )}
                 {mode === "CREATE" && (
