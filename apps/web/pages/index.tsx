@@ -304,7 +304,7 @@ export default function HomePage() {
               <HStack gap={2} align="start">
                 <Box flexShrink={0} pt="0.5"><AlertTriangle size={14} color="var(--chakra-colors-blue-500)" /></Box>
                 <Text fontSize="sm" color="blue.700">
-                  You are currently a Trainee. You can view details and be added to a team, but you cannot claim jobs, take actions, or reserve equipment. Contact your team manager to take these actions on your behalf.
+                  You are currently a Trainee. You can view details and be added to a team, but you cannot claim jobs, take actions, or reserve equipment. You also have limited visibility to jobs, clients, and properties you are assigned to. Contact your team manager to take actions on your behalf.
                 </Text>
               </HStack>
             </Box>

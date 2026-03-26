@@ -215,11 +215,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
       } else if (!forAdmin && myId) {
-        // Worker view — show only my jobs + unassigned (claimable)
-        list = list.filter((occ) => {
-          const assignees = occ.assignees ?? [];
-          return assignees.length === 0 || assignees.some((a) => a.userId === myId);
-        });
+        if (me?.workerType === "TRAINEE") {
+          // Trainees only see jobs they are assigned to (no unassigned/claimable)
+          list = list.filter((occ) => {
+            const assignees = occ.assignees ?? [];
+            return assignees.some((a) => a.userId === myId);
+          });
+        } else {
+          // Worker view — show only my jobs + unassigned (claimable)
+          list = list.filter((occ) => {
+            const assignees = occ.assignees ?? [];
+            return assignees.length === 0 || assignees.some((a) => a.userId === myId);
+          });
+        }
       }
       setItems(list);
     } catch (err) {
@@ -823,12 +831,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </VStack>
                     {isCardCompact ? (
                       <HStack gap={1} flexShrink={0}>
-                        <StatusBadge
-                          status={occ.status}
-                          palette={occurrenceStatusColor(occ.status)}
-                          variant="solid"
-                        />
-                        {isTentative && <StatusBadge status="Tentative" palette="orange" variant="solid" />}
+                        {isTentative ? (
+                          <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                        ) : (
+                          <StatusBadge
+                            status={occ.status}
+                            palette={occurrenceStatusColor(occ.status)}
+                            variant="solid"
+                          />
+                        )}
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
@@ -836,15 +847,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </HStack>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
-                        <StatusBadge
-                          status={occ.status}
-                          palette={occurrenceStatusColor(occ.status)}
-                          variant="solid"
-                        />
-                        {isTentative && (
+                        {isTentative ? (
                           <StatusBadge
                             status="Tentative"
                             palette="orange"
+                            variant="solid"
+                          />
+                        ) : (
+                          <StatusBadge
+                            status={occ.status}
+                            palette={occurrenceStatusColor(occ.status)}
                             variant="solid"
                           />
                         )}

@@ -56,6 +56,8 @@ const statusStates = ["ALL", ...CLIENT_STATUS] as const;
 export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const { isSuper, isAvail, isAdmin, forAdmin } = determineRoles(me, purpose);
   const pfx = purpose === "ADMIN" ? "aclients" : "wclients";
+  const isTrainee = !forAdmin && me?.workerType === "TRAINEE";
+  const [traineeClientIds, setTraineeClientIds] = useState<Set<string> | null>(null);
 
   const router = useRouter();
 
@@ -129,6 +131,23 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     void load();
   }, [forAdmin]);
 
+  // For trainees: fetch their assigned client IDs
+  useEffect(() => {
+    if (!isTrainee) { setTraineeClientIds(null); return; }
+    apiGet<any[]>("/api/occurrences")
+      .then((occs) => {
+        const myId = me?.id;
+        const ids = new Set<string>();
+        for (const occ of occs) {
+          if ((occ.assignees ?? []).some((a: any) => a.userId === myId)) {
+            if (occ.job?.property?.client?.id) ids.add(occ.job.property.client.id);
+          }
+        }
+        setTraineeClientIds(ids);
+      })
+      .catch(() => setTraineeClientIds(new Set()));
+  }, [isTrainee, me?.id]);
+
   useEffect(() => {
     onEventSearchRun("propertyTabToClientTabSearch", setQ, inputRef, setHighlightId);
     onEventSearchRun("propertyTabToClientTabContactSearch", setQ, inputRef, setHighlightId);
@@ -145,6 +164,11 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
 
     let rows = items;
+
+    // Trainees only see clients they are assigned to
+    if (isTrainee && traineeClientIds) {
+      rows = rows.filter((r) => traineeClientIds.has(r.id));
+    }
 
     // Filter based on entity type.
     if (kind[0] !== "ALL") {
@@ -180,7 +204,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
 
     return rows;
-  }, [items, q, kind, statusFilter]);
+  }, [items, q, kind, statusFilter, highlightId, isTrainee, traineeClientIds]);
 
   function openCreate() {
     setEditing(null);
