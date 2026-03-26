@@ -38,9 +38,6 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [test, setTest] = useState(false);
-  setTest(true);
-
   async function load() {
     setLoading(true);
     try {
