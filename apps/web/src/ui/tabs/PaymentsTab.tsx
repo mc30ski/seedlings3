@@ -958,12 +958,17 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                       const fee = p.platformFeeAmount ?? 0;
                       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+                      // Only contractor/unclassified splits get fees
+                      const feeableSplitTotal = p.splits
+                        .filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE")
+                        .reduce((s, sp) => s + sp.amount, 0);
                       return (
                         <VStack align="start" gap={1} mt={0.5}>
                           {p.splits.map((sp) => {
                             const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
                             const expShare = expTotal * ratio;
-                            const feeShare = fee * ratio;
+                            const isFeeable = (sp.user as any)?.workerType !== "EMPLOYEE" && (sp.user as any)?.workerType !== "TRAINEE";
+                            const feeShare = isFeeable && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
                             const personNet = sp.amount - expShare - feeShare;
                             const hasDeductions = expShare > 0 || feeShare > 0;
                             return (
