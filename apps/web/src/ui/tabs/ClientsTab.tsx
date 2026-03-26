@@ -163,6 +163,9 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       if (exact) return [exact];
     }
 
+    // Trainees: wait for filter data before showing anything
+    if (isTrainee && !traineeClientIds) return [];
+
     let rows = items;
 
     // Trainees only see clients they are assigned to
