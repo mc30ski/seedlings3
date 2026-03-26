@@ -726,12 +726,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
           {dayGroups.map((group) => (
             <Box key={group.key}>
-              <HStack gap={2} align="center" my={1}>
-                <Box flex="1" borderBottomWidth="1px" borderColor="border.muted" />
-                <Text fontSize="xs" fontWeight="semibold" color="fg.muted" whiteSpace="nowrap">
+              <HStack gap={3} align="center" my={2}>
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
                   {group.label}
                 </Text>
-                <Box flex="1" borderBottomWidth="1px" borderColor="border.muted" />
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
               <VStack align="stretch" gap={3}>
           {group.items.map((occ) => {
