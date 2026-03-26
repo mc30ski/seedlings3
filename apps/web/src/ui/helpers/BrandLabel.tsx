@@ -42,7 +42,7 @@ export default function BrandLabel({
         />
         {showText && (
           <Text fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
-            Seedlings Lawn Care2
+            Seedlings Lawn Care
           </Text>
         )}
       </HStack>
