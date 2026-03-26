@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, Container, HStack, Text } from "@chakra-ui/react";
-import { AlertTriangle } from "lucide-react";
+import { Badge, Box, Button, Container, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -24,9 +24,7 @@ import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import InlineMessage from "@/src/ui/components/InlineMessage";
-import WorkflowToolbar, {
-  type WorkflowDef,
-} from "@/src/ui/components/WorkflowToolbar";
+import { type WorkflowDef } from "@/src/ui/components/WorkflowToolbar";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -144,6 +142,9 @@ export default function HomePage() {
         }),
     },
   ];
+
+  const workflowItems = adminWorkflows.map((w) => ({ label: w.label, value: w.id }));
+  const workflowCollection = createListCollection({ items: workflowItems });
 
   const loadMe = useCallback(async () => {
     setMeLoading(true);
@@ -339,7 +340,6 @@ export default function HomePage() {
       visible: () => isAdmin,
       content: (
         <>
-          <WorkflowToolbar workflows={adminWorkflows} />
           <NewJobSetupWorkflow
             active={activeWorkflow === "new-job-setup"}
             onDone={() => setActiveWorkflow(null)}
@@ -577,7 +577,7 @@ export default function HomePage() {
             // Ensure LTR flow
             style={{ direction: "ltr" }}
           >
-            {/* Badge FIRST (order 0) */}
+            {/* Pending badge */}
             {isAdmin && pending > 0 && (
               <Box
                 as="button"
@@ -660,6 +660,47 @@ export default function HomePage() {
           edgeSize={16}
           headerPaddingY={0}
           unmountOnExit
+          headerRight={isAdmin && topTab === "admin" ? (
+            <Select.Root
+              collection={workflowCollection}
+              value={[]}
+              onValueChange={(e) => {
+                const wf = adminWorkflows.find((w) => w.id === e.value[0]);
+                if (wf) wf.onClick();
+              }}
+              size="sm"
+              positioning={{ strategy: "fixed", hideWhenDetached: true }}
+              css={{ width: "auto", flex: "0 0 auto" }}
+            >
+              <Select.Control>
+                <Select.Trigger
+                  w="auto"
+                  minW="0"
+                  px="2"
+                  py="1"
+                  mr="2"
+                  css={{
+                    background: "var(--chakra-colors-gray-100)",
+                    borderRadius: "6px",
+                    border: "1px solid var(--chakra-colors-gray-300)",
+                    "&:hover": { background: "var(--chakra-colors-gray-200)" },
+                  }}
+                >
+                  <Plus size={16} color="var(--chakra-colors-gray-600)" />
+                  <Select.Indicator display="none" />
+                </Select.Trigger>
+              </Select.Control>
+              <Select.Positioner>
+                <Select.Content>
+                  {workflowItems.map((it) => (
+                    <Select.Item key={it.value} item={it.value}>
+                      <Select.ItemText>{it.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Select.Root>
+          ) : undefined}
         />
       )}
       <ConfirmDialog

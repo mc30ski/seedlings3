@@ -49,6 +49,7 @@ type Props = {
 
   // When creating from a Client context, pass clientId to pre-select
   defaultClientId?: string;
+  preventOutsideClose?: boolean;
 };
 
 export default function PropertyDialog({
@@ -59,6 +60,7 @@ export default function PropertyDialog({
   initial,
   onSaved,
   defaultClientId,
+  preventOutsideClose,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -263,14 +265,20 @@ export default function PropertyDialog({
           }))
         );
 
-        // If currently selected POC isn’t in the new list, reset to NONE
+        // If currently selected POC isn’t in the new list, reset
         const selected = pocValue[0];
         if (
           selected &&
           selected !== "NONE" &&
           !list.some((c) => c.id === selected)
         ) {
-          setPocValue(["NONE"]);
+          // Auto-select primary contact if available
+          const primary = list.find((c) => c.isPrimary);
+          setPocValue([primary ? primary.id : "NONE"]);
+        } else if (mode === "CREATE" && (!selected || selected === "NONE")) {
+          // On create, pre-select the primary contact
+          const primary = list.find((c) => c.isPrimary);
+          if (primary) setPocValue([primary.id]);
         }
       } catch {
         setContacts([]);
@@ -366,6 +374,7 @@ export default function PropertyDialog({
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
+      closeOnInteractOutside={!preventOutsideClose}
       initialFocusEl={() => cancelRef.current}
     >
       <Portal>
@@ -424,6 +433,29 @@ export default function PropertyDialog({
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="e.g., Main House"
                   />
+                  <HStack gap={1} mt={1} wrap="wrap">
+                    {[
+                      "Main House",
+                      "Rental Property",
+                      "Vacation Home",
+                      "Commercial",
+                      "Office",
+                      "Townhouse",
+                      "Condo",
+                      "Lot",
+                      "Community",
+                    ].map((preset) => (
+                      <Button
+                        key={preset}
+                        size="xs"
+                        variant={displayName === preset ? "solid" : "outline"}
+                        colorPalette="gray"
+                        onClick={() => setDisplayName(preset)}
+                      >
+                        {preset}
+                      </Button>
+                    ))}
+                  </HStack>
                 </div>
                 <HStack gap={3}>
                   <div style={{ flex: 1 }}>

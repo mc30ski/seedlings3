@@ -36,6 +36,7 @@ type Props = {
   role: Role;
   initial?: Client | null;
   onSaved?: (saved: any) => void;
+  preventOutsideClose?: boolean;
 };
 
 export default function ClientDialog({
@@ -45,6 +46,7 @@ export default function ClientDialog({
   role,
   initial,
   onSaved,
+  preventOutsideClose,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -158,6 +160,7 @@ export default function ClientDialog({
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
+      closeOnInteractOutside={!preventOutsideClose}
       initialFocusEl={() => cancelRef.current}
     >
       <Portal>

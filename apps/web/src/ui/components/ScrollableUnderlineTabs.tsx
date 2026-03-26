@@ -41,6 +41,9 @@ type Props = {
   headerClassName?: string;
   contentClassName?: string;
 
+  /** Content rendered on the right side of the tab header */
+  headerRight?: React.ReactNode;
+
   /** Edge presentation */
   edgeMode?: EdgeMode; // "overlay" is the compact one
   edgeSize?: number; // width of fade zones
@@ -66,6 +69,7 @@ export default function ScrollableUnderlineTabs({
   className,
   headerClassName,
   contentClassName,
+  headerRight,
   edgeMode = "overlay",
   edgeSize = 18,
 }: Props) {
@@ -153,8 +157,11 @@ export default function ScrollableUnderlineTabs({
         px={headerPaddingX}
         py={headerPaddingY}
         className={headerClassName}
+        display="flex"
+        alignItems="center"
+        gap={2}
       >
-        <Box position="relative">
+        <Box position="relative" flex="1" minW={0}>
           {/* Make TabsList the actual scroll container */}
           <TabsList asChild>
             <Box
@@ -292,6 +299,11 @@ export default function ScrollableUnderlineTabs({
             </Button>
           )}
         </Box>
+        {headerRight && (
+          <Box flexShrink={0} display="flex" alignItems="center">
+            {headerRight}
+          </Box>
+        )}
       </Box>
 
       {!renderHeaderOnly && (

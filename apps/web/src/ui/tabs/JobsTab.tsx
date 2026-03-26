@@ -795,10 +795,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
                       <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">
-                        {occ.job?.property?.client?.displayName && (
-                          <>{clientLabel(occ.job.property.client.displayName)} — </>
-                        )}
                         {occ.job?.property?.displayName}
+                        {occ.job?.property?.client?.displayName && (
+                          <> — {clientLabel(occ.job.property.client.displayName)}</>
+                        )}
                       </Text>
                       {!isCardCompact && (
                         <Box fontSize="sm">
@@ -846,13 +846,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <HStack gap={1} flexShrink={0}>
                         {isTentative ? (
                           <StatusBadge status="Tentative" palette="orange" variant="solid" />
-                        ) : (
+                        ) : occ.status !== "SCHEDULED" ? (
                           <StatusBadge
                             status={occ.status}
                             palette={occurrenceStatusColor(occ.status)}
                             variant="solid"
                           />
-                        )}
+                        ) : null}
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
@@ -866,13 +866,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             palette="orange"
                             variant="solid"
                           />
-                        ) : (
+                        ) : occ.status !== "SCHEDULED" ? (
                           <StatusBadge
                             status={occ.status}
                             palette={occurrenceStatusColor(occ.status)}
                             variant="solid"
                           />
-                        )}
+                        ) : null}
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
                           <StatusBadge
                             status="Repeating"

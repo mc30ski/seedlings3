@@ -795,10 +795,10 @@ export default function ServicesTab({
                 <HStack gap={3} justify="space-between" align="start">
                   <VStack align="start" gap={0} flex="1" minW={0}>
                     <Text fontSize="md" fontWeight="semibold">
-                      {job.property?.client?.displayName && (
-                        <>{clientLabel(job.property.client.displayName)} — </>
-                      )}
                       {job.property?.displayName ?? job.propertyId}
+                      {job.property?.client?.displayName && (
+                        <> — {clientLabel(job.property.client.displayName)}</>
+                      )}
                     </Text>
                     <HStack gap={3} fontSize="xs">
                       {job.property?.displayName && (

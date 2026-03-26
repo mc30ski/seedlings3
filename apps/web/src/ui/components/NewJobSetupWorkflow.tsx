@@ -76,6 +76,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           onOpenChange={closeGuard("client")}
           mode="CREATE"
           role="ADMIN"
+          preventOutsideClose
           onSaved={(s) => {
             setClientId(s.id);
             go("contact");
@@ -91,6 +92,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           mode="CREATE"
           role="ADMIN"
           clientId={clientId}
+          preventOutsideClose
           onSaved={() => {
             go("property");
           }}
@@ -105,6 +107,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           mode="CREATE"
           role="ADMIN"
           defaultClientId={clientId ?? undefined}
+          preventOutsideClose
           onSaved={(s) => {
             setPropertyId(s.id);
             go("job");
@@ -119,6 +122,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           onOpenChange={closeGuard("job")}
           mode="CREATE"
           defaultPropertyId={propertyId ?? undefined}
+          preventOutsideClose
           onSaved={(created) => {
             if (created?.id) {
               setJobId(created.id);
@@ -143,6 +147,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           onOpenChange={closeGuard("occurrence")}
           mode="CREATE"
           jobId={jobId}
+          preventOutsideClose
           defaultPrice={jobDefaults.defaultPrice}
           defaultEstimatedMinutes={jobDefaults.estimatedMinutes}
           defaultNotes={jobDefaults.notes}
