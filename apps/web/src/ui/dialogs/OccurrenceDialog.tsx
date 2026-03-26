@@ -69,6 +69,7 @@ type Props = {
   title?: string;
   submitLabel?: string;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
+  preventOutsideClose?: boolean;
   onSaved?: () => void;
 };
 
@@ -94,6 +95,7 @@ export default function OccurrenceDialog({
   title,
   submitLabel,
   showOneOff,
+  preventOutsideClose,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -207,6 +209,7 @@ export default function OccurrenceDialog({
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
+      closeOnInteractOutside={!preventOutsideClose}
       initialFocusEl={() => cancelRef.current}
     >
       <Portal>
@@ -332,25 +335,58 @@ export default function OccurrenceDialog({
                 {mode === "CREATE" && workers.length > 0 && (
                   <div>
                     <Text mb="1">Assignees <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
-                    <VStack align="stretch" gap={1} maxH="150px" overflowY="auto">
-                      {workers.map((w) => (
-                        <Checkbox.Root
-                          key={w.id}
-                          checked={selectedAssignees.has(w.id)}
-                          onCheckedChange={(e) => {
-                            setSelectedAssignees((prev) => {
-                              const next = new Set(prev);
-                              e.checked ? next.add(w.id) : next.delete(w.id);
-                              return next;
-                            });
-                          }}
-                        >
-                          <Checkbox.HiddenInput />
-                          <Checkbox.Control />
-                          <Checkbox.Label fontSize="sm">{w.displayName || w.email || w.id}</Checkbox.Label>
-                        </Checkbox.Root>
-                      ))}
-                    </VStack>
+                    <Select.Root
+                      collection={createListCollection({
+                        items: workers.map((w) => ({
+                          label: w.displayName || w.email || w.id,
+                          value: w.id,
+                        })),
+                      })}
+                      value={Array.from(selectedAssignees)}
+                      onValueChange={(e) => setSelectedAssignees(new Set(e.value))}
+                      multiple
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select assignees…" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content maxH="200px" overflowY="auto">
+                          {workers.map((w) => (
+                            <Select.Item key={w.id} item={w.id}>
+                              <Select.ItemText>{w.displayName || w.email || w.id}</Select.ItemText>
+                              <Select.ItemIndicator />
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                    {selectedAssignees.size > 0 && (
+                      <HStack gap={1} mt={1} wrap="wrap">
+                        {Array.from(selectedAssignees).map((id) => {
+                          const w = workers.find((w) => w.id === id);
+                          return (
+                            <Badge
+                              key={id}
+                              size="sm"
+                              colorPalette="blue"
+                              variant="solid"
+                              cursor="pointer"
+                              onClick={() => setSelectedAssignees((prev) => {
+                                const next = new Set(prev);
+                                next.delete(id);
+                                return next;
+                              })}
+                            >
+                              {w?.displayName || w?.email || id} ✕
+                            </Badge>
+                          );
+                        })}
+                      </HStack>
+                    )}
                   </div>
                 )}
                 {mode === "CREATE" && (

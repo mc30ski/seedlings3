@@ -44,6 +44,7 @@ type Props = {
   initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
   onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null; estimatedMinutes?: number | null }) => void;
   defaultPropertyId?: string;
+  preventOutsideClose?: boolean;
 };
 
 export default function JobDialog({
@@ -53,6 +54,7 @@ export default function JobDialog({
   initial,
   onSaved,
   defaultPropertyId,
+  preventOutsideClose,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,8 +109,8 @@ export default function JobDialog({
     const items = properties.map((p) => {
       const location = [p.city, p.state].filter(Boolean).join(", ");
       const parts = [p.displayName];
-      if (location) parts.push(location);
       if (p.client?.displayName) parts.push(`(${clientLabel(p.client.displayName)})`);
+      if (location) parts.push(location);
       return { label: parts.join(" — "), value: p.id };
     });
     const cur = propertyValue[0];
@@ -192,6 +194,7 @@ export default function JobDialog({
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
+      closeOnInteractOutside={!preventOutsideClose}
       initialFocusEl={() => cancelRef.current}
     >
       <Portal>

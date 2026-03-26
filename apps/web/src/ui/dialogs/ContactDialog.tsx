@@ -37,6 +37,7 @@ type Props = {
   initial?: Contact | null;
   onSaved?: (saved: any) => void;
   clientId: string;
+  preventOutsideClose?: boolean;
 };
 
 const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -50,6 +51,7 @@ export default function ClientDialog({
   initial,
   onSaved,
   clientId,
+  preventOutsideClose,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -199,6 +201,7 @@ export default function ClientDialog({
     <Dialog.Root
       open={open}
       onOpenChange={(e) => onOpenChange(e.open)}
+      closeOnInteractOutside={!preventOutsideClose}
       initialFocusEl={() => cancelRef.current}
     >
       <Portal>
