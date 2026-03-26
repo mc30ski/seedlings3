@@ -743,15 +743,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             const isTentative = !!occ.isTentative;
 
-            const cardBorderColor = isTentative
+            const isEstimateOcc = occ.workflow === "ESTIMATE" || occ.isEstimate;
+            const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
+
+            const cardBorderColor = isClosed
+              ? "gray.200"
+              : isTentative
               ? "orange.300"
+              : isEstimateOcc
+              ? "purple.300"
               : isAssignedToMe ? "teal.400" : "gray.200";
-            const cardBg = isTentative
+            const cardBg = isClosed
+              ? undefined
+              : isTentative
               ? "orange.50"
+              : isEstimateOcc
+              ? "purple.50"
               : isAssignedToMe
               ? "teal.50"
               : isAssignedToOthers
-              ? "gray.50"
+              ? "gray.100"
               : undefined;
 
             const isCardCompact = compact && !expandedCards.has(occ.id);
