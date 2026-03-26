@@ -995,6 +995,23 @@ export default function ServicesTab({
                                 )}
                               </VStack>
                             )}
+                            {(occ as any).proposalAmount != null && (
+                              <Box mt={1} p={1} bg="purple.50" rounded="sm">
+                                <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                                  Proposal: ${(occ as any).proposalAmount.toFixed(2)}
+                                </Text>
+                                {(occ as any).proposalNotes && (
+                                  <Text fontSize="xs" color="purple.600">{(occ as any).proposalNotes}</Text>
+                                )}
+                              </Box>
+                            )}
+                            {(occ as any).rejectionReason && (
+                              <Box mt={1} p={1} bg="red.50" rounded="sm">
+                                <Text fontSize="xs" color="red.700">
+                                  Rejected: {(occ as any).rejectionReason}
+                                </Text>
+                              </Box>
+                            )}
                             {occ.payment && (
                               <Box mt={1} p={1} bg="green.50" rounded="sm">
                                 <Text fontSize="xs" fontWeight="medium" color="green.700">
@@ -1082,6 +1099,46 @@ export default function ServicesTab({
                               busyId={statusButtonBusyId}
                               setBusyId={setStatusButtonBusyId}
                             />
+                            {occ.status === "PROPOSAL_SUBMITTED" && (
+                              <StatusButton
+                                id="occ-accept-proposal"
+                                itemId={occ.id}
+                                label="Accept Proposal"
+                                onClick={async () => {
+                                  try {
+                                    await apiPost(`/api/admin/occurrences/${occ.id}/accept-proposal`);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Proposal accepted. New job occurrence created." });
+                                    void loadDetail(job.id, true);
+                                  } catch (err: any) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                                  }
+                                }}
+                                variant="solid"
+                                colorPalette="green"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "PROPOSAL_SUBMITTED" && (
+                              <StatusButton
+                                id="occ-reject-proposal"
+                                itemId={occ.id}
+                                label="Reject Proposal"
+                                onClick={async () => {
+                                  try {
+                                    await apiPost(`/api/admin/occurrences/${occ.id}/reject-proposal`, { reason: "Rejected by admin" });
+                                    publishInlineMessage({ type: "SUCCESS", text: "Proposal rejected." });
+                                    void loadDetail(job.id, true);
+                                  } catch (err: any) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                                  }
+                                }}
+                                variant="outline"
+                                colorPalette="red"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
                             {occ.status === "SCHEDULED" && (
                               <StatusButton
                                 id="occ-tentative"

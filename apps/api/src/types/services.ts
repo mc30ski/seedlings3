@@ -427,6 +427,7 @@ export type CreateOccurrenceInput = {
   price?: number | null;
   estimatedMinutes?: number | null;
 
+  workflow?: string;
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;

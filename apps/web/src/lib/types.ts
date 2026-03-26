@@ -221,8 +221,14 @@ export const JOB_OCCURRENCE_STATUS = [
   "PENDING_PAYMENT",
   "CLOSED",
   "ARCHIVED",
+  "PROPOSAL_SUBMITTED",
+  "ACCEPTED",
+  "REJECTED",
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
+
+export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE"] as const;
+export type OccurrenceWorkflow = (typeof OCCURRENCE_WORKFLOW)[number];
 
 export const JOB_CADENCE = ["WEEKLY", "BIWEEKLY", "MONTHLY"] as const;
 export type JobCadence = (typeof JOB_CADENCE)[number];
@@ -257,9 +263,13 @@ export type JobOccurrenceFull = {
   notes?: string | null;
   price?: number | null;
   estimatedMinutes?: number | null;
+  workflow?: OccurrenceWorkflow;
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  proposalAmount?: number | null;
+  proposalNotes?: string | null;
+  rejectionReason?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;
@@ -413,9 +423,13 @@ export type WorkerOccurrence = {
   notes?: string | null;
   price?: number | null;
   estimatedMinutes?: number | null;
+  workflow?: OccurrenceWorkflow;
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  proposalAmount?: number | null;
+  proposalNotes?: string | null;
+  rejectionReason?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;

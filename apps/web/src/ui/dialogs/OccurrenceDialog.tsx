@@ -59,7 +59,7 @@ type Props = {
   createBody?: Record<string, unknown>;
   title?: string;
   submitLabel?: string;
-  showOneOff?: boolean;
+  showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   onSaved?: () => void;
 };
 
@@ -98,9 +98,8 @@ export default function OccurrenceDialog({
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
-  const [isOneOff, setIsOneOff] = useState(false);
+  const [workflow, setWorkflow] = useState("STANDARD");
   const [isTentative, setIsTentative] = useState(false);
-  const [isEstimate, setIsEstimate] = useState(false);
 
   type WorkerItem = { id: string; displayName?: string | null; email?: string | null };
   const [workers, setWorkers] = useState<WorkerItem[]>([]);
@@ -125,9 +124,8 @@ export default function OccurrenceDialog({
     setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
     setStartedAt(toDateTimeLocal(defaultStartedAt));
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
-    setIsOneOff(false);
+    setWorkflow("STANDARD");
     setIsTentative(false);
-    setIsEstimate(false);
     setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
   }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt, defaultAssignees]);
 
@@ -160,9 +158,8 @@ export default function OccurrenceDialog({
           price: priceVal ?? undefined,
           estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
           ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
-          ...(isOneOff ? { isOneOff: true } : {}),
+          workflow,
           ...(isTentative ? { isTentative: true } : {}),
-          ...(isEstimate ? { isEstimate: true } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
@@ -347,25 +344,20 @@ export default function OccurrenceDialog({
                     </VStack>
                   </div>
                 )}
-                {showOneOff && mode === "CREATE" && (
-                  <Checkbox.Root
-                    checked={isOneOff}
-                    onCheckedChange={(e) => setIsOneOff(!!e.checked)}
-                  >
-                    <Checkbox.HiddenInput />
-                    <Checkbox.Control />
-                    <Checkbox.Label>One-off (skip next occurrence prompt)</Checkbox.Label>
-                  </Checkbox.Root>
-                )}
                 {mode === "CREATE" && (
-                  <Checkbox.Root
-                    checked={isEstimate}
-                    onCheckedChange={(e) => setIsEstimate(!!e.checked)}
-                  >
-                    <Checkbox.HiddenInput />
-                    <Checkbox.Control />
-                    <Checkbox.Label>Estimate (no payment step)</Checkbox.Label>
-                  </Checkbox.Root>
+                  <div>
+                    <Text mb="1">Type</Text>
+                    <NativeSelect.Root>
+                      <NativeSelect.Field
+                        value={workflow}
+                        onChange={(e) => setWorkflow(e.target.value)}
+                      >
+                        <option value="STANDARD">Repeating Job</option>
+                        <option value="ONE_OFF">One-Off Job</option>
+                        <option value="ESTIMATE">Estimate</option>
+                      </NativeSelect.Field>
+                    </NativeSelect.Root>
+                  </div>
                 )}
                 {mode === "CREATE" && (
                   <Checkbox.Root

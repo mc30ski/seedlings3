@@ -145,6 +145,9 @@ export function occurrenceStatusColor(value: string): string {
   if (t === "CLOSED") return "purple";
   if (t === "IN_PROGRESS") return "cyan";
   if (t === "SCHEDULED") return "blue";
+  if (t === "PROPOSAL_SUBMITTED") return "yellow";
+  if (t === "ACCEPTED") return "green";
+  if (t === "REJECTED") return "red";
   return "gray";
 }
 

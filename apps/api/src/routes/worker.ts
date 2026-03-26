@@ -168,6 +168,37 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
+  // Estimate workflow: submit proposal
+  app.post("/occurrences/:id/submit-proposal", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const notes = body.notes != null ? String(body.notes) : undefined;
+    const location = (body.lat != null && body.lng != null)
+      ? { lat: Number(body.lat), lng: Number(body.lng) }
+      : undefined;
+
+    // First update the proposal fields
+    const { prisma } = await import("../db/prisma");
+    if (body.proposalAmount != null || body.proposalNotes != null) {
+      await prisma.jobOccurrence.update({
+        where: { id: String(req.params.id) },
+        data: {
+          ...(body.proposalAmount != null ? { proposalAmount: Number(body.proposalAmount) } : {}),
+          ...(body.proposalNotes != null ? { proposalNotes: String(body.proposalNotes) } : {}),
+        },
+      });
+    }
+
+    // Then transition to PROPOSAL_SUBMITTED
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.PROPOSAL_SUBMITTED,
+      notes,
+      location
+    );
+  });
+
   app.post("/occurrences/create-next", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};

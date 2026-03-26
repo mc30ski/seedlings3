@@ -17,6 +17,7 @@ import {
   JobStatus,
   JobOccurrenceStatus,
   JobOccurrenceSource,
+  OccurrenceWorkflow,
 } from "@prisma/client";
 import type { ServicesJobs } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
@@ -42,6 +43,34 @@ function toDate(x: any): Date | null {
   if (!x) return null;
   const d = x instanceof Date ? x : new Date(String(x));
   return isNaN(d.getTime()) ? null : d;
+}
+
+/** Valid status transitions per workflow */
+const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
+  STANDARD: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PENDING_PAYMENT: ["CLOSED", "CANCELED"],
+    CLOSED: ["ARCHIVED"],
+  },
+  ONE_OFF: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PENDING_PAYMENT: ["CLOSED", "CANCELED"],
+    CLOSED: ["ARCHIVED"],
+  },
+  ESTIMATE: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["PROPOSAL_SUBMITTED", "CANCELED"],
+    PROPOSAL_SUBMITTED: ["ACCEPTED", "REJECTED"],
+    ACCEPTED: ["CLOSED"],
+    REJECTED: ["CLOSED"],
+    CLOSED: ["ARCHIVED"],
+  },
+};
+
+function isValidTransition(workflow: string, from: string, to: string): boolean {
+  return VALID_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
 export const jobs: ServicesJobs = {
@@ -282,9 +311,10 @@ export const jobs: ServicesJobs = {
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
-          isOneOff: input.isOneOff ?? false,
+          workflow: input.workflow ?? OccurrenceWorkflow.STANDARD,
+          isOneOff: input.workflow === "ONE_OFF" || input.isOneOff || false,
           isTentative: input.isTentative ?? false,
-          isEstimate: input.isEstimate ?? false,
+          isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
         } as any,
       });
 
@@ -720,11 +750,23 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("TRAINEE_CANNOT_ACT", "Trainees cannot start, complete, or manage jobs. The team lead must take this action.", 403);
       }
 
-      // For estimates, skip PENDING_PAYMENT and go straight to CLOSED
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
-      const finalStatus = (occ.isEstimate && status === JobOccurrenceStatus.PENDING_PAYMENT)
-        ? JobOccurrenceStatus.CLOSED
-        : status;
+      const workflow = occ.workflow ?? "STANDARD";
+
+      // For backward compat: estimates trying PENDING_PAYMENT → use PROPOSAL_SUBMITTED
+      let finalStatus = status;
+      if (workflow === "ESTIMATE" && status === JobOccurrenceStatus.PENDING_PAYMENT) {
+        finalStatus = JobOccurrenceStatus.PROPOSAL_SUBMITTED;
+      }
+
+      // Validate transition
+      if (!isValidTransition(workflow, occ.status, finalStatus)) {
+        throw new ServiceError(
+          "INVALID_TRANSITION",
+          `Cannot transition from ${occ.status} to ${finalStatus} in ${workflow} workflow.`,
+          409
+        );
+      }
 
       const data: any = { status: finalStatus };
       if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
@@ -732,7 +774,8 @@ export const jobs: ServicesJobs = {
       }
       if (
         (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
-         finalStatus === JobOccurrenceStatus.CLOSED) &&
+         finalStatus === JobOccurrenceStatus.CLOSED ||
+         finalStatus === JobOccurrenceStatus.PROPOSAL_SUBMITTED) &&
         !occ.completedAt
       ) {
         data.completedAt = new Date();
