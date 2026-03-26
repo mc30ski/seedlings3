@@ -14,4 +14,3 @@ coverage
 pnpm-lock.yaml
 yarn.lock
 .turbo
-.vercel
