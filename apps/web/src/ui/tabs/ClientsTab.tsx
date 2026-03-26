@@ -804,19 +804,6 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                               </VStack>
                             ) : null;
                           })}
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() =>
-                              openEventSearch(
-                                "clientTabToPropertiesTabSearch",
-                                c.displayName,
-                                forAdmin
-                              )
-                            }
-                          >
-                            View all
-                          </Button>
                         </VStack>
                       </Accordion.ItemBody>
                     </Accordion.ItemContent>
