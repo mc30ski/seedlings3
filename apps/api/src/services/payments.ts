@@ -32,6 +32,35 @@ export const payments: ServicesPayments = {
         data: { status: JobOccurrenceStatus.CLOSED },
       });
 
+      // Calculate platform fee for contractors/unclassified workers
+      let platformFeePercent: number | null = null;
+      let platformFeeAmount: number | null = null;
+
+      // Check if any assignee is a contractor or unclassified (not employee, not trainee)
+      const assigneeUsers = await tx.user.findMany({
+        where: { id: { in: occ.assignees.map((a) => a.userId) } },
+        select: { id: true, workerType: true },
+      });
+      const hasNonEmployee = assigneeUsers.some(
+        (u) => u.workerType !== "EMPLOYEE" && u.workerType !== "TRAINEE"
+      );
+
+      if (hasNonEmployee) {
+        const feeSetting = await tx.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } });
+        const feePercent = Number(feeSetting?.value ?? 0);
+        if (feePercent > 0) {
+          // Get total expenses for this occurrence
+          const expenses = await tx.expense.aggregate({
+            where: { occurrenceId },
+            _sum: { cost: true },
+          });
+          const totalExpenses = expenses._sum.cost ?? 0;
+          const netAmount = amountPaid - totalExpenses;
+          platformFeePercent = feePercent;
+          platformFeeAmount = Math.round(netAmount * feePercent) / 100; // rounds to cents
+        }
+      }
+
       // Create payment + splits
       const payment = await tx.payment.create({
         data: {
@@ -40,6 +69,8 @@ export const payments: ServicesPayments = {
           method: method as PaymentMethod,
           note: note || null,
           collectedById: currentUserId,
+          platformFeePercent,
+          platformFeeAmount,
           splits: {
             create: splits.map((sp) => ({
               userId: sp.userId,
@@ -109,6 +140,8 @@ export const payments: ServicesPayments = {
         amountPaid: sp.payment.amountPaid,
         method: sp.payment.method,
         note: sp.payment.note,
+        platformFeePercent: sp.payment.platformFeePercent,
+        platformFeeAmount: sp.payment.platformFeeAmount,
         collectedBy: sp.payment.collectedBy,
         createdAt: sp.payment.createdAt,
         splits: sp.payment.splits,
@@ -137,7 +170,7 @@ export const payments: ServicesPayments = {
       where,
       orderBy: { createdAt: "desc" },
       include: {
-        collectedBy: { select: { id: true, displayName: true } },
+        collectedBy: { select: { id: true, displayName: true, email: true } },
         splits: {
           include: {
             user: { select: { id: true, displayName: true, email: true } },
@@ -163,17 +196,27 @@ export const payments: ServicesPayments = {
       },
     });
 
-    // Compute per-person totals
+    // Compute per-person totals (net of expenses and platform fees) and total platform fees
     const totalsMap = new Map<string, { displayName: string | null; total: number }>();
+    let totalPlatformFees = 0;
     for (const p of payments) {
+      const fee = p.platformFeeAmount ?? 0;
+      const expenses = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
+      totalPlatformFees += fee;
+      const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
       for (const sp of p.splits) {
+        // Pro-rate the fee and expenses across splits
+        const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
+        const feeShare = fee * ratio;
+        const expenseShare = expenses * ratio;
+        const netAmount = sp.amount - feeShare - expenseShare;
         const existing = totalsMap.get(sp.userId);
         if (existing) {
-          existing.total += sp.amount;
+          existing.total += netAmount;
         } else {
           totalsMap.set(sp.userId, {
             displayName: sp.user.displayName ?? sp.user.email ?? null,
-            total: sp.amount,
+            total: netAmount,
           });
         }
       }
@@ -181,10 +224,10 @@ export const payments: ServicesPayments = {
     const personTotals = Array.from(totalsMap.entries()).map(([userId, v]) => ({
       userId,
       displayName: v.displayName,
-      total: v.total,
+      total: Math.round(v.total * 100) / 100,
     }));
 
-    return { items: payments, personTotals };
+    return { items: payments, personTotals, totalPlatformFees: Math.round(totalPlatformFees * 100) / 100 };
   },
 
   async updatePayment(currentUserId, paymentId, input) {

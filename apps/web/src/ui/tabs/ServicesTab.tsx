@@ -1016,6 +1016,11 @@ export default function ServicesTab({
                                     ))}
                                   </VStack>
                                 )}
+                                {(occ.payment as any).platformFeeAmount != null && (occ.payment as any).platformFeeAmount > 0 && (
+                                  <Text fontSize="xs" color="orange.600" mt={0.5}>
+                                    Platform fee ({(occ.payment as any).platformFeePercent}%): −${(occ.payment as any).platformFeeAmount.toFixed(2)}
+                                  </Text>
+                                )}
                               </Box>
                             )}
 
@@ -1464,6 +1469,7 @@ export default function ServicesTab({
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
           defaultEstimatedMinutes={occurrenceDefaultEstMins}
+          isAdmin={forAdmin}
           showOneOff={occurrenceJobHasFrequency}
           onSaved={() => {
             if (occurrenceJobId) {

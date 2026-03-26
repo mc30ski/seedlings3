@@ -163,6 +163,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
+  const isContractor = me?.workerType === "CONTRACTOR";
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -276,22 +277,29 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [items]);
 
   async function claim(occurrenceId: string) {
+    // Contractors must acknowledge agreement every time they claim
+    if (isContractor && !agreementDialogOpen) {
+      setPendingClaimOccId(occurrenceId);
+      setAgreementDialogOpen(true);
+      return;
+    }
+
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Job claimed." });
       await load(false);
     } catch (err: any) {
-      const msg = err?.message ?? String(err);
-      if (msg.includes("CONTRACTOR_AGREEMENT_REQUIRED") || msg.includes("contractor agreement")) {
+      const code = err?.code ?? "";
+      if (code === "CONTRACTOR_AGREEMENT_REQUIRED") {
         setPendingClaimOccId(occurrenceId);
         setAgreementDialogOpen(true);
-      } else if (msg.includes("INSURANCE_REQUIRED") || msg.includes("valid insurance")) {
+      } else if (code === "INSURANCE_REQUIRED") {
         publishInlineMessage({
           type: "ERROR",
           text: "This is a high-value job that requires valid insurance. Upload your insurance certificate to claim it.",
         });
         setInsuranceDialogOpen(true);
-      } else if (msg.includes("WORKER_TYPE_REQUIRED") || msg.includes("worker type")) {
+      } else if (code === "WORKER_TYPE_REQUIRED") {
         publishInlineMessage({
           type: "ERROR",
           text: "Your worker type hasn't been assigned yet. Some jobs are restricted until assigned by your administrator.",
@@ -1061,10 +1069,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <VStack align="start" gap={0} mt={0.5}>
                             {occ.payment.splits.map((sp: any) => (
                               <Text key={sp.userId} fontSize="xs" color="green.600">
-                                {sp.user?.displayName ?? sp.userId}: ${sp.amount.toFixed(2)}
+                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
                               </Text>
                             ))}
                           </VStack>
+                        )}
+                        {occ.payment.platformFeeAmount != null && occ.payment.platformFeeAmount > 0 && (
+                          <Text fontSize="xs" color="orange.600" mt={0.5}>
+                            Platform fee ({occ.payment.platformFeePercent}%): −${occ.payment.platformFeeAmount.toFixed(2)}
+                            {" "}· Net: ${(occ.payment.amountPaid - occ.payment.platformFeeAmount).toFixed(2)}
+                          </Text>
                         )}
                       </Box>
                     )}

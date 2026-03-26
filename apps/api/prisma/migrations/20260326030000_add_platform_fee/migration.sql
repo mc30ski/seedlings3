@@ -1,0 +1,2 @@
+ALTER TABLE "Payment" ADD COLUMN "platformFeePercent" DOUBLE PRECISION;
+ALTER TABLE "Payment" ADD COLUMN "platformFeeAmount" DOUBLE PRECISION;

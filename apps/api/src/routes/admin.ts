@@ -802,7 +802,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
-    return services.expenses.addExpense(uid, String(req.params.occurrenceId), {
+    return services.expenses.adminAddExpense(uid, String(req.params.occurrenceId), {
       cost: Number(body.cost),
       description: String(body.description ?? ""),
     });

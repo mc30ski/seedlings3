@@ -99,6 +99,24 @@ export const expenses: ServicesExpenses = {
     return { deleted: true as const };
   },
 
+  async adminAddExpense(currentUserId: string, occurrenceId: string, input: { cost: number; description: string }) {
+    const { cost, description } = input;
+    if (cost <= 0) throw new ServiceError("INVALID_AMOUNT", "Expense cost must be greater than zero.", 400);
+    if (!description || !description.trim()) throw new ServiceError("INVALID_INPUT", "Expense description is required.", 400);
+
+    return prisma.expense.create({
+      data: {
+        occurrenceId,
+        createdById: currentUserId,
+        cost,
+        description: description.trim(),
+      },
+      include: {
+        createdBy: { select: { id: true, displayName: true } },
+      },
+    });
+  },
+
   async adminDeleteExpense(expenseId) {
     const expense = await prisma.expense.findUnique({ where: { id: expenseId } });
     if (!expense) throw new ServiceError("NOT_FOUND", "Expense not found.", 404);

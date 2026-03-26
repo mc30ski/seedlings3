@@ -147,6 +147,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           onOpenChange={closeGuard("occurrence")}
           mode="CREATE"
           jobId={jobId}
+          isAdmin
           preventOutsideClose
           defaultPrice={jobDefaults.defaultPrice}
           defaultEstimatedMinutes={jobDefaults.estimatedMinutes}
