@@ -8,7 +8,7 @@ import { apiGet } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 
-type Worker = { id: string; displayName?: string | null; email?: string | null };
+type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
 export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -42,6 +42,10 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   // Pass selected IDs or undefined (all) to JobsTab
   const viewAsUserIds = selectedWorkers.length > 0 ? selectedWorkers : undefined;
+  // When viewing as a single worker, simulate their worker type for UI behavior
+  const viewAsWorkerType = selectedWorkers.length === 1
+    ? (workers.find((w) => w.id === selectedWorkers[0])?.workerType ?? null)
+    : undefined;
 
   const header = (
     <HStack mb={3} gap={2} align="center" wrap="wrap">
@@ -100,6 +104,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       me={me}
       purpose={purpose}
       viewAsUserIds={viewAsUserIds}
+      viewAsWorkerType={viewAsWorkerType}
       headerSlot={header}
     />
   );

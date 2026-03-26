@@ -436,6 +436,6 @@ export default async function workerRoutes(app: FastifyInstance) {
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });
-    return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email }));
+    return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, workerType: u.workerType }));
   });
 }
