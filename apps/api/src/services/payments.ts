@@ -32,32 +32,43 @@ export const payments: ServicesPayments = {
         data: { status: JobOccurrenceStatus.CLOSED },
       });
 
-      // Calculate platform fee for contractors/unclassified workers
+      // Calculate platform fee only on contractor/unclassified workers' splits
       let platformFeePercent: number | null = null;
       let platformFeeAmount: number | null = null;
 
-      // Check if any assignee is a contractor or unclassified (not employee, not trainee)
       const assigneeUsers = await tx.user.findMany({
         where: { id: { in: occ.assignees.map((a) => a.userId) } },
         select: { id: true, workerType: true },
       });
-      const hasNonEmployee = assigneeUsers.some(
-        (u) => u.workerType !== "EMPLOYEE" && u.workerType !== "TRAINEE"
+      const feeableUserIds = new Set(
+        assigneeUsers
+          .filter((u) => u.workerType !== "EMPLOYEE" && u.workerType !== "TRAINEE")
+          .map((u) => u.id)
       );
 
-      if (hasNonEmployee) {
+      if (feeableUserIds.size > 0) {
         const feeSetting = await tx.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } });
         const feePercent = Number(feeSetting?.value ?? 0);
         if (feePercent > 0) {
-          // Get total expenses for this occurrence
-          const expenses = await tx.expense.aggregate({
+          // Only apply fee to contractor/unclassified splits
+          const feeableSplitTotal = splits
+            .filter((sp) => feeableUserIds.has(sp.userId))
+            .reduce((s, sp) => s + sp.amount, 0);
+
+          // Pro-rate expenses across all splits, then only fee the contractor portion
+          const expensesAgg = await tx.expense.aggregate({
             where: { occurrenceId },
             _sum: { cost: true },
           });
-          const totalExpenses = expenses._sum.cost ?? 0;
-          const netAmount = amountPaid - totalExpenses;
+          const totalExpenses = expensesAgg._sum.cost ?? 0;
+          const totalSplitAmount = splits.reduce((s, sp) => s + sp.amount, 0);
+          const feeableExpenseShare = totalSplitAmount > 0
+            ? totalExpenses * (feeableSplitTotal / totalSplitAmount)
+            : 0;
+
+          const feeableNet = feeableSplitTotal - feeableExpenseShare;
           platformFeePercent = feePercent;
-          platformFeeAmount = Math.round(netAmount * feePercent) / 100; // rounds to cents
+          platformFeeAmount = Math.round(feeableNet * feePercent) / 100;
         }
       }
 
@@ -79,7 +90,7 @@ export const payments: ServicesPayments = {
           },
         },
         include: {
-          splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+          splits: { include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
           collectedBy: { select: { id: true, displayName: true } },
         },
       });
@@ -122,7 +133,7 @@ export const payments: ServicesPayments = {
             },
             splits: {
               include: {
-                user: { select: { id: true, displayName: true, email: true } },
+                user: { select: { id: true, displayName: true, email: true, workerType: true } },
               },
             },
           },
@@ -173,7 +184,7 @@ export const payments: ServicesPayments = {
         collectedBy: { select: { id: true, displayName: true, email: true } },
         splits: {
           include: {
-            user: { select: { id: true, displayName: true, email: true } },
+            user: { select: { id: true, displayName: true, email: true, workerType: true } },
           },
         },
         occurrence: {
@@ -204,11 +215,18 @@ export const payments: ServicesPayments = {
       const expenses = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
       totalPlatformFees += fee;
       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+      // Determine which splits are feeable (contractor/unclassified)
+      const feeableSplitTotal = p.splits
+        .filter((sp) => sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE")
+        .reduce((s, sp) => s + sp.amount, 0);
       for (const sp of p.splits) {
-        // Pro-rate the fee and expenses across splits
         const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-        const feeShare = fee * ratio;
         const expenseShare = expenses * ratio;
+        // Only apply fee to contractor/unclassified splits
+        const isFeeable = sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE";
+        const feeShare = isFeeable && feeableSplitTotal > 0
+          ? fee * (sp.amount / feeableSplitTotal)
+          : 0;
         const netAmount = sp.amount - feeShare - expenseShare;
         const existing = totalsMap.get(sp.userId);
         if (existing) {
@@ -269,7 +287,7 @@ export const payments: ServicesPayments = {
       return tx.payment.findUnique({
         where: { id: paymentId },
         include: {
-          splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+          splits: { include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
           collectedBy: { select: { id: true, displayName: true } },
         },
       });
@@ -301,7 +319,7 @@ export const payments: ServicesPayments = {
         collectedBy: { select: { id: true, displayName: true } },
         splits: {
           include: {
-            user: { select: { id: true, displayName: true, email: true } },
+            user: { select: { id: true, displayName: true, email: true, workerType: true } },
           },
         },
       },
