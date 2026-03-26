@@ -34,6 +34,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
     defaultPrice?: number | null;
     notes?: string | null;
     frequencyDays?: number | null;
+    estimatedMinutes?: number | null;
   }>({});
 
   function reset() {
@@ -125,6 +126,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
                 defaultPrice: created.defaultPrice,
                 notes: created.notes,
                 frequencyDays: created.frequencyDays,
+                estimatedMinutes: created.estimatedMinutes,
               });
               go("occurrence");
             } else {
@@ -142,6 +144,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           mode="CREATE"
           jobId={jobId}
           defaultPrice={jobDefaults.defaultPrice}
+          defaultEstimatedMinutes={jobDefaults.estimatedMinutes}
           defaultNotes={jobDefaults.notes}
           title="New Occurrence (Final Step)"
           submitLabel="Create & Finish"

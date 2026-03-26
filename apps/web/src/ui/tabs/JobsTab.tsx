@@ -825,6 +825,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                           variant="solid"
                         />
                         {isTentative && <StatusBadge status="Tentative" palette="orange" variant="solid" />}
+                        {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {(occ.price ?? 0) >= 200 && <span title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
@@ -841,6 +842,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, headerS
                             status="Tentative"
                             palette="orange"
                             variant="solid"
+                          />
+                        )}
+                        {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
+                          <StatusBadge
+                            status="Repeating"
+                            palette="blue"
+                            variant="outline"
                           />
                         )}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
