@@ -154,7 +154,9 @@ export default function PropertiesTab({
       if (exact) return [exact];
     }
 
-    // Trainees only see properties they are assigned to
+    // Trainees: wait for filter data before showing anything
+    if (isTrainee && !traineePropertyIds) return [];
+
     let rows = items;
 
     // Trainees only see properties they are assigned to
