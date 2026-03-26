@@ -208,14 +208,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
       if (viewAsUserIds?.length) {
-        // Admin "View as" — show only selected workers' jobs + unassigned
+        // Admin "View as" — show only selected workers' jobs
         const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
           const assignees = occ.assignees ?? [];
+          // If impersonating a trainee, hide unassigned jobs
+          if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
       } else if (!forAdmin && myId) {
-        if (me?.workerType === "TRAINEE") {
+        if (isTrainee) {
           // Trainees only see jobs they are assigned to (no unassigned/claimable)
           list = list.filter((occ) => {
             const assignees = occ.assignees ?? [];
@@ -243,7 +245,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   useEffect(() => {
     void load();
-  }, [dateFrom, dateTo, viewAsUserIds]);
+  }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
 
   async function refreshOverdueCount() {
     try {
