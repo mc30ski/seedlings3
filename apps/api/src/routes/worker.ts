@@ -433,6 +433,11 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // Settings (read-only for workers)
+  app.get("/settings", workerGuard, async () => {
+    return services.settings.getAll();
+  });
+
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });

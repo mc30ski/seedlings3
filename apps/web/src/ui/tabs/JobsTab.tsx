@@ -127,6 +127,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [overdueCount, setOverdueCount] = useState(0);
   const [highValueThreshold, setHighValueThreshold] = useState(200);
+  const [commissionPercent, setCommissionPercent] = useState(0);
+  const [marginPercent, setMarginPercent] = useState(0);
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "nextMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
@@ -248,10 +250,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   useEffect(() => {
     void load();
     // Fetch high-value threshold setting
-    apiGet<{ value: string } | null>("/api/admin/settings")
+    apiGet<any[]>("/api/settings")
       .then((list: any) => {
-        const s = Array.isArray(list) ? list.find((r: any) => r.key === "HIGH_VALUE_JOB_THRESHOLD") : null;
+        if (!Array.isArray(list)) return;
+        const s = list.find((r: any) => r.key === "HIGH_VALUE_JOB_THRESHOLD");
         if (s?.value) setHighValueThreshold(Number(s.value));
+        const c = list.find((r: any) => r.key === "CONTRACTOR_PLATFORM_FEE_PERCENT");
+        if (c?.value) setCommissionPercent(Number(c.value));
+        const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
+        if (m?.value) setMarginPercent(Number(m.value));
       })
       .catch(() => {});
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
@@ -932,6 +939,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ${occ.price.toFixed(2)}
                         </Badge>
                       )}
+                      {occ.price != null && !occ.payment && (() => {
+                        const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                        const net = occ.price! - expTotal;
+                        const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+                        const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
+                        const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
+                        const deduction = Math.round(net * pct) / 100;
+                        const payout = net - deduction;
+                        return pct > 0 ? (
+                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                            Payout: ${payout.toFixed(2)}
+                          </Badge>
+                        ) : null;
+                      })()}
                       {(() => {
                         const actual = actualMinutes(occ);
                         if (actual != null && occ.estimatedMinutes) {
@@ -969,6 +990,29 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         ${occ.price.toFixed(2)}
                       </Badge>
                     )}
+                    {occ.price != null && !occ.payment && (() => {
+                      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const net = occ.price! - expTotal;
+                      const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+                      const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
+                      const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
+                      const deduction = Math.round(net * pct) / 100;
+                      const payout = net - deduction;
+                      const label = isEmp ? "margin" : "commission";
+                      return pct > 0 ? (
+                        <Box fontSize="xs" color="fg.muted" mt={0.5}>
+                          <HStack gap={2}>
+                            <Text>Est. payout:</Text>
+                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                              ${payout.toFixed(2)}
+                            </Badge>
+                          </HStack>
+                          <Text fontSize="xs" color="fg.muted">
+                            ${occ.price!.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
+                          </Text>
+                        </Box>
+                      ) : null;
+                    })()}
                     {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
                       <HStack fontSize="xs" gap={2}>
                         {occ.estimatedMinutes != null && (
@@ -1059,40 +1103,56 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           : "Unclaimed — available to pick up"}
                       </Text>
                     )}
-                    {occ.payment && (
-                      <Box mt={1} p={1} bg="green.50" rounded="sm">
-                        <Text fontSize="xs" fontWeight="medium" color="green.700">
-                          Paid: ${occ.payment.amountPaid.toFixed(2)} via {prettyStatus(occ.payment.method)}
-                        </Text>
-                        {occ.payment.note && (
-                          <Text fontSize="xs" color="green.600">{occ.payment.note}</Text>
-                        )}
-                        {occ.payment.splits && occ.payment.splits.length > 1 && (
-                          <VStack align="start" gap={0} mt={0.5}>
-                            {occ.payment.splits.map((sp: any) => (
-                              <Text key={sp.userId} fontSize="xs" color="green.600">
-                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
-                              </Text>
-                            ))}
-                          </VStack>
-                        )}
-                        {occ.payment.platformFeeAmount != null && occ.payment.platformFeeAmount > 0 && (
-                          <Text fontSize="xs" color="orange.600" mt={0.5}>
-                            Commission ({occ.payment.platformFeePercent}%): −${occ.payment.platformFeeAmount.toFixed(2)}
+                    {occ.payment && (() => {
+                      const pay = occ.payment as any;
+                      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                      const fee = pay.platformFeeAmount ?? 0;
+                      const margin = pay.businessMarginAmount ?? 0;
+                      const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
+                      const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
+                      const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
+                      return (
+                        <Box mt={1} p={2} bg="green.50" rounded="sm">
+                          <Text fontSize="xs" fontWeight="medium" color="green.700">
+                            Paid: ${pay.amountPaid.toFixed(2)} via {prettyStatus(pay.method)}
                           </Text>
-                        )}
-                        {(occ.payment as any).businessMarginAmount != null && (occ.payment as any).businessMarginAmount > 0 && (
-                          <Text fontSize="xs" color="orange.600" mt={0.5}>
-                            Business margin ({(occ.payment as any).businessMarginPercent}%): −${(occ.payment as any).businessMarginAmount.toFixed(2)}
-                          </Text>
-                        )}
-                        {((occ.payment.platformFeeAmount ?? 0) > 0 || ((occ.payment as any).businessMarginAmount ?? 0) > 0) && (
-                          <Text fontSize="xs" fontWeight="medium" color="green.600" mt={0.5}>
-                            Net: ${(occ.payment.amountPaid - (occ.payment.platformFeeAmount ?? 0) - ((occ.payment as any).businessMarginAmount ?? 0)).toFixed(2)}
-                          </Text>
-                        )}
-                      </Box>
-                    )}
+                          {pay.note && (
+                            <Text fontSize="xs" color="green.600">{pay.note}</Text>
+                          )}
+                          {(pay.splits ?? []).length > 0 && (
+                            <VStack align="start" gap={1} mt={1}>
+                              {(pay.splits ?? []).map((sp: any) => {
+                                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
+                                const expShare = expTotal * ratio;
+                                const isContractor = sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE";
+                                const isEmployee = sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE";
+                                const feeShare = isContractor && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
+                                const marginShare = isEmployee && employeeSplitTotal > 0 ? margin * (sp.amount / employeeSplitTotal) : 0;
+                                const payout = sp.amount - expShare - feeShare - marginShare;
+                                return (
+                                  <Box key={sp.userId} fontSize="xs">
+                                    <HStack gap={2} align="center">
+                                      <Text fontWeight="medium" color="green.700">
+                                        {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                      </Text>
+                                      <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                                        Payout: ${payout.toFixed(2)}
+                                      </Badge>
+                                    </HStack>
+                                    <Box pl={2} color="fg.muted">
+                                      <Text>Split: ${sp.amount.toFixed(2)}</Text>
+                                      {expShare > 0 && <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>}
+                                      {feeShare > 0 && <Text color="orange.600">−${feeShare.toFixed(2)} commission ({pay.platformFeePercent}%)</Text>}
+                                      {marginShare > 0 && <Text color="orange.600">−${marginShare.toFixed(2)} margin ({pay.businessMarginPercent}%)</Text>}
+                                    </Box>
+                                  </Box>
+                                );
+                              })}
+                            </VStack>
+                          )}
+                        </Box>
+                      );
+                    })()}
 
                     {/* Expenses */}
                     {occ.expenses && occ.expenses.length > 0 && (
