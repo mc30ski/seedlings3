@@ -7,7 +7,10 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
+  Dialog,
   HStack,
+  Portal,
   Text,
   VStack,
   Select,
@@ -76,6 +79,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
   const [scanFor, setScanFor] = useState<string | null>(null);
   const [scanReturnFor, setScanReturnFor] = useState<string | null>(null);
+  const [reserveConfirmEquip, setReserveConfirmEquip] = useState<Equipment | null>(null);
+  const [reserveChecked, setReserveChecked] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -724,7 +729,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     ) : null
                   ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                      Free
+                      No charge
                     </Badge>
                   ) : e.dailyRate != null && e.dailyRate > 0 ? (
                     <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
@@ -862,7 +867,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-reserve"}
                     itemId={e.id}
                     label={"Reserve"}
-                    onClick={async () => await reserve(e)}
+                    onClick={async () => { setReserveConfirmEquip(e); setReserveChecked(false); }}
                     variant={"solid"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
@@ -1014,6 +1019,101 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           }}
         />
       )}
+
+      {/* Reserve Confirmation Dialog */}
+      <Dialog.Root open={!!reserveConfirmEquip} onOpenChange={(e) => { if (!e.open) { setReserveConfirmEquip(null); setReserveChecked(false); } }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Reserve Equipment</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {reserveConfirmEquip && (
+                  <VStack align="stretch" gap={3}>
+                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                      <Text fontSize="sm" fontWeight="medium">{reserveConfirmEquip.shortDesc}</Text>
+                      {(reserveConfirmEquip.brand || reserveConfirmEquip.model) && (
+                        <Text fontSize="xs" color="fg.muted">
+                          {[reserveConfirmEquip.brand, reserveConfirmEquip.model].filter(Boolean).join(" ")}
+                        </Text>
+                      )}
+                      {reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 && (
+                        (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                          <Badge colorPalette="green" variant="subtle" fontSize="xs" mt={1}>No charge</Badge>
+                        ) : (
+                          <Badge colorPalette="orange" variant="solid" fontSize="xs" mt={1}>
+                            ${reserveConfirmEquip.dailyRate.toFixed(2)}/day rental
+                          </Badge>
+                        )
+                      )}
+                    </Box>
+
+                    <Text fontSize="sm">
+                      By reserving this equipment, you accept responsibility for its care and safe use.
+                      You agree to return it in the same condition and report any damage or issues immediately.
+                      You assume all liability for any injury, damage, or loss arising from the use of this equipment.
+                    </Text>
+
+                    {(me?.workerType === "CONTRACTOR" || !me?.workerType) && (
+                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
+                        <Text fontSize="sm" color="orange.700">
+                          As a contractor, you are required to maintain valid general liability insurance
+                          while using company equipment. Your insurance must cover any third-party claims
+                          arising from your use of this equipment.
+                        </Text>
+                      </Box>
+                    )}
+
+                    {reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 &&
+                      me?.workerType !== "EMPLOYEE" && me?.workerType !== "TRAINEE" && (
+                      <Box p={2} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">
+                        <Text fontSize="sm" color="blue.700">
+                          This equipment has a rental rate of <b>${reserveConfirmEquip.dailyRate.toFixed(2)} per day</b>.
+                          Rental charges will be calculated based on the duration of your checkout and deducted from your earnings.
+                        </Text>
+                      </Box>
+                    )}
+
+                    <Checkbox.Root
+                      checked={reserveChecked}
+                      onCheckedChange={(e) => setReserveChecked(!!e.checked)}
+                    >
+                      <Checkbox.HiddenInput />
+                      <Checkbox.Control />
+                      <Checkbox.Label fontSize="sm">
+                        I accept responsibility for this equipment and agree to the terms above
+                      </Checkbox.Label>
+                    </Checkbox.Root>
+                  </VStack>
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setReserveConfirmEquip(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="green"
+                    disabled={!reserveChecked}
+                    onClick={async () => {
+                      if (reserveConfirmEquip) {
+                        await reserve(reserveConfirmEquip);
+                        setReserveConfirmEquip(null);
+                        setReserveChecked(false);
+                      }
+                    }}
+                  >
+                    Reserve Equipment
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }
