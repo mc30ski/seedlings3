@@ -399,11 +399,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }
 
   const canWorkerCheckout = (e: Equipment) =>
-    purpose === "WORKER" && statusFilter[0] === "CLAIMED" && e.status === "RESERVED";
+    purpose === "WORKER" && e.status === "RESERVED";
   const canWorkerCancel = (e: Equipment) =>
-    purpose === "WORKER" && statusFilter[0] === "CLAIMED" && e.status === "RESERVED";
+    purpose === "WORKER" && e.status === "RESERVED";
   const canWorkerReturn = (e: Equipment) =>
-    purpose === "WORKER" && statusFilter[0] === "CLAIMED" && e.status === "CHECKED_OUT";
+    purpose === "WORKER" && e.status === "CHECKED_OUT";
   const isTrainee = me?.workerType === "TRAINEE";
   const canWorkerReserve = (e: Equipment) =>
     purpose === "WORKER" &&
@@ -716,6 +716,21 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.brand ? `${e.brand} ` : ""}
                     {e.model ? `${e.model} ` : ""}
                   </Text>
+                  {forAdmin ? (
+                    e.dailyRate != null && e.dailyRate > 0 ? (
+                      <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                        ${e.dailyRate.toFixed(2)}/day
+                      </Badge>
+                    ) : null
+                  ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                      Free
+                    </Badge>
+                  ) : e.dailyRate != null && e.dailyRate > 0 ? (
+                    <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                      ${e.dailyRate.toFixed(2)}/day
+                    </Badge>
+                  ) : null}
                   {e.holder && (
                     <Text color="orange.500" fontWeight="medium">
                       {e.holder.state === "CHECKED_OUT" ? "Out: " : "Reserved: "}
@@ -747,13 +762,41 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.energy}
                   </Text>
                 )}
-                {e.dailyRate != null && e.dailyRate > 0 && (
-                  <Text fontSize="xs" color="gray.500" mt={0}>
-                    <Text as="span" fontWeight="bold">
-                      Rate:{" "}
-                    </Text>
-                    ${e.dailyRate.toFixed(2)}/day
-                  </Text>
+                {forAdmin ? (
+                  <VStack align="start" gap={0} mt={0.5} fontSize="xs">
+                    <HStack gap={2}>
+                      <Text color="fg.muted">Employee:</Text>
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                    </HStack>
+                    <HStack gap={2}>
+                      <Text color="fg.muted">Contractor:</Text>
+                      {e.dailyRate != null && e.dailyRate > 0 ? (
+                        <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                          ${e.dailyRate.toFixed(2)}/day
+                        </Badge>
+                      ) : (
+                        <Text color="green.500">No charge</Text>
+                      )}
+                    </HStack>
+                  </VStack>
+                ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                  <HStack gap={2} mt={0.5}>
+                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                      No charge
+                    </Badge>
+                    {e.dailyRate != null && e.dailyRate > 0 && (
+                      <Text fontSize="xs" color="gray.400">(${e.dailyRate.toFixed(2)}/day for contractors)</Text>
+                    )}
+                  </HStack>
+                ) : e.dailyRate != null && e.dailyRate > 0 ? (
+                  <HStack gap={2} mt={0.5}>
+                    <Badge colorPalette="orange" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                      ${e.dailyRate.toFixed(2)}/day
+                    </Badge>
+                    <Text fontSize="xs" color="orange.500">rental cost</Text>
+                  </HStack>
+                ) : (
+                  <Text fontSize="xs" color="green.500" mt={0.5}>No rental cost</Text>
                 )}
                 {/* Minimal collapsible for details */}
                 <ItemTile item={e} isMine={isMine(e)} />
