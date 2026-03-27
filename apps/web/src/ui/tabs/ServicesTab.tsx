@@ -1018,7 +1018,12 @@ export default function ServicesTab({
                                 )}
                                 {(occ.payment as any).platformFeeAmount != null && (occ.payment as any).platformFeeAmount > 0 && (
                                   <Text fontSize="xs" color="orange.600" mt={0.5}>
-                                    Platform fee ({(occ.payment as any).platformFeePercent}%): −${(occ.payment as any).platformFeeAmount.toFixed(2)}
+                                    Commission ({(occ.payment as any).platformFeePercent}%): −${(occ.payment as any).platformFeeAmount.toFixed(2)}
+                                  </Text>
+                                )}
+                                {(occ.payment as any).businessMarginAmount != null && (occ.payment as any).businessMarginAmount > 0 && (
+                                  <Text fontSize="xs" color="orange.600" mt={0.5}>
+                                    Business margin ({(occ.payment as any).businessMarginPercent}%): −${(occ.payment as any).businessMarginAmount.toFixed(2)}
                                   </Text>
                                 )}
                               </Box>

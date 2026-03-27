@@ -832,7 +832,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.300">
                     <Badge colorPalette="cyan" mb={1}>Trainee</Badge>
-                    <Text fontSize="sm">Can view job details and be added to a team, but cannot claim jobs, take actions (start/complete), accept payments, or reserve equipment. Limited visibility — only sees jobs, clients, and properties they participate in. Cannot see tentative jobs. Must rely on a team manager for all actions.</Text>
+                    <Text fontSize="sm">A restricted Employee (W-2) intended for new hires who are shadowing or in training. Treated the same as an Employee financially — no platform fee, no insurance requirement, no contractor agreement. However, they have limited capabilities: cannot claim jobs, take actions (start/complete), accept payments, or reserve equipment. Limited visibility — only sees jobs, clients, and properties they participate in. Cannot see tentative or unassigned jobs. Must rely on a team manager for all actions on their behalf.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">

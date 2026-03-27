@@ -219,9 +219,13 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           (s, it) => s + (it.payment.platformFeeAmount ?? 0),
           0
         ) : 0;
+        const totalMargins = showJobs ? items.reduce(
+          (s, it) => s + (it.payment.businessMarginAmount ?? 0),
+          0
+        ) : 0;
         const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
         const visibleTotal = showJobs ? totalAmount : 0;
-        const totalDeductions = totalExpenses + totalEquipCost + totalFees;
+        const totalDeductions = totalExpenses + totalEquipCost + totalFees + totalMargins;
         const net = visibleTotal - totalDeductions;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
@@ -237,7 +241,12 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             )}
             {totalFees > 0 && (
               <Text fontSize="sm" color="orange.600">
-                Platform Fees: −${totalFees.toFixed(2)}
+                Commission: −${totalFees.toFixed(2)}
+              </Text>
+            )}
+            {totalMargins > 0 && (
+              <Text fontSize="sm" color="orange.600">
+                Business Margin: −${totalMargins.toFixed(2)}
               </Text>
             )}
             {totalEquipCost > 0 && (
@@ -393,12 +402,17 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                         )}
                         {item.payment.platformFeeAmount != null && item.payment.platformFeeAmount > 0 && (
                           <Text fontSize="xs" color="orange.600">
-                            −${item.payment.platformFeeAmount.toFixed(2)} fee ({item.payment.platformFeePercent}%)
+                            −${item.payment.platformFeeAmount.toFixed(2)} commission ({item.payment.platformFeePercent}%)
                           </Text>
                         )}
-                        {(expTotal > 0 || (item.payment.platformFeeAmount ?? 0) > 0) && (
+                        {item.payment.businessMarginAmount != null && item.payment.businessMarginAmount > 0 && (
+                          <Text fontSize="xs" color="orange.600">
+                            −${item.payment.businessMarginAmount.toFixed(2)} margin ({item.payment.businessMarginPercent}%)
+                          </Text>
+                        )}
+                        {(expTotal > 0 || (item.payment.platformFeeAmount ?? 0) > 0 || (item.payment.businessMarginAmount ?? 0) > 0) && (
                           <Text fontWeight="bold" color="green.700" fontSize="sm">
-                            Net: ${(net - (item.payment.platformFeeAmount ?? 0)).toFixed(2)}
+                            Net: ${(net - (item.payment.platformFeeAmount ?? 0) - (item.payment.businessMarginAmount ?? 0)).toFixed(2)}
                           </Text>
                         )}
                       </VStack>
@@ -492,6 +506,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
+  const [totalBusinessMargin, setTotalBusinessMargin] = useState(0);
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
@@ -553,6 +568,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           items: PaymentListItem[];
           personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
           totalPlatformFees: number;
+          totalBusinessMargin: number;
         }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
         apiGet<EquipmentCharge[]>(
           `/api/admin/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
@@ -561,6 +577,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       setItems(res.items ?? []);
       setPersonTotals(res.personTotals ?? []);
       setTotalPlatformFees(res.totalPlatformFees ?? 0);
+      setTotalBusinessMargin(res.totalBusinessMargin ?? 0);
       setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
@@ -841,10 +858,22 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   Equipment Total: −${totalEquipCost.toFixed(2)}
                 </Text>
               )}
-        {showJobs && totalPlatformFees > 0 && (
-          <Text fontSize="sm" fontWeight="medium" color="blue.600" mt={1}>
-            Platform Fees Collected: ${totalPlatformFees.toFixed(2)}
-          </Text>
+        {showJobs && (totalPlatformFees > 0 || totalBusinessMargin > 0) && (
+          <VStack align="start" gap={0} mt={1}>
+            {totalPlatformFees > 0 && (
+              <Text fontSize="sm" fontWeight="medium" color="blue.600">
+                Contractor Commission: ${totalPlatformFees.toFixed(2)}
+              </Text>
+            )}
+            {totalBusinessMargin > 0 && (
+              <Text fontSize="sm" fontWeight="medium" color="blue.600">
+                Employee Business Margin: ${totalBusinessMargin.toFixed(2)}
+              </Text>
+            )}
+            <Text fontSize="sm" fontWeight="bold" color="blue.700">
+              Total Revenue: ${(totalPlatformFees + totalBusinessMargin).toFixed(2)}
+            </Text>
+          </VStack>
         )}
         {showJobs && personTotals.length > 0 && (
           <VStack align="start" gap={0} mt={1}>
@@ -957,10 +986,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     {p.splits && p.splits.length > 0 && (() => {
                       const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                       const fee = p.platformFeeAmount ?? 0;
+                      const margin = (p as any).businessMarginAmount ?? 0;
                       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
-                      // Only contractor/unclassified splits get fees
                       const feeableSplitTotal = p.splits
                         .filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE")
+                        .reduce((s, sp) => s + sp.amount, 0);
+                      const employeeSplitTotal = p.splits
+                        .filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE")
                         .reduce((s, sp) => s + sp.amount, 0);
                       return (
                         <VStack align="start" gap={1} mt={0.5}>
@@ -968,9 +1000,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                             const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
                             const expShare = expTotal * ratio;
                             const isFeeable = (sp.user as any)?.workerType !== "EMPLOYEE" && (sp.user as any)?.workerType !== "TRAINEE";
+                            const isEmployee = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
                             const feeShare = isFeeable && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                            const personNet = sp.amount - expShare - feeShare;
-                            const hasDeductions = expShare > 0 || feeShare > 0;
+                            const marginShare = isEmployee && employeeSplitTotal > 0 ? margin * (sp.amount / employeeSplitTotal) : 0;
+                            const personNet = sp.amount - expShare - feeShare - marginShare;
+                            const hasDeductions = expShare > 0 || feeShare > 0 || marginShare > 0;
                             return (
                               <Box key={sp.userId} fontSize="xs">
                                 <Text fontWeight="medium" color="fg.muted">
@@ -982,7 +1016,10 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                                       <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>
                                     )}
                                     {feeShare > 0 && (
-                                      <Text color="orange.600">−${feeShare.toFixed(2)} fee</Text>
+                                      <Text color="orange.600">−${feeShare.toFixed(2)} commission</Text>
+                                    )}
+                                    {marginShare > 0 && (
+                                      <Text color="orange.600">−${marginShare.toFixed(2)} margin</Text>
                                     )}
                                     <Text fontWeight="medium" color="green.600">
                                       Net: ${personNet.toFixed(2)}

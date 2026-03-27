@@ -1078,8 +1078,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         )}
                         {occ.payment.platformFeeAmount != null && occ.payment.platformFeeAmount > 0 && (
                           <Text fontSize="xs" color="orange.600" mt={0.5}>
-                            Platform fee ({occ.payment.platformFeePercent}%): −${occ.payment.platformFeeAmount.toFixed(2)}
-                            {" "}· Net: ${(occ.payment.amountPaid - occ.payment.platformFeeAmount).toFixed(2)}
+                            Commission ({occ.payment.platformFeePercent}%): −${occ.payment.platformFeeAmount.toFixed(2)}
+                          </Text>
+                        )}
+                        {(occ.payment as any).businessMarginAmount != null && (occ.payment as any).businessMarginAmount > 0 && (
+                          <Text fontSize="xs" color="orange.600" mt={0.5}>
+                            Business margin ({(occ.payment as any).businessMarginPercent}%): −${(occ.payment as any).businessMarginAmount.toFixed(2)}
+                          </Text>
+                        )}
+                        {((occ.payment.platformFeeAmount ?? 0) > 0 || ((occ.payment as any).businessMarginAmount ?? 0) > 0) && (
+                          <Text fontSize="xs" fontWeight="medium" color="green.600" mt={0.5}>
+                            Net: ${(occ.payment.amountPaid - (occ.payment.platformFeeAmount ?? 0) - ((occ.payment as any).businessMarginAmount ?? 0)).toFixed(2)}
                           </Text>
                         )}
                       </Box>
