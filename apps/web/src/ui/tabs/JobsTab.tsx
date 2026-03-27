@@ -38,7 +38,7 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
-import ContractorAgreementDialog from "@/src/ui/dialogs/ContractorAgreementDialog";
+import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 
 function localDate(d: Date): string {
@@ -165,7 +165,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
-  const isContractor = me?.workerType === "CONTRACTOR";
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -284,8 +283,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [items]);
 
   async function claim(occurrenceId: string) {
-    // Contractors must acknowledge agreement every time they claim
-    if (isContractor && !agreementDialogOpen) {
+    // All workers must accept payout terms before claiming
+    if (!agreementDialogOpen) {
       setPendingClaimOccId(occurrenceId);
       setAgreementDialogOpen(true);
       return;
@@ -1201,13 +1200,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-claim"
                           itemId={occ.id}
                           label="Claim"
-                          onClick={async () => setConfirmAction({
-                            title: "Claim Job?",
-                            message: "Are you sure you want to claim this job?",
-                            confirmLabel: "Claim",
-                            colorPalette: "green",
-                            onConfirm: () => void claim(occ.id),
-                          })}
+                          onClick={async () => void claim(occ.id)}
                           variant="outline"
                           colorPalette="green"
                           busyId={statusButtonBusyId}
@@ -1452,9 +1445,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           window.location.reload();
         }}
       />
-      <ContractorAgreementDialog
+      <ClaimAgreementDialog
         open={agreementDialogOpen}
         onOpenChange={setAgreementDialogOpen}
+        me={me}
+        occurrence={pendingClaimOccId ? items.find((o) => o.id === pendingClaimOccId) ?? null : null}
+        commissionPercent={commissionPercent}
+        marginPercent={marginPercent}
         onAgreed={async () => {
           if (pendingClaimOccId) {
             await claim(pendingClaimOccId);
