@@ -928,7 +928,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Card.Body py="3" px="4" pt="0">
                     <HStack gap={2} fontSize="xs">
                       {occ.price != null && (
-                        <Text fontWeight="medium">${occ.price.toFixed(2)}</Text>
+                        <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                          ${occ.price.toFixed(2)}
+                        </Badge>
                       )}
                       {(() => {
                         const actual = actualMinutes(occ);
@@ -963,9 +965,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Text>
                     )}
                     {occ.price != null && (
-                      <Text fontSize="xs" fontWeight="medium">
+                      <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
                         ${occ.price.toFixed(2)}
-                      </Text>
+                      </Badge>
                     )}
                     {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
                       <HStack fontSize="xs" gap={2}>
