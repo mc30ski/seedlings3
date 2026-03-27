@@ -698,7 +698,7 @@ export const equipment: ServicesEquipment = {
       orderBy: { releasedAt: "desc" },
       include: {
         equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
-        user: { select: { id: true, displayName: true, email: true } },
+        user: { select: { id: true, displayName: true, email: true, workerType: true } },
       },
     });
   },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CreditCard, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
+import { CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
@@ -94,7 +94,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       ]);
       setItems(res.items ?? []);
       setTotalAmount(res.totalAmount ?? 0);
-      setEquipCharges(charges ?? []);
+      // Employees/trainees don't pay equipment rental charges
+      const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+      setEquipCharges(isEmp ? [] : (charges ?? []));
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
     } finally {
@@ -514,7 +516,22 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [dateFrom, setDateFrom] = useState(defaultDateFrom);
   const [dateTo, setDateTo] = useState(todayStr);
   const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
-  const [personFilter, setPersonFilter] = usePersistedState("pay_a_person", "");
+  const [personFilter, setPersonFilter] = usePersistedState<string[]>("pay_a_persons", []);
+  const [personDropOpen, setPersonDropOpen] = useState(false);
+  const [personSearch, setPersonSearch] = useState("");
+  const personDropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!personDropOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (personDropRef.current && !personDropRef.current.contains(e.target as Node)) {
+        setPersonDropOpen(false);
+        setPersonSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [personDropOpen]);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_a_type", ["ALL"]);
   const [compact, setCompact] = usePersistedState("pay_a_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -538,18 +555,25 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  // Build person collection from personTotals
+  // Fetch all workers for the person search
+  const [allWorkers, setAllWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
+  useEffect(() => {
+    apiGet<any[]>("/api/workers")
+      .then((list) => setAllWorkers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, []);
+
   const personItems = useMemo(() => {
-    const list = [{ label: "All People", value: "" }];
-    personTotals.forEach((p) => {
-      list.push({ label: p.displayName ?? p.userId, value: p.userId });
-    });
-    return list;
-  }, [personTotals]);
-  const personCollection = useMemo(
-    () => createListCollection({ items: personItems }),
-    [personItems]
-  );
+    return allWorkers.map((w) => ({
+      label: w.displayName || w.email || w.id,
+      value: w.id,
+    }));
+  }, [allWorkers]);
+  const personNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const w of allWorkers) map[w.id] = w.displayName || w.email || w.id;
+    return map;
+  }, [allWorkers]);
 
   async function load() {
     setLoading(true);
@@ -558,11 +582,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
       if (methodFilter[0] && methodFilter[0] !== "ALL") qs.set("method", methodFilter[0]);
-      if (personFilter) qs.set("userId", personFilter);
       const eqs = new URLSearchParams();
       if (dateFrom) eqs.set("from", dateFrom);
       if (dateTo) eqs.set("to", dateTo);
-      if (personFilter) eqs.set("userId", personFilter);
       const [res, charges] = await Promise.all([
         apiGet<{
           items: PaymentListItem[];
@@ -588,7 +610,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   useEffect(() => {
     void load();
-  }, [dateFrom, dateTo, methodFilter, personFilter]);
+  }, [dateFrom, dateTo, methodFilter]);
 
   const grandTotal = useMemo(
     () => items.reduce((s, p) => s + p.amountPaid, 0),
@@ -601,28 +623,44 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   );
 
   const filteredItems = useMemo(() => {
-    if (!q.trim()) return items;
+    let rows = items;
+    // Person filter (multi-select)
+    if (personFilter.length > 0) {
+      const ids = new Set(personFilter);
+      rows = rows.filter((p) => p.splits.some((sp) => ids.has(sp.userId)));
+    }
     const qlc = q.trim().toLowerCase();
-    return items.filter((p) => {
-      const prop = p.occurrence?.job?.property;
-      const arr = [
-        prop?.displayName || "",
-        prop?.client?.displayName || "",
-        p.method || "",
-        p.note || "",
-      ];
-      return arr.some((v) => v.toLowerCase().includes(qlc));
-    });
-  }, [items, q]);
+    if (qlc) {
+      rows = rows.filter((p) => {
+        const prop = p.occurrence?.job?.property;
+        const arr = [
+          prop?.displayName || "",
+          prop?.client?.displayName || "",
+          p.method || "",
+          p.note || "",
+          ...p.splits.map((sp) => sp.user?.displayName || sp.user?.email || ""),
+        ];
+        return arr.some((v) => v.toLowerCase().includes(qlc));
+      });
+    }
+    return rows;
+  }, [items, q, personFilter]);
 
   const filteredCharges = useMemo(() => {
-    if (!q.trim()) return equipCharges;
+    let rows = equipCharges;
+    if (personFilter.length > 0) {
+      const ids = new Set(personFilter);
+      rows = rows.filter((c) => ids.has(c.userId));
+    }
     const qlc = q.trim().toLowerCase();
-    return equipCharges.filter((c) => {
-      const arr = [c.equipment?.shortDesc || "", c.equipment?.brand || "", c.equipment?.model || ""];
-      return arr.some((v) => v.toLowerCase().includes(qlc));
-    });
-  }, [equipCharges, q]);
+    if (qlc) {
+      rows = rows.filter((c) => {
+        const arr = [c.equipment?.shortDesc || "", c.equipment?.brand || "", c.equipment?.model || ""];
+        return arr.some((v) => v.toLowerCase().includes(qlc));
+      });
+    }
+    return rows;
+  }, [equipCharges, q, personFilter]);
 
   function openEdit(p: PaymentListItem) {
     setEditPayment(p);
@@ -740,40 +778,98 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Select.Root
-          collection={personCollection}
-          value={[personFilter]}
-          onValueChange={(e) => setPersonFilter(e.value[0] ?? "")}
-          size="sm"
-          positioning={{ strategy: "fixed", hideWhenDetached: true }}
-          css={{ width: "auto", flex: "0 0 auto" }}
-        >
-          <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-teal-100)", borderRadius: "6px" }}>
-              <User size={14} />
-              <Select.Indicator display="none" />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {personItems.map((it) => (
-                <Select.Item key={it.value} item={it.value}>
-                  <Select.ItemText>{it.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select.Root>
+        <Box ref={personDropRef} position="relative" css={{ flex: "0 0 auto" }}>
+          <Input
+            size="sm"
+            w="200px"
+            placeholder={personFilter.length > 0
+              ? personFilter.map((id) => personNameMap[id] || id).join(", ")
+              : "All Workers"}
+            value={personSearch}
+            onChange={(e) => {
+              setPersonSearch(e.target.value);
+              if (!personDropOpen) setPersonDropOpen(true);
+            }}
+            onFocus={() => {
+              setPersonDropOpen(true);
+              setPersonSearch("");
+            }}
+          />
+          {personDropOpen && (() => {
+            const searchLc = personSearch.toLowerCase();
+            const filtered = personSearch
+              ? personItems.filter((it) => it.label.toLowerCase().includes(searchLc))
+              : personItems;
+            const limited = filtered.slice(0, 10);
+            const hasMore = filtered.length > 10;
+            return (
+              <Box
+                position="fixed"
+                zIndex={9999}
+                bg="white"
+                borderWidth="1px"
+                borderColor="gray.200"
+                rounded="md"
+                shadow="lg"
+                w="240px"
+                mt="1"
+                ref={(el: HTMLDivElement | null) => {
+                  if (el && personDropRef.current) {
+                    const rect = personDropRef.current.getBoundingClientRect();
+                    el.style.top = `${rect.bottom + 4}px`;
+                    el.style.left = `${rect.left}px`;
+                  }
+                }}
+              >
+                <Box maxH="250px" overflowY="auto">
+                  {limited.map((it) => (
+                    <Box
+                      key={it.value}
+                      px="3"
+                      py="1.5"
+                      fontSize="sm"
+                      cursor="pointer"
+                      bg={personFilter.includes(it.value) ? "teal.50" : undefined}
+                      _hover={{ bg: "gray.100" }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setPersonFilter((prev) =>
+                          prev.includes(it.value)
+                            ? prev.filter((id) => id !== it.value)
+                            : [...prev, it.value]
+                        );
+                      }}
+                    >
+                      <HStack gap={2}>
+                        <Text flex="1">{it.label}</Text>
+                        {personFilter.includes(it.value) && <Text color="teal.500" fontWeight="bold">✓</Text>}
+                      </HStack>
+                    </Box>
+                  ))}
+                  {hasMore && !personSearch && (
+                    <Text fontSize="xs" color="fg.muted" px="3" py="2" fontStyle="italic">
+                      …{filtered.length - 10} more — type to search
+                    </Text>
+                  )}
+                  {filtered.length === 0 && (
+                    <Text fontSize="xs" color="fg.muted" px="3" py="2">No matches</Text>
+                  )}
+                </Box>
+              </Box>
+            );
+          })()}
+        </Box>
         <Button
           variant="ghost"
           size="sm"
           px="2"
           minW="0"
-          disabled={typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && !personFilter}
+          disabled={typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0}
           onClick={() => {
             setTypeFilter(["ALL"]);
             setMethodFilter(["ALL"]);
-            setPersonFilter("");
+            setPersonFilter([]);
+            setPersonSearch("");
           }}
         >
           <X size={14} />
@@ -797,13 +893,55 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         >
           <RefreshCw size={14} />
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          title="Export payment data (CSV)"
+          onClick={() => {
+            const rows: string[] = [];
+            rows.push("Worker,Type,Job,Date,Amount,Expenses,Commission,Margin,Payout,Method");
+            for (const p of filteredItems) {
+              const prop = p.occurrence?.job?.property;
+              const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+              const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+              const fee = p.platformFeeAmount ?? 0;
+              const bMargin = (p as any).businessMarginAmount ?? 0;
+              const feeableSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
+              const empSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
+              for (const sp of p.splits) {
+                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
+                const expShare = expTotal * ratio;
+                const isEmp = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
+                const feeShare = !isEmp && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
+                const marginShare = isEmp && empSplitTotal > 0 ? bMargin * (sp.amount / empSplitTotal) : 0;
+                const payout = sp.amount - expShare - feeShare - marginShare;
+                const name = (sp.user?.displayName ?? sp.user?.email ?? sp.userId).replace(/,/g, "");
+                const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
+                const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
+                const date = p.createdAt ? new Date(p.createdAt).toLocaleDateString() : "";
+                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${expShare.toFixed(2)},${feeShare.toFixed(2)},${marginShare.toFixed(2)},${payout.toFixed(2)},${prettyStatus(p.method)}`);
+              }
+            }
+            const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `payments-${dateFrom || "all"}-to-${dateTo || "all"}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          <Download size={14} />
+        </Button>
       </HStack>
       <HStack mb={2} gap={2} align="center">
         <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
         <Text fontSize="sm">–</Text>
         <DateInput value={dateTo} onChange={(val) => setDateTo(val)} />
       </HStack>
-      {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter) && (
+      {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter.length > 0) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {typeFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="solid">
@@ -815,11 +953,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
               {methodFilterItems.find((i) => i.value === methodFilter[0])?.label}
             </Badge>
           )}
-          {personFilter && (
-            <Badge size="sm" colorPalette="teal" variant="solid">
-              {personItems.find((i) => i.value === personFilter)?.label}
+          {personFilter.map((id) => (
+            <Badge key={id} size="sm" colorPalette="teal" variant="solid">
+              {personNameMap[id] || id}
             </Badge>
-          )}
+          ))}
         </HStack>
       )}
 
@@ -1113,6 +1251,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             {filteredCharges.map((c) => {
               const cardId = `aec-${c.id}`;
               const isCardCompact = compact && !expandedCards.has(cardId);
+              const isEmpCharge = (c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE";
               const toggleCard = compact ? () => setExpandedCards((prev) => {
                 const next = new Set(prev);
                 next.has(cardId) ? next.delete(cardId) : next.add(cardId);
@@ -1136,9 +1275,16 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       <Text fontSize="md" fontWeight="semibold" truncate>
                         {c.equipment.shortDesc}
                       </Text>
-                      <Text fontWeight="bold" color="orange.600" fontSize="lg" flexShrink={0}>
-                        −${(c.rentalCost ?? 0).toFixed(2)}
-                      </Text>
+                      <HStack gap={1} flexShrink={0}>
+                        <Text fontSize="xs" color="fg.muted">{c.user.displayName ?? c.user.email ?? c.user.id}</Text>
+                        {isEmpCharge ? (
+                          <Badge colorPalette="green" variant="subtle" fontSize="xs">No charge</Badge>
+                        ) : (
+                          <Text fontWeight="bold" color="orange.600" fontSize="lg">
+                            −${(c.rentalCost ?? 0).toFixed(2)}
+                          </Text>
+                        )}
+                      </HStack>
                     </HStack>
                   ) : (
                   <HStack justify="space-between" align="start">
@@ -1150,9 +1296,14 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                         {c.equipment.brand ? `${c.equipment.brand} ` : ""}
                         {c.equipment.model ?? ""}
                       </Text>
-                      <Text fontSize="xs" color="fg.muted">
-                        {c.user.displayName ?? c.user.email ?? c.user.id}
-                      </Text>
+                      <HStack gap={1} fontSize="xs">
+                        <Text color="fg.muted">
+                          {c.user.displayName ?? c.user.email ?? c.user.id}
+                        </Text>
+                        <Badge size="xs" colorPalette={(c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE" ? "blue" : "orange"} variant="subtle">
+                          {(c.user as any).workerType === "EMPLOYEE" ? "W-2" : (c.user as any).workerType === "TRAINEE" ? "Trainee" : (c.user as any).workerType === "CONTRACTOR" ? "1099" : "Unclassified"}
+                        </Badge>
+                      </HStack>
                       <Text fontSize="xs" color="fg.muted">
                         {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
                         {c.equipment.dailyRate ? ` @ $${c.equipment.dailyRate.toFixed(2)}/day` : ""}
@@ -1163,9 +1314,15 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                         </Text>
                       )}
                     </VStack>
-                    <Text fontWeight="bold" color="orange.600" fontSize="lg">
-                      −${(c.rentalCost ?? 0).toFixed(2)}
-                    </Text>
+                    {(c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE" ? (
+                      <Badge colorPalette="green" variant="subtle" fontSize="sm" flexShrink={0}>
+                        No charge
+                      </Badge>
+                    ) : (
+                      <Text fontWeight="bold" color="orange.600" fontSize="lg" flexShrink={0}>
+                        −${(c.rentalCost ?? 0).toFixed(2)}
+                      </Text>
+                    )}
                   </HStack>
                   )}
                 </Card.Body>
