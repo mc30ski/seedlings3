@@ -352,6 +352,8 @@ export type PaymentInfo = {
   note?: string | null;
   platformFeePercent?: number | null;
   platformFeeAmount?: number | null;
+  businessMarginPercent?: number | null;
+  businessMarginAmount?: number | null;
   collectedBy?: { id: string; displayName?: string | null };
   splits: PaymentSplitItem[];
   createdAt: string;
@@ -380,6 +382,8 @@ export type WorkerPaymentItem = {
     note?: string | null;
     platformFeePercent?: number | null;
     platformFeeAmount?: number | null;
+    businessMarginPercent?: number | null;
+    businessMarginAmount?: number | null;
     collectedBy?: { id: string; displayName?: string | null };
     createdAt: string;
     splits: PaymentSplitItem[];

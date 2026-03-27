@@ -72,6 +72,39 @@ export const payments: ServicesPayments = {
         }
       }
 
+      // Calculate business margin on employee/trainee splits
+      let businessMarginPercent: number | null = null;
+      let businessMarginAmount: number | null = null;
+
+      const employeeUserIds = new Set(
+        assigneeUsers
+          .filter((u) => u.workerType === "EMPLOYEE" || u.workerType === "TRAINEE")
+          .map((u) => u.id)
+      );
+
+      if (employeeUserIds.size > 0) {
+        const marginSetting = await tx.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } });
+        const marginPercent = Number(marginSetting?.value ?? 0);
+        if (marginPercent > 0) {
+          const employeeSplitTotal = splits
+            .filter((sp) => employeeUserIds.has(sp.userId))
+            .reduce((s, sp) => s + sp.amount, 0);
+
+          const expensesAgg2 = platformFeeAmount != null
+            ? { _sum: { cost: (await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost } }
+            : await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
+          const totalExpenses2 = expensesAgg2._sum.cost ?? 0;
+          const totalSplitAmount2 = splits.reduce((s, sp) => s + sp.amount, 0);
+          const employeeExpenseShare = totalSplitAmount2 > 0
+            ? totalExpenses2 * (employeeSplitTotal / totalSplitAmount2)
+            : 0;
+
+          const employeeNet = employeeSplitTotal - employeeExpenseShare;
+          businessMarginPercent = marginPercent;
+          businessMarginAmount = Math.round(employeeNet * marginPercent) / 100;
+        }
+      }
+
       // Create payment + splits
       const payment = await tx.payment.create({
         data: {
@@ -82,6 +115,8 @@ export const payments: ServicesPayments = {
           collectedById: currentUserId,
           platformFeePercent,
           platformFeeAmount,
+          businessMarginPercent,
+          businessMarginAmount,
           splits: {
             create: splits.map((sp) => ({
               userId: sp.userId,
@@ -153,6 +188,8 @@ export const payments: ServicesPayments = {
         note: sp.payment.note,
         platformFeePercent: sp.payment.platformFeePercent,
         platformFeeAmount: sp.payment.platformFeeAmount,
+        businessMarginPercent: sp.payment.businessMarginPercent,
+        businessMarginAmount: sp.payment.businessMarginAmount,
         collectedBy: sp.payment.collectedBy,
         createdAt: sp.payment.createdAt,
         splits: sp.payment.splits,
@@ -210,24 +247,32 @@ export const payments: ServicesPayments = {
     // Compute per-person totals (net of expenses and platform fees) and total platform fees
     const totalsMap = new Map<string, { displayName: string | null; total: number }>();
     let totalPlatformFees = 0;
+    let totalBusinessMargin = 0;
     for (const p of payments) {
       const fee = p.platformFeeAmount ?? 0;
+      const margin = p.businessMarginAmount ?? 0;
       const expenses = (p.occurrence?.expenses ?? []).reduce((s: number, e: any) => s + (e.cost ?? 0), 0);
       totalPlatformFees += fee;
+      totalBusinessMargin += margin;
       const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
-      // Determine which splits are feeable (contractor/unclassified)
       const feeableSplitTotal = p.splits
         .filter((sp) => sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE")
+        .reduce((s, sp) => s + sp.amount, 0);
+      const employeeSplitTotal = p.splits
+        .filter((sp) => sp.user.workerType === "EMPLOYEE" || sp.user.workerType === "TRAINEE")
         .reduce((s, sp) => s + sp.amount, 0);
       for (const sp of p.splits) {
         const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
         const expenseShare = expenses * ratio;
-        // Only apply fee to contractor/unclassified splits
         const isFeeable = sp.user.workerType !== "EMPLOYEE" && sp.user.workerType !== "TRAINEE";
+        const isEmployee = sp.user.workerType === "EMPLOYEE" || sp.user.workerType === "TRAINEE";
         const feeShare = isFeeable && feeableSplitTotal > 0
           ? fee * (sp.amount / feeableSplitTotal)
           : 0;
-        const netAmount = sp.amount - feeShare - expenseShare;
+        const marginShare = isEmployee && employeeSplitTotal > 0
+          ? margin * (sp.amount / employeeSplitTotal)
+          : 0;
+        const netAmount = sp.amount - feeShare - marginShare - expenseShare;
         const existing = totalsMap.get(sp.userId);
         if (existing) {
           existing.total += netAmount;
@@ -245,7 +290,12 @@ export const payments: ServicesPayments = {
       total: Math.round(v.total * 100) / 100,
     }));
 
-    return { items: payments, personTotals, totalPlatformFees: Math.round(totalPlatformFees * 100) / 100 };
+    return {
+      items: payments,
+      personTotals,
+      totalPlatformFees: Math.round(totalPlatformFees * 100) / 100,
+      totalBusinessMargin: Math.round(totalBusinessMargin * 100) / 100,
+    };
   },
 
   async updatePayment(currentUserId, paymentId, input) {
