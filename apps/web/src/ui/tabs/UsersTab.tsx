@@ -4,7 +4,9 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Box,
   Button,
+  Dialog,
   HStack,
+  Portal,
   Select,
   Stack,
   Text,
@@ -12,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, RefreshCw, Shield, X } from "lucide-react";
+import { Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
@@ -83,6 +85,15 @@ const roleFilterItems = [
 ];
 const roleFilterCollection = createListCollection({ items: roleFilterItems });
 
+const workerTypeFilterItems = [
+  { label: "All Types", value: "all" },
+  { label: "Unclassified", value: "unclassified" },
+  { label: "Trainee", value: "TRAINEE" },
+  { label: "Employee", value: "EMPLOYEE" },
+  { label: "Contractor", value: "CONTRACTOR" },
+];
+const workerTypeFilterCollection = createListCollection({ items: workerTypeFilterItems });
+
 export default function UsersTab({ role = "worker" }: TabRolePropType) {
   if (role !== "admin") return <UnavailableNotice />;
 
@@ -99,6 +110,8 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   const [accessRole, setAccessRole] = usePersistedState<"all" | "worker" | "admin">(
     "users_role", "all"
   );
+  const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
+  const [showInfoOverlay, setShowInfoOverlay] = useState(false);
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
@@ -202,15 +215,24 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   }, [load]);
 
   const filtered = useMemo(() => {
+    let rows = items;
+    if (workerTypeFilter !== "all") {
+      if (workerTypeFilter === "unclassified") {
+        rows = rows.filter((u) => !u.workerType && u.roles.some((r) => r.role === "WORKER"));
+      } else {
+        rows = rows.filter((u) => u.workerType === workerTypeFilter);
+      }
+    }
     const qlc = q.trim().toLowerCase();
-    if (!qlc) return items;
-    return items.filter((u) => {
-      const name = (u.displayName ?? "").toLowerCase();
-      const email = (u.email ?? "").toLowerCase();
-      // Removed user-id searching from filter
-      return name.includes(qlc) || email.includes(qlc);
-    });
-  }, [items, q]);
+    if (qlc) {
+      rows = rows.filter((u) => {
+        const name = (u.displayName ?? "").toLowerCase();
+        const email = (u.email ?? "").toLowerCase();
+        return name.includes(qlc) || email.includes(qlc);
+      });
+    }
+    return rows;
+  }, [items, q, workerTypeFilter]);
 
   async function approve(userId: string) {
     try {
@@ -392,15 +414,49 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Select.Root
+          collection={workerTypeFilterCollection}
+          value={[workerTypeFilter]}
+          onValueChange={(e) => setWorkerTypeFilter(e.value[0] ?? "all")}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+              <Tag size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {workerTypeFilterItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
         <Button
           variant="ghost"
           size="sm"
           px="2"
           minW="0"
-          disabled={status === "all" && accessRole === "all"}
-          onClick={() => { setStatus("all"); setAccessRole("all"); }}
+          disabled={status === "all" && accessRole === "all" && workerTypeFilter === "all"}
+          onClick={() => { setStatus("all"); setAccessRole("all"); setWorkerTypeFilter("all"); }}
         >
           <X size={14} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          onClick={() => setShowInfoOverlay(true)}
+          title="Role & type information"
+        >
+          <Info size={14} />
         </Button>
         <Button
           variant="ghost"
@@ -413,7 +469,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           <RefreshCw size={14} />
         </Button>
       </HStack>
-      {(status !== "all" || accessRole !== "all") && (
+      {(status !== "all" || accessRole !== "all" || workerTypeFilter !== "all") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {status !== "all" && (
             <Badge size="sm" colorPalette="blue" variant="solid">
@@ -423,6 +479,11 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           {accessRole !== "all" && (
             <Badge size="sm" colorPalette="purple" variant="solid">
               {roleFilterItems.find((i) => i.value === accessRole)?.label}
+            </Badge>
+          )}
+          {workerTypeFilter !== "all" && (
+            <Badge size="sm" colorPalette="orange" variant="solid">
+              {workerTypeFilterItems.find((i) => i.value === workerTypeFilter)?.label}
             </Badge>
           )}
         </HStack>
@@ -726,6 +787,69 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
         onConfirm={confirmWorkerType}
         onCancel={() => setWorkerTypeConfirm(null)}
       />
+
+      {/* Roles & Types Info Overlay */}
+      <Dialog.Root open={showInfoOverlay} onOpenChange={(e) => { if (!e.open) setShowInfoOverlay(false); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p="4" shadow="lg" maxH="80vh" overflowY="auto">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Roles & Worker Types</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={4}>
+                  <Box>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Access Roles</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Controls what parts of the app a user can access.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md">
+                    <Badge colorPalette="gray" mb={1}>Worker</Badge>
+                    <Text fontSize="sm">Can see Worker tabs (Jobs, Equipment, Clients, Properties, Payments). Can claim jobs, start/complete work, accept payments, reserve equipment, and upload photos.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md">
+                    <Badge colorPalette="purple" mb={1}>Admin</Badge>
+                    <Text fontSize="sm">Can see Admin tabs (Jobs, Services, Equipment, Clients, Properties, Payments, Users, Audit, Settings). Can manage all data, create jobs, assign workers, approve users, and configure settings. Also has Worker access.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md">
+                    <Badge colorPalette="yellow" mb={1}>Super</Badge>
+                    <Text fontSize="sm">An Admin bootstrapped via environment config. Cannot be deleted or have roles removed. Can modify platform settings. Has all Admin + Worker capabilities.</Text>
+                  </Box>
+
+                  <Box mt={2}>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Worker Types</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Classifies how a worker is employed. Determines financial treatment and access restrictions.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
+                    <Badge colorPalette="gray" variant="outline" mb={1}>Unclassified</Badge>
+                    <Text fontSize="sm">Worker type not yet assigned. Can claim standard jobs (under the high-value threshold). Cannot claim high-value jobs. No platform fee. No insurance requirement. Should be classified by an admin.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.300">
+                    <Badge colorPalette="cyan" mb={1}>Trainee</Badge>
+                    <Text fontSize="sm">Can view job details and be added to a team, but cannot claim jobs, take actions (start/complete), accept payments, or reserve equipment. Limited visibility — only sees jobs, clients, and properties they participate in. Cannot see tentative jobs. Must rely on a team manager for all actions.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                    <Badge colorPalette="blue" mb={1}>Employee (W-2)</Badge>
+                    <Text fontSize="sm">Full access. Can claim any job including high-value. Can reserve any equipment. No insurance requirement. No platform fee on payments. No contractor agreement required.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
+                    <Badge colorPalette="orange" mb={1}>Contractor (1099)</Badge>
+                    <Text fontSize="sm">Must acknowledge a contractor agreement every time they claim a job. Can claim standard jobs without insurance. High-value jobs and insurance-flagged equipment require a valid insurance certificate. Platform fee (configured in Settings) is deducted from their payment splits after expenses. Admin tracks W-9 collection and insurance expiration.</Text>
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }
