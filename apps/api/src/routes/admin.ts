@@ -395,7 +395,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (kind !== "ENTIRE_SITE" && kind !== "SINGLE_ADDRESS") {
       throw app.httpErrors.badRequest("Invalid kind");
     }
-    if (status && status !== "PROPOSED" && status !== "ACCEPTED") {
+    if (status && status !== "PROPOSED" && status !== "ACCEPTED" && status !== "PAUSED") {
       throw app.httpErrors.badRequest("Invalid status");
     }
 
@@ -435,7 +435,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     if (body.status != null) {
       const status = String(body.status || "").toUpperCase();
-      if (status !== "PROPOSED" && status !== "ACCEPTED") {
+      if (status !== "PROPOSED" && status !== "ACCEPTED" && status !== "PAUSED") {
         throw app.httpErrors.badRequest("Invalid status");
       }
       patch.status = status as JobStatus;

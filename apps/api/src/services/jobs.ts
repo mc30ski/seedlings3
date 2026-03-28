@@ -243,6 +243,25 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
+      // When pausing, remove future scheduled repeating occurrences
+      if (payload.status === "PAUSED") {
+        const deleted = await tx.jobOccurrence.deleteMany({
+          where: {
+            jobId: id,
+            status: JobOccurrenceStatus.SCHEDULED,
+            workflow: OccurrenceWorkflow.STANDARD,
+            startAt: { gt: new Date() },
+          },
+        });
+        if (deleted.count > 0) {
+          await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
+            id,
+            action: "PAUSED_REMOVED_FUTURE_OCCURRENCES",
+            removedCount: deleted.count,
+          });
+        }
+      }
+
       await writeAudit(tx, AUDIT.JOB.UPDATED, currentUserId, {
         id,
         record,

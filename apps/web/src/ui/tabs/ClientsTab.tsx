@@ -405,6 +405,9 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
               <HStack gap={3} justify="space-between" align="center">
                 <Text fontSize="md" fontWeight="semibold" flex="1" minW={0}>{clientLabel(c.displayName)}</Text>
                 <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
+                  {(c.contacts ?? []).some((ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone) && (
+                    <Badge size="xs" colorPalette="red" variant="subtle">Missing contact info</Badge>
+                  )}
                   <StatusBadge
                     status={c.status}
                     palette={clientStatusColor(c.status)}

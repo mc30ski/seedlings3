@@ -136,6 +136,7 @@ export function jobStatusColor(value: string): string {
   const t = (value || "").toUpperCase();
   if (t === "ACCEPTED") return "green";
   if (t === "PROPOSED") return "orange";
+  if (t === "PAUSED") return "yellow";
   return "gray";
 }
 
