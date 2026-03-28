@@ -261,6 +261,10 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   // ── Expenses (claimer only) ──
 
+  app.get("/occurrences/:id/expenses", workerGuard, async (req: any) => {
+    return services.expenses.listExpensesByOccurrence(String(req.params.id));
+  });
+
   app.post("/occurrences/:id/expenses", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
