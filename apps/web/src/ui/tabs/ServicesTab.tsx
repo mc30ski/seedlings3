@@ -86,6 +86,7 @@ export default function ServicesTab({
   const [q, setQ] = useState("");
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
+  const [flashOccId, setFlashOccId] = useState<string | null>(null);
   const [kind, setKind] = usePersistedState<string[]>("services_kind", ["ALL"]);
   const [jobStatusFilter, setJobStatusFilter] = usePersistedState<string[]>("services_jobStatus", ["ALL"]);
   const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
@@ -271,11 +272,12 @@ export default function ServicesTab({
   // Navigate from Admin Jobs tab → specific occurrence
   useEffect(() => {
     return onEventSearchRun("jobsTabToServicesTabSearch", setQ, inputRef, (id) => {
-      if (!id) { setHighlightId(null); setHighlightOccId(null); return; }
+      if (!id) { setHighlightId(null); setHighlightOccId(null); setFlashOccId(null); return; }
       // entityId is encoded as "jobId:occurrenceId"
       const [jobId, occId] = id.split(":");
       setHighlightId(jobId || null);
       setHighlightOccId(occId || null);
+      setFlashOccId(occId || null);
       if (jobId) {
         // Auto-expand the job and load its detail
         setExpandedMap((prev) => ({ ...prev, [jobId]: true }));
@@ -491,7 +493,7 @@ export default function ServicesTab({
         <SearchWithClear
           ref={inputRef}
           value={q}
-          onChange={(v) => { setQ(v); setHighlightId(null); setHighlightOccId(null); }}
+          onChange={(v) => { setQ(v); setHighlightId(null); setHighlightOccId(null); setFlashOccId(null); }}
           inputId="services-search"
           placeholder="Search…"
         />
@@ -927,15 +929,15 @@ export default function ServicesTab({
                       <Box
                         key={occ.id}
                         p={2}
-                        borderWidth={highlightOccId === occ.id ? "2px" : "1px"}
-                        borderColor={highlightOccId === occ.id ? "blue.400" : undefined}
-                        bg={highlightOccId === occ.id ? "blue.50" : undefined}
+                        borderWidth={flashOccId === occ.id ? "2px" : "1px"}
+                        borderColor={flashOccId === occ.id ? "blue.400" : undefined}
+                        bg={flashOccId === occ.id ? "blue.50" : undefined}
                         rounded="md"
                         mb={2}
                         ref={highlightOccId === occ.id ? (el: HTMLDivElement | null) => {
                           if (el) {
                             requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "center" }));
-                            setTimeout(() => setHighlightOccId(null), 3000);
+                            setTimeout(() => setFlashOccId(null), 3000);
                           }
                         } : undefined}
                       >
