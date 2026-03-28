@@ -341,6 +341,7 @@ enum JobKind {
 enum JobStatus {
   PROPOSED
   ACCEPTED
+  PAUSED
   ARCHIVED
 }
 

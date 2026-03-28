@@ -135,13 +135,14 @@ export const payments: ServicesPayments = {
       const fullOcc = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
         include: {
-          job: { select: { id: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true } },
+          job: { select: { id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true } },
           assignees: true,
         },
       });
       if (
         fullOcc &&
         fullOcc.job.frequencyDays &&
+        fullOcc.job.status !== "PAUSED" &&
         !fullOcc.isOneOff &&
         fullOcc.workflow !== "ONE_OFF"
       ) {

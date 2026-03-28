@@ -1525,6 +1525,30 @@ export default function ServicesTab({
                     )}
                     {job.status === "ACCEPTED" && (
                       <StatusButton
+                        id="job-pause"
+                        itemId={job.id}
+                        label="Pause"
+                        onClick={async () => patchJobStatus(job, "PAUSED")}
+                        variant="outline"
+                        colorPalette="yellow"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "PAUSED" && (
+                      <StatusButton
+                        id="job-resume"
+                        itemId={job.id}
+                        label="Resume"
+                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        variant="outline"
+                        colorPalette="green"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {(job.status === "ACCEPTED" || job.status === "PAUSED") && (
+                      <StatusButton
                         id="job-archive"
                         itemId={job.id}
                         label="Archive"
