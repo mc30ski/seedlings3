@@ -32,7 +32,7 @@ type Props = {
   endpoint: string; // e.g. "/api/occurrences/:id/accept-payment" or "/api/admin/occurrences/:id/accept-payment"
   defaultAmount?: number | null;
   assignees: Assignee[];
-  onAccepted: () => void;
+  onAccepted: (result?: any) => void;
 };
 
 const methodItems = PAYMENT_METHOD.map((m) => ({ label: prettyStatus(m), value: m }));
@@ -111,7 +111,7 @@ export default function AcceptPaymentDialog({
 
     setBusy(true);
     try {
-      await apiPost(endpoint, {
+      const result = await apiPost<any>(endpoint, {
         amountPaid: amt,
         method: method[0],
         note: note.trim() || null,
@@ -119,7 +119,7 @@ export default function AcceptPaymentDialog({
       });
       publishInlineMessage({ type: "SUCCESS", text: "Payment accepted." });
       onOpenChange(false);
-      onAccepted();
+      onAccepted(result);
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",

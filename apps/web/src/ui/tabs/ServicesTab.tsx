@@ -85,6 +85,7 @@ export default function ServicesTab({
 
   const [q, setQ] = useState("");
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
   const [kind, setKind] = usePersistedState<string[]>("services_kind", ["ALL"]);
   const [jobStatusFilter, setJobStatusFilter] = usePersistedState<string[]>("services_jobStatus", ["ALL"]);
   const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
@@ -265,6 +266,22 @@ export default function ServicesTab({
 
   useEffect(() => {
     onEventSearchRun("paymentsTabToServicesTabSearch", setQ, inputRef, setHighlightId);
+  }, []);
+
+  // Navigate from Admin Jobs tab → specific occurrence
+  useEffect(() => {
+    return onEventSearchRun("jobsTabToServicesTabSearch", setQ, inputRef, (id) => {
+      if (!id) { setHighlightId(null); setHighlightOccId(null); return; }
+      // entityId is encoded as "jobId:occurrenceId"
+      const [jobId, occId] = id.split(":");
+      setHighlightId(jobId || null);
+      setHighlightOccId(occId || null);
+      if (jobId) {
+        // Auto-expand the job and load its detail
+        setExpandedMap((prev) => ({ ...prev, [jobId]: true }));
+        void loadDetail(jobId, true);
+      }
+    });
   }, []);
 
   async function loadDetail(jobId: string, force = false) {
@@ -474,7 +491,7 @@ export default function ServicesTab({
         <SearchWithClear
           ref={inputRef}
           value={q}
-          onChange={(v) => { setQ(v); setHighlightId(null); }}
+          onChange={(v) => { setQ(v); setHighlightId(null); setHighlightOccId(null); }}
           inputId="services-search"
           placeholder="Search…"
         />
@@ -787,6 +804,8 @@ export default function ServicesTab({
           const tf = typeFilter[0];
           const visibleOccs = detail
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
+                // Always show the highlighted occurrence
+                if (highlightOccId && o.id === highlightOccId) return true;
                 if (o.startAt) {
                   const d = o.startAt.slice(0, 10);
                   if (dateFrom && d < dateFrom) return false;
@@ -908,9 +927,17 @@ export default function ServicesTab({
                       <Box
                         key={occ.id}
                         p={2}
-                        borderWidth="1px"
+                        borderWidth={highlightOccId === occ.id ? "2px" : "1px"}
+                        borderColor={highlightOccId === occ.id ? "blue.400" : undefined}
+                        bg={highlightOccId === occ.id ? "blue.50" : undefined}
                         rounded="md"
                         mb={2}
+                        ref={highlightOccId === occ.id ? (el: HTMLDivElement | null) => {
+                          if (el) {
+                            requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "center" }));
+                            setTimeout(() => setHighlightOccId(null), 3000);
+                          }
+                        } : undefined}
                       >
                         <HStack justify="space-between" align="center">
                           <VStack align="start" gap={0}>
@@ -1251,11 +1278,11 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "SCHEDULED" && (
+                            {(occ.status === "SCHEDULED" || occ.isTentative) && (
                               <StatusButton
                                 id="occ-tentative"
                                 itemId={occ.id}
-                                label={occ.isTentative ? "Confirm" : "Mark Tentative"}
+                                label={occ.isTentative ? "Clear Tentative" : "Mark Tentative"}
                                 onClick={async () => void toggleTentative(occ.id, job.id, !!occ.isTentative)}
                                 variant="outline"
                                 colorPalette={occ.isTentative ? "green" : "orange"}
@@ -1279,7 +1306,7 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "SCHEDULED" && (
+                            {occ.status === "SCHEDULED" && !occ.isTentative && (
                               <StatusButton
                                 id="occ-start"
                                 itemId={occ.id}

@@ -415,6 +415,7 @@ export default function HomePage() {
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
+  setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
