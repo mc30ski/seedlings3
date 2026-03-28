@@ -33,13 +33,14 @@ import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
-import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
+import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
+import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -165,6 +166,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
+  const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -270,7 +272,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         `/api/occurrences?to=${localDate(yesterday)}`
       );
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED"
+        (o) => {
+          const s = o.status as string;
+          return s !== "CLOSED" && s !== "ARCHIVED" && s !== "CANCELED" && s !== "REJECTED";
+        }
       ).length;
       setOverdueCount(count);
     } catch {
@@ -1229,13 +1234,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-complete"
                           itemId={occ.id}
                           label="Complete"
-                          onClick={async () => setConfirmAction({
-                            title: "Complete Job?",
-                            message: "Are you sure you want to mark this job as complete?",
-                            confirmLabel: "Complete",
-                            colorPalette: "green",
-                            onConfirm: () => void updateStatus(occ, "complete"),
-                          })}
+                          onClick={async () => setCompleteDialogOcc(occ)}
                           variant="outline"
                           colorPalette="green"
                           busyId={statusButtonBusyId}
@@ -1295,7 +1294,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <StatusButton
                           id="occ-add-expense"
                           itemId={occ.id}
-                          label="Add Expense"
+                          label="Expenses"
                           onClick={async () => setExpenseDialogOccId(occ.id)}
                           variant="outline"
                           colorPalette="orange"
@@ -1391,14 +1390,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCancel={() => setConfirmAction(null)}
       />
 
-      <AddExpenseDialog
+      <ManageExpensesDialog
         open={!!expenseDialogOccId}
-        onOpenChange={(o) => { if (!o) setExpenseDialogOccId(null); }}
-        endpoint={`/api/occurrences/${expenseDialogOccId}/expenses`}
-        onAdded={() => {
-          setExpenseDialogOccId(null);
-          void load(false);
-        }}
+        onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
+        occurrenceId={expenseDialogOccId ?? ""}
+        onChanged={() => void load(false)}
       />
 
       {acceptPaymentOcc && (
@@ -1459,6 +1455,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }
         }}
       />
+      {completeDialogOcc && (
+        <CompleteJobDialog
+          open={!!completeDialogOcc}
+          onOpenChange={(o) => { if (!o) setCompleteDialogOcc(null); }}
+          occurrenceId={completeDialogOcc.id}
+          occurrencePrice={completeDialogOcc.price}
+          onCompleted={() => {
+            void updateStatus(completeDialogOcc, "complete");
+            setCompleteDialogOcc(null);
+          }}
+        />
+      )}
     </Box>
   );
 }

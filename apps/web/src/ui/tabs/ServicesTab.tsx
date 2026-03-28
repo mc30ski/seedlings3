@@ -251,7 +251,7 @@ export default function ServicesTab({
         `/api/occurrences?to=${localDate(yesterday)}`
       );
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED"
+        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED" && o.status !== "CANCELED" && o.status !== "REJECTED"
       ).length;
       setOverdueCount(count);
     } catch {
@@ -882,8 +882,8 @@ export default function ServicesTab({
                     onClick={() => toggleExpand(job.id)}
                   >
                     {expanded
-                      ? `Hide occurrences (${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▲`
-                      : `Show occurrences (${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▼`}
+                      ? `Hide occurrences (${visibleOccs.length} of ${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▲`
+                      : `Show occurrences (${job.occurrenceCount ?? 0}) ▼`}
                   </Button>
                 )}
 

@@ -114,6 +114,10 @@ export default function ClaimAgreementDialog({
                   </Box>
                 )}
 
+                <Text fontSize="xs" color="orange.500" fontStyle="italic">
+                  Note: This payout is an estimate based on current expenses. The final amount may change if expenses are added, updated, or removed before the job is completed.
+                </Text>
+
                 {/* Agreement terms */}
                 {isContractor ? (
                   <Box>
