@@ -930,6 +930,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ${occ.price.toFixed(2)}
                         </Badge>
                       )}
+                      {occ.payment && (
+                        <Badge colorPalette="teal" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                          Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                        </Badge>
+                      )}
                       {occ.price != null && !occ.payment && (() => {
                         const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                         const net = occ.price! - expTotal;
@@ -979,6 +984,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {occ.price != null && (
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
                         ${occ.price.toFixed(2)}
+                      </Badge>
+                    )}
+                    {occ.payment && (
+                      <Badge colorPalette="teal" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                        Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                       </Badge>
                     )}
                     {occ.price != null && !occ.payment && (() => {
@@ -1187,7 +1197,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
-                      {isUnassigned && (
+                      {isUnassigned && !isEstimateOcc && (
                         <StatusButton
                           id="occ-claim"
                           itemId={occ.id}

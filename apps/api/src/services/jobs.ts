@@ -698,6 +698,9 @@ export const jobs: ServicesJobs = {
       if (occ.isTentative) {
         throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by an admin.", 409);
       }
+      if ((occ as any).workflow === "ESTIMATE" || (occ as any).isEstimate) {
+        throw new ServiceError("ESTIMATE_NO_CLAIM", "Estimates cannot be claimed. An admin must assign workers.", 409);
+      }
 
       // Tier gating for high-value jobs
       const thresholdSetting = await prisma.setting.findUnique({ where: { key: "HIGH_VALUE_JOB_THRESHOLD" } });
