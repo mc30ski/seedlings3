@@ -752,6 +752,11 @@ export const jobs: ServicesJobs = {
       }
 
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+      // Tentative jobs cannot be started
+      if (occ.isTentative && status === JobOccurrenceStatus.IN_PROGRESS) {
+        throw new ServiceError("TENTATIVE", "Tentative jobs cannot be started until confirmed by an admin.", 409);
+      }
+
       const workflow = occ.workflow ?? "STANDARD";
 
       // For backward compat: estimates trying PENDING_PAYMENT → use PROPOSAL_SUBMITTED

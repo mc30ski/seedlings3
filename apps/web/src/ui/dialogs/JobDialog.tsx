@@ -148,6 +148,10 @@ export default function JobDialog({
       publishInlineMessage({ type: "WARNING", text: "Please select a property." });
       return;
     }
+    if (!frequencyDays || Number(frequencyDays) < 1) {
+      publishInlineMessage({ type: "WARNING", text: "Please enter a frequency in days for this job." });
+      return;
+    }
     const payload = {
       propertyId: pid,
       kind: kindValue[0] as JobKind,
@@ -300,7 +304,7 @@ export default function JobDialog({
                     />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <Text mb="1">Frequency (days)</Text>
+                    <Text mb="1">Frequency (days) *</Text>
                     <Input
                       type="number"
                       value={frequencyDays}

@@ -30,7 +30,6 @@ import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
-import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
@@ -180,13 +179,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
   const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<WorkerOccurrence | null>(null);
-
-  const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
-  const [scheduleNextData, setScheduleNextData] = useState<{
-    jobId: string;
-    frequencyDays: number;
-    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null; estimatedMinutes?: number | null; assignees?: { userId: string; displayName?: string | null }[] };
-  } | null>(null);
 
   const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
 
@@ -361,28 +353,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       await apiPost(`/api/occurrences/${occ.id}/${action}`, body);
       await load(false);
 
-      // For estimates, "complete" goes straight to CLOSED — prompt schedule next
-      if (action === "complete" && occ.isEstimate && occ.job?.frequencyDays && !occ.isOneOff) {
-        publishInlineMessage({ type: "SUCCESS", text: "Estimate completed." });
-        setScheduleNextData({
-          jobId: occ.job.id,
-          frequencyDays: occ.job.frequencyDays,
-          closedOccurrence: {
-            startAt: occ.startAt,
-            endAt: occ.endAt,
-            notes: occ.notes,
-            price: occ.price,
-            estimatedMinutes: occ.estimatedMinutes,
-            assignees: (occ.assignees ?? []).map((a) => ({ userId: a.userId, displayName: a.user?.displayName })),
-          },
-        });
-        setScheduleNextOpen(true);
-      } else {
-        publishInlineMessage({
-          type: "SUCCESS",
-          text: action === "start" ? "Job started." : "Job marked as pending payment.",
-        });
-      }
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: action === "start" ? "Job started." : action === "complete" ? "Job completed." : "Job marked as pending payment.",
+      });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -866,6 +840,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               }
                             />
                           )}
+                          {forAdmin && (
+                            <TextLink
+                              text="View in Services"
+                              onClick={() =>
+                                openEventSearch(
+                                  "jobsTabToServicesTabSearch",
+                                  occ.job?.property?.displayName ?? "",
+                                  true,
+                                  `${occ.job?.id}:${occ.id}`,
+                                )
+                              }
+                            />
+                          )}
                         </HStack>
                       )}
                     </VStack>
@@ -1212,7 +1199,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "SCHEDULED" && (
+                      {isAssignedToMe && occ.status === "SCHEDULED" && !isTentative && (
                         <StatusButton
                           id="occ-start"
                           itemId={occ.id}
@@ -1349,27 +1336,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         />
       )}
 
-      {scheduleNextData && (
-        <ScheduleNextDialog
-          open={scheduleNextOpen}
-          onOpenChange={(o) => {
-            setScheduleNextOpen(o);
-            if (!o) setScheduleNextData(null);
-          }}
-          jobId={scheduleNextData.jobId}
-          frequencyDays={scheduleNextData.frequencyDays}
-          closedOccurrence={scheduleNextData.closedOccurrence}
-          createEndpoint="/api/occurrences/create-next"
-          createBody={{ jobId: scheduleNextData.jobId }}
-          onCreated={(nextStartDate) => {
-            if (nextStartDate && dateTo && nextStartDate > dateTo) {
-              setDateTo(nextStartDate);
-            } else {
-              void load(false);
-            }
-          }}
-        />
-      )}
 
       <ConfirmDialog
         open={!!confirmAction}
@@ -1410,24 +1376,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
           }))}
-          onAccepted={() => {
-            const occ = acceptPaymentOcc;
+          onAccepted={(result: any) => {
             void load(false);
-            // Prompt to schedule next if job has frequency and not one-off
-            if (occ?.job?.frequencyDays && !occ.isOneOff) {
-              setScheduleNextData({
-                jobId: occ.job.id,
-                frequencyDays: occ.job.frequencyDays,
-                closedOccurrence: {
-                  startAt: occ.startAt,
-                  endAt: occ.endAt,
-                  notes: occ.notes,
-                  price: occ.price,
-                  estimatedMinutes: occ.estimatedMinutes,
-                  assignees: (occ.assignees ?? []).map((a) => ({ userId: a.userId, displayName: a.user?.displayName })),
-                },
+            if (result?.nextOccurrence) {
+              const nextDate = result.nextOccurrence.startAt
+                ? new Date(result.nextOccurrence.startAt).toLocaleDateString()
+                : "upcoming";
+              publishInlineMessage({
+                type: "SUCCESS",
+                text: `Payment accepted. Next occurrence scheduled for ${nextDate}.`,
               });
-              setScheduleNextOpen(true);
             }
             setAcceptPaymentOcc(null);
           }}

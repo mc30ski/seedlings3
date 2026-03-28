@@ -28,7 +28,8 @@ export type EventTypes =
   | "jobsTabToClientsTabSearch"
   | "paymentsTabToPropertiesTabSearch"
   | "paymentsTabToClientsTabSearch"
-  | "paymentsTabToServicesTabSearch";
+  | "paymentsTabToServicesTabSearch"
+  | "jobsTabToServicesTabSearch";
 
 export type DialogMode = "CREATE" | "UPDATE";
 

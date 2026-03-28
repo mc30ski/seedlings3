@@ -130,7 +130,58 @@ export const payments: ServicesPayments = {
         },
       });
 
-      return payment;
+      // Auto-create next occurrence for repeating jobs
+      let nextOccurrence: any = null;
+      const fullOcc = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        include: {
+          job: { select: { id: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true } },
+          assignees: true,
+        },
+      });
+      if (
+        fullOcc &&
+        fullOcc.job.frequencyDays &&
+        !fullOcc.isOneOff &&
+        fullOcc.workflow !== "ONE_OFF"
+      ) {
+        const freq = fullOcc.job.frequencyDays;
+        const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();
+        const nextStart = new Date(baseDate);
+        nextStart.setDate(nextStart.getDate() + freq);
+        const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
+        if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq);
+
+        nextOccurrence = await tx.jobOccurrence.create({
+          data: {
+            jobId: fullOcc.jobId,
+            kind: fullOcc.kind,
+            startAt: nextStart,
+            endAt: nextEnd,
+            status: "SCHEDULED",
+            source: "GENERATED",
+            workflow: "STANDARD",
+            notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
+            price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
+            estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
+          } as any,
+        });
+
+        // Copy assignees to the new occurrence
+        const assigneeIds = fullOcc.assignees.map((a) => a.userId);
+        if (assigneeIds.length > 0) {
+          await tx.jobOccurrenceAssignee.createMany({
+            data: assigneeIds.map((uid) => ({
+              occurrenceId: nextOccurrence.id,
+              userId: uid,
+              assignedById: currentUserId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return { ...payment, nextOccurrence };
     });
   },
 
