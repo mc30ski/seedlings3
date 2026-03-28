@@ -9,11 +9,12 @@ type SearchWithClearProps = {
   onChange: (next: string) => void;
   placeholder?: string;
   inputId?: string;
+  showClear?: boolean;
 };
 
 const SearchWithClear = forwardRef<HTMLInputElement, SearchWithClearProps>(
   (
-    { value, onChange, placeholder = "Search…", inputId = "equipment-search" },
+    { value, onChange, placeholder = "Search…", inputId = "equipment-search", showClear },
     ref
   ) => {
     return (
@@ -28,7 +29,7 @@ const SearchWithClear = forwardRef<HTMLInputElement, SearchWithClearProps>(
             pr="9"
           />
 
-          {value && (
+          {(value || showClear) && (
             <IconButton
               aria-label="Clear search"
               size="xs"

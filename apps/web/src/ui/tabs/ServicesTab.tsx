@@ -496,6 +496,7 @@ export default function ServicesTab({
           onChange={(v) => { setQ(v); setHighlightId(null); setHighlightOccId(null); setFlashOccId(null); }}
           inputId="services-search"
           placeholder="Search…"
+          showClear={!!highlightId || !!highlightOccId}
         />
         <Select.Root
           collection={kindCollection}
@@ -978,6 +979,11 @@ export default function ServicesTab({
                                 <span>Not set</span>
                               )}
                             </Text>
+                            {occ.payment && (
+                              <Text fontSize="xs" color="teal.600" fontWeight="medium">
+                                Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {prettyStatus((occ.payment as any).method)}
+                              </Text>
+                            )}
                             {occ.price != null && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (() => {
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const assignees = occ.assignees ?? [];
@@ -1196,31 +1202,23 @@ export default function ServicesTab({
                             )}
                           </VStack>
                           <VStack gap={1} align="end">
-                            <StatusBadge
-                              status={occ.status}
-                              palette={occurrenceStatusColor(occ.status)}
-                              variant="subtle"
-                            />
-                            {occ.isTentative && (
+                            {occ.isTentative ? (
+                              <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                            ) : occ.status !== "SCHEDULED" ? (
                               <StatusBadge
-                                status="Tentative"
-                                palette="orange"
+                                status={occ.status}
+                                palette={occurrenceStatusColor(occ.status)}
                                 variant="subtle"
                               />
+                            ) : null}
+                            {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
+                              <StatusBadge status="Repeating" palette="blue" variant="outline" />
                             )}
-                            {occ.isEstimate && (
-                              <StatusBadge
-                                status="Estimate"
-                                palette="purple"
-                                variant="subtle"
-                              />
+                            {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                              <StatusBadge status="Estimate" palette="purple" variant="solid" />
                             )}
-                            {occ.isOneOff && (
-                              <StatusBadge
-                                status="One-off"
-                                palette="gray"
-                                variant="subtle"
-                              />
+                            {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
+                              <StatusBadge status="One-off" palette="gray" variant="solid" />
                             )}
                           </VStack>
                         </HStack>

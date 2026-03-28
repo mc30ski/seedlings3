@@ -265,6 +265,33 @@ export default function OccurrenceDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {mode === "CREATE" && (
+                  <div>
+                    <Text mb="1">Type</Text>
+                    <Select.Root
+                      collection={workflowCollection}
+                      value={[workflow]}
+                      onValueChange={(e) => setWorkflow(e.value[0] ?? "STANDARD")}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    >
+                      <Select.Control>
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select type" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {workflowItems.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                  </div>
+                )}
                 {mode === "UPDATE" && (
                   <div>
                     <Text mb="1">Status</Text>
@@ -488,33 +515,6 @@ export default function OccurrenceDialog({
                         })}
                       </HStack>
                     )}
-                  </div>
-                )}
-                {mode === "CREATE" && (
-                  <div>
-                    <Text mb="1">Type</Text>
-                    <Select.Root
-                      collection={workflowCollection}
-                      value={[workflow]}
-                      onValueChange={(e) => setWorkflow(e.value[0] ?? "STANDARD")}
-                      size="sm"
-                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
-                    >
-                      <Select.Control>
-                        <Select.Trigger>
-                          <Select.ValueText placeholder="Select type" />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {workflowItems.map((it) => (
-                            <Select.Item key={it.value} item={it.value}>
-                              <Select.ItemText>{it.label}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Select.Root>
                   </div>
                 )}
                 {mode === "CREATE" && (
