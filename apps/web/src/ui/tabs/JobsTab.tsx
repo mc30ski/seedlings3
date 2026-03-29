@@ -266,7 +266,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => {
           const s = o.status as string;
-          return s !== "CLOSED" && s !== "ARCHIVED" && s !== "CANCELED" && s !== "REJECTED";
+          return s !== "CLOSED" && s !== "ARCHIVED" && s !== "CANCELED" && s !== "REJECTED" && s !== "ACCEPTED";
         }
       ).length;
       setOverdueCount(count);
@@ -383,7 +383,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     }
     if (overdueActive) {
-      rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED");
+      rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.status !== "ACCEPTED" && occ.status !== "REJECTED");
     }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
