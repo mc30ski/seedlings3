@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import {
   Box,
-  Badge,
   Card,
   HStack,
   Text,
@@ -29,14 +28,6 @@ type FeedItem = {
   durationMinutes: number | null;
   estimatedMinutes: number | null;
   photos: FeedPhoto[];
-};
-
-type Stats = {
-  jobsCompleted: number;
-  jobsThisMonth: number;
-  activeProperties: number;
-  teamSize: number;
-  inProgress: number;
 };
 
 function prettyKind(kind: string): string {
@@ -76,21 +67,34 @@ function formatDuration(mins: number): string {
 }
 
 function workerLabel(workers: string[]): string {
-  if (workers.length === 0) return "";
+  if (workers.length === 0) return "Our team";
   if (workers.length === 1) return workers[0];
   if (workers.length === 2) return `${workers[0]} & ${workers[1]}`;
-  return `${workers[0]} + ${workers.length - 1} others`;
+  return `${workers[0]}, ${workers[1]} & others`;
 }
 
-const typeBadge: Record<string, { label: string; palette: string; variant: string }> = {
-  completed: { label: "Completed", palette: "green", variant: "solid" },
-  in_progress: { label: "In Progress", palette: "blue", variant: "solid" },
-  upcoming: { label: "Upcoming", palette: "gray", variant: "outline" },
+/** Build a natural-language description for a feed item */
+function feedMessage(item: FeedItem): string {
+  const where = item.area || "the area";
+
+  if (item.type === "in_progress") {
+    return `Our team is servicing lawns in ${where}`;
+  }
+  if (item.type === "upcoming") {
+    return `Lawn care scheduled in ${where}`;
+  }
+  // completed
+  return `Our team completed lawn care in ${where}`;
+}
+
+const typeStyle: Record<string, { dot: string; color: string; bg?: string; borderColor?: string }> = {
+  in_progress: { dot: "blue.500", color: "blue.700", bg: "blue.50", borderColor: "blue.200" },
+  completed: { dot: "green.500", color: "fg.default" },
+  upcoming: { dot: "gray.400", color: "fg.muted" },
 };
 
 export default function ClientFeedTab() {
   const [items, setItems] = useState<FeedItem[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
@@ -105,12 +109,6 @@ export default function ClientFeedTab() {
       } catch (err: any) {
         console.error("Feed load failed:", err);
         setError(err?.message || "Failed to load feed");
-      }
-      try {
-        const st = await apiGet<Stats>("/api/public/stats");
-        setStats(st);
-      } catch (err: any) {
-        console.error("Stats load failed:", err);
       }
       setLoading(false);
     }
@@ -146,44 +144,14 @@ export default function ClientFeedTab() {
 
   return (
     <Box w="full" pb={8}>
-      {/* Stats banner */}
-      {stats && (
-        <Box mb={5} p={4} bg="green.50" rounded="xl" borderWidth="1px" borderColor="green.200">
-          <HStack gap={6} justify="center" wrap="wrap">
-            <VStack gap={0}>
-              <Text fontSize="2xl" fontWeight="bold" color="green.700">{stats.jobsCompleted.toLocaleString()}</Text>
-              <Text fontSize="xs" color="green.600">Jobs Completed</Text>
-            </VStack>
-            <VStack gap={0}>
-              <Text fontSize="2xl" fontWeight="bold" color="green.700">{stats.jobsThisMonth}</Text>
-              <Text fontSize="xs" color="green.600">This Month</Text>
-            </VStack>
-            <VStack gap={0}>
-              <Text fontSize="2xl" fontWeight="bold" color="teal.700">{stats.activeProperties}</Text>
-              <Text fontSize="xs" color="teal.600">Properties</Text>
-            </VStack>
-            <VStack gap={0}>
-              <Text fontSize="2xl" fontWeight="bold" color="blue.700">{stats.teamSize}</Text>
-              <Text fontSize="xs" color="blue.600">Team Members</Text>
-            </VStack>
-            {stats.inProgress > 0 && (
-              <VStack gap={0}>
-                <Text fontSize="2xl" fontWeight="bold" color="blue.600">{stats.inProgress}</Text>
-                <Text fontSize="xs" color="blue.500">Active Now</Text>
-              </VStack>
-            )}
-          </HStack>
-        </Box>
-      )}
-
       {error && (
         <Text textAlign="center" color="red.500" py={4} fontSize="sm">{error}</Text>
       )}
 
       {/* In Progress section */}
       {inProgress.length > 0 && (
-        <Box mb={4}>
-          <Text fontSize="sm" fontWeight="semibold" color="blue.600" mb={2} px={1}>
+        <Box mb={5}>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.500" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             Happening Now
           </Text>
           <VStack align="stretch" gap={2}>
@@ -196,9 +164,9 @@ export default function ClientFeedTab() {
 
       {/* Completed section */}
       {completed.length > 0 && (
-        <Box mb={4}>
-          <Text fontSize="sm" fontWeight="semibold" color="green.600" mb={2} px={1}>
-            Recently Completed
+        <Box mb={5}>
+          <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+            Recent Activity
           </Text>
           <VStack align="stretch" gap={2}>
             {completed.map((item) => (
@@ -210,8 +178,8 @@ export default function ClientFeedTab() {
 
       {/* Upcoming section */}
       {upcoming.length > 0 && (
-        <Box mb={4}>
-          <Text fontSize="sm" fontWeight="semibold" color="fg.muted" mb={2} px={1}>
+        <Box mb={5}>
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
             Coming Up
           </Text>
           <VStack align="stretch" gap={2}>
@@ -223,7 +191,10 @@ export default function ClientFeedTab() {
       )}
 
       {!error && items.length === 0 && (
-        <Text textAlign="center" color="fg.muted" py={8}>No recent activity to show.</Text>
+        <Box textAlign="center" py={10}>
+          <Text color="fg.muted" fontSize="lg">All caught up!</Text>
+          <Text color="fg.muted" fontSize="sm" mt={1}>Check back soon for updates on your lawn care.</Text>
+        </Box>
       )}
 
       {/* Full-screen photo viewer */}
@@ -291,78 +262,62 @@ export default function ClientFeedTab() {
 }
 
 function FeedCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photos: FeedPhoto[], idx: number) => void }) {
-  const badge = typeBadge[item.type];
+  const style = typeStyle[item.type];
   const isUpcoming = item.type === "upcoming";
-  const isInProgress = item.type === "in_progress";
 
   return (
-    <Card.Root variant="outline" borderColor={isInProgress ? "blue.200" : undefined} bg={isInProgress ? "blue.50" : undefined}>
+    <Card.Root
+      variant="outline"
+      borderColor={style.borderColor}
+      bg={style.bg}
+    >
       <Card.Body py="3" px="4">
-        <HStack justify="space-between" align="start" gap={3}>
+        <HStack align="start" gap={3}>
+          {/* Timeline dot */}
+          <Box
+            w="8px"
+            h="8px"
+            borderRadius="full"
+            bg={style.dot}
+            mt="6px"
+            flexShrink={0}
+          />
           <VStack align="start" gap={1} flex="1" minW={0}>
-            <HStack gap={2} wrap="wrap">
-              <Badge colorPalette={badge.palette} variant={badge.variant as any} fontSize="xs" borderRadius="full" px="2">
-                {badge.label}
-              </Badge>
-              <Badge colorPalette="gray" variant="outline" fontSize="xs" borderRadius="full" px="2">
-                {prettyKind(item.kind)}
-              </Badge>
-              {item.estimatedMinutes && !item.durationMinutes && (
-                <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
-                  ~{formatDuration(item.estimatedMinutes)}
-                </Badge>
-              )}
-            </HStack>
+            <Text fontSize="sm" color={style.color}>
+              {feedMessage(item)}
+            </Text>
+            <Text fontSize="xs" color="fg.muted">
+              {isUpcoming ? relativeTime(item.timestamp) : timeAgo(item.timestamp)}
+            </Text>
 
-            {item.area && (
-              <Text fontSize="sm" fontWeight="medium">
-                {item.area}
-              </Text>
+            {/* Photos */}
+            {item.photos.length > 0 && (
+              <HStack gap={2} mt={1} overflowX="auto" pb={1}>
+                {item.photos.map((p, idx) => (
+                  <Box
+                    key={p.id}
+                    flexShrink={0}
+                    w="90px"
+                    h="90px"
+                    rounded="lg"
+                    overflow="hidden"
+                    cursor="pointer"
+                    onClick={() => onPhotoClick(item.photos, idx)}
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                  >
+                    <img
+                      src={p.url}
+                      alt="Job photo"
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      loading="lazy"
+                    />
+                  </Box>
+                ))}
+              </HStack>
             )}
-
-            <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
-              {item.workers.length > 0 && (
-                <Text>{workerLabel(item.workers)}</Text>
-              )}
-              {item.durationMinutes != null && item.durationMinutes > 0 && (
-                <Text>
-                  {isInProgress ? `${formatDuration(item.durationMinutes)} so far` : formatDuration(item.durationMinutes)}
-                </Text>
-              )}
-            </HStack>
           </VStack>
-
-          <Text fontSize="xs" color="fg.muted" flexShrink={0} whiteSpace="nowrap">
-            {isUpcoming ? relativeTime(item.timestamp) : timeAgo(item.timestamp)}
-          </Text>
         </HStack>
-
-        {/* Photos */}
-        {item.photos.length > 0 && (
-          <HStack gap={2} mt={3} overflowX="auto" pb={1}>
-            {item.photos.map((p, idx) => (
-              <Box
-                key={p.id}
-                flexShrink={0}
-                w="100px"
-                h="100px"
-                rounded="lg"
-                overflow="hidden"
-                cursor="pointer"
-                onClick={() => onPhotoClick(item.photos, idx)}
-                borderWidth="1px"
-                borderColor="gray.200"
-              >
-                <img
-                  src={p.url}
-                  alt="Job photo"
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  loading="lazy"
-                />
-              </Box>
-            ))}
-          </HStack>
-        )}
       </Card.Body>
     </Card.Root>
   );
