@@ -1220,6 +1220,9 @@ export default function ServicesTab({
                             {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
                               <StatusBadge status="One-off" palette="gray" variant="solid" />
                             )}
+                            {(occ as any).isAdminOnly && (
+                              <StatusBadge status="Administered" palette="red" variant="outline" />
+                            )}
                           </VStack>
                         </HStack>
 
@@ -1649,6 +1652,7 @@ export default function ServicesTab({
           defaultEstimatedMinutes={editingOccurrence.estimatedMinutes}
           defaultStartedAt={editingOccurrence.startedAt}
           defaultCompletedAt={editingOccurrence.completedAt}
+          defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           isAdmin={forAdmin}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);

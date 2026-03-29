@@ -568,6 +568,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.isOneOff != null) input.isOneOff = !!body.isOneOff;
     if (body.isTentative != null) input.isTentative = !!body.isTentative;
     if (body.isEstimate != null) input.isEstimate = !!body.isEstimate;
+    if (body.isAdminOnly != null) input.isAdminOnly = !!body.isAdminOnly;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
@@ -672,6 +673,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
+      if ("isAdminOnly" in body) patch.isAdminOnly = !!body.isAdminOnly;
       if ("startedAt" in body) patch.startedAt = body.startedAt || null;
       if ("completedAt" in body) patch.completedAt = body.completedAt || null;
       if ("startLat" in body) patch.startLat = body.startLat != null ? Number(body.startLat) : null;

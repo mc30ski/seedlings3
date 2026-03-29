@@ -749,6 +749,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isEstimateOcc = occ.workflow === "ESTIMATE" || occ.isEstimate;
             const isAcceptedEstimate = isEstimateOcc && occ.status === "ACCEPTED";
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
+            const isAdminOnlyOcc = !!occ.isAdminOnly;
 
             const cardBorderColor = (isClosed || isAcceptedEstimate)
               ? "gray.200"
@@ -871,6 +872,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
+                        {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
                       </HStack>
                     ) : (
@@ -908,6 +910,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             palette="gray"
                             variant="solid"
                           />
+                        )}
+                        {isAdminOnlyOcc && (
+                          <StatusBadge status="Administered" palette="red" variant="outline" />
                         )}
                         {(occ.price ?? 0) >= highValueThreshold && (
                           <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
@@ -1102,6 +1107,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         {isTentative
                           ? "Tentative — awaiting admin confirmation"
+                          : isAdminOnlyOcc
+                          ? "Unclaimed — contact your administrator"
                           : "Unclaimed — available to pick up"}
                       </Text>
                     )}
@@ -1198,7 +1205,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
-                      {isUnassigned && !isEstimateOcc && (
+                      {isUnassigned && !isEstimateOcc && !isAdminOnlyOcc && (
                         <StatusButton
                           id="occ-claim"
                           itemId={occ.id}
