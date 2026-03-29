@@ -6,7 +6,7 @@ import { AlertTriangle, Plus } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
-import { UserButton, SignIn, useAuth } from "@clerk/clerk-react";
+import { UserButton, useAuth } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
@@ -59,8 +59,6 @@ export default function HomePage() {
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
-  const [showSignIn, setShowSignIn] = useState(false);
-
   const isAdmin = hasRole(me?.roles, "ADMIN");
   const isWorker = hasRole(me?.roles, "WORKER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
@@ -179,11 +177,6 @@ export default function HomePage() {
       setMeLoading(false);
     }
   }, [authLoaded, isSignedIn, loadMe]);
-
-  // Dismiss sign-in overlay when user completes sign-in
-  useEffect(() => {
-    if (isSignedIn && showSignIn) setShowSignIn(false);
-  }, [isSignedIn, showSignIn]);
 
   useEffect(() => {
     if (topTab === "admin" && !isAdmin)
@@ -316,7 +309,7 @@ export default function HomePage() {
       value: "worker",
       label: "Worker",
       icon: FiUser,
-      visible: () => !isSignedIn || (!!me?.isApproved && isWorker),
+      visible: () => !!isSignedIn && !!me?.isApproved && isWorker,
       content: (
         <>
           {me && !me.workerType && (
@@ -366,7 +359,7 @@ export default function HomePage() {
       value: "admin",
       label: "Admin",
       icon: GrUserAdmin,
-      visible: () => !isSignedIn || isAdmin,
+      visible: () => !!isSignedIn && isAdmin,
       content: (
         <>
           <NewJobSetupWorkflow
@@ -685,14 +678,7 @@ export default function HomePage() {
         <ScrollableUnderlineTabs
           tabs={outerTabs}
           value={topTab}
-          onValueChange={(v) => {
-            if ((v === "worker" || v === "admin") && !isSignedIn) {
-              setShowSignIn(true);
-              return;
-            }
-            setShowSignIn(false);
-            setTopTab(v as typeof topTab);
-          }}
+          onValueChange={(v) => setTopTab(v as typeof topTab)}
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={0}
@@ -739,22 +725,6 @@ export default function HomePage() {
             </Select.Root>
           ) : undefined}
         />
-      )}
-      {showSignIn && (
-        <Box
-          position="fixed"
-          inset="0"
-          zIndex={10000}
-          bg="blackAlpha.600"
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          onClick={() => setShowSignIn(false)}
-        >
-          <Box onClick={(e) => e.stopPropagation()}>
-            <SignIn routing="hash" afterSignInUrl="/" />
-          </Box>
-        </Box>
       )}
       <ConfirmDialog
         open={!!confirmAction}
