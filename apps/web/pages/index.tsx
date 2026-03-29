@@ -677,7 +677,7 @@ export default function HomePage() {
       </Box>
       {!meLoading && me && !me.isApproved && topTab !== "client" && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
-      {authLoaded && (
+      {authLoaded && (!isSignedIn || me) && (
         <ScrollableUnderlineTabs
           tabs={outerTabs}
           value={topTab}
