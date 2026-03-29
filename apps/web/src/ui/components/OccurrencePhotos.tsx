@@ -245,119 +245,92 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
         </SimpleGrid>
       )}
 
-      {/* Full-size photo viewer — fixed overlay, completely outside card event flow */}
+      {/* Full-size photo viewer — dark overlay like Client tab */}
       {viewPhoto && typeof document !== "undefined" && ReactDOM.createPortal(
         <Box
           position="fixed"
           inset="0"
           zIndex="9999"
+          bg="blackAlpha.800"
           display="flex"
           alignItems="center"
           justifyContent="center"
+          onMouseDown={() => setViewPhoto(null)}
+          onClick={(e) => e.stopPropagation()}
         >
-          {/* Backdrop — onMouseDown to dismiss before click bubbles anywhere */}
-          <Box
-            position="absolute"
-            inset="0"
-            bg="blackAlpha.700"
-            onMouseDown={() => setViewPhoto(null)}
-            onClick={(e) => e.stopPropagation()}
-          />
-          {/* Content — stop mousedown so clicking inside doesn't dismiss */}
-          <Box
-            position="relative"
-            mx="4"
-            maxW="lg"
-            w="full"
-            bg="white"
-            rounded="2xl"
-            p="4"
-            shadow="lg"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <VStack gap={2}>
-              <Box position="relative" w="full">
-                <Image
-                  src={viewPhoto.url}
-                  alt={viewPhoto.fileName ?? "Photo"}
-                  w="full"
-                  maxH="70vh"
-                  objectFit="contain"
-                  borderRadius="md"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-                {hasPrev && (
-                  <Button
-                    position="absolute"
-                    left="2"
-                    top="50%"
-                    transform="translateY(-50%)"
-                    size="sm"
-                    variant="ghost"
-                    bg="blackAlpha.500"
-                    color="white"
-                    borderRadius="full"
-                    minW="auto"
-                    px="2"
-                    _hover={{ bg: "blackAlpha.700" }}
-                    onClick={() => setViewPhoto(photos[viewIndex - 1])}
-                  >
-                    <ChevronLeft size={20} />
-                  </Button>
-                )}
-                {hasNext && (
-                  <Button
-                    position="absolute"
-                    right="2"
-                    top="50%"
-                    transform="translateY(-50%)"
-                    size="sm"
-                    variant="ghost"
-                    bg="blackAlpha.500"
-                    color="white"
-                    borderRadius="full"
-                    minW="auto"
-                    px="2"
-                    _hover={{ bg: "blackAlpha.700" }}
-                    onClick={() => setViewPhoto(photos[viewIndex + 1])}
-                  >
-                    <ChevronRight size={20} />
-                  </Button>
-                )}
-              </Box>
-              <HStack justify="space-between" w="full" fontSize="xs" color="fg.muted">
-                <Text>
-                  {viewIndex + 1}/{photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {new Date(viewPhoto.createdAt).toLocaleString()}
-                </Text>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  colorPalette="red"
-                  onClick={() => viewPhoto && handleDelete(viewPhoto)}
-                >
-                  <Trash2 size={14} />
-                  Delete
-                </Button>
-              </HStack>
-            </VStack>
-            {/* Close button */}
-            <Button
+          {/* Navigation: prev */}
+          {hasPrev && (
+            <Box
               position="absolute"
-              top="2"
-              right="2"
+              left="3"
+              top="50%"
+              transform="translateY(-50%)"
+              color="white"
+              fontSize="2xl"
+              cursor="pointer"
+              p={2}
+              zIndex={1}
+              onMouseDown={(e) => { e.stopPropagation(); setViewPhoto(photos[viewIndex - 1]); }}
+              userSelect="none"
+            >
+              <ChevronLeft size={28} />
+            </Box>
+          )}
+
+          {/* Image */}
+          <img
+            src={viewPhoto.url}
+            alt={viewPhoto.fileName ?? "Photo"}
+            style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: "8px" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+
+          {/* Navigation: next */}
+          {hasNext && (
+            <Box
+              position="absolute"
+              right="3"
+              top="50%"
+              transform="translateY(-50%)"
+              color="white"
+              fontSize="2xl"
+              cursor="pointer"
+              p={2}
+              zIndex={1}
+              onMouseDown={(e) => { e.stopPropagation(); setViewPhoto(photos[viewIndex + 1]); }}
+              userSelect="none"
+            >
+              <ChevronRight size={28} />
+            </Box>
+          )}
+
+          {/* Bottom bar: info + delete */}
+          <HStack
+            position="absolute"
+            bottom="4"
+            left="0"
+            right="0"
+            justify="center"
+            gap={4}
+            px={4}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <Text color="whiteAlpha.700" fontSize="sm">
+              {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {new Date(viewPhoto.createdAt).toLocaleString()}
+            </Text>
+            <Button
               size="xs"
               variant="ghost"
-              borderRadius="full"
-              minW="auto"
-              px="1"
-              onClick={() => setViewPhoto(null)}
+              color="red.300"
+              _hover={{ color: "red.200", bg: "whiteAlpha.200" }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => viewPhoto && handleDelete(viewPhoto)}
             >
-              ✕
+              <Trash2 size={14} />
+              Delete
             </Button>
-          </Box>
+          </HStack>
         </Box>,
         document.body
       )}
