@@ -180,11 +180,13 @@ export default function HomePage() {
   }, [authLoaded, isSignedIn, loadMe]);
 
   useEffect(() => {
+    // Don't reset tabs until we know the user's roles
+    if (!me) return;
     if (topTab === "admin" && !isAdmin)
       setTopTab(isWorker ? "worker" : "client");
     if (topTab === "worker" && !isWorker)
       setTopTab(isAdmin ? "admin" : "client");
-  }, [isAdmin, isWorker, topTab]);
+  }, [isAdmin, isWorker, topTab, me]);
 
   // Re-fetch me silently when switching top tabs so admin changes are reflected
   useEffect(() => {
