@@ -174,8 +174,8 @@ export default function OccurrenceDialog({
     }
     setBusy(true);
     try {
-      const startAtIso = new Date(startAt + "T00:00:00").toISOString();
-      const endAtIso = endAt ? new Date(endAt + "T00:00:00").toISOString() : null;
+      const startAtIso = startAt + "T12:00:00Z";
+      const endAtIso = endAt ? endAt + "T12:00:00Z" : null;
       const priceVal = price !== "" ? Number(price) : null;
       const notesVal = notes.trim() || null;
 
