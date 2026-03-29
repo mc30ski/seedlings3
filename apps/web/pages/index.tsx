@@ -40,6 +40,7 @@ import {
   FiFileText,
   FiMapPin,
   FiActivity,
+  FiHome,
   FiSettings,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
@@ -301,7 +302,7 @@ export default function HomePage() {
     {
       value: "client",
       label: "Client",
-      icon: FiActivity,
+      icon: FiHome,
       visible: true,
       content: <ClientFeedTab />,
     },

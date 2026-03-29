@@ -334,6 +334,7 @@ export const jobs: ServicesJobs = {
           isOneOff: input.workflow === "ONE_OFF" || input.isOneOff || false,
           isTentative: input.isTentative ?? false,
           isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
+          isAdminOnly: input.isAdminOnly ?? false,
         } as any,
       });
 
@@ -388,6 +389,7 @@ export const jobs: ServicesJobs = {
       if ("estimatedMinutes" in patch) data.estimatedMinutes = patch.estimatedMinutes ?? null;
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
+      if ("isAdminOnly" in patch) data.isAdminOnly = !!patch.isAdminOnly;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
 
@@ -719,6 +721,9 @@ export const jobs: ServicesJobs = {
       }
       if ((occ as any).workflow === "ESTIMATE" || (occ as any).isEstimate) {
         throw new ServiceError("ESTIMATE_NO_CLAIM", "Estimates cannot be claimed. An admin must assign workers.", 409);
+      }
+      if ((occ as any).isAdminOnly) {
+        throw new ServiceError("ADMIN_ONLY", "This job can only be assigned by an admin.", 409);
       }
 
       // Tier gating for high-value jobs

@@ -60,6 +60,7 @@ type Props = {
   defaultEstimatedMinutes?: number | null;
   defaultStartedAt?: string | null;
   defaultCompletedAt?: string | null;
+  defaultIsAdminOnly?: boolean;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -88,6 +89,7 @@ export default function OccurrenceDialog({
   defaultEstimatedMinutes,
   defaultStartedAt,
   defaultCompletedAt,
+  defaultIsAdminOnly,
   isAdmin,
   defaultAssignees,
   createEndpoint,
@@ -110,6 +112,7 @@ export default function OccurrenceDialog({
   const [completedAt, setCompletedAt] = useState("");
   const [workflow, setWorkflow] = useState("ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
+  const [isAdminOnly, setIsAdminOnly] = useState(false);
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -142,6 +145,7 @@ export default function OccurrenceDialog({
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
     setWorkflow("ESTIMATE");
     setIsTentative(false);
+    setIsAdminOnly(defaultIsAdminOnly ?? false);
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
@@ -187,6 +191,7 @@ export default function OccurrenceDialog({
           ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
           workflow,
           ...(isTentative ? { isTentative: true } : {}),
+          ...(isAdminOnly ? { isAdminOnly: true } : {}),
         });
         // Create any inline expenses against the new occurrence
         const newOccId = created?.id;
@@ -219,6 +224,7 @@ export default function OccurrenceDialog({
           body.startedAt = startedAt ? new Date(startedAt).toISOString() : null;
           body.completedAt = completedAt ? new Date(completedAt).toISOString() : null;
         }
+        body.isAdminOnly = isAdminOnly;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
         if (isAdmin && occurrenceId) {
@@ -527,6 +533,14 @@ export default function OccurrenceDialog({
                     <Checkbox.Label>Tentative (must be confirmed before workers can claim)</Checkbox.Label>
                   </Checkbox.Root>
                 )}
+                <Checkbox.Root
+                  checked={isAdminOnly}
+                  onCheckedChange={(e) => setIsAdminOnly(!!e.checked)}
+                >
+                  <Checkbox.HiddenInput />
+                  <Checkbox.Control />
+                  <Checkbox.Label>Administered (workers cannot claim, must be assigned)</Checkbox.Label>
+                </Checkbox.Root>
               </VStack>
             </Dialog.Body>
 

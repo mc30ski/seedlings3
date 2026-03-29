@@ -270,6 +270,7 @@ export type JobOccurrenceFull = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  isAdminOnly?: boolean;
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;
@@ -439,6 +440,7 @@ export type WorkerOccurrence = {
   isOneOff?: boolean;
   isTentative?: boolean;
   isEstimate?: boolean;
+  isAdminOnly?: boolean;
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;

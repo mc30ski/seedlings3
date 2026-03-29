@@ -481,6 +481,7 @@ model JobOccurrence {
   isOneOff         Boolean @default(false)   // @deprecated — use workflow
   isTentative      Boolean @default(false)
   isEstimate       Boolean @default(false)   // @deprecated — use workflow
+  isAdminOnly      Boolean @default(false)
 
   startedAt   DateTime?
   completedAt DateTime?
