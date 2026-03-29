@@ -6,7 +6,7 @@ import { AlertTriangle, Plus } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
-import { UserButton } from "@clerk/clerk-react";
+import { UserButton, SignIn, useAuth } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
@@ -19,6 +19,7 @@ import PropertiesTab from "@/src/ui/tabs/PropertiesTab";
 import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
 import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
+import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -54,15 +55,17 @@ const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 
 export default function HomePage() {
   const router = useRouter();
+  const { isSignedIn, isLoaded: authLoaded } = useAuth();
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
+  const [showSignIn, setShowSignIn] = useState(false);
 
   const isAdmin = hasRole(me?.roles, "ADMIN");
   const isWorker = hasRole(me?.roles, "WORKER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
-  const [topTab, setTopTab] = usePersistedState<"worker" | "admin">("topTab", "worker");
+  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
 
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "jobs");
@@ -169,13 +172,24 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    void loadMe();
-  }, [loadMe]);
+    if (authLoaded && isSignedIn) {
+      void loadMe();
+    } else if (authLoaded && !isSignedIn) {
+      setMe(null);
+      setMeLoading(false);
+    }
+  }, [authLoaded, isSignedIn, loadMe]);
+
+  // Dismiss sign-in overlay when user completes sign-in
+  useEffect(() => {
+    if (isSignedIn && showSignIn) setShowSignIn(false);
+  }, [isSignedIn, showSignIn]);
 
   useEffect(() => {
     if (topTab === "admin" && !isAdmin)
-      setTopTab(isWorker ? "worker" : "worker");
-    if (topTab === "worker" && !isWorker && isAdmin) setTopTab("admin");
+      setTopTab(isWorker ? "worker" : "client");
+    if (topTab === "worker" && !isWorker)
+      setTopTab(isAdmin ? "admin" : "client");
   }, [isAdmin, isWorker, topTab]);
 
   // Re-fetch me silently when switching top tabs so admin changes are reflected
@@ -292,10 +306,17 @@ export default function HomePage() {
 
   const outerTabs: TabItem[] = [
     {
+      value: "client",
+      label: "Client",
+      icon: FiActivity,
+      visible: true,
+      content: <ClientFeedTab />,
+    },
+    {
       value: "worker",
       label: "Worker",
       icon: FiUser,
-      visible: true,
+      visible: () => !isSignedIn || (!!me?.isApproved && isWorker),
       content: (
         <>
           {me && !me.workerType && (
@@ -345,7 +366,7 @@ export default function HomePage() {
       value: "admin",
       label: "Admin",
       icon: GrUserAdmin,
-      visible: () => isAdmin,
+      visible: () => !isSignedIn || isAdmin,
       content: (
         <>
           <NewJobSetupWorkflow
@@ -545,7 +566,7 @@ export default function HomePage() {
 
   return (
     <Container maxW="5xl" py={8}>
-      <AppSplash show={meLoading} />
+      <AppSplash show={!authLoaded || (isSignedIn && meLoading)} />
       <Box
         as="header"
         bg="#f4f7f0"
@@ -658,13 +679,20 @@ export default function HomePage() {
           </HStack>
         </Box>
       </Box>
-      {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
-      {!meLoading && me?.isApproved && !hasAnyRole && <NoRoleNotice />}
-      {me?.isApproved && hasAnyRole && (
+      {!meLoading && me && !me.isApproved && topTab !== "client" && <AwaitingApprovalNotice />}
+      {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
+      {authLoaded && (
         <ScrollableUnderlineTabs
           tabs={outerTabs}
           value={topTab}
-          onValueChange={(v) => setTopTab(v as typeof topTab)}
+          onValueChange={(v) => {
+            if ((v === "worker" || v === "admin") && !isSignedIn) {
+              setShowSignIn(true);
+              return;
+            }
+            setShowSignIn(false);
+            setTopTab(v as typeof topTab);
+          }}
           edgeMode="overlay"
           edgeSize={16}
           headerPaddingY={0}
@@ -711,6 +739,22 @@ export default function HomePage() {
             </Select.Root>
           ) : undefined}
         />
+      )}
+      {showSignIn && (
+        <Box
+          position="fixed"
+          inset="0"
+          zIndex={10000}
+          bg="blackAlpha.600"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          onClick={() => setShowSignIn(false)}
+        >
+          <Box onClick={(e) => e.stopPropagation()}>
+            <SignIn routing="hash" afterSignInUrl="/" />
+          </Box>
+        </Box>
       )}
       <ConfirmDialog
         open={!!confirmAction}
