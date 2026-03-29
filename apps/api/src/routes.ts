@@ -9,6 +9,7 @@ import adminRoutes from "./routes/admin";
 import systemRoutes from "./routes/system";
 import meRoutes from "./routes/me";
 import workerRoutes from "./routes/worker";
+import publicRoutes from "./routes/public";
 
 // ---------- CORS Helpers
 
@@ -145,6 +146,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(
     async (api) => {
       await api.register(rbac);
+      await api.register(publicRoutes);
       await api.register(systemRoutes);
       await api.register(meRoutes);
       await api.register(adminRoutes);

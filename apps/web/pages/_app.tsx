@@ -2,9 +2,6 @@
 import type { AppProps } from "next/app";
 import {
   ClerkProvider,
-  SignedIn,
-  SignedOut,
-  SignIn,
   useAuth,
 } from "@clerk/clerk-react";
 import { system } from "../src/styles/theme";
@@ -60,17 +57,7 @@ function AppInner({ Component, pageProps }: AppProps) {
         {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}
         <PWAPullToRefresh />
 
-        <SignedIn>
-          <Component {...pageProps} />
-        </SignedIn>
-
-        <SignedOut>
-          <div
-            style={{ display: "flex", justifyContent: "center", marginTop: 40 }}
-          >
-            <SignIn routing="hash" />
-          </div>
-        </SignedOut>
+        <Component {...pageProps} />
       </Box>
     </ChakraProvider>
   );
