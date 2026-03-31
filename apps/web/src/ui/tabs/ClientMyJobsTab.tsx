@@ -11,7 +11,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate, fmtDateTime } from "@/src/lib/lib";
+import { fmtDate } from "@/src/lib/lib";
+import { MapLink } from "@/src/ui/helpers/Link";
 
 type Photo = { id: string; url: string; contentType?: string | null };
 
@@ -140,9 +141,9 @@ export default function ClientMyJobsTab() {
               {profile.client.properties.length} propert{profile.client.properties.length === 1 ? "y" : "ies"} on file
             </Text>
             {profile.client.properties.map((p) => (
-              <Text key={p.id} fontSize="xs" color="fg.muted">
-                {[p.street1, p.city, p.state].filter(Boolean).join(", ")}
-              </Text>
+              <Box key={p.id} fontSize="xs">
+                <MapLink address={[p.street1, p.city, p.state].filter(Boolean).join(", ")} />
+              </Box>
             ))}
           </>
         )}

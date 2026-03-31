@@ -208,7 +208,7 @@ export default function HomePage() {
   const clientTabs: TabItem[] = [
     {
       value: "my-jobs",
-      label: "My Jobs",
+      label: "My Properties",
       icon: FiBriefcase,
       visible: () => !!isSignedIn,
       content: <ClientMyJobsTab />,
