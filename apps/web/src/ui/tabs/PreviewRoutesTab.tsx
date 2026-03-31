@@ -13,6 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { apiGet, apiPatch } from "@/src/lib/api";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -86,10 +87,10 @@ export default function PreviewRoutesTab() {
 
   // Target day = the day to optimize a route for
   const tomorrow = bizDateKey(addDays(new Date(), 1));
-  const [targetDate, setTargetDate] = useState(tomorrow);
+  const [targetDate, setTargetDate] = usePersistedState("preview_targetDate", tomorrow);
 
   // Look-ahead = how far to look for jobs that could be pulled into the target day
-  const [lookAhead, setLookAhead] = useState(7);
+  const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 7);
 
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
