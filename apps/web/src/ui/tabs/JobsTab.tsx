@@ -1584,45 +1584,41 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <VStack align="stretch" gap={4}>
                   <Box>
                     <Text fontWeight="bold" fontSize="md" mb={1}>Occurrence Types</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>Each job can have multiple occurrences. The type determines the workflow.</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Each job can have multiple occurrences. The type determines the workflow and defaults.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
                     <Badge colorPalette="blue" variant="outline" mb={1}>Repeating</Badge>
-                    <Text fontSize="sm">A recurring job that repeats on a schedule (e.g. every 14 days). When payment is accepted, the next occurrence is automatically created. Workers can claim repeating jobs, or an admin can assign them.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claimed → Start → Complete → Accept Payment → Next occurrence auto-created</Text>
+                    <Text fontSize="sm">A recurring job on a schedule (e.g. every 14 days). Workers can claim it, or an admin can assign a team. When payment is accepted, the next occurrence is automatically created and left unassigned so it can be claimed again.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim or Assign → Start → Complete → Accept Payment → Next occurrence auto-created</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
                     <Badge colorPalette="gray" variant="solid" mb={1}>One-Off</Badge>
-                    <Text fontSize="sm">A single job that does not repeat. Workers can claim one-off jobs, or an admin can assign them. No next occurrence is created after payment.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claimed → Start → Complete → Accept Payment → Done</Text>
+                    <Text fontSize="sm">A single job that does not repeat. Workers can claim it, or an admin can assign a team. No next occurrence is created after payment.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim or Assign → Start → Complete → Accept Payment → Done</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300">
                     <Badge colorPalette="purple" variant="solid" mb={1}>Estimate</Badge>
-                    <Text fontSize="sm">A site visit to assess work before committing. Estimates cannot be claimed by workers — an admin must assign a team. The team visits the site, starts the estimate, then completes it with optional comments.</Text>
-                    <Text fontSize="sm" mt={1}>After completion, the assigned team or an admin can accept or reject the estimate. Accepting prompts to update the job defaults and create a new occurrence (repeating, one-off, or another estimate).</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Created by Admin → Assigned → Start → Complete (add comments) → Accept or Reject</Text>
+                    <Text fontSize="sm">A site visit to assess work before committing. Estimates are administered by default — they cannot be claimed and must be assigned by an admin. The assigned team visits the site, starts the estimate, then completes it with optional comments and photos.</Text>
+                    <Text fontSize="sm" mt={1}>After completion, the assigned team or an admin can accept or reject the estimate. Accepting prompts to update the job defaults (price, frequency, duration) and optionally create a new occurrence of any type.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Admin Creates & Assigns → Start → Complete → Accept or Reject</Text>
                   </Box>
 
                   <Box mt={2}>
-                    <Text fontWeight="bold" fontSize="md" mb={1}>Special Flags</Text>
-                  </Box>
-
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
-                    <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
-                    <Text fontSize="sm">A tentative occurrence cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain.</Text>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Flags</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>These flags can be applied to any occurrence type to modify its behavior.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
                     <Badge colorPalette="red" variant="outline" mb={1}>Administered</Badge>
-                    <Text fontSize="sm">An administered occurrence cannot be claimed by workers. An admin must assign the team directly. The team can still start, complete, and manage the job once assigned.</Text>
+                    <Text fontSize="sm">An administered occurrence cannot be claimed by workers — an admin must assign the team. Once assigned, the team can start, complete, and manage it normally. Estimates are administered by default, but any repeating or one-off occurrence can also be marked as administered. When an administered repeating job auto-creates the next occurrence, it keeps the same team assigned.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
                     <Badge colorPalette="red" variant="outline" mb={1}>Insured Only</Badge>
-                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have a valid insurance certificate to be assigned. Employees can always be assigned.</Text>
+                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have a valid insurance certificate to claim or be assigned. Employees can always be assigned.</Text>
                   </Box>
                 </VStack>
               </Dialog.Body>
@@ -1632,17 +1628,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      localStorage.setItem("seedlings_jobs_infoDismissed", "1");
+                      try { localStorage.removeItem("seedlings_jobs_infoDismissed"); } catch {}
+                      setShowInfoDialog(false);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      try { localStorage.setItem("seedlings_jobs_infoDismissed", "1"); } catch {}
                       setShowInfoDialog(false);
                     }}
                   >
                     Don't show again
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setShowInfoDialog(false)}
-                  >
-                    Got it
                   </Button>
                 </HStack>
               </Dialog.Footer>

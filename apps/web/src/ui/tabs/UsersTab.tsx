@@ -856,17 +856,20 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      localStorage.setItem("seedlings_users_infoDismissed", "1");
+                      try { localStorage.removeItem("seedlings_users_infoDismissed"); } catch {}
+                      setShowInfoOverlay(false);
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      try { localStorage.setItem("seedlings_users_infoDismissed", "1"); } catch {}
                       setShowInfoOverlay(false);
                     }}
                   >
                     Don't show again
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setShowInfoOverlay(false)}
-                  >
-                    Got it
                   </Button>
                 </HStack>
               </Dialog.Footer>
