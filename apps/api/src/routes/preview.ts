@@ -17,22 +17,22 @@ export default async function previewRoutes(app: FastifyInstance) {
     const targetUserIdParam = req.query?.userId as string | undefined;
     const targetUserId = targetUserIdParam || userId;
 
-    // Get the target user info
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, displayName: true, email: true, workerType: true, homeBaseAddress: true },
     });
     if (!user) throw app.httpErrors.notFound("User not found.");
 
-    // Get tomorrow's date range
+    // Next 7 days
     const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-    const dayAfter = new Date(tomorrow);
-    dayAfter.setDate(dayAfter.getDate() + 1);
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() + 1);
+    const startStr = startDate.toISOString().slice(0, 10);
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 7);
+    const endStr = endDate.toISOString().slice(0, 10);
 
-    // Fetch claimable occurrences (unassigned, scheduled, tomorrow or undated)
+    // Fetch claimable occurrences (unassigned, scheduled, next 7 days or undated)
     const claimable = await prisma.jobOccurrence.findMany({
       where: {
         status: "SCHEDULED",
@@ -41,7 +41,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         isTentative: false,
         workflow: { not: "ESTIMATE" },
         OR: [
-          { startAt: { gte: new Date(tomorrowStr + "T00:00:00Z"), lt: new Date(dayAfter.toISOString().slice(0, 10) + "T00:00:00Z") } },
+          { startAt: { gte: new Date(startStr + "T00:00:00Z"), lt: new Date(endStr + "T00:00:00Z") } },
           { startAt: null },
         ],
       },
@@ -56,13 +56,13 @@ export default async function previewRoutes(app: FastifyInstance) {
       },
     });
 
-    // Fetch already-claimed by this user (tomorrow)
+    // Fetch already-claimed by this user (next 7 days)
     const claimed = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
         assignees: { some: { userId: targetUserId } },
         OR: [
-          { startAt: { gte: new Date(tomorrowStr + "T00:00:00Z"), lt: new Date(dayAfter.toISOString().slice(0, 10) + "T00:00:00Z") } },
+          { startAt: { gte: new Date(startStr + "T00:00:00Z"), lt: new Date(endStr + "T00:00:00Z") } },
           { startAt: null },
         ],
       },
@@ -80,7 +80,6 @@ export default async function previewRoutes(app: FastifyInstance) {
       },
     });
 
-    // Format data for Claude
     const formatOcc = (occ: any, type: "claimable" | "claimed") => {
       const prop = occ.job?.property;
       const address = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
@@ -93,7 +92,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         price: occ.price ?? occ.job?.defaultPrice ?? null,
         estimatedMinutes: occ.estimatedMinutes ?? occ.job?.estimatedMinutes ?? null,
         kind: occ.kind,
-        startAt: occ.startAt?.toISOString() ?? null,
+        currentDate: occ.startAt?.toISOString()?.slice(0, 10) ?? null,
       };
     };
 
@@ -105,12 +104,11 @@ export default async function previewRoutes(app: FastifyInstance) {
     if (allJobs.length === 0) {
       return {
         suggestions: null,
-        message: "No available or claimed jobs found for tomorrow.",
+        message: "No available or claimed jobs found for the next 7 days.",
         jobs: [],
       };
     }
 
-    // Call Claude
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return {
@@ -123,47 +121,61 @@ export default async function previewRoutes(app: FastifyInstance) {
     const client = new Anthropic({ apiKey });
 
     const jobsJson = JSON.stringify(allJobs, null, 2);
-    const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan their day for tomorrow.
+    const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan their week.
 
 Worker: ${user.displayName ?? user.email ?? "Unknown"}
 ${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
+Week: ${startStr} to ${endStr}
 
-Here are the available jobs (some already claimed by this worker, others available to claim):
+Here are the available jobs for the next 7 days (some already claimed, others available to claim):
 
 ${jobsJson}
 
-Please suggest an optimal route for the day. Consider:
-1. ${user.homeBaseAddress ? `Start and end the route near the worker's home base (${user.homeBaseAddress})` : "Geographic clustering — group nearby jobs to minimize driving"}
-2. Minimize total driving distance between jobs
-3. Earnings — higher-paying jobs should be prioritized
-4. Time efficiency — consider estimated duration and travel between locations
-5. Already claimed jobs must be included in the route
+Your goal is to organize these jobs into efficient DAILY routes. Jobs may currently be scheduled on different days — you should suggest moving jobs to different days if it creates better geographic routes. This is advisory only — the worker will need to contact clients to confirm date changes.
 
-For each job in your suggested order, explain briefly why it fits at that position in the route.
+Rules:
+1. ${user.homeBaseAddress ? `Each day's route should start and end near the worker's home base (${user.homeBaseAddress})` : "Each day's route should minimize total driving"}
+2. Group jobs by geographic proximity into daily clusters
+3. Already claimed jobs must be included
+4. If a job's date needs to change to fit an efficient route, flag it clearly
+5. Not every day needs jobs — consolidate into fewer, more efficient days when possible
+6. Consider earnings and estimated duration for workload balance
 
 Respond in this JSON format:
 {
-  "route": [
+  "days": [
     {
-      "occurrenceId": "...",
-      "order": 1,
-      "property": "...",
-      "address": "...",
-      "reason": "Start here because..."
+      "date": "YYYY-MM-DD",
+      "dayLabel": "Monday, Apr 1",
+      "route": [
+        {
+          "occurrenceId": "...",
+          "order": 1,
+          "property": "...",
+          "address": "...",
+          "reason": "Brief reason for this position in route",
+          "dateChanged": false,
+          "originalDate": null,
+          "suggestedDate": null
+        }
+      ],
+      "estimatedEarnings": 0,
+      "estimatedHours": 0,
+      "daySummary": "Brief summary of this day's route"
     }
   ],
-  "summary": "A brief 1-2 sentence overview of the route strategy",
-  "estimatedEarnings": 0,
-  "estimatedHours": 0,
-  "additionalJobsToConsider": ["id1", "id2"]
+  "summary": "Overall week strategy in 1-2 sentences",
+  "totalEstimatedEarnings": 0,
+  "dateChangeCount": 0,
+  "additionalJobsToConsider": ["id1"]
 }
 
-Only include jobs from the list provided. The "additionalJobsToConsider" field should list IDs of claimable jobs you recommend the worker claim to fill gaps in the route.`;
+For jobs that need a date change, set dateChanged=true with originalDate and suggestedDate. The "additionalJobsToConsider" field lists IDs of claimable jobs worth adding.`;
 
     try {
       const response = await client.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 1500,
+        max_tokens: 3000,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -172,7 +184,6 @@ Only include jobs from the list provided. The "additionalJobsToConsider" field s
         .map((b) => b.text)
         .join("");
 
-      // Try to parse JSON from response
       let parsed: any = null;
       try {
         const jsonMatch = text.match(/\{[\s\S]*\}/);

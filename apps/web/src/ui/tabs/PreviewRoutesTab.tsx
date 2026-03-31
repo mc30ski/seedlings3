@@ -16,6 +16,7 @@ import { apiGet, apiPatch } from "@/src/lib/api";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import { fmtDate } from "@/src/lib/lib";
 
 type RouteJob = {
   id: string;
@@ -26,7 +27,7 @@ type RouteJob = {
   price: number | null;
   estimatedMinutes: number | null;
   kind: string;
-  startAt: string | null;
+  currentDate: string | null;
 };
 
 type RouteStop = {
@@ -35,13 +36,25 @@ type RouteStop = {
   property: string;
   address: string;
   reason: string;
+  dateChanged: boolean;
+  originalDate: string | null;
+  suggestedDate: string | null;
+};
+
+type DayPlan = {
+  date: string;
+  dayLabel: string;
+  route: RouteStop[];
+  estimatedEarnings: number;
+  estimatedHours: number;
+  daySummary: string;
 };
 
 type Suggestions = {
-  route: RouteStop[];
+  days: DayPlan[];
   summary: string;
-  estimatedEarnings: number;
-  estimatedHours: number;
+  totalEstimatedEarnings: number;
+  dateChangeCount: number;
   additionalJobsToConsider?: string[];
 };
 
@@ -68,7 +81,6 @@ export default function PreviewRoutesTab() {
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
   const [homeBaseSaving, setHomeBaseSaving] = useState(false);
 
-  // Load current home base
   useEffect(() => {
     apiGet<Me>("/api/me")
       .then((me) => {
@@ -104,6 +116,7 @@ export default function PreviewRoutesTab() {
   }, []);
 
   const jobMap = new Map((data?.jobs ?? []).map((j) => [j.id, j]));
+  const dateChangeCount = data?.suggestions?.dateChangeCount ?? 0;
 
   return (
     <Box w="full" pb={8}>
@@ -117,12 +130,7 @@ export default function PreviewRoutesTab() {
             onChange={(e) => setHomeBase(e.target.value)}
             placeholder="e.g. 123 Main St, Chapel Hill, NC"
           />
-          <Button
-            size="sm"
-            onClick={saveHomeBase}
-            loading={homeBaseSaving}
-            disabled={!homeBaseLoaded}
-          >
+          <Button size="sm" onClick={saveHomeBase} loading={homeBaseSaving} disabled={!homeBaseLoaded}>
             Save
           </Button>
         </HStack>
@@ -131,8 +139,8 @@ export default function PreviewRoutesTab() {
 
       <HStack justify="space-between" mb={4}>
         <VStack align="start" gap={0}>
-          <Text fontSize="lg" fontWeight="semibold">Route Suggestions</Text>
-          <Text fontSize="xs" color="fg.muted">AI-powered route optimization for tomorrow's jobs</Text>
+          <Text fontSize="lg" fontWeight="semibold">Weekly Route Planner</Text>
+          <Text fontSize="xs" color="fg.muted">AI-powered route optimization for the next 7 days</Text>
         </VStack>
         <Button size="sm" onClick={loadSuggestions} loading={loading}>
           Refresh
@@ -142,13 +150,11 @@ export default function PreviewRoutesTab() {
       {loading && !data && (
         <Box textAlign="center" py={10}>
           <Spinner size="lg" />
-          <Text fontSize="sm" color="fg.muted" mt={2}>Analyzing available jobs...</Text>
+          <Text fontSize="sm" color="fg.muted" mt={2}>Analyzing jobs for the week...</Text>
         </Box>
       )}
 
-      {error && (
-        <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>
-      )}
+      {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
 
       {data?.message && !data.suggestions && (
         <Box p={4} bg="gray.50" rounded="md" mb={4}>
@@ -158,83 +164,126 @@ export default function PreviewRoutesTab() {
 
       {data?.suggestions && (
         <VStack align="stretch" gap={4}>
-          {/* Summary */}
+          {/* Week summary */}
           <Box p={4} bg="blue.50" rounded="xl" borderWidth="1px" borderColor="blue.200">
             <Text fontSize="sm" fontWeight="medium" color="blue.700">{data.suggestions.summary}</Text>
-            <HStack gap={4} mt={2}>
-              {data.suggestions.estimatedEarnings > 0 && (
+            <HStack gap={4} mt={2} wrap="wrap">
+              {data.suggestions.totalEstimatedEarnings > 0 && (
                 <Text fontSize="xs" color="blue.600">
-                  Est. earnings: ${data.suggestions.estimatedEarnings.toFixed(2)}
+                  Week earnings: ${data.suggestions.totalEstimatedEarnings.toFixed(2)}
                 </Text>
               )}
-              {data.suggestions.estimatedHours > 0 && (
-                <Text fontSize="xs" color="blue.600">
-                  Est. time: {formatDuration(Math.round(data.suggestions.estimatedHours * 60))}
-                </Text>
-              )}
+              <Text fontSize="xs" color="blue.600">
+                {data.suggestions.days.length} day{data.suggestions.days.length !== 1 ? "s" : ""} planned
+              </Text>
             </HStack>
           </Box>
 
-          {/* Route */}
-          <VStack align="stretch" gap={2}>
-            {data.suggestions.route.map((stop, idx) => {
-              const job = jobMap.get(stop.occurrenceId);
-              const isClaimed = job?.type === "claimed";
-              return (
-                <Card.Root
-                  key={stop.occurrenceId}
-                  variant="outline"
-                  borderColor={isClaimed ? "teal.200" : undefined}
-                  bg={isClaimed ? "teal.50" : undefined}
-                >
-                  <Card.Body py="3" px="4">
-                    <HStack gap={3} align="start">
-                      <Box
-                        w="28px"
-                        h="28px"
-                        borderRadius="full"
-                        bg={isClaimed ? "teal.500" : "blue.500"}
-                        color="white"
-                        display="flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        fontSize="xs"
-                        fontWeight="bold"
-                        flexShrink={0}
-                        mt="1px"
-                      >
-                        {idx + 1}
-                      </Box>
-                      <VStack align="start" gap={1} flex="1" minW={0}>
-                        <HStack gap={2} wrap="wrap">
-                          <Text fontSize="sm" fontWeight="medium">{stop.property}</Text>
-                          {isClaimed ? (
-                            <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Claimed</Badge>
-                          ) : (
-                            <Badge colorPalette="blue" variant="outline" fontSize="xs" borderRadius="full" px="2">Available</Badge>
-                          )}
-                          {job?.price != null && (
-                            <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                              ${job.price.toFixed(2)}
-                            </Badge>
-                          )}
-                          {job?.estimatedMinutes != null && (
-                            <Text fontSize="xs" color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>
-                          )}
+          {/* Date change warning */}
+          {dateChangeCount > 0 && (
+            <Box p={3} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
+              <Text fontSize="sm" fontWeight="medium" color="orange.700">
+                {dateChangeCount} job{dateChangeCount !== 1 ? "s" : ""} would need to be rescheduled
+              </Text>
+              <Text fontSize="xs" color="orange.600" mt={1}>
+                Jobs marked with a date change badge need client confirmation before moving. This is a suggestion only — no changes have been made.
+              </Text>
+            </Box>
+          )}
+
+          {/* Daily routes */}
+          {data.suggestions.days.map((day) => (
+            <Box key={day.date}>
+              {/* Day header */}
+              <HStack justify="space-between" mb={2} px={1}>
+                <VStack align="start" gap={0}>
+                  <Text fontSize="sm" fontWeight="semibold">{day.dayLabel}</Text>
+                  <Text fontSize="xs" color="fg.muted">{day.daySummary}</Text>
+                </VStack>
+                <VStack align="end" gap={0}>
+                  {day.estimatedEarnings > 0 && (
+                    <Text fontSize="xs" color="green.600" fontWeight="medium">${day.estimatedEarnings.toFixed(2)}</Text>
+                  )}
+                  {day.estimatedHours > 0 && (
+                    <Text fontSize="xs" color="fg.muted">{formatDuration(Math.round(day.estimatedHours * 60))}</Text>
+                  )}
+                </VStack>
+              </HStack>
+
+              {/* Route stops */}
+              <VStack align="stretch" gap={2}>
+                {day.route.map((stop, idx) => {
+                  const job = jobMap.get(stop.occurrenceId);
+                  const isClaimed = job?.type === "claimed";
+                  return (
+                    <Card.Root
+                      key={stop.occurrenceId}
+                      variant="outline"
+                      borderColor={stop.dateChanged ? "orange.300" : isClaimed ? "teal.200" : undefined}
+                      bg={stop.dateChanged ? "orange.50" : isClaimed ? "teal.50" : undefined}
+                    >
+                      <Card.Body py="3" px="4">
+                        <HStack gap={3} align="start">
+                          <Box
+                            w="28px"
+                            h="28px"
+                            borderRadius="full"
+                            bg={stop.dateChanged ? "orange.500" : isClaimed ? "teal.500" : "blue.500"}
+                            color="white"
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            fontSize="xs"
+                            fontWeight="bold"
+                            flexShrink={0}
+                            mt="1px"
+                          >
+                            {idx + 1}
+                          </Box>
+                          <VStack align="start" gap={1} flex="1" minW={0}>
+                            <HStack gap={2} wrap="wrap">
+                              <Text fontSize="sm" fontWeight="medium">{stop.property}</Text>
+                              {isClaimed ? (
+                                <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Claimed</Badge>
+                              ) : (
+                                <Badge colorPalette="blue" variant="outline" fontSize="xs" borderRadius="full" px="2">Available</Badge>
+                              )}
+                              {job?.price != null && (
+                                <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                                  ${job.price.toFixed(2)}
+                                </Badge>
+                              )}
+                              {job?.estimatedMinutes != null && (
+                                <Text fontSize="xs" color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>
+                              )}
+                            </HStack>
+
+                            {stop.dateChanged && (
+                              <HStack gap={1} fontSize="xs">
+                                <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                                  Date change needed
+                                </Badge>
+                                <Text color="orange.600">
+                                  {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : day.date ? fmtDate(day.date + "T12:00:00Z") : ""}
+                                </Text>
+                              </HStack>
+                            )}
+
+                            <Box fontSize="xs">
+                              <MapLink address={stop.address} />
+                            </Box>
+                            <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+                              {stop.reason}
+                            </Text>
+                          </VStack>
                         </HStack>
-                        <Box fontSize="xs">
-                          <MapLink address={stop.address} />
-                        </Box>
-                        <Text fontSize="xs" color="fg.muted" fontStyle="italic">
-                          {stop.reason}
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Card.Body>
-                </Card.Root>
-              );
-            })}
-          </VStack>
+                      </Card.Body>
+                    </Card.Root>
+                  );
+                })}
+              </VStack>
+            </Box>
+          ))}
 
           {/* Additional recommendations */}
           {data.suggestions.additionalJobsToConsider && data.suggestions.additionalJobsToConsider.length > 0 && (
@@ -250,6 +299,7 @@ export default function PreviewRoutesTab() {
                     <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.50" rounded="md" gap={2}>
                       <Text fontWeight="medium">{job.property}</Text>
                       <Text color="fg.muted">{job.city}</Text>
+                      {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
                       {job.price != null && <Badge colorPalette="green" variant="solid" fontSize="xs" px="1.5" borderRadius="full">${job.price.toFixed(2)}</Badge>}
                     </HStack>
                   );
@@ -260,18 +310,18 @@ export default function PreviewRoutesTab() {
         </VStack>
       )}
 
-      {/* Raw fallback if JSON parsing failed */}
+      {/* Raw fallback */}
       {data?.raw && (
         <Box p={4} bg="gray.50" rounded="md" whiteSpace="pre-wrap" fontSize="sm">
           {data.raw}
         </Box>
       )}
 
-      {/* All available jobs listing */}
+      {/* All jobs listing */}
       {data?.jobs && data.jobs.length > 0 && (
         <Box mt={6}>
           <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">
-            All Jobs for Tomorrow ({data.jobs.length})
+            All Jobs This Week ({data.jobs.length})
           </Text>
           <VStack align="stretch" gap={1}>
             {data.jobs.map((job) => (
@@ -290,6 +340,7 @@ export default function PreviewRoutesTab() {
                   <Text color="fg.muted" truncate>{job.city}</Text>
                 </HStack>
                 <HStack gap={2} flexShrink={0}>
+                  {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
                   {job.price != null && <Text color="green.600">${job.price.toFixed(2)}</Text>}
                   {job.estimatedMinutes != null && <Text color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>}
                 </HStack>
