@@ -321,6 +321,7 @@ export type JobListItem = {
 };
 
 export type JobDetail = JobListItem & {
+  defaultAssignees?: { id: string; userId: string; user?: { id: string; displayName?: string | null; email?: string | null } }[];
   occurrences: JobOccurrenceFull[];
 };
 
