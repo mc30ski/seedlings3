@@ -20,6 +20,7 @@ import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
 import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
+import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -30,7 +31,7 @@ import { type WorkflowDef } from "@/src/ui/components/WorkflowToolbar";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
-import { Me, Role, AdminTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
+import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
   FiBriefcase,
   FiClipboard,
@@ -66,6 +67,7 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
 
+  const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "jobs");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "jobs");
 
@@ -202,6 +204,21 @@ export default function HomePage() {
     );
   }
 
+  const clientTabs: TabItem[] = [
+    {
+      value: "jobs",
+      label: "Jobs",
+      icon: FiBriefcase,
+      content: <ClientFeedTab />,
+    },
+    {
+      value: "services",
+      label: "Services",
+      icon: FiClipboard,
+      content: <ClientServicesTab />,
+    },
+  ];
+
   const workerTabs: TabItem[] = [
     {
       value: "jobs",
@@ -306,7 +323,17 @@ export default function HomePage() {
       label: "Client",
       icon: FiHome,
       visible: true,
-      content: <ClientFeedTab />,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={clientTabs}
+          value={clientInnerTab}
+          onValueChange={(v) => setClientInnerTab(v as ClientTabs)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={0}
+          unmountOnExit
+        />
+      ),
     },
     {
       value: "worker",
