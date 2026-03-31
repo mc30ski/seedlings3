@@ -127,15 +127,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
-  const [showInfoDialog, setShowInfoDialog] = useState(false);
-
-  // Show info dialog on first visit
-  useEffect(() => {
-    const key = `seedlings_${pfx}_infoDismissed`;
-    if (!localStorage.getItem(key)) {
-      setShowInfoDialog(true);
-    }
-  }, [pfx]);
+  const [showInfoDialog, setShowInfoDialog] = useState(() => {
+    try {
+      return !localStorage.getItem("seedlings_jobs_infoDismissed");
+    } catch { return false; }
+  });
   const [overdueCount, setOverdueCount] = useState(0);
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
@@ -1636,7 +1632,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      localStorage.setItem(`seedlings_${pfx}_infoDismissed`, "1");
+                      localStorage.setItem("seedlings_jobs_infoDismissed", "1");
                       setShowInfoDialog(false);
                     }}
                   >

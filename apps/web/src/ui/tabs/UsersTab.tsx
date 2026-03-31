@@ -111,15 +111,11 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     "users_role", "all"
   );
   const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
-  const [showInfoOverlay, setShowInfoOverlay] = useState(false);
-
-  // Show info on first visit
-  useEffect(() => {
-    const key = "seedlings_users_infoDismissed";
-    if (!localStorage.getItem(key)) {
-      setShowInfoOverlay(true);
-    }
-  }, []);
+  const [showInfoOverlay, setShowInfoOverlay] = useState(() => {
+    try {
+      return !localStorage.getItem("seedlings_users_infoDismissed");
+    } catch { return false; }
+  });
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
