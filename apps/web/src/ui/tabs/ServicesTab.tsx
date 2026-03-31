@@ -49,6 +49,7 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
+import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
@@ -183,12 +184,16 @@ export default function ServicesTab({
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
   const [occurrenceDefaultEstMins, setOccurrenceDefaultEstMins] = useState<number | null>(null);
   const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
+  const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
   const [editOccurrenceJobId, setEditOccurrenceJobId] = useState<string>("");
 
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
+  const [defaultCrewDialogOpen, setDefaultCrewDialogOpen] = useState(false);
+  const [defaultCrewJobId, setDefaultCrewJobId] = useState<string>("");
+  const [defaultCrewCurrent, setDefaultCrewCurrent] = useState<any[]>([]);
   const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
   const [assigneeCurrentAssignees, setAssigneeCurrentAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
@@ -897,6 +902,11 @@ export default function ServicesTab({
                       {job.notes}
                     </Text>
                   )}
+                  {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
+                    <Text fontSize="xs" color="teal.600">
+                      Default crew: {detail.defaultAssignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                    </Text>
+                  )}
                 </VStack>
                 {forAdmin && (
                   <HStack gap={2} wrap="wrap" mt={2}>
@@ -907,6 +917,19 @@ export default function ServicesTab({
                       onClick={async () => {
                         setEditingJob(job);
                         setJobDialogOpen(true);
+                      }}
+                      variant="outline"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                    <StatusButton
+                      id="job-default-crew"
+                      itemId={job.id}
+                      label="Default Crew"
+                      onClick={async () => {
+                        setDefaultCrewJobId(job.id);
+                        setDefaultCrewCurrent(detail?.defaultAssignees ?? []);
+                        setDefaultCrewDialogOpen(true);
                       }}
                       variant="outline"
                       busyId={statusButtonBusyId}
@@ -923,6 +946,12 @@ export default function ServicesTab({
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
                           setOccurrenceJobHasFrequency(!!job.frequencyDays);
+                          setOccurrenceDefaultAssignees(
+                            (detail?.defaultAssignees ?? []).map((a) => ({
+                              userId: a.userId,
+                              displayName: a.user?.displayName ?? a.user?.email ?? null,
+                            }))
+                          );
                           setOccurrenceDialogOpen(true);
                         }}
                         variant="outline"
@@ -1676,6 +1705,7 @@ export default function ServicesTab({
           defaultEstimatedMinutes={occurrenceDefaultEstMins}
           isAdmin={forAdmin}
           showOneOff={occurrenceJobHasFrequency}
+          defaultAssignees={occurrenceDefaultAssignees}
           onSaved={() => {
             if (occurrenceJobId) {
               setExpandedMap((prev) => ({ ...prev, [occurrenceJobId]: true }));
@@ -1739,6 +1769,16 @@ export default function ServicesTab({
           }}
         />
       )}
+
+      <DefaultCrewDialog
+        open={defaultCrewDialogOpen}
+        onOpenChange={setDefaultCrewDialogOpen}
+        jobId={defaultCrewJobId}
+        currentAssignees={defaultCrewCurrent}
+        onChanged={() => {
+          if (defaultCrewJobId) void loadDetail(defaultCrewJobId, true);
+        }}
+      />
 
 
       <ConfirmDialog

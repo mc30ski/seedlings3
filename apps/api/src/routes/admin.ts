@@ -459,6 +459,27 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.jobs.update(await currentUserId(req), id, patch);
   });
 
+  // Default assignees for a job
+  app.put("/admin/jobs/:id/default-assignees", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const body = req.body || {};
+    const userIds: string[] = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
+
+    await prisma.$transaction(async (tx) => {
+      // Remove existing
+      await tx.jobAssigneeDefault.deleteMany({ where: { jobId } });
+      // Add new
+      if (userIds.length > 0) {
+        await tx.jobAssigneeDefault.createMany({
+          data: userIds.map((uid) => ({ jobId, userId: uid })),
+          skipDuplicates: true,
+        });
+      }
+    });
+
+    return { updated: true };
+  });
+
   // Job schedule: upsert schedule + generate occurrences
 
   app.put("/admin/jobs/:id/schedule", adminGuard, async (req: any) => {
