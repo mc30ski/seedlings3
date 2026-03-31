@@ -151,12 +151,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
   useEffect(() => {
-    if (datePreset) {
+    if (overdueActive) {
+      // When overdue is persisted, apply the overdue date range
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      setDateFrom("");
+      setDateTo(localDate(yesterday));
+    } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
       setDateFrom(d.from);
       setDateTo(d.to);
     }
-  }, [datePreset]);
+  }, [datePreset, overdueActive]);
 
   const quickDateItems = useMemo(
     () =>
@@ -1015,7 +1021,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       )}
                       {isUnassigned && occ.status !== "ARCHIVED" && (
                         <Text color="orange.500" fontWeight="medium">
-                          {isTentative ? "Tentative" : "Unclaimed"}
+                          {isTentative ? "Tentative" : isAdminOnlyOcc ? "Administered" : "Unclaimed"}
                         </Text>
                       )}
                     </HStack>
@@ -1169,10 +1175,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {isUnassigned && occ.status !== "ARCHIVED" && (
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         {isTentative
-                          ? "Tentative — awaiting admin confirmation"
-                          : (isAdminOnlyOcc || isEstimateOcc)
-                          ? "Unclaimed — must be assigned by an administrator"
-                          : "Unclaimed — available to pick up"}
+                          ? "Unclaimed — tentative, awaiting admin confirmation"
+                          : isAdminOnlyOcc
+                          ? "Unclaimed — administered, must be assigned by an admin"
+                          : "Unclaimed — available to claim"}
                       </Text>
                     )}
                     {occ.payment && (() => {
@@ -1268,7 +1274,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
-                      {isUnassigned && !isEstimateOcc && !isAdminOnlyOcc && (
+                      {isUnassigned && !isAdminOnlyOcc && (
                         <StatusButton
                           id="occ-claim"
                           itemId={occ.id}

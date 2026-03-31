@@ -145,7 +145,7 @@ export default function OccurrenceDialog({
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
     setWorkflow("ESTIMATE");
     setIsTentative(false);
-    setIsAdminOnly(defaultIsAdminOnly ?? false);
+    setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
@@ -277,7 +277,11 @@ export default function OccurrenceDialog({
                     <Select.Root
                       collection={workflowCollection}
                       value={[workflow]}
-                      onValueChange={(e) => setWorkflow(e.value[0] ?? "STANDARD")}
+                      onValueChange={(e) => {
+                        const wf = e.value[0] ?? "STANDARD";
+                        setWorkflow(wf);
+                        if (mode === "CREATE") setIsAdminOnly(wf === "ESTIMATE");
+                      }}
                       size="sm"
                       positioning={{ strategy: "fixed", hideWhenDetached: true }}
                     >

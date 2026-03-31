@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { prisma } from "../db/prisma";
+import { getDownloadUrl, deleteObject } from "../lib/r2";
 import { Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
@@ -819,7 +821,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/occurrences/:occurrenceId/accept-proposal", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.occurrenceId);
     const body = req.body || {};
-    const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({
       where: { id: occurrenceId },
@@ -862,7 +863,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/occurrences/:occurrenceId/reject-proposal", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.occurrenceId);
     const body = req.body || {};
-    const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
 
@@ -915,8 +915,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.occurrenceId);
-    const { prisma } = await import("../db/prisma");
-    const { getDownloadUrl } = await import("../lib/r2");
 
     const photos = await prisma.jobOccurrencePhoto.findMany({
       where: { occurrenceId },
@@ -938,8 +936,6 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete("/admin/photos/:id", adminGuard, async (req: any) => {
     const photoId = String(req.params.id);
-    const { prisma } = await import("../db/prisma");
-    const { deleteObject } = await import("../lib/r2");
 
     const photo = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
     if (!photo) throw app.httpErrors.notFound("Photo not found");
@@ -967,7 +963,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Full Data Export ──
 
   app.get("/admin/export", adminGuard, async (_req: any, reply: any) => {
-    const { prisma } = await import("../db/prisma");
 
     const [
       users,
@@ -1041,7 +1036,6 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Human-Readable Summary Export ──
 
   app.get("/admin/export-summary", adminGuard, async (_req: any) => {
-    const { prisma } = await import("../db/prisma");
 
     const clients = await prisma.client.findMany({
       orderBy: { displayName: "asc" },
