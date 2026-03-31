@@ -71,12 +71,21 @@ export default fp(async function auth(app: FastifyInstance) {
           });
         }
 
+        // Auto-approve if their email matches a ClientContact (they're a client, not a worker applicant)
+        let isClient = false;
+        if (email) {
+          const contact = await prisma.clientContact.findFirst({
+            where: { email: { equals: email, mode: "insensitive" } },
+          });
+          if (contact) isClient = true;
+        }
+
         await prisma.user.create({
           data: {
             clerkUserId,
             email: email ?? undefined,
             displayName: displayName ?? undefined,
-            isApproved: false,
+            isApproved: isClient,
           },
         });
       }
