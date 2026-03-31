@@ -20,7 +20,7 @@ import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -44,7 +44,7 @@ import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 
 function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return bizDateKey(d);
 }
 
 function formatDuration(minutes: number): string {
@@ -441,25 +441,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    // day labels are relative to today
+    const todayKey = bizDateKey(new Date());
 
-    const dayLabel = (dateStr: string) => {
-      const d = new Date(dateStr + "T00:00:00");
-      const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+    const dayLabel = (dateKey: string) => {
+      // dateKey is YYYY-MM-DD in ET
+      const d = new Date(dateKey + "T12:00:00Z"); // noon UTC avoids day-boundary issues
+      const todayD = new Date(todayKey + "T12:00:00Z");
+      const diff = Math.round((d.getTime() - todayD.getTime()) / 86400000);
       if (diff === 0) return "Today";
       if (diff === -1) return "Yesterday";
       if (diff === 1) return "Tomorrow";
-      const dayName = d.toLocaleDateString(undefined, { weekday: "long" });
+      const dayName = fmtDateWeekday(d);
       if (diff >= 2 && diff <= 6) return dayName;
       if (diff <= -2 && diff >= -6) return `Last ${dayName}`;
-      return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
+      return fmtDateWeekday(d, { year: d.getFullYear() !== todayD.getFullYear() });
     };
 
     let current: (typeof groups)[number] | null = null;
     for (const occ of filtered) {
-      const dateKey = occ.startAt?.slice(0, 10) ?? "no-date";
+      const dateKey = occ.startAt ? bizDateKey(occ.startAt) : "no-date";
       if (!current || current.key !== dateKey) {
         current = {
           key: dateKey,
@@ -832,6 +832,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
+                {forAdmin && !isCardCompact && (
+                  <Box px="4" pt="3" pb="0">
+                    <Button
+                      size="xs"
+                      variant="solid"
+                      colorPalette="blue"
+                      onClick={() =>
+                        openEventSearch(
+                          "jobsTabToServicesTabSearch",
+                          occ.job?.property?.displayName ?? "",
+                          true,
+                          `${occ.job?.id}:${occ.id}`,
+                        )
+                      }
+                    >
+                      Manage in Services
+                    </Button>
+                  </Box>
+                )}
                 <Card.Header py="3" px="4" pb="0">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
@@ -876,19 +895,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   occ.job?.property?.client?.displayName ?? "",
                                   forAdmin,
                                   occ.job?.property?.client?.id,
-                                )
-                              }
-                            />
-                          )}
-                          {forAdmin && (
-                            <TextLink
-                              text="View in Services"
-                              onClick={() =>
-                                openEventSearch(
-                                  "jobsTabToServicesTabSearch",
-                                  occ.job?.property?.displayName ?? "",
-                                  true,
-                                  `${occ.job?.id}:${occ.id}`,
                                 )
                               }
                             />
@@ -1019,9 +1025,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <VStack align="start" gap={1}>
                     {occ.startAt && (
                       <Text fontSize="xs">
-                        {new Date(occ.startAt).toLocaleDateString()}
-                        {occ.endAt && new Date(occ.endAt).toLocaleDateString() !== new Date(occ.startAt).toLocaleDateString()
-                          ? ` – ${new Date(occ.endAt).toLocaleDateString()}`
+                        {fmtDate(occ.startAt)}
+                        {occ.endAt && fmtDate(occ.endAt) !== fmtDate(occ.startAt)
+                          ? ` – ${fmtDate(occ.endAt)}`
                           : ""}
                       </Text>
                     )}
@@ -1075,36 +1081,53 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {occ.startedAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        Start Time: {new Date(occ.startedAt).toLocaleString()}
+                        Start Time: {fmtDateTime(occ.startedAt)}
                       </Text>
                     )}
                     {occ.completedAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        Complete Time: {new Date(occ.completedAt).toLocaleString()}
+                        Complete Time: {fmtDateTime(occ.completedAt)}
                       </Text>
                     )}
-                    {occ.notes && (
-                      <Text fontSize="xs" color="fg.muted">
-                        {occ.notes}
-                      </Text>
-                    )}
-                    {(occ.proposalAmount != null || occ.proposalNotes) && (
-                      <Box p={2} bg="purple.50" rounded="sm" mt={1}>
-                        {occ.proposalAmount != null && (
-                          <Text fontSize="xs" fontWeight="medium" color="purple.700">
-                            Proposal: ${occ.proposalAmount.toFixed(2)}
-                          </Text>
-                        )}
-                        {occ.proposalNotes && (
-                          <Text fontSize="xs" color="purple.600">{occ.proposalNotes}</Text>
-                        )}
-                      </Box>
-                    )}
+                    {(() => {
+                      // Split notes: lines starting with "Accepted:" are accept comments
+                      const raw = occ.notes ?? "";
+                      const lines = raw.split("\n");
+                      const acceptLines = lines.filter((l) => l.startsWith("Accepted:"));
+                      const otherLines = lines.filter((l) => !l.startsWith("Accepted:")).join("\n").trim();
+                      const acceptComment = acceptLines.map((l) => l.replace(/^Accepted:\s*/, "")).join("\n").trim();
+                      return (
+                        <>
+                          {otherLines && (
+                            <Text fontSize="xs" color="fg.muted">{otherLines}</Text>
+                          )}
+                          {occ.proposalNotes && (
+                            <Box p={2} bg="purple.50" rounded="sm" mt={1}>
+                              <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
+                              <Text fontSize="xs" color="purple.600">{occ.proposalNotes}</Text>
+                              {occ.proposalAmount != null && (
+                                <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${occ.proposalAmount.toFixed(2)}</Text>
+                              )}
+                            </Box>
+                          )}
+                          {(occ.status === "ACCEPTED" || acceptComment) && (
+                            <Box p={2} bg="green.50" rounded="sm" mt={1}>
+                              <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
+                              {acceptComment && <Text fontSize="xs" color="green.600">{acceptComment}</Text>}
+                            </Box>
+                          )}
+                        </>
+                      );
+                    })()}
                     {occ.rejectionReason && (
                       <Box p={2} bg="red.50" rounded="sm" mt={1}>
-                        <Text fontSize="xs" color="red.700">
-                          Rejected: {occ.rejectionReason}
-                        </Text>
+                        <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
+                        <Text fontSize="xs" color="red.600">{occ.rejectionReason}</Text>
+                      </Box>
+                    )}
+                    {occ.status === "REJECTED" && !occ.rejectionReason && (
+                      <Box p={2} bg="red.50" rounded="sm" mt={1}>
+                        <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
                       </Box>
                     )}
                     {(occ.startLat != null || occ.completeLat != null) && (
@@ -1500,7 +1523,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             void load(false);
             if (result?.nextOccurrence) {
               const nextDate = result.nextOccurrence.startAt
-                ? new Date(result.nextOccurrence.startAt).toLocaleDateString()
+                ? fmtDate(result.nextOccurrence.startAt)
                 : "upcoming";
               publishInlineMessage({
                 type: "SUCCESS",

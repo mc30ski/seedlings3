@@ -24,6 +24,9 @@ import {
   occurrenceStatusColor,
   prettyStatus,
   clientLabel,
+  fmtDate,
+  fmtDateTime,
+  bizDateKey,
 } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -58,7 +61,7 @@ import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return bizDateKey(d);
 }
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -812,7 +815,7 @@ export default function ServicesTab({
                 // Always show the highlighted occurrence
                 if (highlightOccId && o.id === highlightOccId) return true;
                 if (o.startAt) {
-                  const d = o.startAt.slice(0, 10);
+                  const d = bizDateKey(o.startAt);
                   if (dateFrom && d < dateFrom) return false;
                   if (dateTo && d > dateTo) return false;
                 }
@@ -897,6 +900,99 @@ export default function ServicesTab({
                     </Text>
                   )}
                 </VStack>
+                {forAdmin && (
+                  <HStack gap={2} wrap="wrap" mt={2}>
+                    <StatusButton
+                      id="job-edit"
+                      itemId={job.id}
+                      label="Edit Job"
+                      onClick={async () => {
+                        setEditingJob(job);
+                        setJobDialogOpen(true);
+                      }}
+                      variant="outline"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                    {job.status === "ACCEPTED" && (
+                      <StatusButton
+                        id="job-new-occurrence"
+                        itemId={job.id}
+                        label="+ Occurrence"
+                        onClick={async () => {
+                          setOccurrenceJobId(job.id);
+                          setOccurrenceDefaultNotes(job.notes ?? null);
+                          setOccurrenceDefaultPrice(job.defaultPrice ?? null);
+                          setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
+                          setOccurrenceJobHasFrequency(!!job.frequencyDays);
+                          setOccurrenceDialogOpen(true);
+                        }}
+                        variant="outline"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "PROPOSED" && (
+                      <StatusButton
+                        id="job-accept"
+                        itemId={job.id}
+                        label="Accept"
+                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        variant="outline"
+                        colorPalette="green"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "ACCEPTED" && (
+                      <StatusButton
+                        id="job-pause"
+                        itemId={job.id}
+                        label="Pause"
+                        onClick={async () => patchJobStatus(job, "PAUSED")}
+                        variant="outline"
+                        colorPalette="yellow"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {job.status === "PAUSED" && (
+                      <StatusButton
+                        id="job-resume"
+                        itemId={job.id}
+                        label="Resume"
+                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
+                        variant="outline"
+                        colorPalette="green"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    {(job.status === "ACCEPTED" || job.status === "PAUSED") && (
+                      <StatusButton
+                        id="job-archive"
+                        itemId={job.id}
+                        label="Archive"
+                        onClick={async () => archiveJob(job.id)}
+                        variant="outline"
+                        colorPalette="gray"
+                        busyId={statusButtonBusyId}
+                        setBusyId={setStatusButtonBusyId}
+                      />
+                    )}
+                    <StatusButton
+                      id="job-delete"
+                      itemId={job.id}
+                      label="Delete"
+                      onClick={async () => openDeleteJobDialog(job)}
+                      variant="outline"
+                      colorPalette="red"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  </HStack>
+                )}
+
                 {(detail ? detail.occurrences.length === 0 : (job.occurrenceCount ?? 0) === 0) ? (
                   <Text fontSize="xs" color="fg.muted">No occurrences</Text>
                 ) : (
@@ -934,7 +1030,7 @@ export default function ServicesTab({
                         p={2}
                         borderWidth={flashOccId === occ.id ? "2px" : "1px"}
                         borderColor={flashOccId === occ.id ? "blue.400" : undefined}
-                        bg={flashOccId === occ.id ? "blue.50" : undefined}
+                        bg={flashOccId === occ.id ? "blue.50" : "gray.100"}
                         rounded="md"
                         mb={2}
                         ref={highlightOccId === occ.id ? (el: HTMLDivElement | null) => {
@@ -944,11 +1040,11 @@ export default function ServicesTab({
                           }
                         } : undefined}
                       >
-                        <HStack justify="space-between" align="center">
+                        <HStack justify="space-between" align="start">
                           <VStack align="start" gap={0}>
                             <Text fontSize="xs" fontWeight="medium">
                               {occ.startAt
-                                ? new Date(occ.startAt).toLocaleDateString()
+                                ? fmtDate(occ.startAt)
                                 : "—"}
                             </Text>
                             {occ.assignees.length === 0 ? (
@@ -1066,19 +1162,54 @@ export default function ServicesTab({
                             )}
                             {occ.startedAt && (
                               <Text fontSize="xs" color="fg.muted">
-                                Start Time: {new Date(occ.startedAt).toLocaleString()}
+                                Start Time: {fmtDateTime(occ.startedAt)}
                               </Text>
                             )}
                             {occ.completedAt && (
                               <Text fontSize="xs" color="fg.muted">
-                                Complete Time: {new Date(occ.completedAt).toLocaleString()}
+                                Complete Time: {fmtDateTime(occ.completedAt)}
                               </Text>
                             )}
-                            {occ.notes && (
-                              <Text fontSize="xs" color="fg.muted">
-                                {occ.notes}
-                              </Text>
-                            )}
+                            {(() => {
+                              const raw = occ.notes ?? "";
+                              const lines = raw.split("\n");
+                              const acceptLines = lines.filter((l) => l.startsWith("Accepted:"));
+                              const otherLines = lines.filter((l) => !l.startsWith("Accepted:")).join("\n").trim();
+                              const acceptComment = acceptLines.map((l) => l.replace(/^Accepted:\s*/, "")).join("\n").trim();
+                              return (
+                                <>
+                                  {otherLines && (
+                                    <Text fontSize="xs" color="fg.muted">{otherLines}</Text>
+                                  )}
+                                  {(occ as any).proposalNotes && (
+                                    <Box mt={1} p={1} bg="purple.50" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
+                                      <Text fontSize="xs" color="purple.600">{(occ as any).proposalNotes}</Text>
+                                      {(occ as any).proposalAmount != null && (
+                                        <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${(occ as any).proposalAmount.toFixed(2)}</Text>
+                                      )}
+                                    </Box>
+                                  )}
+                                  {(occ.status === "ACCEPTED" || acceptComment) && (
+                                    <Box mt={1} p={1} bg="green.50" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
+                                      {acceptComment && <Text fontSize="xs" color="green.600">{acceptComment}</Text>}
+                                    </Box>
+                                  )}
+                                  {(occ as any).rejectionReason && (
+                                    <Box mt={1} p={1} bg="red.50" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
+                                      <Text fontSize="xs" color="red.600">{(occ as any).rejectionReason}</Text>
+                                    </Box>
+                                  )}
+                                  {occ.status === "REJECTED" && !(occ as any).rejectionReason && (
+                                    <Box mt={1} p={1} bg="red.50" rounded="sm">
+                                      <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
+                                    </Box>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {(occ.startLat != null || occ.completeLat != null) && (
                               <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                                 {occ.startLat != null && occ.startLng != null && (
@@ -1092,25 +1223,6 @@ export default function ServicesTab({
                                   </a>
                                 )}
                               </VStack>
-                            )}
-                            {((occ as any).proposalAmount != null || (occ as any).proposalNotes) && (
-                              <Box mt={1} p={1} bg="purple.50" rounded="sm">
-                                {(occ as any).proposalAmount != null && (
-                                  <Text fontSize="xs" fontWeight="medium" color="purple.700">
-                                    Proposal: ${(occ as any).proposalAmount.toFixed(2)}
-                                  </Text>
-                                )}
-                                {(occ as any).proposalNotes && (
-                                  <Text fontSize="xs" color="purple.600">{(occ as any).proposalNotes}</Text>
-                                )}
-                              </Box>
-                            )}
-                            {(occ as any).rejectionReason && (
-                              <Box mt={1} p={1} bg="red.50" rounded="sm">
-                                <Text fontSize="xs" color="red.700">
-                                  Rejected: {(occ as any).rejectionReason}
-                                </Text>
-                              </Box>
                             )}
                             {occ.payment && (() => {
                               const pay = occ.payment as any;
@@ -1205,7 +1317,7 @@ export default function ServicesTab({
                               />
                             )}
                           </VStack>
-                          <VStack gap={1} align="end">
+                          <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems={{ base: "flex-end", md: "flex-start" }} flexWrap="wrap">
                             {occ.isTentative ? (
                               <StatusBadge status="Tentative" palette="orange" variant="solid" />
                             ) : occ.status !== "SCHEDULED" ? (
@@ -1227,7 +1339,7 @@ export default function ServicesTab({
                             {(occ as any).isAdminOnly && (
                               <StatusBadge status="Administered" palette="red" variant="outline" />
                             )}
-                          </VStack>
+                          </Box>
                         </HStack>
 
                         {forAdmin && (
@@ -1389,7 +1501,7 @@ export default function ServicesTab({
                                 label="Cancel"
                                 onClick={async () => {
                                   const dateLabel = occ.startAt
-                                    ? new Date(occ.startAt).toLocaleDateString()
+                                    ? fmtDate(occ.startAt)
                                     : "unknown date";
                                   setToDelete({
                                     deleteType: "archived-occurrence",
@@ -1413,7 +1525,7 @@ export default function ServicesTab({
                                 label="Cancel"
                                 onClick={async () => {
                                   const dateLabel = occ.startAt
-                                    ? new Date(occ.startAt).toLocaleDateString()
+                                    ? fmtDate(occ.startAt)
                                     : "unknown date";
                                   setToDelete({
                                     deleteType: "archived-occurrence",
@@ -1485,7 +1597,7 @@ export default function ServicesTab({
                               label="Delete"
                               onClick={async () => {
                                 const dateLabel = occ.startAt
-                                  ? new Date(occ.startAt).toLocaleDateString()
+                                  ? fmtDate(occ.startAt)
                                   : "unknown date";
                                 setToDelete({
                                   deleteType: "archived-occurrence",
@@ -1511,101 +1623,6 @@ export default function ServicesTab({
                   </Box>
                 )}
               </Card.Body>
-
-              {forAdmin && (
-                <Card.Footer py="3" px="4" pt="0">
-                  <HStack gap={2} wrap="wrap">
-                    <StatusButton
-                      id="job-edit"
-                      itemId={job.id}
-                      label="Edit"
-                      onClick={async () => {
-                        setEditingJob(job);
-                        setJobDialogOpen(true);
-                      }}
-                      variant="outline"
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                    {job.status === "ACCEPTED" && (
-                      <StatusButton
-                        id="job-new-occurrence"
-                        itemId={job.id}
-                        label="+ Occurrence"
-                        onClick={async () => {
-                          setOccurrenceJobId(job.id);
-                          setOccurrenceDefaultNotes(job.notes ?? null);
-                          setOccurrenceDefaultPrice(job.defaultPrice ?? null);
-                          setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
-                          setOccurrenceJobHasFrequency(!!job.frequencyDays);
-                          setOccurrenceDialogOpen(true);
-                        }}
-                        variant="outline"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {job.status === "PROPOSED" && (
-                      <StatusButton
-                        id="job-accept"
-                        itemId={job.id}
-                        label="Accept"
-                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
-                        variant="outline"
-                        colorPalette="green"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {job.status === "ACCEPTED" && (
-                      <StatusButton
-                        id="job-pause"
-                        itemId={job.id}
-                        label="Pause"
-                        onClick={async () => patchJobStatus(job, "PAUSED")}
-                        variant="outline"
-                        colorPalette="yellow"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {job.status === "PAUSED" && (
-                      <StatusButton
-                        id="job-resume"
-                        itemId={job.id}
-                        label="Resume"
-                        onClick={async () => patchJobStatus(job, "ACCEPTED")}
-                        variant="outline"
-                        colorPalette="green"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    {(job.status === "ACCEPTED" || job.status === "PAUSED") && (
-                      <StatusButton
-                        id="job-archive"
-                        itemId={job.id}
-                        label="Archive"
-                        onClick={async () => archiveJob(job.id)}
-                        variant="outline"
-                        colorPalette="gray"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
-                    )}
-                    <StatusButton
-                      id="job-delete"
-                      itemId={job.id}
-                      label="Delete"
-                      onClick={async () => openDeleteJobDialog(job)}
-                      variant="outline"
-                      colorPalette="red"
-                      busyId={statusButtonBusyId}
-                      setBusyId={setStatusButtonBusyId}
-                    />
-                  </HStack>
-                </Card.Footer>
-              )}
             </Card.Root>
           );
         })}

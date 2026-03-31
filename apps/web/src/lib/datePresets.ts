@@ -1,5 +1,7 @@
+import { bizDateKey } from "@/src/lib/lib";
+
 function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return bizDateKey(d);
 }
 
 export type DatePreset =

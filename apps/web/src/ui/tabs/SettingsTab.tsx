@@ -12,7 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { apiGet, apiPatch } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
-import { determineRoles } from "@/src/lib/lib";
+import { determineRoles, fmtDateTime } from "@/src/lib/lib";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import {
@@ -147,7 +147,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                 {s.updatedBy && (
                   <Text fontSize="xs" color="fg.muted">
                     Last updated by {s.updatedBy.displayName ?? "unknown"} on{" "}
-                    {new Date(s.updatedAt).toLocaleString()}
+                    {fmtDateTime(s.updatedAt)}
                   </Text>
                 )}
               </VStack>

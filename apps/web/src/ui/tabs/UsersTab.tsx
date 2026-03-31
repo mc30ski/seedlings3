@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { prettyStatus, equipmentStatusColor } from "@/src/lib/lib";
+import { prettyStatus, equipmentStatusColor, fmtDate } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
 import { openEventSearch } from "@/src/lib/bus";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
@@ -558,7 +558,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isTrainee && <Badge colorPalette="cyan">Trainee</Badge>}
                     {!u.workerType && isWorker && <Badge colorPalette="gray" variant="outline">Unclassified</Badge>}
                     {isContractor && !noInsurance && !insuranceExpired && (
-                      <Badge colorPalette="green" variant="subtle">Insured · {new Date(u.insuranceExpiresAt!).toLocaleDateString()}</Badge>
+                      <Badge colorPalette="green" variant="subtle">Insured · {fmtDate(u.insuranceExpiresAt)}</Badge>
                     )}
                     {insuranceExpired && (
                       <Badge colorPalette="red" variant="solid">Insurance Expired</Badge>
