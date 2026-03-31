@@ -42,7 +42,7 @@ type UpcomingJob = {
 type ClientProfile = {
   linked: boolean;
   contact?: { id: string; firstName: string; lastName: string; email?: string | null };
-  client?: { id: string; displayName: string; properties: { id: string; displayName: string }[] };
+  client?: { id: string; displayName: string; properties: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null }[] };
 };
 
 function formatDuration(mins: number): string {
@@ -135,9 +135,16 @@ export default function ClientMyJobsTab() {
           Welcome, {profile.contact?.firstName}
         </Text>
         {profile.client && (
-          <Text fontSize="sm" color="fg.muted">
-            {profile.client.properties.length} propert{profile.client.properties.length === 1 ? "y" : "ies"} on file
-          </Text>
+          <>
+            <Text fontSize="sm" color="fg.muted">
+              {profile.client.properties.length} propert{profile.client.properties.length === 1 ? "y" : "ies"} on file
+            </Text>
+            {profile.client.properties.map((p) => (
+              <Text key={p.id} fontSize="xs" color="fg.muted">
+                {[p.street1, p.city, p.state].filter(Boolean).join(", ")}
+              </Text>
+            ))}
+          </>
         )}
       </Box>
 

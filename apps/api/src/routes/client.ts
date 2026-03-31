@@ -26,7 +26,7 @@ export default async function clientRoutes(app: FastifyInstance) {
           include: {
             properties: {
               where: { status: "ACTIVE" },
-              select: { id: true, displayName: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
             },
           },
         },

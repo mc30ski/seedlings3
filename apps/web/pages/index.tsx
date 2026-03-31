@@ -215,7 +215,7 @@ export default function HomePage() {
     },
     {
       value: "public",
-      label: "Public",
+      label: "Community",
       icon: FiActivity,
       content: <ClientFeedTab />,
     },
@@ -665,7 +665,7 @@ export default function HomePage() {
             )}
 
             {/* Worker type badge (order 1) */}
-            {me && (
+            {me && hasAnyRole && (
               <Badge
                 style={{ order: 1 }}
                 size="sm"
@@ -682,6 +682,11 @@ export default function HomePage() {
                   : me.workerType === "CONTRACTOR" ? "1099"
                   : me.workerType === "TRAINEE" ? "Trainee"
                   : "Unclassified"}
+              </Badge>
+            )}
+            {isSignedIn && !hasAnyRole && (
+              <Badge style={{ order: 1 }} size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
+                Client
               </Badge>
             )}
 
