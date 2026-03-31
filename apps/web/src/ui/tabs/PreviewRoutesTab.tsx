@@ -92,6 +92,9 @@ export default function PreviewRoutesTab() {
   // Look-ahead = how far to look for jobs that could be pulled into the target day
   const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 7);
 
+  // Available hours in the day
+  const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", 8);
+
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
   const [homeBaseSaving, setHomeBaseSaving] = useState(false);
@@ -118,7 +121,7 @@ export default function PreviewRoutesTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}`);
+      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}`);
       setData(res);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
@@ -182,6 +185,24 @@ export default function PreviewRoutesTab() {
             <HStack justify="space-between" fontSize="xs" color="fg.muted">
               <Text>Same day only</Text>
               <Text>30 days</Text>
+            </HStack>
+          </Box>
+          <Box flex="1" minW="140px">
+            <HStack justify="space-between" mb={1}>
+              <Text fontSize="xs" fontWeight="medium">Available hours</Text>
+              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
+            </HStack>
+            <input
+              type="range"
+              min={2}
+              max={12}
+              value={availableHours}
+              onChange={(e) => setAvailableHours(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+            />
+            <HStack justify="space-between" fontSize="xs" color="fg.muted">
+              <Text>2h</Text>
+              <Text>12h</Text>
             </HStack>
           </Box>
         </HStack>

@@ -24,6 +24,7 @@ export default async function previewRoutes(app: FastifyInstance) {
     if (!user) throw app.httpErrors.notFound("User not found.");
 
     const lookAhead = Math.min(Math.max(Number(req.query?.lookAhead) || 7, 0), 30);
+    const availableHours = Math.min(Math.max(Number(req.query?.availableHours) || 8, 2), 12);
     const now = new Date();
     // Target date = the specific day to plan a route for
     const targetDateParam = req.query?.targetDate as string | undefined;
@@ -169,6 +170,7 @@ export default async function previewRoutes(app: FastifyInstance) {
 Worker: ${user.displayName ?? user.email ?? "Unknown"}
 ${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
 Target day: ${targetStr}
+Available hours: ${availableHours} hours (do not exceed this)
 ${lookAhead > 0 ? `Also considering jobs from the next ${lookAhead} days that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
 Here are the available jobs (some on the target day, some on nearby days that could potentially be moved):
@@ -188,7 +190,9 @@ Rules:
 5. For jobs from other days, clearly flag that a reschedule is needed (the worker must contact the client first)
 6. Don't suggest moving ALL jobs to one day — only suggest moves that genuinely improve the route
 7. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there
-8. Consider earnings and estimated duration for workload balance
+8. The worker has ${availableHours} hours available. Do NOT schedule more than ${availableHours} hours of work (include estimated travel time between jobs, roughly 15-20 min per stop)
+9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
+10. Consider earnings and estimated duration for workload balance
 
 Respond in this JSON format:
 {
