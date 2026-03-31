@@ -12,7 +12,7 @@ export type AdminTabs =
   | "audit"
   | "settings";
 
-export type ClientTabs = "jobs" | "services";
+export type ClientTabs = "my-jobs" | "public" | "services";
 
 export type WorkerTabs =
   | "equipment"

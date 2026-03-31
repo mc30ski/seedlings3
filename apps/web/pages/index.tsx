@@ -20,6 +20,7 @@ import PaymentsTab from "@/src/ui/tabs/PaymentsTab";
 import ServicesTab from "@/src/ui/tabs/ServicesTab";
 import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
+import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
@@ -67,7 +68,7 @@ export default function HomePage() {
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
 
-  const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "jobs");
+  const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "jobs");
 
@@ -206,9 +207,16 @@ export default function HomePage() {
 
   const clientTabs: TabItem[] = [
     {
-      value: "jobs",
-      label: "Jobs",
+      value: "my-jobs",
+      label: "My Jobs",
       icon: FiBriefcase,
+      visible: () => !!isSignedIn,
+      content: <ClientMyJobsTab />,
+    },
+    {
+      value: "public",
+      label: "Public",
+      icon: FiActivity,
       content: <ClientFeedTab />,
     },
     {

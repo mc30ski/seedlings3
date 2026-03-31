@@ -255,6 +255,8 @@ model ClientContact {
   role             ContactRole?
   isPrimary        Boolean     @default(false)
 
+  clerkUserId      String?     @unique
+
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
