@@ -18,6 +18,7 @@
     "schema": "./prisma/schema.prisma"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@aws-sdk/client-s3": "^3.1016.0",
     "@aws-sdk/s3-request-presigner": "^3.1016.0",
     "@clerk/clerk-sdk-node": "^5.1.6",

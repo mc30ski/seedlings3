@@ -14,6 +14,8 @@ export type AdminTabs =
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
+export type PreviewTabs = "routes";
+
 export type WorkerTabs =
   | "equipment"
   | "clients"
