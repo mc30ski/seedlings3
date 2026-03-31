@@ -22,6 +22,7 @@ import AdminJobsTab from "@/src/ui/tabs/AdminJobsTab";
 import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
+import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
@@ -44,6 +45,7 @@ import {
   FiMapPin,
   FiActivity,
   FiHome,
+  FiBell,
   FiEye,
   FiNavigation,
   FiSettings,
@@ -74,7 +76,7 @@ export default function HomePage() {
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [previewInnerTab, setPreviewInnerTab] = usePersistedState<PreviewTabs>("previewTab", "routes");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
-  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "jobs");
+  const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
 
@@ -241,6 +243,12 @@ export default function HomePage() {
   ];
 
   const workerTabs: TabItem[] = [
+    {
+      value: "reminders",
+      label: "Reminders",
+      icon: FiBell,
+      content: wrapWithInlineMessage(<RemindersTab myId={me?.id} />),
+    },
     {
       value: "jobs",
       label: "Jobs",
