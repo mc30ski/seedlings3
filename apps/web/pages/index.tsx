@@ -231,7 +231,7 @@ export default function HomePage() {
     {
       value: "jobs",
       label: "Jobs",
-      icon: FiBriefcase,
+      icon: FiClipboard,
       content: wrapWithInlineMessage(<JobsTab me={me} purpose="WORKER" />),
     },
     {

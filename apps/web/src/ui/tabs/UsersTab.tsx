@@ -82,6 +82,7 @@ const roleFilterItems = [
   { label: "All Roles", value: "all" },
   { label: "Worker", value: "worker" },
   { label: "Admin", value: "admin" },
+  { label: "Client", value: "client" },
 ];
 const roleFilterCollection = createListCollection({ items: roleFilterItems });
 
@@ -107,7 +108,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   // simple filters
   const [q, setQ] = useState("");
   const [status, setStatus] = usePersistedState<Status>("users_status", "all");
-  const [accessRole, setAccessRole] = usePersistedState<"all" | "worker" | "admin">(
+  const [accessRole, setAccessRole] = usePersistedState<"all" | "worker" | "admin" | "client">(
     "users_role", "all"
   );
   const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
@@ -185,6 +186,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
       if (status === "approved") params.set("approved", "true");
       if (accessRole === "worker") params.set("role", "WORKER");
       if (accessRole === "admin") params.set("role", "ADMIN");
+      // "client" filter is applied client-side after fetch
 
       // Load users + holdings together (holdings is a separate endpoint)
       const [users, holdings] = await Promise.all([
@@ -220,6 +222,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
 
   const filtered = useMemo(() => {
     let rows = items;
+    // Client filter: approved, no roles
+    if (accessRole === "client") {
+      rows = rows.filter((u) => u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN"));
+    }
     if (workerTypeFilter !== "all") {
       if (workerTypeFilter === "unclassified") {
         rows = rows.filter((u) => !u.workerType && u.roles.some((r) => r.role === "WORKER"));
@@ -236,7 +242,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
       });
     }
     return rows;
-  }, [items, q, workerTypeFilter]);
+  }, [items, q, workerTypeFilter, accessRole]);
 
   async function approve(userId: string) {
     try {
@@ -549,6 +555,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && <Badge>Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                     {isSuper && <Badge colorPalette="yellow">Super</Badge>}
+                    {u.isApproved && !isWorker && !isAdmin && <Badge colorPalette="green">Client</Badge>}
                     {isEmployee && <Badge colorPalette="blue">Employee</Badge>}
                     {isContractor && <Badge colorPalette="orange">Contractor</Badge>}
                     {isTrainee && <Badge colorPalette="cyan">Trainee</Badge>}
