@@ -3,6 +3,39 @@ import { Me, Role } from "@/src/lib/types";
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+const BIZ_TZ = "America/New_York";
+
+/** Format a date as a short date string in business timezone (Eastern) */
+export function fmtDate(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", { timeZone: BIZ_TZ });
+}
+
+/** Format a date+time string in business timezone (Eastern) */
+export function fmtDateTime(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleString("en-US", { timeZone: BIZ_TZ });
+}
+
+/** Format a date with weekday in business timezone */
+export function fmtDateWeekday(d: string | Date | null | undefined, opts?: { year?: boolean }): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", {
+    timeZone: BIZ_TZ,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    ...(opts?.year ? { year: "numeric" } : {}),
+  });
+}
+
+/** Get the YYYY-MM-DD date string in business timezone */
+export function bizDateKey(d: string | Date): string {
+  const dt = new Date(d);
+  const parts = dt.toLocaleDateString("en-CA", { timeZone: BIZ_TZ }); // en-CA gives YYYY-MM-DD
+  return parts;
+}
+
 /** Append " JOB" to client display names for display purposes. */
 export function clientLabel(name: string | null | undefined): string {
   if (!name) return "";

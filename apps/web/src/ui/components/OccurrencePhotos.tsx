@@ -16,6 +16,7 @@ import {
 import { Camera, ChevronLeft, ChevronRight, ImageIcon, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
+import { fmtDateTime } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -317,7 +318,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
             onMouseDown={(e) => e.stopPropagation()}
           >
             <Text color="whiteAlpha.700" fontSize="sm">
-              {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {new Date(viewPhoto.createdAt).toLocaleString()}
+              {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {fmtDateTime(viewPhoto.createdAt)}
             </Text>
             <Button
               size="xs"

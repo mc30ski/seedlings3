@@ -12,7 +12,7 @@ import {
   useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
-import { equipmentStatusColor } from "@/src/lib/lib";
+import { equipmentStatusColor, fmtDateTime } from "@/src/lib/lib";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
@@ -347,10 +347,10 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
                     title="Click to toggle details"
                   >
                     <Table.Cell
-                      title={new Date(row.createdAt).toLocaleString()}
+                      title={fmtDateTime(row.createdAt)}
                       whiteSpace="nowrap"
                     >
-                      {new Date(row.createdAt).toLocaleString()}
+                      {fmtDateTime(row.createdAt)}
                     </Table.Cell>
 
                     <Table.Cell>

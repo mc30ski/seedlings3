@@ -21,7 +21,7 @@ import { CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } fro
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
-import { determineRoles, prettyStatus, clientLabel } from "@/src/lib/lib";
+import { determineRoles, prettyStatus, clientLabel, fmtDate } from "@/src/lib/lib";
 import {
   type TabPropsType,
   type WorkerPaymentItem,
@@ -350,7 +350,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     </HStack>
                     {item.occurrence?.startAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        {new Date(item.occurrence.startAt).toLocaleDateString()}
+                        {fmtDate(item.occurrence.startAt)}
                       </Text>
                     )}
                     <Text fontSize="xs" color="fg.muted">
@@ -359,7 +359,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     </Text>
                     {item.payment.createdAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        Paid on {new Date(item.payment.createdAt).toLocaleDateString()}
+                        Paid on {fmtDate(item.payment.createdAt)}
                       </Text>
                     )}
                     {item.payment.splits.length > 1 && (
@@ -478,7 +478,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       </Text>
                       {c.releasedAt && (
                         <Text fontSize="xs" color="fg.muted">
-                          Returned {new Date(c.releasedAt).toLocaleDateString()}
+                          Returned {fmtDate(c.releasedAt)}
                         </Text>
                       )}
                     </VStack>
@@ -920,7 +920,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 const name = (sp.user?.displayName ?? sp.user?.email ?? sp.userId).replace(/,/g, "");
                 const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
                 const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
-                const date = p.createdAt ? new Date(p.createdAt).toLocaleDateString() : "";
+                const date = p.createdAt ? fmtDate(p.createdAt) : "";
                 rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${expShare.toFixed(2)},${feeShare.toFixed(2)},${marginShare.toFixed(2)},${payout.toFixed(2)},${prettyStatus(p.method)}`);
               }
             }
@@ -1104,7 +1104,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     </HStack>
                     {p.occurrence?.startAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        {new Date(p.occurrence.startAt).toLocaleDateString()}
+                        {fmtDate(p.occurrence.startAt)}
                       </Text>
                     )}
                     <Text fontSize="xs" color="fg.muted">
@@ -1118,7 +1118,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     )}
                     {p.createdAt && (
                       <Text fontSize="xs" color="fg.muted">
-                        {new Date(p.createdAt).toLocaleDateString()}
+                        {fmtDate(p.createdAt)}
                       </Text>
                     )}
                     {p.splits && p.splits.length > 0 && (() => {
@@ -1310,7 +1310,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       </Text>
                       {c.releasedAt && (
                         <Text fontSize="xs" color="fg.muted">
-                          Returned {new Date(c.releasedAt).toLocaleDateString()}
+                          Returned {fmtDate(c.releasedAt)}
                         </Text>
                       )}
                     </VStack>

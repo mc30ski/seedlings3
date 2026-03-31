@@ -10,6 +10,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
+import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 
 type FeedPhoto = {
   id: string;
@@ -45,7 +46,7 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days === 1) return "Yesterday";
   if (days < 7) return `${days} days ago`;
-  return new Date(dateStr).toLocaleDateString();
+  return fmtDate(dateStr);
 }
 
 function relativeTime(dateStr: string): string {
@@ -56,7 +57,7 @@ function relativeTime(dateStr: string): string {
   if (hours < 24) return `in ${hours}h`;
   const days = Math.floor(hours / 24);
   if (days === 1) return "Tomorrow";
-  return new Date(dateStr).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return fmtDateWeekday(dateStr);
 }
 
 function formatDuration(mins: number): string {
