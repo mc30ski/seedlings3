@@ -16,7 +16,7 @@ import { apiGet, apiPatch } from "@/src/lib/api";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate, bizDateKey } from "@/src/lib/lib";
 
 type RouteJob = {
   id: string;
@@ -73,10 +73,24 @@ function formatDuration(mins: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+function addDays(date: Date, n: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
 export default function PreviewRoutesTab() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Target day = the day to optimize a route for
+  const tomorrow = bizDateKey(addDays(new Date(), 1));
+  const [targetDate, setTargetDate] = useState(tomorrow);
+
+  // Look-ahead = how far to look for jobs that could be pulled into the target day
+  const [lookAhead, setLookAhead] = useState(7);
+
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
   const [homeBaseSaving, setHomeBaseSaving] = useState(false);
@@ -84,7 +98,7 @@ export default function PreviewRoutesTab() {
   useEffect(() => {
     apiGet<Me>("/api/me")
       .then((me) => {
-        setHomeBase(me.homeBaseAddress ?? "");
+        setHomeBase(me?.homeBaseAddress ?? "");
         setHomeBaseLoaded(true);
       })
       .catch(() => setHomeBaseLoaded(true));
@@ -103,10 +117,12 @@ export default function PreviewRoutesTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<Response>("/api/preview/route-suggestions");
+      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}`);
       setData(res);
     } catch (err: any) {
+      console.error("Route suggestions failed:", err);
       setError(err?.message || "Failed to load suggestions");
+      setData(null);
     }
     setLoading(false);
   }
@@ -116,13 +132,14 @@ export default function PreviewRoutesTab() {
   }, []);
 
   const jobMap = new Map((data?.jobs ?? []).map((j) => [j.id, j]));
+  const days = data?.suggestions?.days ?? [];
   const dateChangeCount = data?.suggestions?.dateChangeCount ?? 0;
 
   return (
     <Box w="full" pb={8}>
       {/* Home base */}
-      <Box mb={4} p={3} bg="gray.50" rounded="md" borderWidth="1px">
-        <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base Address</Text>
+      <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
+        <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base</Text>
         <HStack gap={2}>
           <Input
             size="sm"
@@ -134,23 +151,58 @@ export default function PreviewRoutesTab() {
             Save
           </Button>
         </HStack>
-        <Text fontSize="xs" color="fg.muted" mt={1}>Used to optimize route start/end point</Text>
+      </Box>
+
+      {/* Planning controls */}
+      <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
+        <HStack gap={4} wrap="wrap" align="flex-end">
+          <Box flex="1" minW="140px">
+            <Text fontSize="xs" fontWeight="medium" mb={1}>Plan for date</Text>
+            <Input
+              type="date"
+              size="sm"
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+            />
+          </Box>
+          <Box flex="1" minW="140px">
+            <HStack justify="space-between" mb={1}>
+              <Text fontSize="xs" fontWeight="medium">Also consider jobs within</Text>
+              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{lookAhead} days</Text>
+            </HStack>
+            <input
+              type="range"
+              min={0}
+              max={30}
+              value={lookAhead}
+              onChange={(e) => setLookAhead(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+            />
+            <HStack justify="space-between" fontSize="xs" color="fg.muted">
+              <Text>Same day only</Text>
+              <Text>30 days</Text>
+            </HStack>
+          </Box>
+        </HStack>
       </Box>
 
       <HStack justify="space-between" mb={4}>
         <VStack align="start" gap={0}>
-          <Text fontSize="lg" fontWeight="semibold">Weekly Route Planner</Text>
-          <Text fontSize="xs" color="fg.muted">AI-powered route optimization for the next 7 days</Text>
+          <Text fontSize="lg" fontWeight="semibold">Route Planner</Text>
+          <Text fontSize="xs" color="fg.muted">
+            Optimizing {fmtDate(targetDate + "T12:00:00Z")}
+            {lookAhead > 0 ? ` · looking ${lookAhead} day${lookAhead !== 1 ? "s" : ""} ahead for nearby jobs` : ""}
+          </Text>
         </VStack>
         <Button size="sm" onClick={loadSuggestions} loading={loading}>
-          Refresh
+          Analyze
         </Button>
       </HStack>
 
       {loading && !data && (
         <Box textAlign="center" py={10}>
           <Spinner size="lg" />
-          <Text fontSize="sm" color="fg.muted" mt={2}>Analyzing jobs for the week...</Text>
+          <Text fontSize="sm" color="fg.muted" mt={2}>Analyzing available jobs...</Text>
         </Box>
       )}
 
@@ -164,17 +216,17 @@ export default function PreviewRoutesTab() {
 
       {data?.suggestions && (
         <VStack align="stretch" gap={4}>
-          {/* Week summary */}
+          {/* Summary */}
           <Box p={4} bg="blue.50" rounded="xl" borderWidth="1px" borderColor="blue.200">
             <Text fontSize="sm" fontWeight="medium" color="blue.700">{data.suggestions.summary}</Text>
             <HStack gap={4} mt={2} wrap="wrap">
               {data.suggestions.totalEstimatedEarnings > 0 && (
                 <Text fontSize="xs" color="blue.600">
-                  Week earnings: ${data.suggestions.totalEstimatedEarnings.toFixed(2)}
+                  Est. earnings: ${data.suggestions.totalEstimatedEarnings.toFixed(2)}
                 </Text>
               )}
               <Text fontSize="xs" color="blue.600">
-                {data.suggestions.days.length} day{data.suggestions.days.length !== 1 ? "s" : ""} planned
+                {days.reduce((n, d) => n + (d.route ?? []).length, 0)} jobs in route
               </Text>
             </HStack>
           </Box>
@@ -183,18 +235,17 @@ export default function PreviewRoutesTab() {
           {dateChangeCount > 0 && (
             <Box p={3} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
               <Text fontSize="sm" fontWeight="medium" color="orange.700">
-                {dateChangeCount} job{dateChangeCount !== 1 ? "s" : ""} would need to be rescheduled
+                {dateChangeCount} job{dateChangeCount !== 1 ? "s" : ""} from other days could be added to this route
               </Text>
               <Text fontSize="xs" color="orange.600" mt={1}>
-                Jobs marked with a date change badge need client confirmation before moving. This is a suggestion only — no changes have been made.
+                These jobs are currently scheduled for different dates. You'd need to contact the client to confirm moving them. No changes have been made.
               </Text>
             </Box>
           )}
 
-          {/* Daily routes */}
-          {data.suggestions.days.map((day) => (
+          {/* Route for each day (usually just the target day + maybe overflow) */}
+          {days.map((day) => (
             <Box key={day.date}>
-              {/* Day header */}
               <HStack justify="space-between" mb={2} px={1}>
                 <VStack align="start" gap={0}>
                   <Text fontSize="sm" fontWeight="semibold">{day.dayLabel}</Text>
@@ -210,9 +261,8 @@ export default function PreviewRoutesTab() {
                 </VStack>
               </HStack>
 
-              {/* Route stops */}
               <VStack align="stretch" gap={2}>
-                {day.route.map((stop, idx) => {
+                {(day.route ?? []).map((stop, idx) => {
                   const job = jobMap.get(stop.occurrenceId);
                   const isClaimed = job?.type === "claimed";
                   return (
@@ -259,12 +309,12 @@ export default function PreviewRoutesTab() {
                             </HStack>
 
                             {stop.dateChanged && (
-                              <HStack gap={1} fontSize="xs">
+                              <HStack gap={1} fontSize="xs" wrap="wrap">
                                 <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                                  Date change needed
+                                  Reschedule needed
                                 </Badge>
                                 <Text color="orange.600">
-                                  {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : day.date ? fmtDate(day.date + "T12:00:00Z") : ""}
+                                  Currently {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → move to {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : fmtDate(day.date + "T12:00:00Z")}
                                 </Text>
                               </HStack>
                             )}
@@ -321,7 +371,7 @@ export default function PreviewRoutesTab() {
       {data?.jobs && data.jobs.length > 0 && (
         <Box mt={6}>
           <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} textTransform="uppercase" letterSpacing="wide">
-            All Jobs This Week ({data.jobs.length})
+            All Available Jobs ({data.jobs.length})
           </Text>
           <VStack align="stretch" gap={1}>
             {data.jobs.map((job) => (
