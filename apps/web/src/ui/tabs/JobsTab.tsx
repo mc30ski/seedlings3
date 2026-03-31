@@ -919,7 +919,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
-                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="red" variant="outline" /></span>}
+                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
                       </HStack>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
@@ -964,8 +964,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
                             <StatusBadge
                               status="Insured Only"
-                              palette="red"
-                              variant="outline"
+                              palette="yellow"
+                              variant="solid"
                             />
                           </span>
                         )}
@@ -1616,8 +1616,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="sm">An administered occurrence cannot be claimed by workers — an admin must assign the team. Once assigned, the team can start, complete, and manage it normally. Estimates are administered by default, but any repeating or one-off occurrence can also be marked as administered. When an administered repeating job auto-creates the next occurrence, it keeps the same team assigned.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
-                    <Badge colorPalette="red" variant="outline" mb={1}>Insured Only</Badge>
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
+                    <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
+                    <Text fontSize="sm">A tentative occurrence cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain or needs client approval first.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400">
+                    <Badge colorPalette="yellow" variant="solid" mb={1}>Insured Only</Badge>
                     <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have a valid insurance certificate to claim or be assigned. Employees can always be assigned.</Text>
                   </Box>
                 </VStack>
