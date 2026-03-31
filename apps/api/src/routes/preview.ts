@@ -20,7 +20,7 @@ export default async function previewRoutes(app: FastifyInstance) {
     // Get the target user info
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, displayName: true, email: true, workerType: true },
+      select: { id: true, displayName: true, email: true, workerType: true, homeBaseAddress: true },
     });
     if (!user) throw app.httpErrors.notFound("User not found.");
 
@@ -126,16 +126,18 @@ export default async function previewRoutes(app: FastifyInstance) {
     const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan their day for tomorrow.
 
 Worker: ${user.displayName ?? user.email ?? "Unknown"}
+${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
 
 Here are the available jobs (some already claimed by this worker, others available to claim):
 
 ${jobsJson}
 
 Please suggest an optimal route for the day. Consider:
-1. Geographic clustering — group nearby jobs to minimize driving
-2. Earnings — higher-paying jobs should be prioritized
-3. Time efficiency — consider estimated duration and travel between locations
-4. Already claimed jobs must be included in the route
+1. ${user.homeBaseAddress ? `Start and end the route near the worker's home base (${user.homeBaseAddress})` : "Geographic clustering — group nearby jobs to minimize driving"}
+2. Minimize total driving distance between jobs
+3. Earnings — higher-paying jobs should be prioritized
+4. Time efficiency — consider estimated duration and travel between locations
+5. Already claimed jobs must be included in the route
 
 For each job in your suggested order, explain briefly why it fits at that position in the route.
 

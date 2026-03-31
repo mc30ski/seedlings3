@@ -7,12 +7,15 @@ import {
   Button,
   Card,
   HStack,
+  Input,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPatch } from "@/src/lib/api";
 import { MapLink } from "@/src/ui/helpers/Link";
+import { type Me } from "@/src/lib/types";
+import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 type RouteJob = {
   id: string;
@@ -61,6 +64,28 @@ export default function PreviewRoutesTab() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [homeBase, setHomeBase] = useState("");
+  const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
+  const [homeBaseSaving, setHomeBaseSaving] = useState(false);
+
+  // Load current home base
+  useEffect(() => {
+    apiGet<Me>("/api/me")
+      .then((me) => {
+        setHomeBase(me.homeBaseAddress ?? "");
+        setHomeBaseLoaded(true);
+      })
+      .catch(() => setHomeBaseLoaded(true));
+  }, []);
+
+  async function saveHomeBase() {
+    setHomeBaseSaving(true);
+    try {
+      await apiPatch("/api/me/home-base", { address: homeBase });
+      publishInlineMessage({ type: "SUCCESS", text: "Home base saved." });
+    } catch {}
+    setHomeBaseSaving(false);
+  }
 
   async function loadSuggestions() {
     setLoading(true);
@@ -82,6 +107,28 @@ export default function PreviewRoutesTab() {
 
   return (
     <Box w="full" pb={8}>
+      {/* Home base */}
+      <Box mb={4} p={3} bg="gray.50" rounded="md" borderWidth="1px">
+        <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base Address</Text>
+        <HStack gap={2}>
+          <Input
+            size="sm"
+            value={homeBase}
+            onChange={(e) => setHomeBase(e.target.value)}
+            placeholder="e.g. 123 Main St, Chapel Hill, NC"
+          />
+          <Button
+            size="sm"
+            onClick={saveHomeBase}
+            loading={homeBaseSaving}
+            disabled={!homeBaseLoaded}
+          >
+            Save
+          </Button>
+        </HStack>
+        <Text fontSize="xs" color="fg.muted" mt={1}>Used to optimize route start/end point</Text>
+      </Box>
+
       <HStack justify="space-between" mb={4}>
         <VStack align="start" gap={0}>
           <Text fontSize="lg" fontWeight="semibold">Route Suggestions</Text>
