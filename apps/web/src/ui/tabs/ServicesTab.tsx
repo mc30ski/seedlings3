@@ -50,7 +50,6 @@ import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
-import ScheduleNextDialog from "@/src/ui/dialogs/ScheduleNextDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
@@ -214,13 +213,6 @@ export default function ServicesTab({
   const [expenseDialogJobId, setExpenseDialogJobId] = useState<string | null>(null);
   const [acceptPaymentJobId, setAcceptPaymentJobId] = useState<string>("");
 
-  const [scheduleNextOpen, setScheduleNextOpen] = useState(false);
-  const [scheduleNextData, setScheduleNextData] = useState<{
-    jobId: string;
-    frequencyDays: number;
-    closedOccurrence: { startAt?: string | null; endAt?: string | null; notes?: string | null; price?: number | null };
-  } | null>(null);
-
   async function load(displayLoading = true) {
     setLoading(displayLoading);
     try {
@@ -348,20 +340,6 @@ export default function ServicesTab({
       void loadDetail(jobId, true);
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
 
-      // Prompt to schedule next occurrence if job has a frequency (skip for one-off)
-      if (newStatus === "CLOSED" && job?.frequencyDays && occ && !occ.isOneOff) {
-        setScheduleNextData({
-          jobId,
-          frequencyDays: job.frequencyDays,
-          closedOccurrence: {
-            startAt: occ.startAt,
-            endAt: occ.endAt,
-            notes: occ.notes,
-            price: occ.price,
-          },
-        });
-        setScheduleNextOpen(true);
-      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -1736,25 +1714,6 @@ export default function ServicesTab({
         />
       )}
 
-      {scheduleNextData && (
-        <ScheduleNextDialog
-          open={scheduleNextOpen}
-          onOpenChange={(o) => {
-            setScheduleNextOpen(o);
-            if (!o) setScheduleNextData(null);
-          }}
-          jobId={scheduleNextData.jobId}
-          frequencyDays={scheduleNextData.frequencyDays}
-          closedOccurrence={scheduleNextData.closedOccurrence}
-          createEndpoint={`/api/admin/jobs/${scheduleNextData.jobId}/occurrences`}
-          onCreated={(nextStartDate) => {
-            if (nextStartDate && dateTo && nextStartDate > dateTo) {
-              setDateTo(nextStartDate);
-            }
-            void loadDetail(scheduleNextData.jobId, true);
-          }}
-        />
-      )}
 
       <ConfirmDialog
         open={!!confirmAction}
@@ -1790,24 +1749,11 @@ export default function ServicesTab({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
           }))}
-          onAccepted={() => {
-            const occ = acceptPaymentOcc;
+          onAccepted={(result) => {
             const jobId = acceptPaymentJobId;
             if (jobId) void loadDetail(jobId, true);
-            // Prompt to schedule next if job has frequency and not one-off
-            const job = items.find((j) => j.id === jobId);
-            if (job?.frequencyDays && occ && !occ.isOneOff) {
-              setScheduleNextData({
-                jobId,
-                frequencyDays: job.frequencyDays,
-                closedOccurrence: {
-                  startAt: occ.startAt,
-                  endAt: occ.endAt,
-                  notes: occ.notes,
-                  price: occ.price,
-                },
-              });
-              setScheduleNextOpen(true);
+            if (result?.nextOccurrence) {
+              publishInlineMessage({ type: "SUCCESS", text: `Next occurrence auto-scheduled for ${fmtDate(result.nextOccurrence.startAt)}.` });
             }
             setAcceptPaymentOcc(null);
           }}

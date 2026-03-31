@@ -17,6 +17,7 @@ import { Camera, ChevronLeft, ChevronRight, ImageIcon, Trash2 } from "lucide-rea
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
 import { fmtDateTime } from "@/src/lib/lib";
+import { compressAndRedact } from "@/src/lib/imageRedact";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -32,35 +33,6 @@ type Props = {
   photoCount?: number;
 };
 
-/** Compress an image file client-side: max 1200px, 80% JPEG quality. */
-async function compressImage(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new window.Image();
-    img.onload = () => {
-      URL.revokeObjectURL(img.src);
-      const MAX = 1200;
-      let w = img.width;
-      let h = img.height;
-      if (w > MAX || h > MAX) {
-        const ratio = Math.min(MAX / w, MAX / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("Compression failed"))),
-        "image/jpeg",
-        0.8,
-      );
-    };
-    img.onerror = () => reject(new Error("Failed to load image"));
-    img.src = URL.createObjectURL(file);
-  });
-}
 
 /**
  * Persistent file input that lives at document.body level.
@@ -132,7 +104,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const compressed = await compressImage(file);
+        const compressed = await compressAndRedact(file);
 
         const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
           `/api/occurrences/${occurrenceId}/photos/upload-url`,
