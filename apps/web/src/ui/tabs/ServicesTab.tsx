@@ -192,6 +192,7 @@ export default function ServicesTab({
   const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
   const [assigneeCurrentAssignees, setAssigneeCurrentAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
+  const [assigneeHasPayment, setAssigneeHasPayment] = useState(false);
 
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [commissionPercent, setCommissionPercent] = useState(0);
@@ -1446,6 +1447,7 @@ export default function ServicesTab({
                                   setAssigneeOccurrenceId(occ.id);
                                   setAssigneeCurrentAssignees(occ.assignees);
                                   setAssigneeJobId(job.id);
+                                  setAssigneeHasPayment(!!occ.payment);
                                   setAssigneeDialogOpen(true);
                                 }}
                                 variant="outline"
@@ -1729,6 +1731,7 @@ export default function ServicesTab({
           onOpenChange={setAssigneeDialogOpen}
           occurrenceId={assigneeOccurrenceId}
           currentAssignees={assigneeCurrentAssignees}
+          hasPayment={assigneeHasPayment}
           onChanged={() => {
             if (assigneeJobId) {
               void loadDetail(assigneeJobId, true);

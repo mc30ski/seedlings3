@@ -268,7 +268,10 @@ export const payments: ServicesPayments = {
       where.method = params.method;
     }
     if (params?.userId) {
-      where.splits = { some: { userId: params.userId } };
+      where.OR = [
+        { splits: { some: { userId: params.userId } } },
+        { occurrence: { assignees: { some: { userId: params.userId } } } },
+      ];
     }
 
     const payments = await prisma.payment.findMany({
@@ -430,6 +433,47 @@ export const payments: ServicesPayments = {
           },
         },
       },
+    });
+  },
+
+  async recalculateSplits(occurrenceId: string) {
+    return prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { occurrenceId },
+        include: { splits: true },
+      });
+      if (!payment) throw new ServiceError("NOT_FOUND", "No payment found for this occurrence.", 404);
+
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        include: { assignees: true },
+      });
+      if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+
+      const assigneeIds = occ.assignees.map((a) => a.userId);
+      if (assigneeIds.length === 0) {
+        throw new ServiceError("NO_ASSIGNEES", "Cannot recalculate — no assignees on this occurrence.", 400);
+      }
+
+      // Even split across current assignees
+      const splitAmount = Math.round((payment.amountPaid / assigneeIds.length) * 100) / 100;
+
+      await tx.paymentSplit.deleteMany({ where: { paymentId: payment.id } });
+      await tx.paymentSplit.createMany({
+        data: assigneeIds.map((uid) => ({
+          paymentId: payment.id,
+          userId: uid,
+          amount: splitAmount,
+        })),
+      });
+
+      return tx.payment.findUnique({
+        where: { id: payment.id },
+        include: {
+          splits: { include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
+          collectedBy: { select: { id: true, displayName: true } },
+        },
+      });
     });
   },
 };

@@ -604,6 +604,8 @@ export type ServicesPayments = {
     currentUserId: string,
     paymentId: string
   ): Promise<void>;
+
+  recalculateSplits(occurrenceId: string): Promise<any>;
 };
 
 export type ServicesExpenses = {

@@ -30,6 +30,7 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   occurrenceId: string;
   currentAssignees: JobOccurrenceAssigneeWithUser[];
+  hasPayment?: boolean;
   onChanged?: () => void;
 };
 
@@ -38,6 +39,7 @@ export default function AssigneeDialog({
   onOpenChange,
   occurrenceId,
   currentAssignees,
+  hasPayment,
   onChanged,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -47,11 +49,16 @@ export default function AssigneeDialog({
   const [selected, setSelected] = useState<string[]>([]);
   const [addBusy, setAddBusy] = useState(false);
   const [removingId, setRemovingId] = useState<string>("");
+  const [assigneesChanged, setAssigneesChanged] = useState(false);
+  const [showRecalcPrompt, setShowRecalcPrompt] = useState(false);
+  const [recalcBusy, setRecalcBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setAssignees(currentAssignees);
     setSelected([]);
+    setAssigneesChanged(false);
+    setShowRecalcPrompt(false);
     (async () => {
       try {
         const list = await apiGet<WorkerLite[]>(
@@ -114,6 +121,7 @@ export default function AssigneeDialog({
         }
       }
       setSelected([]);
+      setAssigneesChanged(true);
       publishInlineMessage({
         type: "SUCCESS",
         text: selected.length === 1 ? "Worker assigned." : `${selected.length} workers assigned.`,
@@ -134,6 +142,7 @@ export default function AssigneeDialog({
     try {
       await apiDelete(`/api/admin/occurrences/${occurrenceId}/assignees/${targetUserId}`);
       setAssignees((prev) => prev.filter((a) => a.userId !== targetUserId));
+      setAssigneesChanged(true);
       publishInlineMessage({ type: "SUCCESS", text: "Worker removed." });
       onChanged?.();
     } catch (err) {
@@ -256,12 +265,76 @@ export default function AssigneeDialog({
               </VStack>
             </Dialog.Body>
 
+            {hasPayment && assigneesChanged && !showRecalcPrompt && (
+              <Box px="4" pb="2">
+                <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+                  <Text fontSize="xs" color="orange.700">
+                    This occurrence has already been paid. The payment splits may no longer match the current team.
+                  </Text>
+                </Box>
+              </Box>
+            )}
+
+            {showRecalcPrompt && (
+              <Box px="4" pb="2">
+                <VStack align="stretch" gap={2}>
+                  <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+                    <Text fontSize="sm" fontWeight="medium" color="orange.700" mb={1}>
+                      Recalculate payment splits?
+                    </Text>
+                    <Text fontSize="xs" color="orange.600">
+                      This will evenly split the payment amount across the current team. Warning: if financial records have already been acted on (e.g. cash paid out), the previous records may no longer be accurate.
+                    </Text>
+                  </Box>
+                  <HStack justify="flex-end" gap={2}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setShowRecalcPrompt(false);
+                        onOpenChange(false);
+                      }}
+                    >
+                      Skip
+                    </Button>
+                    <Button
+                      size="sm"
+                      colorPalette="orange"
+                      loading={recalcBusy}
+                      onClick={async () => {
+                        setRecalcBusy(true);
+                        try {
+                          await apiPost(`/api/admin/occurrences/${occurrenceId}/recalculate-splits`);
+                          publishInlineMessage({ type: "SUCCESS", text: "Payment splits recalculated." });
+                          onChanged?.();
+                          setShowRecalcPrompt(false);
+                          onOpenChange(false);
+                        } catch (err) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Recalculate failed.", err) });
+                        } finally {
+                          setRecalcBusy(false);
+                        }
+                      }}
+                    >
+                      Recalculate
+                    </Button>
+                  </HStack>
+                </VStack>
+              </Box>
+            )}
+
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
                 <Button
                   ref={cancelRef}
-                  onClick={() => onOpenChange(false)}
-                  disabled={addBusy || removingId !== ""}
+                  onClick={() => {
+                    if (hasPayment && assigneesChanged && !showRecalcPrompt) {
+                      setShowRecalcPrompt(true);
+                    } else {
+                      onOpenChange(false);
+                    }
+                  }}
+                  disabled={addBusy || removingId !== "" || recalcBusy}
                 >
                   Done
                 </Button>
