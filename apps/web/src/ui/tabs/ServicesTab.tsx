@@ -104,12 +104,17 @@ export default function ServicesTab({
   const [quickDate, setQuickDate] = useState<string[]>([]);
 
   useEffect(() => {
-    if (datePreset) {
+    if (overdueActive) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      setDateFrom("");
+      setDateTo(localDate(yesterday));
+    } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
       setDateFrom(d.from);
       setDateTo(d.to);
     }
-  }, [datePreset]);
+  }, [datePreset, overdueActive]);
 
   const quickDateItems = useMemo(
     () =>
@@ -828,6 +833,20 @@ export default function ServicesTab({
                               "jobsTabToPropertiesTabSearch",
                               job.property?.displayName ?? "",
                               forAdmin,
+                              job.property?.id,
+                            )
+                          }
+                        />
+                      )}
+                      {job.property?.client?.displayName && (
+                        <TextLink
+                          text="View Client"
+                          onClick={() =>
+                            openEventSearch(
+                              "jobsTabToClientsTabSearch",
+                              job.property?.client?.displayName ?? "",
+                              forAdmin,
+                              job.property?.client?.id,
                             )
                           }
                         />
@@ -1027,7 +1046,11 @@ export default function ServicesTab({
                             </Text>
                             {occ.assignees.length === 0 ? (
                               <Text fontSize="xs" color="orange.500" fontWeight="medium">
-                                Unclaimed — available to pick up
+                                {occ.isTentative
+                                  ? "Unclaimed — tentative, awaiting admin confirmation"
+                                  : (occ as any).isAdminOnly
+                                  ? "Unclaimed — administered, must be assigned by an admin"
+                                  : "Unclaimed — available to claim"}
                               </Text>
                             ) : (
                               <VStack align="start" gap={0}>

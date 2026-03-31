@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { prisma } from "../db/prisma";
+import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 
 async function currentUserId(req: any) {
@@ -178,7 +180,6 @@ export default async function workerRoutes(app: FastifyInstance) {
       : undefined;
 
     // First update the proposal fields
-    const { prisma } = await import("../db/prisma");
     if (body.proposalAmount != null || body.proposalNotes != null) {
       await prisma.jobOccurrence.update({
         where: { id: String(req.params.id) },
@@ -204,7 +205,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     const body = req.body || {};
-    const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({
       where: { id: occurrenceId },
@@ -249,7 +249,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     const body = req.body || {};
-    const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({
       where: { id: occurrenceId },
@@ -295,7 +294,6 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const { prisma } = await import("../db/prisma");
     const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid } });
     if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments. The team lead must take this action.");
     const body = req.body || {};
@@ -372,7 +370,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
 
-    const { prisma } = await import("../db/prisma");
     const count = await prisma.jobOccurrencePhoto.count({ where: { occurrenceId } });
     if (count >= 10) throw app.httpErrors.badRequest("Maximum 10 photos per occurrence");
 
@@ -380,7 +377,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const fileName = String(body.fileName ?? "photo.jpg");
     const contentType = String(body.contentType ?? "image/jpeg");
 
-    const { getUploadUrl } = await import("../lib/r2");
     const key = `photos/${occurrenceId}/${uid}-${Date.now()}-${fileName}`;
     const uploadUrl = await getUploadUrl(key, contentType);
 
@@ -394,7 +390,6 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     if (!body.key) throw app.httpErrors.badRequest("key is required");
 
-    const { prisma } = await import("../db/prisma");
     const photo = await prisma.jobOccurrencePhoto.create({
       data: {
         occurrenceId,
@@ -410,8 +405,6 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.get("/occurrences/:id/photos", workerGuard, async (req: any) => {
     const occurrenceId = String(req.params.id);
-    const { prisma } = await import("../db/prisma");
-    const { getDownloadUrl } = await import("../lib/r2");
 
     const photos = await prisma.jobOccurrencePhoto.findMany({
       where: { occurrenceId },
@@ -436,8 +429,6 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.delete("/occurrences/:id/photos/:photoId", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const photoId = String(req.params.photoId);
-    const { prisma } = await import("../db/prisma");
-    const { deleteObject } = await import("../lib/r2");
 
     const photo = await prisma.jobOccurrencePhoto.findUnique({ where: { id: photoId } });
     if (!photo) throw app.httpErrors.notFound("Photo not found");
@@ -457,7 +448,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const fileName = String(body.fileName ?? "certificate.pdf");
     const contentType = String(body.contentType ?? "application/pdf");
 
-    const { getUploadUrl } = await import("../lib/r2");
     const key = `insurance/${uid}/${Date.now()}-${fileName}`;
     const uploadUrl = await getUploadUrl(key, contentType, 300, "docs");
 
@@ -483,7 +473,6 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.get("/insurance", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const { prisma } = await import("../db/prisma");
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: uid },
       select: {
@@ -495,8 +484,7 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     let url: string | null = null;
     if (user.insuranceCertR2Key) {
-      const { getDownloadUrl } = await import("../lib/r2");
-      url = await getDownloadUrl(user.insuranceCertR2Key, 3600, "docs");
+        url = await getDownloadUrl(user.insuranceCertR2Key, 3600, "docs");
     }
 
     return {

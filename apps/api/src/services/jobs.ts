@@ -334,7 +334,7 @@ export const jobs: ServicesJobs = {
           isOneOff: input.workflow === "ONE_OFF" || input.isOneOff || false,
           isTentative: input.isTentative ?? false,
           isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
-          isAdminOnly: input.isAdminOnly ?? false,
+          isAdminOnly: input.isAdminOnly ?? (input.workflow === "ESTIMATE" || input.isEstimate ? true : false),
         } as any,
       });
 
@@ -719,11 +719,8 @@ export const jobs: ServicesJobs = {
       if (occ.isTentative) {
         throw new ServiceError("TENTATIVE", "Tentative occurrences cannot be claimed until confirmed by an admin.", 409);
       }
-      if ((occ as any).workflow === "ESTIMATE" || (occ as any).isEstimate) {
-        throw new ServiceError("ESTIMATE_NO_CLAIM", "Estimates cannot be claimed. An admin must assign workers.", 409);
-      }
       if ((occ as any).isAdminOnly) {
-        throw new ServiceError("ADMIN_ONLY", "This job can only be assigned by an admin.", 409);
+        throw new ServiceError("ADMIN_ONLY", "This job is administered and can only be assigned by an admin.", 409);
       }
 
       // Tier gating for high-value jobs
