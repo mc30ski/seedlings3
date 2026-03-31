@@ -756,6 +756,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // Recalculate payment splits based on current assignees
+  app.post("/admin/occurrences/:occurrenceId/recalculate-splits", adminGuard, async (req: any) => {
+    return services.payments.recalculateSplits(String(req.params.occurrenceId));
+  });
+
   // Update a payment (admin)
   app.patch("/admin/payments/:paymentId", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
