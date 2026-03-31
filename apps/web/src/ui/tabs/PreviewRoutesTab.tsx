@@ -131,9 +131,6 @@ export default function PreviewRoutesTab() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    void loadSuggestions();
-  }, []);
 
   const jobMap = new Map((data?.jobs ?? []).map((j) => [j.id, j]));
   const days = data?.suggestions?.days ?? [];
