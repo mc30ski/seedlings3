@@ -11,10 +11,14 @@ type Props = {
   confirmColorPalette?: string;
   onConfirm: ((inputValue: string) => void) | (() => void);
   onCancel: () => void;
-  /** If provided, shows a required text input with this placeholder */
+  /** If provided, shows a text input with this placeholder */
   inputPlaceholder?: string;
   /** Label for the text input */
   inputLabel?: string;
+  /** If true, the input is not required to confirm */
+  inputOptional?: boolean;
+  /** Default value for the input */
+  inputDefaultValue?: string;
 };
 
 export default function ConfirmDialog({
@@ -27,17 +31,19 @@ export default function ConfirmDialog({
   onCancel,
   inputPlaceholder,
   inputLabel,
+  inputOptional,
+  inputDefaultValue,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
 
   // Reset input when dialog opens/closes
   useEffect(() => {
-    if (open) setInputValue("");
-  }, [open]);
+    if (open) setInputValue(inputDefaultValue ?? "");
+  }, [open, inputDefaultValue]);
 
   const hasInput = !!inputPlaceholder;
-  const canConfirm = !hasInput || inputValue.trim().length > 0;
+  const canConfirm = !hasInput || inputOptional || inputValue.trim().length > 0;
 
   function handleConfirm() {
     if (!canConfirm) return;

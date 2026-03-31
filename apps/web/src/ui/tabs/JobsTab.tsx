@@ -7,14 +7,16 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Portal,
   Select,
   Spinner,
   Text,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, LayoutList, List, Maximize2, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2, RefreshCw, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -125,6 +127,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
+  const [showInfoDialog, setShowInfoDialog] = useState(false);
+
+  // Show info dialog on first visit
+  useEffect(() => {
+    const key = `seedlings_${pfx}_infoDismissed`;
+    if (!localStorage.getItem(key)) {
+      setShowInfoDialog(true);
+    }
+  }, [pfx]);
   const [overdueCount, setOverdueCount] = useState(0);
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
@@ -175,6 +186,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     onConfirm: ((inputValue: string) => void) | (() => void);
     inputPlaceholder?: string;
     inputLabel?: string;
+    inputOptional?: boolean;
+    inputDefaultValue?: string;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -260,15 +273,34 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     try {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const list = await apiGet<WorkerOccurrence[]>(
+      let list = await apiGet<WorkerOccurrence[]>(
         `/api/occurrences?to=${localDate(yesterday)}`
       );
-      const count = (Array.isArray(list) ? list : []).filter(
-        (o) => {
-          const s = o.status as string;
-          return s !== "CLOSED" && s !== "ARCHIVED" && s !== "CANCELED" && s !== "REJECTED" && s !== "ACCEPTED";
+      if (!Array.isArray(list)) list = [];
+
+      // Apply the same visibility filtering as load()
+      if (viewAsUserIds?.length) {
+        const idSet = new Set(viewAsUserIds);
+        list = list.filter((occ) => {
+          const assignees = occ.assignees ?? [];
+          if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
+          return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
+        });
+      } else if (!forAdmin && myId) {
+        if (isTrainee) {
+          list = list.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
+        } else {
+          list = list.filter((occ) => {
+            const assignees = occ.assignees ?? [];
+            return assignees.length === 0 || assignees.some((a) => a.userId === myId);
+          });
         }
-      ).length;
+      }
+
+      const count = list.filter((o) => {
+        const s = o.status as string;
+        return s !== "CLOSED" && s !== "ARCHIVED" && s !== "CANCELED" && s !== "REJECTED" && s !== "ACCEPTED";
+      }).length;
       setOverdueCount(count);
     } catch {
       // silently ignore
@@ -329,18 +361,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
-  async function submitProposal(occurrenceId: string, amount: string) {
+  async function completeEstimate(occurrenceId: string, comments: string) {
     try {
-      const proposalAmount = parseFloat(amount);
-      if (isNaN(proposalAmount) || proposalAmount <= 0) {
-        publishInlineMessage({ type: "WARNING", text: "Please enter a valid proposal amount." });
-        return;
-      }
-      await apiPost(`/api/occurrences/${occurrenceId}/submit-proposal`, { proposalAmount });
-      publishInlineMessage({ type: "SUCCESS", text: "Proposal submitted." });
+      await apiPost(`/api/occurrences/${occurrenceId}/submit-proposal`, {
+        proposalNotes: comments || undefined,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Estimate completed." });
       await load(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Submit proposal failed.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete estimate failed.", err) });
     }
   }
 
@@ -555,6 +584,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           } : undefined}
         >
           {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowInfoDialog(true)}
+          px="2"
+          title="How jobs work"
+        >
+          <Info size={14} />
         </Button>
         <Button
           size="sm"
@@ -1050,11 +1088,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.notes}
                       </Text>
                     )}
-                    {occ.proposalAmount != null && (
+                    {(occ.proposalAmount != null || occ.proposalNotes) && (
                       <Box p={2} bg="purple.50" rounded="sm" mt={1}>
-                        <Text fontSize="xs" fontWeight="medium" color="purple.700">
-                          Proposal: ${occ.proposalAmount.toFixed(2)}
-                        </Text>
+                        {occ.proposalAmount != null && (
+                          <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                            Proposal: ${occ.proposalAmount.toFixed(2)}
+                          </Text>
+                        )}
                         {occ.proposalNotes && (
                           <Text fontSize="xs" color="purple.600">{occ.proposalNotes}</Text>
                         )}
@@ -1107,8 +1147,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         {isTentative
                           ? "Tentative — awaiting admin confirmation"
-                          : isAdminOnlyOcc
-                          ? "Unclaimed — contact your administrator"
+                          : (isAdminOnlyOcc || isEstimateOcc)
+                          ? "Unclaimed — must be assigned by an administrator"
                           : "Unclaimed — available to pick up"}
                       </Text>
                     )}
@@ -1202,7 +1242,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Body>
                 )}
 
-                {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT") && (
+                {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && !isEstimateOcc && !isAdminOnlyOcc && (
@@ -1250,18 +1290,78 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <StatusButton
                           id="occ-submit-proposal"
                           itemId={occ.id}
-                          label="Submit Proposal"
+                          label="Complete Estimate"
                           onClick={async () => setConfirmAction({
-                            title: "Submit Proposal?",
-                            message: "Submit this estimate as a proposal. An admin will review and accept or reject it.",
-                            confirmLabel: "Submit",
+                            title: "Complete Estimate?",
+                            message: "Add any comments about this estimate (optional):",
+                            confirmLabel: "Complete",
                             colorPalette: "purple",
-                            inputLabel: "Proposal amount ($)",
-                            inputPlaceholder: "Enter proposed price",
-                            onConfirm: (amount: string) => void submitProposal(occ.id, amount),
+                            inputLabel: "Comments",
+                            inputPlaceholder: "Notes about this estimate...",
+                            inputOptional: true,
+                            inputDefaultValue: occ.proposalNotes ?? "",
+                            onConfirm: (comments: string) => void completeEstimate(occ.id, comments),
                           })}
                           variant="outline"
                           colorPalette="purple"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
+                      {isAssignedToMe && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                        <StatusButton
+                          id="occ-accept-estimate"
+                          itemId={occ.id}
+                          label="Accept Estimate"
+                          onClick={async () => setConfirmAction({
+                            title: "Accept Estimate?",
+                            message: "Add a comment (optional):",
+                            confirmLabel: "Accept",
+                            colorPalette: "green",
+                            inputPlaceholder: "Comment...",
+                            inputLabel: "Comment",
+                            inputOptional: true,
+                            onConfirm: async (comment: string) => {
+                              try {
+                                await apiPost(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+                                await load(false);
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                              }
+                            },
+                          })}
+                          variant="solid"
+                          colorPalette="green"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
+                      {isAssignedToMe && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                        <StatusButton
+                          id="occ-reject-estimate"
+                          itemId={occ.id}
+                          label="Reject Estimate"
+                          onClick={async () => setConfirmAction({
+                            title: "Reject Estimate?",
+                            message: "Add a reason (optional):",
+                            confirmLabel: "Reject",
+                            colorPalette: "red",
+                            inputPlaceholder: "Reason...",
+                            inputLabel: "Reason",
+                            inputOptional: true,
+                            onConfirm: async (reason: string) => {
+                              try {
+                                await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
+                                await load(false);
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                              }
+                            },
+                          })}
+                          variant="outline"
+                          colorPalette="red"
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -1363,6 +1463,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         confirmColorPalette={confirmAction?.colorPalette}
         inputPlaceholder={confirmAction?.inputPlaceholder}
         inputLabel={confirmAction?.inputLabel}
+        inputOptional={confirmAction?.inputOptional}
+        inputDefaultValue={confirmAction?.inputDefaultValue}
         onConfirm={(inputValue: string) => {
           if (confirmAction?.inputPlaceholder) {
             (confirmAction.onConfirm as (v: string) => void)(inputValue);
@@ -1443,6 +1545,86 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
         />
       )}
+
+      <Dialog.Root open={showInfoDialog} onOpenChange={(e) => { if (!e.open) setShowInfoDialog(false); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p="4" shadow="lg" maxH="80vh" overflowY="auto">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>How Jobs Work</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={4}>
+                  <Box>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Occurrence Types</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Each job can have multiple occurrences. The type determines the workflow.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                    <Badge colorPalette="blue" variant="outline" mb={1}>Repeating</Badge>
+                    <Text fontSize="sm">A recurring job that repeats on a schedule (e.g. every 14 days). When payment is accepted, the next occurrence is automatically created. Workers can claim repeating jobs, or an admin can assign them.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claimed → Start → Complete → Accept Payment → Next occurrence auto-created</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
+                    <Badge colorPalette="gray" variant="solid" mb={1}>One-Off</Badge>
+                    <Text fontSize="sm">A single job that does not repeat. Workers can claim one-off jobs, or an admin can assign them. No next occurrence is created after payment.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claimed → Start → Complete → Accept Payment → Done</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300">
+                    <Badge colorPalette="purple" variant="solid" mb={1}>Estimate</Badge>
+                    <Text fontSize="sm">A site visit to assess work before committing. Estimates cannot be claimed by workers — an admin must assign a team. The team visits the site, starts the estimate, then completes it with optional comments.</Text>
+                    <Text fontSize="sm" mt={1}>After completion, the assigned team or an admin can accept or reject the estimate. Accepting prompts to update the job defaults and create a new occurrence (repeating, one-off, or another estimate).</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Created by Admin → Assigned → Start → Complete (add comments) → Accept or Reject</Text>
+                  </Box>
+
+                  <Box mt={2}>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Special Flags</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
+                    <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
+                    <Text fontSize="sm">A tentative occurrence cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
+                    <Badge colorPalette="red" variant="outline" mb={1}>Administered</Badge>
+                    <Text fontSize="sm">An administered occurrence cannot be claimed by workers. An admin must assign the team directly. The team can still start, complete, and manage the job once assigned.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
+                    <Badge colorPalette="red" variant="outline" mb={1}>Insured Only</Badge>
+                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have a valid insurance certificate to be assigned. Employees can always be assigned.</Text>
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      localStorage.setItem(`seedlings_${pfx}_infoDismissed`, "1");
+                      setShowInfoDialog(false);
+                    }}
+                  >
+                    Don't show again
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowInfoDialog(false)}
+                  >
+                    Got it
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }

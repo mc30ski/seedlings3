@@ -153,6 +153,8 @@ export const payments: ServicesPayments = {
         const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
         if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq);
 
+        const isAdminOnly = !!(fullOcc as any).isAdminOnly;
+
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             jobId: fullOcc.jobId,
@@ -162,23 +164,26 @@ export const payments: ServicesPayments = {
             status: "SCHEDULED",
             source: "GENERATED",
             workflow: "STANDARD",
+            isAdminOnly,
             notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
             price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
             estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
           } as any,
         });
 
-        // Copy assignees to the new occurrence
-        const assigneeIds = fullOcc.assignees.map((a) => a.userId);
-        if (assigneeIds.length > 0) {
-          await tx.jobOccurrenceAssignee.createMany({
-            data: assigneeIds.map((uid) => ({
-              occurrenceId: nextOccurrence.id,
-              userId: uid,
-              assignedById: currentUserId,
-            })),
-            skipDuplicates: true,
-          });
+        // Only copy assignees for administered occurrences
+        if (isAdminOnly) {
+          const assigneeIds = fullOcc.assignees.map((a) => a.userId);
+          if (assigneeIds.length > 0) {
+            await tx.jobOccurrenceAssignee.createMany({
+              data: assigneeIds.map((uid) => ({
+                occurrenceId: nextOccurrence.id,
+                userId: uid,
+                assignedById: currentUserId,
+              })),
+              skipDuplicates: true,
+            });
+          }
         }
       }
 

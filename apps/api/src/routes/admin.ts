@@ -817,8 +817,8 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ── Estimate Proposal Actions ──
 
   app.post("/admin/occurrences/:occurrenceId/accept-proposal", adminGuard, async (req: any) => {
-    const uid = await currentUserId(req);
     const occurrenceId = String(req.params.occurrenceId);
+    const body = req.body || {};
     const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({
@@ -826,29 +826,37 @@ export default async function adminRoutes(app: FastifyInstance) {
       include: { job: { select: { id: true, defaultPrice: true, estimatedMinutes: true } }, assignees: true },
     });
 
+    const isEstimate = (occ as any).workflow === "ESTIMATE" || (occ as any).isEstimate;
+    if (!isEstimate) {
+      throw app.httpErrors.badRequest("Only estimate occurrences can be accepted.");
+    }
     if (occ.status !== "PROPOSAL_SUBMITTED") {
-      throw app.httpErrors.badRequest("Only PROPOSAL_SUBMITTED occurrences can be accepted.");
+      throw app.httpErrors.badRequest("Estimates can only be accepted after the team has completed them.");
     }
 
-    // Accept the estimate
+    // Accept the estimate with optional comment
     await prisma.jobOccurrence.update({
       where: { id: occurrenceId },
-      data: { status: "ACCEPTED" },
+      data: {
+        status: "ACCEPTED",
+        notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
+      },
     });
 
-    // Auto-create a STANDARD occurrence from the estimate
-    const newOcc = await services.jobs.createOccurrence(uid, occ.jobId, {
-      kind: occ.kind,
-      startAt: occ.startAt?.toISOString() ?? undefined,
-      endAt: occ.endAt?.toISOString() ?? undefined,
-      notes: occ.proposalNotes ?? occ.notes ?? undefined,
-      price: occ.proposalAmount ?? occ.price ?? undefined,
-      estimatedMinutes: occ.estimatedMinutes ?? undefined,
-      workflow: "STANDARD",
-      assigneeUserIds: occ.assignees.map((a) => a.userId),
-    } as any);
-
-    return { accepted: true, newOccurrenceId: newOcc.id };
+    // Return job info so frontend can prompt to create occurrence
+    return {
+      accepted: true,
+      jobId: occ.jobId,
+      occurrence: {
+        kind: occ.kind,
+        startAt: occ.startAt?.toISOString() ?? null,
+        endAt: occ.endAt?.toISOString() ?? null,
+        notes: (occ as any).proposalNotes ?? occ.notes ?? null,
+        price: (occ as any).proposalAmount ?? occ.price ?? null,
+        estimatedMinutes: occ.estimatedMinutes ?? null,
+        assignees: occ.assignees.map((a) => ({ userId: a.userId })),
+      },
+    };
   });
 
   app.post("/admin/occurrences/:occurrenceId/reject-proposal", adminGuard, async (req: any) => {
@@ -857,8 +865,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { prisma } = await import("../db/prisma");
 
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+
+    const isEstimate = (occ as any).workflow === "ESTIMATE" || (occ as any).isEstimate;
+    if (!isEstimate) {
+      throw app.httpErrors.badRequest("Only estimate occurrences can be rejected.");
+    }
     if (occ.status !== "PROPOSAL_SUBMITTED") {
-      throw app.httpErrors.badRequest("Only PROPOSAL_SUBMITTED occurrences can be rejected.");
+      throw app.httpErrors.badRequest("Estimates can only be rejected after the team has completed them.");
     }
 
     await prisma.jobOccurrence.update({
