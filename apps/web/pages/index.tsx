@@ -407,23 +407,6 @@ export default function HomePage() {
       ),
     },
     {
-      value: "preview",
-      label: "Preview",
-      icon: FiEye,
-      visible: () => !!isSignedIn && isAdmin,
-      content: (
-        <ScrollableUnderlineTabs
-          tabs={previewTabs}
-          value={previewInnerTab}
-          onValueChange={(v) => setPreviewInnerTab(v as PreviewTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
-        />
-      ),
-    },
-    {
       value: "admin",
       label: "Admin",
       icon: GrUserAdmin,
@@ -445,6 +428,23 @@ export default function HomePage() {
             unmountOnExit
           />
         </>
+      ),
+    },
+    {
+      value: "preview",
+      label: "Beta: Preview",
+      icon: FiEye,
+      visible: () => !!isSignedIn && isAdmin,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={previewTabs}
+          value={previewInnerTab}
+          onValueChange={(v) => setPreviewInnerTab(v as PreviewTabs)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={0}
+          unmountOnExit
+        />
       ),
     },
   ];
