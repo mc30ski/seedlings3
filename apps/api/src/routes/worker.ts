@@ -199,6 +199,84 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
+  // Accept/reject estimate (assigned workers)
+  app.post("/occurrences/:id/accept-estimate", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+    const { prisma } = await import("../db/prisma");
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occurrenceId },
+      include: { assignees: true, job: { select: { id: true } } },
+    });
+
+    // Must be assigned
+    if (!occ.assignees.some((a) => a.userId === uid)) {
+      throw app.httpErrors.forbidden("You are not assigned to this estimate.");
+    }
+    if ((occ as any).workflow !== "ESTIMATE" && !(occ as any).isEstimate) {
+      throw app.httpErrors.badRequest("Only estimate occurrences can be accepted.");
+    }
+    if (occ.status !== "PROPOSAL_SUBMITTED") {
+      throw app.httpErrors.badRequest("Estimates can only be accepted after completion.");
+    }
+
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data: {
+        status: "ACCEPTED",
+        notes: body.comment ? `${occ.notes ? occ.notes + "\n" : ""}Accepted: ${String(body.comment)}` : occ.notes,
+      },
+    });
+
+    return {
+      accepted: true,
+      jobId: occ.jobId,
+      occurrence: {
+        kind: occ.kind,
+        startAt: occ.startAt?.toISOString() ?? null,
+        endAt: occ.endAt?.toISOString() ?? null,
+        notes: (occ as any).proposalNotes ?? occ.notes ?? null,
+        price: (occ as any).proposalAmount ?? occ.price ?? null,
+        estimatedMinutes: occ.estimatedMinutes ?? null,
+        assignees: occ.assignees.map((a) => ({ userId: a.userId })),
+      },
+    };
+  });
+
+  app.post("/occurrences/:id/reject-estimate", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+    const { prisma } = await import("../db/prisma");
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occurrenceId },
+      include: { assignees: true },
+    });
+
+    if (!occ.assignees.some((a) => a.userId === uid)) {
+      throw app.httpErrors.forbidden("You are not assigned to this estimate.");
+    }
+    if ((occ as any).workflow !== "ESTIMATE" && !(occ as any).isEstimate) {
+      throw app.httpErrors.badRequest("Only estimate occurrences can be rejected.");
+    }
+    if (occ.status !== "PROPOSAL_SUBMITTED") {
+      throw app.httpErrors.badRequest("Estimates can only be rejected after completion.");
+    }
+
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data: {
+        status: "REJECTED",
+        rejectionReason: body.reason ? String(body.reason) : null,
+      },
+    });
+
+    return { rejected: true };
+  });
+
   app.post("/occurrences/create-next", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};

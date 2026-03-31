@@ -113,6 +113,14 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
   const [showInfoOverlay, setShowInfoOverlay] = useState(false);
 
+  // Show info on first visit
+  useEffect(() => {
+    const key = "seedlings_users_infoDismissed";
+    if (!localStorage.getItem(key)) {
+      setShowInfoOverlay(true);
+    }
+  }, []);
+
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
     Record<string, Holding[]>
@@ -846,6 +854,26 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                   </Box>
                 </VStack>
               </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      localStorage.setItem("seedlings_users_infoDismissed", "1");
+                      setShowInfoOverlay(false);
+                    }}
+                  >
+                    Don't show again
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowInfoOverlay(false)}
+                  >
+                    Got it
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
             </Dialog.Content>
           </Dialog.Positioner>
         </Portal>

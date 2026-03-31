@@ -201,6 +201,8 @@ export default function ServicesTab({
     onConfirm: ((inputValue: string) => void) | (() => void);
     inputPlaceholder?: string;
     inputLabel?: string;
+    inputOptional?: boolean;
+    inputDefaultValue?: string;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -1091,11 +1093,13 @@ export default function ServicesTab({
                                 )}
                               </VStack>
                             )}
-                            {(occ as any).proposalAmount != null && (
+                            {((occ as any).proposalAmount != null || (occ as any).proposalNotes) && (
                               <Box mt={1} p={1} bg="purple.50" rounded="sm">
-                                <Text fontSize="xs" fontWeight="medium" color="purple.700">
-                                  Proposal: ${(occ as any).proposalAmount.toFixed(2)}
-                                </Text>
+                                {(occ as any).proposalAmount != null && (
+                                  <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                                    Proposal: ${(occ as any).proposalAmount.toFixed(2)}
+                                  </Text>
+                                )}
                                 {(occ as any).proposalNotes && (
                                   <Text fontSize="xs" color="purple.600">{(occ as any).proposalNotes}</Text>
                                 )}
@@ -1241,40 +1245,67 @@ export default function ServicesTab({
                               busyId={statusButtonBusyId}
                               setBusyId={setStatusButtonBusyId}
                             />
-                            {occ.status === "PROPOSAL_SUBMITTED" && (
+                            {(occ.workflow === "ESTIMATE" || occ.isEstimate) && occ.status === "PROPOSAL_SUBMITTED" && (
                               <StatusButton
                                 id="occ-accept-proposal"
                                 itemId={occ.id}
-                                label="Accept Proposal"
-                                onClick={async () => {
-                                  try {
-                                    await apiPost(`/api/admin/occurrences/${occ.id}/accept-proposal`);
-                                    publishInlineMessage({ type: "SUCCESS", text: "Proposal accepted. New job occurrence created." });
-                                    void loadDetail(job.id, true);
-                                  } catch (err: any) {
-                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
-                                  }
-                                }}
+                                label="Accept Estimate"
+                                onClick={async () => setConfirmAction({
+                                  title: "Accept Estimate?",
+                                  message: "Add a comment (optional):",
+                                  confirmLabel: "Accept",
+                                  colorPalette: "green",
+                                  inputPlaceholder: "Comment...",
+                                  inputLabel: "Comment",
+                                  inputOptional: true,
+                                  onConfirm: async (comment: string) => {
+                                    try {
+                                      const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/admin/occurrences/${occ.id}/accept-proposal`, { comment: comment || undefined });
+                                      publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+                                      void loadDetail(job.id, true);
+                                      // Prompt to create occurrence
+                                      if (result.jobId) {
+                                        setOccurrenceJobId(result.jobId);
+                                        setOccurrenceDefaultNotes(result.occurrence?.notes ?? null);
+                                        setOccurrenceDefaultPrice(result.occurrence?.price ?? null);
+                                        setOccurrenceDefaultEstMins(result.occurrence?.estimatedMinutes ?? null);
+                                        setOccurrenceJobHasFrequency(false);
+                                        setPromptOccurrenceOpen(true);
+                                      }
+                                    } catch (err: any) {
+                                      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                                    }
+                                  },
+                                })}
                                 variant="solid"
                                 colorPalette="green"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "PROPOSAL_SUBMITTED" && (
+                            {(occ.workflow === "ESTIMATE" || occ.isEstimate) && occ.status === "PROPOSAL_SUBMITTED" && (
                               <StatusButton
                                 id="occ-reject-proposal"
                                 itemId={occ.id}
-                                label="Reject Proposal"
-                                onClick={async () => {
-                                  try {
-                                    await apiPost(`/api/admin/occurrences/${occ.id}/reject-proposal`, { reason: "Rejected by admin" });
-                                    publishInlineMessage({ type: "SUCCESS", text: "Proposal rejected." });
-                                    void loadDetail(job.id, true);
-                                  } catch (err: any) {
-                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
-                                  }
-                                }}
+                                label="Reject Estimate"
+                                onClick={async () => setConfirmAction({
+                                  title: "Reject Estimate?",
+                                  message: "Add a reason (optional):",
+                                  confirmLabel: "Reject",
+                                  colorPalette: "red",
+                                  inputPlaceholder: "Reason...",
+                                  inputLabel: "Reason",
+                                  inputOptional: true,
+                                  onConfirm: async (reason: string) => {
+                                    try {
+                                      await apiPost(`/api/admin/occurrences/${occ.id}/reject-proposal`, { reason: reason || undefined });
+                                      publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
+                                      void loadDetail(job.id, true);
+                                    } catch (err: any) {
+                                      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                                    }
+                                  },
+                                })}
                                 variant="outline"
                                 colorPalette="red"
                                 busyId={statusButtonBusyId}
@@ -1716,6 +1747,8 @@ export default function ServicesTab({
         confirmColorPalette={confirmAction?.colorPalette}
         inputPlaceholder={confirmAction?.inputPlaceholder}
         inputLabel={confirmAction?.inputLabel}
+        inputOptional={confirmAction?.inputOptional}
+        inputDefaultValue={confirmAction?.inputDefaultValue}
         onConfirm={(inputValue: string) => {
           if (confirmAction?.inputPlaceholder) {
             (confirmAction.onConfirm as (v: string) => void)(inputValue);

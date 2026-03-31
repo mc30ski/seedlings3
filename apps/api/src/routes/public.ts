@@ -13,11 +13,13 @@ export default async function publicRoutes(app: FastifyInstance) {
     const sevenDaysAhead = new Date(now);
     sevenDaysAhead.setDate(sevenDaysAhead.getDate() + 7);
 
-    // Fetch completed jobs (with photos, assignees, property)
+    // Fetch completed jobs (with photos, assignees, property) — exclude estimates
     const completed = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["CLOSED", "PENDING_PAYMENT"] },
         completedAt: { not: null, gte: thirtyDaysAgo },
+        workflow: { not: "ESTIMATE" },
+        isEstimate: false,
       },
       orderBy: { completedAt: "desc" },
       take: limit,
@@ -52,11 +54,13 @@ export default async function publicRoutes(app: FastifyInstance) {
       },
     });
 
-    // Fetch upcoming scheduled jobs (next 7 days)
+    // Fetch upcoming scheduled jobs (next 7 days) — exclude estimates
     const upcoming = await prisma.jobOccurrence.findMany({
       where: {
         status: "SCHEDULED",
         startAt: { gte: now, lte: sevenDaysAhead },
+        workflow: { not: "ESTIMATE" },
+        isEstimate: false,
       },
       orderBy: { startAt: "asc" },
       take: 10,
@@ -81,9 +85,9 @@ export default async function publicRoutes(app: FastifyInstance) {
       },
     });
 
-    // Fetch in-progress jobs
+    // Fetch in-progress jobs — exclude estimates
     const inProgress = await prisma.jobOccurrence.findMany({
-      where: { status: "IN_PROGRESS" },
+      where: { status: "IN_PROGRESS", workflow: { not: "ESTIMATE" }, isEstimate: false },
       orderBy: { startedAt: "desc" },
       take: 5,
       select: {
