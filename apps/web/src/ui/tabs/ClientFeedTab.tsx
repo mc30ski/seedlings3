@@ -141,7 +141,6 @@ export default function ClientFeedTab() {
   // Group items by type for sections
   const inProgress = items.filter((i) => i.type === "in_progress");
   const completed = items.filter((i) => i.type === "completed");
-  const upcoming = items.filter((i) => i.type === "upcoming");
 
   return (
     <Box w="full" pb={8}>
@@ -177,19 +176,6 @@ export default function ClientFeedTab() {
         </Box>
       )}
 
-      {/* Upcoming section */}
-      {upcoming.length > 0 && (
-        <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Coming Up
-          </Text>
-          <VStack align="stretch" gap={2}>
-            {upcoming.map((item) => (
-              <FeedCard key={item.id} item={item} onPhotoClick={openViewer} />
-            ))}
-          </VStack>
-        </Box>
-      )}
 
       {!error && items.length === 0 && (
         <Box textAlign="center" py={10}>
