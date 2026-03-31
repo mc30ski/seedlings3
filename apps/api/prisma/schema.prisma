@@ -73,6 +73,8 @@ model User {
   isApproved   Boolean      @default(false)
 
   workerType              WorkerType?
+  homeBaseAddress         String?
+
   insuranceCertR2Key      String?
   insuranceCertFileName   String?
   insuranceCertContentType String?

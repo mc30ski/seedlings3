@@ -508,6 +508,17 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.settings.getAll();
   });
 
+  // Set own home base address
+  app.patch("/me/home-base", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    await prisma.user.update({
+      where: { id: uid },
+      data: { homeBaseAddress: body.address != null ? String(body.address).trim() || null : null },
+    });
+    return { ok: true };
+  });
+
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });

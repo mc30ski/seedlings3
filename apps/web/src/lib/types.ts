@@ -47,6 +47,7 @@ export type Me = {
   email?: string | null;
   displayName?: string | null;
   workerType?: WorkerType | null;
+  homeBaseAddress?: string | null;
   hasInsuranceCert?: boolean;
   isInsuranceValid?: boolean;
   insuranceExpiresAt?: string | null;

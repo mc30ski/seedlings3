@@ -311,6 +311,7 @@ export const users: ServicesUsers = {
       email: user!.email ?? null,
       displayName: user!.displayName ?? null,
       workerType: user!.workerType ?? null,
+      homeBaseAddress: user!.homeBaseAddress ?? null,
       hasInsuranceCert: !!user!.insuranceCertR2Key,
       isInsuranceValid,
       insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,

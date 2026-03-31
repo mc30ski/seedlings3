@@ -937,6 +937,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  app.patch("/admin/users/:id/home-base", adminGuard, async (req: any) => {
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    await prisma.user.update({
+      where: { id: userId },
+      data: { homeBaseAddress: body.address != null ? String(body.address).trim() || null : null },
+    });
+    return { ok: true };
+  });
+
   // ── Admin Photos ──
 
   app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {
