@@ -141,7 +141,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   useEffect(() => {
     const onRun = (ev: Event) => {
       const { q: searchQ } = (ev as CustomEvent<{ q?: string }>).detail || {};
-      if (typeof searchQ === "string") setQ(searchQ);
+      if (typeof searchQ === "string") {
+        setQ(searchQ);
+        // Use "next 3 days" to keep it focused
+        setDatePreset("next3");
+        setOverdueActive(false);
+      }
     };
     window.addEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
     return () => window.removeEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
