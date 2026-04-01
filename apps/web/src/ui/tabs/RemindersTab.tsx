@@ -17,16 +17,18 @@ import { MapLink } from "@/src/ui/helpers/Link";
 
 type Props = {
   myId?: string;
+  /** When true, show reminders for all workers (admin mode) */
+  showAll?: boolean;
 };
 
-export default function RemindersTab({ myId }: Props) {
+export default function RemindersTab({ myId, showAll }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     async function load() {
       try {
-        // Fetch all occurrences (no date filter) assigned to this worker
         const list = await apiGet<WorkerOccurrence[]>("/api/occurrences");
         setItems(Array.isArray(list) ? list : []);
       } catch {
@@ -46,8 +48,10 @@ export default function RemindersTab({ myId }: Props) {
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
   const tomorrow = bizDateKey(tomorrowDate);
 
-  // Filter to only my assigned items
-  const myItems = myId
+  // Filter: specific worker, all workers (assigned only), or just mine
+  const myItems = showAll
+    ? items.filter((occ) => (occ.assignees ?? []).length > 0)
+    : myId
     ? items.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
     : items;
 
@@ -105,6 +109,7 @@ export default function RemindersTab({ myId }: Props) {
             return <Badge colorPalette="red" variant="solid" fontSize="xs" borderRadius="full" px="2">{daysLate} day{daysLate !== 1 ? "s" : ""} overdue</Badge>;
           }}
           message="Contact the client to reschedule or complete this job"
+          showAssignees={showAll}
         />
       )}
 
@@ -117,6 +122,7 @@ export default function RemindersTab({ myId }: Props) {
           items={todayJobs}
           badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2">Today</Badge>}
           message="Confirm with the client that the job is still on for today"
+          showAssignees={showAll}
         />
       )}
 
@@ -129,6 +135,7 @@ export default function RemindersTab({ myId }: Props) {
           items={tomorrowJobs}
           badge={() => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Tomorrow</Badge>}
           message="Contact the client to confirm they want the job done tomorrow"
+          showAssignees={showAll}
         />
       )}
 
@@ -141,6 +148,7 @@ export default function RemindersTab({ myId }: Props) {
           items={pendingPayment}
           badge={() => <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">Awaiting payment</Badge>}
           message="Collect payment from the client"
+          showAssignees={showAll}
         />
       )}
 
@@ -153,6 +161,7 @@ export default function RemindersTab({ myId }: Props) {
           items={estimatesReady}
           badge={() => <Badge colorPalette="purple" variant="solid" fontSize="xs" borderRadius="full" px="2">Review needed</Badge>}
           message="Accept or reject this estimate"
+          showAssignees={showAll}
         />
       )}
     </Box>
@@ -166,6 +175,7 @@ function Section({
   items,
   badge,
   message,
+  showAssignees,
 }: {
   title: string;
   subtitle: string;
@@ -173,6 +183,7 @@ function Section({
   items: WorkerOccurrence[];
   badge: (occ: WorkerOccurrence) => React.ReactNode;
   message: string;
+  showAssignees?: boolean;
 }) {
   return (
     <Box mb={5}>
@@ -199,6 +210,11 @@ function Section({
                       occ.job?.property?.state,
                     ].filter(Boolean).join(", ")} />
                   </Box>
+                  {showAssignees && (occ.assignees ?? []).length > 0 && (
+                    <Text fontSize="xs" color="teal.600">
+                      {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                    </Text>
+                  )}
                   <Text fontSize="xs" color="fg.muted" fontStyle="italic">
                     {message}
                   </Text>
