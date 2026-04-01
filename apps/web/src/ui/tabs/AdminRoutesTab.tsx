@@ -56,7 +56,7 @@ export default function AdminRoutesTab() {
           <Input
             size="sm"
             w="200px"
-            placeholder={selectedWorker ? workerNameMap[selectedWorker] || selectedWorker : "Select a worker"}
+            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "Select a worker"}
             value={searchText}
             onChange={(e) => { setSearchText(e.target.value); if (!dropOpen) setDropOpen(true); }}
             onFocus={() => { setDropOpen(true); setSearchText(""); }}
@@ -106,7 +106,7 @@ export default function AdminRoutesTab() {
         )}
         {selectedWorker && (
           <Badge size="sm" colorPalette="blue" variant="solid">
-            {workerNameMap[selectedWorker] || selectedWorker}
+            {workerNameMap[selectedWorker] || "Loading…"}
           </Badge>
         )}
       </HStack>

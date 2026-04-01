@@ -783,7 +783,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             size="sm"
             w="200px"
             placeholder={personFilter.length > 0
-              ? personFilter.map((id) => personNameMap[id] || id).join(", ")
+              ? personFilter.map((id) => personNameMap[id] || "Loading…").join(", ")
               : "All Workers"}
             value={personSearch}
             onChange={(e) => {
@@ -955,7 +955,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
           {personFilter.map((id) => (
             <Badge key={id} size="sm" colorPalette="teal" variant="solid">
-              {personNameMap[id] || id}
+              {personNameMap[id] || "Loading…"}
             </Badge>
           ))}
         </HStack>

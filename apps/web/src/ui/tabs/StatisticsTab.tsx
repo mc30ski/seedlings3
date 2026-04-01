@@ -181,7 +181,7 @@ export default function StatisticsTab() {
             size="sm"
             w="200px"
             placeholder={selectedWorkers.length > 0
-              ? selectedWorkers.map((id) => workerNameMap[id] || id).join(", ")
+              ? selectedWorkers.map((id) => workerNameMap[id] || "Loading…").join(", ")
               : "All Workers"
             }
             value={searchText}
@@ -241,7 +241,7 @@ export default function StatisticsTab() {
       {selectedWorkers.length > 0 && (
         <HStack mb={3} gap={1} wrap="wrap">
           {selectedWorkers.map((id) => (
-            <Badge key={id} size="sm" colorPalette="blue" variant="solid">{workerNameMap[id] || id}</Badge>
+            <Badge key={id} size="sm" colorPalette="blue" variant="solid">{workerNameMap[id] || "Loading…"}</Badge>
           ))}
         </HStack>
       )}

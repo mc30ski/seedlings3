@@ -73,7 +73,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           size="sm"
           w="200px"
           placeholder={selectedWorkers.length > 0
-            ? selectedWorkers.map((id) => workerNameMap[id] || id).join(", ")
+            ? selectedWorkers.map((id) => workerNameMap[id] || "Loading…").join(", ")
             : "All Workers"
           }
           value={searchText}
@@ -157,7 +157,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         <HStack gap={1} wrap="wrap">
           {selectedWorkers.map((id) => (
             <Badge key={id} size="sm" colorPalette="blue" variant="solid">
-              {workerNameMap[id] || id}
+              {workerNameMap[id] || "Loading…"}
             </Badge>
           ))}
         </HStack>

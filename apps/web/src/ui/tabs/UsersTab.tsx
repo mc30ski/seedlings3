@@ -510,6 +510,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           const isWorker = s.has("WORKER");
           const isSuper = s.has("SUPER");
           const isMe = !!me?.id && u.id === me.id;
+          const isClient = u.isApproved && !isWorker && !isAdmin;
           const showDecline = !u.isApproved && !isMe;
 
           const isConfirming = confirm?.userId === u.id;
@@ -612,45 +613,49 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                           </>
                         ) : (
                           <>
-                            {/* Role toggles */}
-                            {isAdmin && !isSuper ? (
-                              <Button
-                                size={{ base: "xs", md: "sm" }}
-                                onClick={() => removeRole(u.id, "ADMIN")}
-                                variant="subtle"
-                              >
-                                Remove Admin
-                              </Button>
-                            ) : !isSuper ? (
-                              <Button
-                                size={{ base: "xs", md: "sm" }}
-                                onClick={() => addRole(u.id, "ADMIN")}
-                                variant="subtle"
-                              >
-                                Make Admin
-                              </Button>
-                            ) : null}
-                            {isWorker && !isSuper ? (
-                              <Button
-                                size={{ base: "xs", md: "sm" }}
-                                onClick={() => removeRole(u.id, "WORKER")}
-                                variant="outline"
-                                disabled={isAdmin}
-                                title={
-                                  isAdmin ? "Admins must keep Worker role" : ""
-                                }
-                              >
-                                Remove Worker
-                              </Button>
-                            ) : !isSuper ? (
-                              <Button
-                                size={{ base: "xs", md: "sm" }}
-                                onClick={() => addRole(u.id, "WORKER")}
-                                variant="outline"
-                              >
-                                Add Worker
-                              </Button>
-                            ) : null}
+                            {/* Role toggles — hidden for client-only users */}
+                            {!isClient && (
+                              <>
+                                {isAdmin && !isSuper ? (
+                                  <Button
+                                    size={{ base: "xs", md: "sm" }}
+                                    onClick={() => removeRole(u.id, "ADMIN")}
+                                    variant="subtle"
+                                  >
+                                    Remove Admin
+                                  </Button>
+                                ) : !isSuper ? (
+                                  <Button
+                                    size={{ base: "xs", md: "sm" }}
+                                    onClick={() => addRole(u.id, "ADMIN")}
+                                    variant="subtle"
+                                  >
+                                    Make Admin
+                                  </Button>
+                                ) : null}
+                                {isWorker && !isSuper ? (
+                                  <Button
+                                    size={{ base: "xs", md: "sm" }}
+                                    onClick={() => removeRole(u.id, "WORKER")}
+                                    variant="outline"
+                                    disabled={isAdmin}
+                                    title={
+                                      isAdmin ? "Admins must keep Worker role" : ""
+                                    }
+                                  >
+                                    Remove Worker
+                                  </Button>
+                                ) : !isSuper ? (
+                                  <Button
+                                    size={{ base: "xs", md: "sm" }}
+                                    onClick={() => addRole(u.id, "WORKER")}
+                                    variant="outline"
+                                  >
+                                    Add Worker
+                                  </Button>
+                                ) : null}
+                              </>
+                            )}
                             {u.isApproved &&
                               !(isAdmin || isWorker) &&
                               !isMe &&

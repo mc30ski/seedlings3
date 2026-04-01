@@ -57,7 +57,7 @@ export default function AdminRemindersTab() {
           <Input
             size="sm"
             w="200px"
-            placeholder={selectedWorker ? workerNameMap[selectedWorker] || selectedWorker : "All Workers"}
+            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "All Workers"}
             value={searchText}
             onChange={(e) => {
               setSearchText(e.target.value);
@@ -154,7 +154,7 @@ export default function AdminRemindersTab() {
         )}
         {selectedWorker && (
           <Badge size="sm" colorPalette="blue" variant="solid">
-            {workerNameMap[selectedWorker] || selectedWorker}
+            {workerNameMap[selectedWorker] || "Loading…"}
           </Badge>
         )}
       </HStack>
