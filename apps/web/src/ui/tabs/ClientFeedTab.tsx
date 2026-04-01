@@ -279,7 +279,7 @@ function FeedCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
 
             {/* Photos */}
             {item.photos.length > 0 && (
-              <HStack gap={2} mt={1} overflowX="auto" pb={1}>
+              <HStack gap={2} mt={1} wrap="wrap">
                 {item.photos.map((p, idx) => (
                   <Box
                     key={p.id}
