@@ -10,6 +10,7 @@ export type AdminTabs =
   | "jobs"
   | "admin-jobs"
   | "payments"
+  | "statistics"
   | "audit"
   | "settings";
 
