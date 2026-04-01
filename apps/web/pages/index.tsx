@@ -23,6 +23,7 @@ import ClientFeedTab from "@/src/ui/tabs/ClientFeedTab";
 import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
+import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
@@ -284,6 +285,12 @@ export default function HomePage() {
   ];
 
   const adminTabs: TabItem[] = [
+    {
+      value: "reminders",
+      label: "Reminders",
+      icon: FiBell,
+      content: wrapWithInlineMessage(<AdminRemindersTab />),
+    },
     {
       value: "admin-jobs",
       label: "Jobs",
