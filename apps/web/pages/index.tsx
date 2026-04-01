@@ -281,6 +281,13 @@ export default function HomePage() {
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<PreviewRoutesTab />),
     },
+    {
+      value: "statistics",
+      label: "Statistics",
+      icon: FiBarChart2,
+      visible: () => !!me?.workerType,
+      content: wrapWithInlineMessage(<StatisticsTab myId={me?.id} />),
+    },
   ];
 
   const adminTabs: TabItem[] = [

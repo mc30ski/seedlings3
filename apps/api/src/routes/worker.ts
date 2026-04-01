@@ -508,6 +508,96 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.settings.getAll();
   });
 
+  // Worker statistics (proxies to admin statistics endpoint logic, scoped to self)
+  app.get("/me/statistics", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    // Redirect internally to the admin statistics logic but we'll inline it here
+    const from = req.query?.from as string | undefined;
+    const to = req.query?.to as string | undefined;
+
+    const dateFilter: any = {};
+    if (from) dateFilter.gte = new Date(from + "T00:00:00Z");
+    if (to) dateFilter.lte = new Date(to + "T23:59:59.999Z");
+    const hasDate = from || to;
+
+    const occurrences = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: ["CLOSED", "PENDING_PAYMENT"] },
+        assignees: { some: { userId: uid } },
+        ...(hasDate ? { completedAt: dateFilter } : {}),
+      },
+      select: {
+        id: true, status: true, kind: true, startedAt: true, completedAt: true,
+        estimatedMinutes: true, price: true, workflow: true, isEstimate: true, startAt: true,
+        assignees: { select: { userId: true, user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
+        payment: { select: { amountPaid: true, method: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } } },
+        expenses: { select: { cost: true } },
+        job: { select: { property: { select: { id: true, displayName: true, city: true } } } },
+      },
+      orderBy: { completedAt: "desc" },
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { id: uid },
+      select: { id: true, displayName: true, email: true, workerType: true },
+    });
+    if (!user) return { workers: [], totalOccurrences: 0, daysInRange: 0 };
+
+    // Build stats for just this user
+    let jobsCompleted = 0, totalEarnings = 0, totalExpenses = 0, totalActualMinutes = 0,
+      totalEstimatedMinutes = 0, jobsWithTiming = 0;
+    const paymentMethods: Record<string, number> = {};
+    const jobsByDay: Record<string, number> = {};
+    const propertySet = new Set<string>();
+
+    for (const occ of occurrences) {
+      if (occ.workflow === "ESTIMATE" || occ.isEstimate) continue;
+      jobsCompleted++;
+      const actualMinutes = occ.startedAt && occ.completedAt
+        ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000) : null;
+      const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
+      const split = occ.payment?.splits.find((s) => s.userId === uid);
+      if (split) {
+        const splitRatio = occ.payment && occ.payment.splits.length > 0
+          ? split.amount / occ.payment.splits.reduce((s, sp) => s + sp.amount, 0) : 1;
+        totalEarnings += split.amount;
+        totalExpenses += expenseTotal * splitRatio;
+      }
+      if (actualMinutes != null && actualMinutes > 0) { totalActualMinutes += actualMinutes; jobsWithTiming++; }
+      if (occ.estimatedMinutes) totalEstimatedMinutes += occ.estimatedMinutes;
+      if (occ.payment?.method) paymentMethods[occ.payment.method] = (paymentMethods[occ.payment.method] || 0) + 1;
+      const dayKey = occ.completedAt ? occ.completedAt.toISOString().slice(0, 10) : null;
+      if (dayKey) jobsByDay[dayKey] = (jobsByDay[dayKey] || 0) + 1;
+      if (occ.job?.property?.id) propertySet.add(occ.job.property.id);
+    }
+
+    const netEarnings = totalEarnings - totalExpenses;
+    const allDays = new Set(Object.keys(jobsByDay));
+
+    return {
+      workers: [{
+        userId: user.id,
+        displayName: user.displayName ?? user.email ?? user.id,
+        workerType: user.workerType,
+        jobsCompleted,
+        totalEarnings: Math.round(totalEarnings * 100) / 100,
+        totalExpenses: Math.round(totalExpenses * 100) / 100,
+        netEarnings: Math.round(netEarnings * 100) / 100,
+        totalActualMinutes,
+        totalEstimatedMinutes,
+        jobsWithTiming,
+        avgActualMinutes: jobsWithTiming > 0 ? Math.round(totalActualMinutes / jobsWithTiming) : 0,
+        avgEstimatedMinutes: jobsCompleted > 0 && totalEstimatedMinutes > 0 ? Math.round(totalEstimatedMinutes / jobsCompleted) : 0,
+        efficiencyPercent: totalActualMinutes > 0 && totalEstimatedMinutes > 0 ? Math.round((totalEstimatedMinutes / totalActualMinutes) * 100) : null,
+        propertiesServiced: propertySet.size,
+        paymentMethods,
+        jobsByDay,
+      }],
+      totalOccurrences: jobsCompleted,
+      daysInRange: allDays.size,
+    };
+  });
+
   // Set own home base address
   app.patch("/me/home-base", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);

@@ -75,7 +75,12 @@ function workerTypeColor(wt: string | null): string {
 
 const CHART_COLORS = ["#3182CE", "#38A169", "#DD6B20", "#805AD5", "#E53E3E", "#319795", "#D69E2E", "#718096"];
 
-export default function StatisticsTab() {
+type Props = {
+  /** If set, only show this worker's stats and hide the worker selector */
+  myId?: string;
+};
+
+export default function StatisticsTab({ myId }: Props = {}) {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [viewMode, setViewMode] = usePersistedState<"cards" | "charts">("stats_view", "cards");
   const [loading, setLoading] = useState(false);
@@ -112,7 +117,8 @@ export default function StatisticsTab() {
       const qs = new URLSearchParams();
       if (dateFrom) qs.set("from", dateFrom);
       if (dateTo) qs.set("to", dateTo);
-      const res = await apiGet<StatsResponse>(`/api/admin/statistics?${qs}`);
+      const endpoint = myId ? "/api/me/statistics" : "/api/admin/statistics";
+      const res = await apiGet<StatsResponse>(`${endpoint}?${qs}`);
       setData(res);
     } catch (err: any) {
       setError(err?.message || "Failed to load statistics");
@@ -130,10 +136,11 @@ export default function StatisticsTab() {
   }, [allWorkers]);
 
   const displayed = useMemo(() => {
+    if (myId) return allWorkers.filter((w) => w.userId === myId);
     if (selectedWorkers.length === 0) return allWorkers;
     const set = new Set(selectedWorkers);
     return allWorkers.filter((w) => set.has(w.userId));
-  }, [allWorkers, selectedWorkers]);
+  }, [allWorkers, selectedWorkers, myId]);
 
   const searchLc = searchText.toLowerCase();
   const dropdownItems = searchText
@@ -175,7 +182,7 @@ export default function StatisticsTab() {
           <Text fontSize="xs" fontWeight="medium" mb={1}>To</Text>
           <Input type="date" size="sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </Box>
-        <Box ref={dropRef} position="relative">
+        {!myId && <Box ref={dropRef} position="relative">
           <Text fontSize="xs" fontWeight="medium" mb={1}>Compare Workers</Text>
           <Input
             size="sm"
@@ -220,8 +227,8 @@ export default function StatisticsTab() {
               </Box>
             </Box>
           )}
-        </Box>
-        {selectedWorkers.length > 0 && (
+        </Box>}
+        {!myId && selectedWorkers.length > 0 && (
           <Button variant="ghost" size="sm" px="2" minW="0" onClick={() => { setSelectedWorkers([]); setSearchText(""); }}>
             <X size={14} />
           </Button>
@@ -238,7 +245,7 @@ export default function StatisticsTab() {
         </Button>
       </HStack>
 
-      {selectedWorkers.length > 0 && (
+      {!myId && selectedWorkers.length > 0 && (
         <HStack mb={3} gap={1} wrap="wrap">
           {selectedWorkers.map((id) => (
             <Badge key={id} size="sm" colorPalette="blue" variant="solid">{workerNameMap[id] || "Loading…"}</Badge>
