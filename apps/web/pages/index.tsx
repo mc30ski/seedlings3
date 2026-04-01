@@ -25,6 +25,7 @@ import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
+import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
@@ -324,6 +325,12 @@ export default function HomePage() {
       label: "Properties",
       icon: FiMapPin,
       content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "routes",
+      label: "Routes",
+      icon: FiNavigation,
+      content: wrapWithInlineMessage(<AdminRoutesTab />),
     },
     {
       value: "users",
