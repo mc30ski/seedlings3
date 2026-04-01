@@ -80,7 +80,11 @@ function addDays(date: Date, n: number): Date {
   return d;
 }
 
-export default function PreviewRoutesTab() {
+type Props = {
+  userId?: string;
+};
+
+export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +125,8 @@ export default function PreviewRoutesTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}`);
+      const userParam = userId ? `&userId=${userId}` : "";
+      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}${userParam}`);
       setData(res);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
