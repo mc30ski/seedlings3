@@ -19,6 +19,7 @@ export type PreviewTabs = "routes";
 
 export type WorkerTabs =
   | "reminders"
+  | "routes"
   | "equipment"
   | "clients"
   | "properties"

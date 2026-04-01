@@ -35,7 +35,7 @@ import { type WorkflowDef } from "@/src/ui/components/WorkflowToolbar";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
-import { Me, Role, AdminTabs, ClientTabs, PreviewTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
+import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
 import {
   FiBriefcase,
   FiClipboard,
@@ -47,7 +47,6 @@ import {
   FiActivity,
   FiHome,
   FiBell,
-  FiEye,
   FiNavigation,
   FiSettings,
 } from "react-icons/fi";
@@ -72,10 +71,9 @@ export default function HomePage() {
   const isWorker = hasRole(me?.roles, "WORKER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
-  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "preview">("topTab", "client");
+  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
-  const [previewInnerTab, setPreviewInnerTab] = usePersistedState<PreviewTabs>("previewTab", "routes");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
 
@@ -192,7 +190,7 @@ export default function HomePage() {
   useEffect(() => {
     // Don't reset tabs until we know the user's roles
     if (!me) return;
-    if ((topTab === "admin" || topTab === "preview") && !isAdmin)
+    if (topTab === "admin" && !isAdmin)
       setTopTab(isWorker ? "worker" : "client");
     if (topTab === "worker" && !isWorker)
       setTopTab(isAdmin ? "admin" : "client");
@@ -234,15 +232,6 @@ export default function HomePage() {
     },
   ];
 
-  const previewTabs: TabItem[] = [
-    {
-      value: "routes",
-      label: "Routes",
-      icon: FiNavigation,
-      content: <PreviewRoutesTab />,
-    },
-  ];
-
   const workerTabs: TabItem[] = [
     {
       value: "reminders",
@@ -281,6 +270,13 @@ export default function HomePage() {
       content: wrapWithInlineMessage(
         <PropertiesTab me={me} purpose="WORKER" />
       ),
+    },
+    {
+      value: "routes",
+      label: "Routes",
+      icon: FiNavigation,
+      visible: () => !!me?.workerType,
+      content: wrapWithInlineMessage(<PreviewRoutesTab />),
     },
   ];
 
@@ -443,23 +439,6 @@ export default function HomePage() {
             unmountOnExit
           />
         </>
-      ),
-    },
-    {
-      value: "preview",
-      label: "Beta: Preview",
-      icon: FiEye,
-      visible: () => !!isSignedIn && isAdmin,
-      content: (
-        <ScrollableUnderlineTabs
-          tabs={previewTabs}
-          value={previewInnerTab}
-          onValueChange={(v) => setPreviewInnerTab(v as PreviewTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
-        />
       ),
     },
   ];

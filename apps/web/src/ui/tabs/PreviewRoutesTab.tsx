@@ -90,7 +90,7 @@ export default function PreviewRoutesTab() {
   const [targetDate, setTargetDate] = usePersistedState("preview_targetDate", tomorrow);
 
   // Look-ahead = how far to look for jobs that could be pulled into the target day
-  const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 7);
+  const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 5);
 
   // Available hours in the day
   const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", 8);
@@ -138,6 +138,11 @@ export default function PreviewRoutesTab() {
 
   return (
     <Box w="full" pb={8}>
+      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Preview Feature</Text>
+        <Text fontSize="xs" color="yellow.600">This feature is in preview and will be updated. Route suggestions are AI-generated and should be used as a starting point, not a final plan.</Text>
+      </Box>
+
       {/* Home base */}
       <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
         <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base</Text>
@@ -174,14 +179,14 @@ export default function PreviewRoutesTab() {
             <input
               type="range"
               min={0}
-              max={30}
+              max={5}
               value={lookAhead}
               onChange={(e) => setLookAhead(Number(e.target.value))}
               style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
             />
             <HStack justify="space-between" fontSize="xs" color="fg.muted">
               <Text>Same day only</Text>
-              <Text>30 days</Text>
+              <Text>5 days</Text>
             </HStack>
           </Box>
           <Box flex="1" minW="140px">
