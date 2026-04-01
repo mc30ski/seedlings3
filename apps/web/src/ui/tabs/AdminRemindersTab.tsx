@@ -159,7 +159,7 @@ export default function AdminRemindersTab() {
         )}
       </HStack>
 
-      <RemindersTab myId={selectedWorker ?? undefined} showAll={!selectedWorker} />
+      <RemindersTab myId={selectedWorker ?? undefined} showAll={!selectedWorker} forAdmin />
     </Box>
   );
 }
