@@ -2,9 +2,9 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 
-const adminGuard = {
+const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
-    (req.server as any).requireRole(req, reply, "ADMIN"),
+    (req.server as any).requireRole(req, reply, "WORKER"),
 };
 
 async function currentUserId(req: any): Promise<string> {
@@ -12,7 +12,7 @@ async function currentUserId(req: any): Promise<string> {
 }
 
 export default async function previewRoutes(app: FastifyInstance) {
-  app.get("/preview/route-suggestions", adminGuard, async (req: any) => {
+  app.get("/preview/route-suggestions", workerGuard, async (req: any) => {
     const userId = await currentUserId(req);
     const targetUserIdParam = req.query?.userId as string | undefined;
     const targetUserId = targetUserIdParam || userId;
@@ -23,7 +23,7 @@ export default async function previewRoutes(app: FastifyInstance) {
     });
     if (!user) throw app.httpErrors.notFound("User not found.");
 
-    const lookAhead = Math.min(Math.max(Number(req.query?.lookAhead) || 7, 0), 30);
+    const lookAhead = Math.min(Math.max(Number(req.query?.lookAhead) || 5, 0), 5);
     const availableHours = Math.min(Math.max(Number(req.query?.availableHours) || 8, 2), 12);
     const now = new Date();
     // Target date = the specific day to plan a route for
