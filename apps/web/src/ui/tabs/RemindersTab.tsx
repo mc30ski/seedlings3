@@ -1,32 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Box,
+  Button,
   Card,
   HStack,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { List, Maximize2 } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
-import { MapLink, TextLink } from "@/src/ui/helpers/Link";
+import { MapLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
 
 type Props = {
   myId?: string;
-  /** When true, show reminders for all workers (admin mode) */
   showAll?: boolean;
-  /** Admin context — links go to admin tabs */
   forAdmin?: boolean;
 };
 
 export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+  const [compact, setCompact] = useState(true);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setLoading(true);
@@ -42,56 +46,100 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
     void load();
   }, []);
 
-  if (loading) {
-    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
-  }
-
   const today = bizDateKey(new Date());
   const tomorrowDate = new Date();
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
   const tomorrow = bizDateKey(tomorrowDate);
 
-  // Filter: specific worker, all workers (assigned only), or just mine
-  const myItems = showAll
-    ? items.filter((occ) => (occ.assignees ?? []).length > 0)
-    : myId
-    ? items.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
-    : items;
+  const myItems = useMemo(() => {
+    let rows = showAll
+      ? items.filter((occ) => (occ.assignees ?? []).length > 0)
+      : myId
+      ? items.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
+      : items;
 
-  // Overdue: scheduled, start date before today
+    // Text search
+    const qlc = q.trim().toLowerCase();
+    if (qlc) {
+      rows = rows.filter((occ) =>
+        [
+          occ.job?.property?.displayName,
+          occ.job?.property?.street1,
+          occ.job?.property?.city,
+          occ.job?.property?.state,
+          occ.job?.property?.client?.displayName,
+          occ.status,
+          occ.notes,
+          ...(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email),
+        ]
+          .filter(Boolean)
+          .some((s) => (s as string).toLowerCase().includes(qlc))
+      );
+    }
+    return rows;
+  }, [items, myId, showAll, q]);
+
   const overdue = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED") return false;
     if (!occ.startAt) return false;
-    const d = bizDateKey(occ.startAt);
-    return d < today;
+    return bizDateKey(occ.startAt) < today;
   });
 
-  // Today's jobs: scheduled or in progress, start date is today
   const todayJobs = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS") return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === today;
   });
 
-  // Tomorrow's jobs: scheduled, start date is tomorrow
   const tomorrowJobs = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED") return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === tomorrow;
   });
 
-  // Pending payment
   const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT");
 
-  // Estimates awaiting action
   const estimatesReady = myItems.filter((occ) =>
     occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
   );
 
   const hasReminders = overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
 
+  if (loading) {
+    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+  }
+
+  function toggleCard(id: string) {
+    setExpandedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <Box w="full" pb={8}>
+      <HStack mb={3} gap={2}>
+        <SearchWithClear
+          value={q}
+          onChange={setQ}
+          placeholder="Search reminders…"
+          inputId="reminders-search"
+        />
+        <Button
+          size="sm"
+          variant={compact ? "solid" : "ghost"}
+          px="2"
+          onClick={() => { setCompact(!compact); setExpandedCards(new Set()); }}
+          css={compact ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+          } : undefined}
+        >
+          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+        </Button>
+      </HStack>
+
       {!hasReminders && (
         <Box textAlign="center" py={10}>
           <Text fontSize="lg" fontWeight="semibold" color="green.600">All caught up!</Text>
@@ -99,7 +147,6 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
         </Box>
       )}
 
-      {/* Overdue */}
       {overdue.length > 0 && (
         <Section
           title="Overdue"
@@ -114,10 +161,12 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           message="Contact the client to reschedule or complete this job"
           showAssignees={showAll}
           forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
         />
       )}
 
-      {/* Today */}
       {todayJobs.length > 0 && (
         <Section
           title="Today"
@@ -128,10 +177,12 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           message="Confirm with the client that the job is still on for today"
           showAssignees={showAll}
           forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
         />
       )}
 
-      {/* Tomorrow */}
       {tomorrowJobs.length > 0 && (
         <Section
           title="Tomorrow"
@@ -142,10 +193,12 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           message="Contact the client to confirm they want the job done tomorrow"
           showAssignees={showAll}
           forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
         />
       )}
 
-      {/* Pending payment */}
       {pendingPayment.length > 0 && (
         <Section
           title="Pending Payment"
@@ -156,10 +209,12 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           message="Collect payment from the client"
           showAssignees={showAll}
           forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
         />
       )}
 
-      {/* Estimates ready for review */}
       {estimatesReady.length > 0 && (
         <Section
           title="Estimates Ready"
@@ -170,6 +225,9 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           message="Accept or reject this estimate"
           showAssignees={showAll}
           forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
         />
       )}
     </Box>
@@ -185,6 +243,9 @@ function Section({
   message,
   showAssignees,
   forAdmin,
+  compact,
+  expandedCards,
+  toggleCard,
 }: {
   title: string;
   subtitle: string;
@@ -194,66 +255,109 @@ function Section({
   message: string;
   showAssignees?: boolean;
   forAdmin?: boolean;
+  compact: boolean;
+  expandedCards: Set<string>;
+  toggleCard: (id: string) => void;
 }) {
   return (
     <Box mb={5}>
       <Text fontSize="xs" fontWeight="semibold" color={color} mb={1} px={1} textTransform="uppercase" letterSpacing="wide">
-        {title}
+        {title} ({items.length})
       </Text>
       <Text fontSize="xs" color="fg.muted" mb={2} px={1}>{subtitle}</Text>
       <VStack align="stretch" gap={2}>
-        {items.map((occ) => (
-          <Card.Root key={occ.id} variant="outline">
-            <Card.Body py="3" px="4">
-              <HStack justify="space-between" align="start" gap={3}>
-                <VStack align="start" gap={1} flex="1" minW={0}>
-                  <Text fontSize="sm" fontWeight="medium">
-                    {occ.job?.property?.displayName}
-                    {occ.job?.property?.client?.displayName && (
-                      <> — {clientLabel(occ.job.property.client.displayName)}</>
-                    )}
-                  </Text>
-                  <Box fontSize="xs">
-                    <MapLink address={[
-                      occ.job?.property?.street1,
-                      occ.job?.property?.city,
-                      occ.job?.property?.state,
-                    ].filter(Boolean).join(", ")} />
-                  </Box>
-                  {showAssignees && (occ.assignees ?? []).length > 0 && (
-                    <Text fontSize="xs" color="teal.600">
-                      {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                    </Text>
-                  )}
-                  <Text fontSize="xs" color="fg.muted" fontStyle="italic">
-                    {message}
-                  </Text>
-                  <TextLink
-                    text="View in Jobs"
-                    onClick={() =>
+        {items.map((occ) => {
+          const isExpanded = !compact || expandedCards.has(occ.id);
+          return (
+            <Card.Root
+              key={occ.id}
+              variant="outline"
+              css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
+              onClick={() => { if (compact) toggleCard(occ.id); }}
+            >
+              {isExpanded && (
+                <Box px="4" pt="3" pb="0">
+                  <Button
+                    size="xs"
+                    variant="solid"
+                    colorPalette="blue"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       openEventSearch(
                         "remindersToJobsTabSearch",
                         occ.job?.property?.displayName ?? "",
                         !!forAdmin,
-                      )
-                    }
-                  />
-                </VStack>
-                <VStack align="end" gap={1} flexShrink={0}>
-                  {badge(occ)}
-                  {occ.startAt && (
-                    <Text fontSize="xs" color="fg.muted">{fmtDate(occ.startAt)}</Text>
+                        `${occ.id}|${occ.startAt ?? ""}`,
+                      );
+                    }}
+                  >
+                    View in Jobs
+                  </Button>
+                </Box>
+              )}
+              <Card.Body py="3" px="4" pt={isExpanded ? "2" : "3"}>
+                <HStack justify="space-between" align="start" gap={3}>
+                  <VStack align="start" gap={1} flex="1" minW={0}>
+                    <Text fontSize={isExpanded ? "sm" : "sm"} fontWeight="medium">
+                      {occ.job?.property?.displayName}
+                      {occ.job?.property?.client?.displayName && (
+                        <> — {clientLabel(occ.job.property.client.displayName)}</>
+                      )}
+                    </Text>
+                    {isExpanded && (
+                      <>
+                        <Box fontSize="xs">
+                          <MapLink address={[
+                            occ.job?.property?.street1,
+                            occ.job?.property?.city,
+                            occ.job?.property?.state,
+                          ].filter(Boolean).join(", ")} />
+                        </Box>
+                        {showAssignees && (occ.assignees ?? []).length > 0 && (
+                          <Text fontSize="xs" color="teal.600">
+                            {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                          </Text>
+                        )}
+                        <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+                          {message}
+                        </Text>
+                      </>
+                    )}
+                    {!isExpanded && (
+                      <HStack gap={2} fontSize="xs">
+                        {badge(occ)}
+                        {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
+                        {occ.price != null && (
+                          <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                            ${occ.price.toFixed(2)}
+                          </Badge>
+                        )}
+                        {showAssignees && (occ.assignees ?? []).length > 0 && (
+                          <Text color="teal.600">
+                            {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                          </Text>
+                        )}
+                      </HStack>
+                    )}
+                  </VStack>
+                  {isExpanded && (
+                    <VStack align="end" gap={1} flexShrink={0}>
+                      {badge(occ)}
+                      {occ.startAt && (
+                        <Text fontSize="xs" color="fg.muted">{fmtDate(occ.startAt)}</Text>
+                      )}
+                      {occ.price != null && (
+                        <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                          ${occ.price.toFixed(2)}
+                        </Badge>
+                      )}
+                    </VStack>
                   )}
-                  {occ.price != null && (
-                    <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                      ${occ.price.toFixed(2)}
-                    </Badge>
-                  )}
-                </VStack>
-              </HStack>
-            </Card.Body>
-          </Card.Root>
-        ))}
+                </HStack>
+              </Card.Body>
+            </Card.Root>
+          );
+        })}
       </VStack>
     </Box>
   );

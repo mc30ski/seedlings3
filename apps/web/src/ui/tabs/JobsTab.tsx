@@ -138,14 +138,38 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [marginPercent, setMarginPercent] = useState(0);
 
   // Listen for navigation from Reminders tab
+  const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
   useEffect(() => {
     const onRun = (ev: Event) => {
-      const { q: searchQ } = (ev as CustomEvent<{ q?: string }>).detail || {};
-      if (typeof searchQ === "string") {
+      const { q: searchQ, entityId } = (ev as CustomEvent<{ q?: string; entityId?: string }>).detail || {};
+      setOverdueActive(false);
+      if (entityId) {
+        // entityId is "occId|startAt"
+        const sepIdx = entityId.indexOf("|");
+        const occId = sepIdx >= 0 ? entityId.slice(0, sepIdx) : entityId;
+        const startAt = sepIdx >= 0 ? entityId.slice(sepIdx + 1) : "";
+        setHighlightOccId(occId);
+        setQ("");
+        setDatePreset(null);
+        // Set a 7-day window around the occurrence date
+        if (startAt) {
+          const occDate = new Date(startAt);
+          const from = new Date(occDate);
+          from.setDate(from.getDate() - 3);
+          const to = new Date(occDate);
+          to.setDate(to.getDate() + 3);
+          setDateFrom(bizDateKey(from));
+          setDateTo(bizDateKey(to));
+        } else {
+          // No date — use recent
+          const d = new Date();
+          d.setDate(d.getDate() - 7);
+          setDateFrom(bizDateKey(d));
+          setDateTo("");
+        }
+      } else if (typeof searchQ === "string") {
         setQ(searchQ);
-        // Use "next 3 days" to keep it focused
-        setDatePreset("next3");
-        setOverdueActive(false);
+        setHighlightOccId(null);
       }
     };
     window.addEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
@@ -431,6 +455,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (overdueActive) {
       rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.status !== "ACCEPTED" && occ.status !== "REJECTED");
     }
+    // If navigated from Reminders to a specific occurrence, show only that one (bypass all filters)
+    if (highlightOccId) {
+      const exact = items.find((occ) => occ.id === highlightOccId);
+      if (exact) return [exact];
+    }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((occ) =>
@@ -454,7 +483,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, isTrainee]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, isTrainee, highlightOccId]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -498,7 +527,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       <HStack mb={3} gap={2}>
         <SearchWithClear
           value={q}
-          onChange={setQ}
+          onChange={(v) => { setQ(v); setHighlightOccId(null); }}
+          showClear={!!highlightOccId}
           inputId="jobs-search"
           placeholder="Search…"
         />
