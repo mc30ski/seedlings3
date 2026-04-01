@@ -493,6 +493,42 @@ export default function HomePage() {
   setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
   setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
 
+  // Reminders → Jobs: admin goes to admin-jobs, worker goes to jobs
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onEvent = (e: Event) => {
+      const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
+      if (!q) return;
+      if (forAdmin) {
+        setTopTab("admin");
+        setAdminInnerTab("admin-jobs");
+      } else {
+        setTopTab("worker");
+        setWorkerInnerTab("jobs");
+      }
+      window.sessionStorage.setItem(
+        "open:remindersToJobsTabSearchOnce",
+        JSON.stringify({ q, entityId }),
+      );
+    };
+    window.addEventListener("open:remindersToJobsTabSearch", onEvent as EventListener);
+    return () => window.removeEventListener("open:remindersToJobsTabSearch", onEvent as EventListener);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = "open:remindersToJobsTabSearchOnce";
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return;
+    let payload: { q: string; entityId?: string };
+    try { payload = JSON.parse(raw); } catch { payload = { q: raw }; }
+    requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent("remindersToJobsTabSearch:run", { detail: payload })
+      );
+      window.sessionStorage.removeItem(key);
+    });
+  }, [topTab, adminInnerTab, workerInnerTab]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (topTab !== "admin" || adminInnerTab !== "users") return;

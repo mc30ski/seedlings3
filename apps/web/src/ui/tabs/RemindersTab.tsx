@@ -13,15 +13,18 @@ import {
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
-import { MapLink } from "@/src/ui/helpers/Link";
+import { MapLink, TextLink } from "@/src/ui/helpers/Link";
+import { openEventSearch } from "@/src/lib/bus";
 
 type Props = {
   myId?: string;
   /** When true, show reminders for all workers (admin mode) */
   showAll?: boolean;
+  /** Admin context — links go to admin tabs */
+  forAdmin?: boolean;
 };
 
-export default function RemindersTab({ myId, showAll }: Props) {
+export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -110,6 +113,7 @@ export default function RemindersTab({ myId, showAll }: Props) {
           }}
           message="Contact the client to reschedule or complete this job"
           showAssignees={showAll}
+          forAdmin={forAdmin}
         />
       )}
 
@@ -123,6 +127,7 @@ export default function RemindersTab({ myId, showAll }: Props) {
           badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2">Today</Badge>}
           message="Confirm with the client that the job is still on for today"
           showAssignees={showAll}
+          forAdmin={forAdmin}
         />
       )}
 
@@ -136,6 +141,7 @@ export default function RemindersTab({ myId, showAll }: Props) {
           badge={() => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Tomorrow</Badge>}
           message="Contact the client to confirm they want the job done tomorrow"
           showAssignees={showAll}
+          forAdmin={forAdmin}
         />
       )}
 
@@ -149,6 +155,7 @@ export default function RemindersTab({ myId, showAll }: Props) {
           badge={() => <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">Awaiting payment</Badge>}
           message="Collect payment from the client"
           showAssignees={showAll}
+          forAdmin={forAdmin}
         />
       )}
 
@@ -162,6 +169,7 @@ export default function RemindersTab({ myId, showAll }: Props) {
           badge={() => <Badge colorPalette="purple" variant="solid" fontSize="xs" borderRadius="full" px="2">Review needed</Badge>}
           message="Accept or reject this estimate"
           showAssignees={showAll}
+          forAdmin={forAdmin}
         />
       )}
     </Box>
@@ -176,6 +184,7 @@ function Section({
   badge,
   message,
   showAssignees,
+  forAdmin,
 }: {
   title: string;
   subtitle: string;
@@ -184,6 +193,7 @@ function Section({
   badge: (occ: WorkerOccurrence) => React.ReactNode;
   message: string;
   showAssignees?: boolean;
+  forAdmin?: boolean;
 }) {
   return (
     <Box mb={5}>
@@ -218,6 +228,16 @@ function Section({
                   <Text fontSize="xs" color="fg.muted" fontStyle="italic">
                     {message}
                   </Text>
+                  <TextLink
+                    text="View in Jobs"
+                    onClick={() =>
+                      openEventSearch(
+                        "remindersToJobsTabSearch",
+                        occ.job?.property?.displayName ?? "",
+                        !!forAdmin,
+                      )
+                    }
+                  />
                 </VStack>
                 <VStack align="end" gap={1} flexShrink={0}>
                   {badge(occ)}

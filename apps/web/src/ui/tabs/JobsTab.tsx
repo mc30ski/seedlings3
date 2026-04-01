@@ -137,6 +137,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
 
+  // Listen for navigation from Reminders tab
+  useEffect(() => {
+    const onRun = (ev: Event) => {
+      const { q: searchQ } = (ev as CustomEvent<{ q?: string }>).detail || {};
+      if (typeof searchQ === "string") setQ(searchQ);
+    };
+    window.addEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
+    return () => window.removeEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
+  }, []);
+
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "nextMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = useState(presetDates.from);

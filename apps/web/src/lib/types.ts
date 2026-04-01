@@ -36,7 +36,8 @@ export type EventTypes =
   | "paymentsTabToPropertiesTabSearch"
   | "paymentsTabToClientsTabSearch"
   | "paymentsTabToServicesTabSearch"
-  | "jobsTabToServicesTabSearch";
+  | "jobsTabToServicesTabSearch"
+  | "remindersToJobsTabSearch";
 
 export type DialogMode = "CREATE" | "UPDATE";
 
