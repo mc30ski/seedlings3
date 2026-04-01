@@ -225,7 +225,7 @@ export default function ClientMyJobsTab() {
 
                   {/* Photos */}
                   {job.photos.length > 0 && (
-                    <HStack gap={2} mt={2} overflowX="auto" pb={1}>
+                    <HStack gap={2} mt={2} wrap="wrap">
                       {job.photos.map((p, idx) => (
                         <Box
                           key={p.id}
