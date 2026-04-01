@@ -24,6 +24,7 @@ import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
+import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
@@ -46,6 +47,7 @@ import {
   FiMapPin,
   FiActivity,
   FiHome,
+  FiBarChart2,
   FiBell,
   FiNavigation,
   FiSettings,
@@ -328,6 +330,12 @@ export default function HomePage() {
       label: "Users",
       icon: AiOutlineTeam,
       content: wrapWithInlineMessage(<UsersTab role="admin" />),
+    },
+    {
+      value: "statistics",
+      label: "Statistics",
+      icon: FiBarChart2,
+      content: wrapWithInlineMessage(<StatisticsTab />),
     },
     {
       value: "activity",

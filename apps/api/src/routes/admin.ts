@@ -947,6 +947,208 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ── Worker Statistics ──
+
+  app.get("/admin/statistics", adminGuard, async (req: any) => {
+    const from = req.query?.from as string | undefined;
+    const to = req.query?.to as string | undefined;
+
+    const dateFilter: any = {};
+    if (from) dateFilter.gte = new Date(from + "T00:00:00Z");
+    if (to) dateFilter.lte = new Date(to + "T23:59:59.999Z");
+    const hasDate = from || to;
+
+    // Get all closed occurrences with assignees, payment splits, timing
+    const occurrences = await prisma.jobOccurrence.findMany({
+      where: {
+        status: { in: ["CLOSED", "PENDING_PAYMENT"] },
+        ...(hasDate ? { completedAt: dateFilter } : {}),
+      },
+      select: {
+        id: true,
+        status: true,
+        kind: true,
+        startedAt: true,
+        completedAt: true,
+        estimatedMinutes: true,
+        price: true,
+        workflow: true,
+        isEstimate: true,
+        startAt: true,
+        assignees: {
+          select: {
+            userId: true,
+            user: { select: { id: true, displayName: true, email: true, workerType: true } },
+          },
+        },
+        payment: {
+          select: {
+            amountPaid: true,
+            method: true,
+            platformFeeAmount: true,
+            businessMarginAmount: true,
+            splits: {
+              select: { userId: true, amount: true },
+            },
+          },
+        },
+        expenses: {
+          select: { cost: true },
+        },
+        job: {
+          select: {
+            property: { select: { id: true, displayName: true, city: true } },
+          },
+        },
+      },
+      orderBy: { completedAt: "desc" },
+    });
+
+    // Get all workers
+    const workers = await prisma.user.findMany({
+      where: {
+        isApproved: true,
+        roles: { some: { role: "WORKER" } },
+      },
+      select: { id: true, displayName: true, email: true, workerType: true },
+    });
+
+    // Build per-worker stats
+    type WorkerStat = {
+      userId: string;
+      displayName: string;
+      workerType: string | null;
+      jobsCompleted: number;
+      totalEarnings: number;
+      totalExpenses: number;
+      netEarnings: number;
+      totalActualMinutes: number;
+      totalEstimatedMinutes: number;
+      jobsWithTiming: number;
+      avgActualMinutes: number;
+      avgEstimatedMinutes: number;
+      efficiencyPercent: number | null; // estimated/actual * 100
+      propertiesServiced: number;
+      paymentMethods: Record<string, number>;
+      jobsByDay: Record<string, number>; // YYYY-MM-DD -> count
+    };
+
+    const statsMap = new Map<string, WorkerStat>();
+
+    for (const w of workers) {
+      statsMap.set(w.id, {
+        userId: w.id,
+        displayName: w.displayName ?? w.email ?? w.id,
+        workerType: w.workerType,
+        jobsCompleted: 0,
+        totalEarnings: 0,
+        totalExpenses: 0,
+        netEarnings: 0,
+        totalActualMinutes: 0,
+        totalEstimatedMinutes: 0,
+        jobsWithTiming: 0,
+        avgActualMinutes: 0,
+        avgEstimatedMinutes: 0,
+        efficiencyPercent: null,
+        propertiesServiced: 0,
+        paymentMethods: {},
+        jobsByDay: {},
+      });
+    }
+
+    const propertySetMap = new Map<string, Set<string>>();
+
+    for (const occ of occurrences) {
+      if (occ.workflow === "ESTIMATE" || occ.isEstimate) continue;
+
+      const actualMinutes = occ.startedAt && occ.completedAt
+        ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
+        : null;
+
+      const expenseTotal = occ.expenses.reduce((s, e) => s + e.cost, 0);
+      const dayKey = occ.completedAt ? occ.completedAt.toISOString().slice(0, 10) : null;
+      const propId = occ.job?.property?.id;
+
+      for (const a of occ.assignees) {
+        let stat = statsMap.get(a.userId);
+        if (!stat) continue;
+
+        stat.jobsCompleted++;
+
+        // Earnings from splits
+        const split = occ.payment?.splits.find((s) => s.userId === a.userId);
+        if (split) {
+          const splitRatio = occ.payment && occ.payment.splits.length > 0
+            ? split.amount / occ.payment.splits.reduce((s, sp) => s + sp.amount, 0)
+            : 1;
+          const expenseShare = expenseTotal * splitRatio;
+          stat.totalEarnings += split.amount;
+          stat.totalExpenses += expenseShare;
+          stat.netEarnings += split.amount - expenseShare;
+        }
+
+        // Timing
+        if (actualMinutes != null && actualMinutes > 0) {
+          stat.totalActualMinutes += actualMinutes;
+          stat.jobsWithTiming++;
+        }
+        if (occ.estimatedMinutes) {
+          stat.totalEstimatedMinutes += occ.estimatedMinutes;
+        }
+
+        // Payment method
+        if (occ.payment?.method) {
+          stat.paymentMethods[occ.payment.method] = (stat.paymentMethods[occ.payment.method] || 0) + 1;
+        }
+
+        // Jobs by day
+        if (dayKey) {
+          stat.jobsByDay[dayKey] = (stat.jobsByDay[dayKey] || 0) + 1;
+        }
+
+        // Properties
+        if (propId) {
+          if (!propertySetMap.has(a.userId)) propertySetMap.set(a.userId, new Set());
+          propertySetMap.get(a.userId)!.add(propId);
+        }
+      }
+    }
+
+    // Finalize averages
+    const results: WorkerStat[] = [];
+    for (const stat of statsMap.values()) {
+      stat.propertiesServiced = propertySetMap.get(stat.userId)?.size ?? 0;
+      if (stat.jobsWithTiming > 0) {
+        stat.avgActualMinutes = Math.round(stat.totalActualMinutes / stat.jobsWithTiming);
+      }
+      if (stat.jobsCompleted > 0 && stat.totalEstimatedMinutes > 0) {
+        stat.avgEstimatedMinutes = Math.round(stat.totalEstimatedMinutes / stat.jobsCompleted);
+      }
+      if (stat.totalActualMinutes > 0 && stat.totalEstimatedMinutes > 0) {
+        stat.efficiencyPercent = Math.round((stat.totalEstimatedMinutes / stat.totalActualMinutes) * 100);
+      }
+      stat.totalEarnings = Math.round(stat.totalEarnings * 100) / 100;
+      stat.totalExpenses = Math.round(stat.totalExpenses * 100) / 100;
+      stat.netEarnings = Math.round(stat.netEarnings * 100) / 100;
+      results.push(stat);
+    }
+
+    // Sort by jobs completed desc
+    results.sort((a, b) => b.jobsCompleted - a.jobsCompleted);
+
+    // Days with jobs for "jobs per day" calc
+    const allDays = new Set<string>();
+    for (const stat of results) {
+      for (const d of Object.keys(stat.jobsByDay)) allDays.add(d);
+    }
+
+    return {
+      workers: results,
+      totalOccurrences: occurrences.filter((o) => o.workflow !== "ESTIMATE" && !o.isEstimate).length,
+      daysInRange: allDays.size,
+    };
+  });
+
   // ── Admin Photos ──
 
   app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {
