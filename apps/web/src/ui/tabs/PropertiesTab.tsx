@@ -475,6 +475,11 @@ export default function PropertiesTab({
                       "None"
                     )}
                   </Text>
+                  {(p as any).lotSize != null && (
+                    <Text fontSize="xs" color="fg.muted">
+                      Lot size: {(p as any).lotSize.toLocaleString()} {(p as any).lotSizeUnit ?? "sqft"}
+                    </Text>
+                  )}
                 </VStack>
               </Card.Body>
               {forAdmin && (

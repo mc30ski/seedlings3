@@ -307,6 +307,10 @@ model Property {
   pointOfContactId   String?
   pointOfContact     ClientContact? @relation("PropertyPOC", fields: [pointOfContactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  // Property size
+  lotSize            Float?
+  lotSizeUnit        String?        // e.g. "sqft", "acres", "hectares"
+
   // Light ops
   accessNotes        String?
   //photos             Json?
@@ -476,6 +480,7 @@ model JobOccurrence {
   source      JobOccurrenceSource @default(GENERATED)
   workflow    OccurrenceWorkflow  @default(STANDARD)
 
+  jobType          String?        // e.g. "MOW_ONLY", "MOW_TRIM_BLOW", etc.
   notes            String?
   price            Float?
   estimatedMinutes Int?

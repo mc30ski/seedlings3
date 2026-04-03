@@ -20,7 +20,7 @@ import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
-import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey } from "@/src/lib/lib";
+import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -1022,6 +1022,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="0">
                     <HStack gap={2} fontSize="xs">
+                      {(occ as any).jobType && (
+                        <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                          {jobTypeLabel((occ as any).jobType)}
+                        </Badge>
+                      )}
                       {occ.price != null && (
                         <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
                           ${occ.price.toFixed(2)}
@@ -1077,6 +1082,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ? ` – ${fmtDate(occ.endAt)}`
                           : ""}
                       </Text>
+                    )}
+                    {(occ as any).jobType && (
+                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {jobTypeLabel((occ as any).jobType)}
+                      </Badge>
                     )}
                     {occ.price != null && (
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">

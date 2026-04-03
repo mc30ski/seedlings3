@@ -432,6 +432,7 @@ export type CreateOccurrenceInput = {
   isTentative?: boolean;
   isEstimate?: boolean;
   isAdminOnly?: boolean;
+  jobType?: string | null;
 
   // optional assignees at creation time
   assigneeUserIds?: string[];

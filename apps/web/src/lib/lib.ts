@@ -1,4 +1,4 @@
-import { Me, Role } from "@/src/lib/types";
+import { Me, Role, JOB_TYPE_OPTIONS } from "@/src/lib/types";
 
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +37,12 @@ export function bizDateKey(d: string | Date): string {
 }
 
 /** Append " JOB" to client display names for display purposes. */
+export function jobTypeLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  const opt = JOB_TYPE_OPTIONS.find((o) => o.value === value);
+  return opt?.label ?? value;
+}
+
 export function clientLabel(name: string | null | undefined): string {
   if (!name) return "";
   return `${name} JOB`;

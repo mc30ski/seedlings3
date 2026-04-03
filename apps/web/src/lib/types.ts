@@ -245,6 +245,48 @@ export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
 export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE"] as const;
 export type OccurrenceWorkflow = (typeof OCCURRENCE_WORKFLOW)[number];
 
+export const JOB_TYPE_OPTIONS = [
+  { value: "", label: "Not specified" },
+  { value: "MOW_ONLY", label: "Mow Only" },
+  { value: "MOW_TRIM_BLOW", label: "Mow / Trim / Blow" },
+  { value: "FULL_SERVICE", label: "Full Service (Mow / Trim / Edge / Blow)" },
+  { value: "TRIM_BLOW", label: "Trim & Blow" },
+  { value: "EDGE_TRIM", label: "Edge & Trim" },
+  { value: "LEAF_REMOVAL", label: "Leaf Removal" },
+  { value: "LEAF_CLEANUP", label: "Leaf Cleanup & Blow" },
+  { value: "MULCH_INSTALL", label: "Mulch Install" },
+  { value: "MULCH_BED_REFRESH", label: "Mulch Bed Refresh" },
+  { value: "HEDGE_TRIMMING", label: "Hedge Trimming" },
+  { value: "BUSH_PRUNING", label: "Bush / Shrub Pruning" },
+  { value: "TREE_TRIMMING", label: "Tree Trimming (Low Branches)" },
+  { value: "WEED_CONTROL", label: "Weed Control / Pull" },
+  { value: "BED_WEEDING", label: "Flower Bed Weeding" },
+  { value: "FERTILIZATION", label: "Fertilization" },
+  { value: "AERATION", label: "Lawn Aeration" },
+  { value: "OVERSEEDING", label: "Overseeding" },
+  { value: "AERATION_OVERSEEDING", label: "Aeration & Overseeding" },
+  { value: "DETHATCHING", label: "Dethatching" },
+  { value: "SOD_INSTALL", label: "Sod Installation" },
+  { value: "SEED_INSTALL", label: "Seed Installation" },
+  { value: "SPRING_CLEANUP", label: "Spring Cleanup" },
+  { value: "FALL_CLEANUP", label: "Fall Cleanup" },
+  { value: "GUTTER_CLEANING", label: "Gutter Cleaning" },
+  { value: "PRESSURE_WASHING", label: "Pressure Washing" },
+  { value: "DRIVEWAY_CLEANING", label: "Driveway / Walkway Cleaning" },
+  { value: "DEBRIS_REMOVAL", label: "Debris / Brush Removal" },
+  { value: "STUMP_GRINDING", label: "Stump Grinding" },
+  { value: "FLOWER_PLANTING", label: "Flower / Plant Installation" },
+  { value: "LANDSCAPE_DESIGN", label: "Landscape Design" },
+  { value: "IRRIGATION_CHECK", label: "Irrigation Check / Repair" },
+  { value: "DRAINAGE", label: "Drainage Work" },
+  { value: "GRADING", label: "Grading / Leveling" },
+  { value: "RETAINING_WALL", label: "Retaining Wall" },
+  { value: "PATIO_WALKWAY", label: "Patio / Walkway Install" },
+  { value: "SNOW_REMOVAL", label: "Snow Removal" },
+  { value: "SALT_TREATMENT", label: "Salt / Ice Treatment" },
+  { value: "OTHER", label: "Other" },
+] as const;
+
 export const JOB_CADENCE = ["WEEKLY", "BIWEEKLY", "MONTHLY"] as const;
 export type JobCadence = (typeof JOB_CADENCE)[number];
 

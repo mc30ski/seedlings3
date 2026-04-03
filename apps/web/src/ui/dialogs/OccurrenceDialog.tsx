@@ -23,7 +23,7 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { JOB_KIND, JOB_OCCURRENCE_STATUS, JOB_TYPE_OPTIONS } from "@/src/lib/types";
 
 const workflowItems = [
   { label: "Estimate", value: "ESTIMATE" },
@@ -61,6 +61,7 @@ type Props = {
   defaultStartedAt?: string | null;
   defaultCompletedAt?: string | null;
   defaultIsAdminOnly?: boolean;
+  defaultJobType?: string | null;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -90,6 +91,7 @@ export default function OccurrenceDialog({
   defaultStartedAt,
   defaultCompletedAt,
   defaultIsAdminOnly,
+  defaultJobType,
   isAdmin,
   defaultAssignees,
   createEndpoint,
@@ -113,6 +115,7 @@ export default function OccurrenceDialog({
   const [workflow, setWorkflow] = useState("ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
+  const [jobType, setJobType] = useState("");
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -146,6 +149,7 @@ export default function OccurrenceDialog({
     setWorkflow("ESTIMATE");
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
+    setJobType(defaultJobType ?? "");
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
@@ -192,6 +196,7 @@ export default function OccurrenceDialog({
           workflow,
           ...(isTentative ? { isTentative: true } : {}),
           ...(isAdminOnly ? { isAdminOnly: true } : {}),
+          ...(jobType ? { jobType } : {}),
         });
         // Create any inline expenses against the new occurrence
         const newOccId = created?.id;
@@ -225,6 +230,7 @@ export default function OccurrenceDialog({
           body.completedAt = completedAt ? new Date(completedAt).toISOString() : null;
         }
         body.isAdminOnly = isAdminOnly;
+        body.jobType = jobType || null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
         if (isAdmin && occurrenceId) {
@@ -332,6 +338,26 @@ export default function OccurrenceDialog({
                     </NativeSelect.Root>
                   </div>
                 )}
+                <div>
+                  <Text mb="1">Job Type</Text>
+                  <select
+                    value={jobType}
+                    onChange={(e) => setJobType(e.target.value)}
+                    style={{
+                      width: "100%",
+                      fontSize: "0.875rem",
+                      padding: "0.4rem 0.5rem",
+                      borderRadius: "0.375rem",
+                      border: "1px solid var(--chakra-colors-border)",
+                      background: "var(--chakra-colors-bg)",
+                      color: "var(--chakra-colors-fg)",
+                    }}
+                  >
+                    {JOB_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <Text mb="1">Start date *</Text>
                   <Input

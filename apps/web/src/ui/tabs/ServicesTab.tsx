@@ -27,6 +27,7 @@ import {
   fmtDate,
   fmtDateTime,
   bizDateKey,
+  jobTypeLabel,
 } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -1073,6 +1074,9 @@ export default function ServicesTab({
                               {occ.startAt
                                 ? fmtDate(occ.startAt)
                                 : "—"}
+                              {(occ as any).jobType && (
+                                <> · {jobTypeLabel((occ as any).jobType)}</>
+                              )}
                             </Text>
                             {occ.assignees.length === 0 ? (
                               <Text fontSize="xs" color="orange.500" fontWeight="medium">
@@ -1734,6 +1738,7 @@ export default function ServicesTab({
           defaultStartedAt={editingOccurrence.startedAt}
           defaultCompletedAt={editingOccurrence.completedAt}
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
+          defaultJobType={(editingOccurrence as any).jobType}
           isAdmin={forAdmin}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
