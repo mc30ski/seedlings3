@@ -973,20 +973,29 @@ export default async function adminRoutes(app: FastifyInstance) {
       prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
     ].filter(Boolean).join("\n");
 
-    const prompt = `Generate a short, friendly estimate message for a lawn care client. Text message style — under 150 words, plain text only, no subject line.
+    const prompt = `You are estimating a lawn care job. First, calculate the price accurately, then write a client message.
 
 Job info:
 ${details}
 
-Rules:
+STEP 1 — CALCULATE THE PRICE:
+- Use the address to determine local market rates for the area (materials, labor, delivery)
+- If the notes contain measurements, square footage, material quantities (e.g. yards of mulch), use those exact numbers — do NOT estimate over them
+- Break down: material costs (using local supplier rates for the area), delivery fees, labor (crew hours × local labor rates), and any additional services mentioned (weed treatment, trimming, etc.)
+- If a price is already set in the job info, use that exact price
+- The estimate must reflect what a professional lawn care company would actually charge in this specific location
+
+STEP 2 — WRITE THE MESSAGE:
 - Address client as ${contactName}
-- You MUST include a concrete dollar amount estimate. If a price is provided in the job info, use it. If no price is set, calculate a reasonable estimate based on the service type, property size, and location — use typical market rates for the region. Never omit the price.
-- If the property size is unknown, estimate based on typical lot sizes in the city/area and mention "based on typical lot sizes in [city]" so the client understands. If other key details are missing, note the price could adjust once we see the property
-- NEVER offer discounts, bundles, or reduced pricing of any kind
-- Add a brief note that the final price may vary based on actual property conditions
-- If recurring, mention the frequency
-- End with a short invite to confirm or ask questions
+- Plain text only, no markdown, no subject line
+- State the total price clearly
+- Briefly list what's included
+- If the notes mention upgrade options (e.g. thicker depth), mention the approximate cost for that too
+- Add one line: final price may vary slightly based on actual conditions on-site
+- NEVER offer discounts or reduced pricing
+- End with a short invite to confirm
 - Sign off as "Seedlings Lawn Care"
+- Keep it concise but include all relevant details from the notes
 12. Do NOT use markdown formatting — plain text only`;
 
     try {
