@@ -981,7 +981,7 @@ ${details}
 Rules:
 - Address client as ${contactName}
 - You MUST include a concrete dollar amount estimate. If a price is provided in the job info, use it. If no price is set, calculate a reasonable estimate based on the service type, property size, and location — use typical market rates for the region. Never omit the price.
-- If the property size is unknown or other key details are missing, mention that briefly and note the price could adjust once we see the property
+- If the property size is unknown, estimate based on typical lot sizes in the city/area and mention "based on typical lot sizes in [city]" so the client understands. If other key details are missing, note the price could adjust once we see the property
 - NEVER offer discounts, bundles, or reduced pricing of any kind
 - Add a brief note that the final price may vary based on actual property conditions
 - If recurring, mention the frequency
