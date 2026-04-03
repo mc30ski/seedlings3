@@ -84,6 +84,8 @@ export default function PropertyDialog({
   const [postalCode, setPostalCode] = useState("");
   const [country, setCountry] = useState("USA");
   const [accessNotes, setAccessNotes] = useState("");
+  const [lotSize, setLotSize] = useState("");
+  const [lotSizeUnit, setLotSizeUnit] = useState("sqft");
 
   const [pocValue, setPocValue] = useState<string[]>(["NONE"]);
 
@@ -212,6 +214,8 @@ export default function PropertyDialog({
       setPostalCode(initial.postalCode ?? "");
       setCountry(initial.country ?? "USA");
       setAccessNotes(initial.accessNotes ?? "");
+      setLotSize((initial as any).lotSize != null ? String((initial as any).lotSize) : "");
+      setLotSizeUnit((initial as any).lotSizeUnit ?? "sqft");
       setPocValue([initial.pointOfContactId ?? "NONE"]);
     } else {
       setKindValue([PROPERTY_KIND[0]]);
@@ -225,6 +229,8 @@ export default function PropertyDialog({
       setPostalCode("");
       setCountry("USA");
       setAccessNotes("");
+      setLotSize("");
+      setLotSizeUnit("sqft");
       setPocValue(["NONE"]);
     }
   }, [open, mode, initial, defaultClientId]);
@@ -330,6 +336,8 @@ export default function PropertyDialog({
       postalCode: postalCode.trim(),
       country: country.trim(),
       accessNotes: accessNotes.trim() || null,
+      lotSize: lotSize !== "" ? Number(lotSize) : null,
+      lotSizeUnit: lotSize !== "" ? lotSizeUnit : null,
       pointOfContactId: pocValue[0] === "NONE" ? null : pocValue[0],
     };
 
@@ -583,6 +591,35 @@ export default function PropertyDialog({
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
+                </div>
+                <div>
+                  <Text mb="1">Lot size</Text>
+                  <HStack gap={2}>
+                    <Input
+                      type="number"
+                      value={lotSize}
+                      onChange={(e) => setLotSize(e.target.value)}
+                      placeholder="e.g. 5000"
+                      size="sm"
+                      flex="1"
+                    />
+                    <select
+                      value={lotSizeUnit}
+                      onChange={(e) => setLotSizeUnit(e.target.value)}
+                      style={{
+                        fontSize: "0.875rem",
+                        padding: "0.3rem 0.5rem",
+                        borderRadius: "0.375rem",
+                        border: "1px solid var(--chakra-colors-border)",
+                        background: "var(--chakra-colors-bg)",
+                      }}
+                    >
+                      <option value="sqft">sq ft</option>
+                      <option value="acres">acres</option>
+                      <option value="hectares">hectares</option>
+                      <option value="sqm">sq m</option>
+                    </select>
+                  </HStack>
                 </div>
                 <div>
                   <Text mb="1">Access notes</Text>

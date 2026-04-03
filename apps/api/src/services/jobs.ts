@@ -240,6 +240,7 @@ export const jobs: ServicesJobs = {
           notes: payload.notes ?? undefined,
           defaultPrice: payload.defaultPrice ?? undefined,
           estimatedMinutes: "estimatedMinutes" in (payload as any) ? ((payload as any).estimatedMinutes ?? null) : undefined,
+          defaultJobType: "defaultJobType" in (payload as any) ? ((payload as any).defaultJobType ?? null) : undefined,
         } as any,
       });
 
@@ -327,6 +328,7 @@ export const jobs: ServicesJobs = {
           endAt: toDate(input.endAt),
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
+          jobType: input.jobType ?? null,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
@@ -390,6 +392,7 @@ export const jobs: ServicesJobs = {
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
       if ("isAdminOnly" in patch) data.isAdminOnly = !!patch.isAdminOnly;
+      if ("jobType" in patch) data.jobType = patch.jobType ?? null;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
 

@@ -87,6 +87,8 @@ export const properties: ServicesProperties = {
           postalCode: payload.postalCode ?? null,
           country: payload.country ?? null,
           accessNotes: payload.accessNotes ?? null,
+          lotSize: payload.lotSize != null ? Number(payload.lotSize) : null,
+          lotSizeUnit: payload.lotSizeUnit ?? null,
           pointOfContactId: payload.pointOfContactId ?? null,
         },
       });
@@ -117,6 +119,8 @@ export const properties: ServicesProperties = {
           postalCode: payload.postalCode,
           country: payload.country,
           accessNotes: payload.accessNotes,
+          lotSize: "lotSize" in payload ? (payload.lotSize != null ? Number(payload.lotSize) : null) : undefined,
+          lotSizeUnit: "lotSizeUnit" in payload ? (payload.lotSizeUnit ?? null) : undefined,
           pointOfContactId: payload.pointOfContactId ?? null,
         },
       });
