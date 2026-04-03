@@ -328,6 +328,7 @@ export type JobOccurrenceFull = {
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;
+  generatedEstimate?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;
@@ -499,6 +500,7 @@ export type WorkerOccurrence = {
   proposalAmount?: number | null;
   proposalNotes?: string | null;
   rejectionReason?: string | null;
+  generatedEstimate?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;

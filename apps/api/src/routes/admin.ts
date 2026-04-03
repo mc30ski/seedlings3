@@ -913,6 +913,110 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { rejected: true };
   });
 
+  // ── Generate AI Estimate ──
+
+  app.post("/admin/occurrences/:occurrenceId/generate-estimate", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.occurrenceId);
+
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({
+      where: { id: occurrenceId },
+      include: {
+        job: {
+          include: {
+            property: {
+              include: {
+                client: {
+                  include: {
+                    contacts: { where: { status: "ACTIVE" }, orderBy: { isPrimary: "desc" } },
+                  },
+                },
+                pointOfContact: true,
+              },
+            },
+          },
+        },
+        assignees: { include: { user: { select: { displayName: true } } } },
+        expenses: true,
+      },
+    });
+
+    const prop = occ.job?.property;
+    const client = prop?.client;
+    const contact = prop?.pointOfContact ?? client?.contacts?.[0];
+    const contactName = contact?.firstName ?? client?.displayName ?? "Valued Customer";
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw app.httpErrors.serviceUnavailable("Estimate generation is not configured. Add ANTHROPIC_API_KEY.");
+    }
+
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const ai = new Anthropic({ apiKey });
+
+    const jobTypeLabel = occ.jobType
+      ? occ.jobType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase())
+      : "Lawn Care Service";
+
+    const details = [
+      `Client: ${contactName}`,
+      `Property: ${prop?.displayName ?? "N/A"}`,
+      `Address: ${[prop?.street1, prop?.city, prop?.state, prop?.postalCode].filter(Boolean).join(", ")}`,
+      prop?.lotSize ? `Property size: ${prop.lotSize} ${prop.lotSizeUnit ?? "sqft"}` : null,
+      `Service type: ${jobTypeLabel}`,
+      occ.estimatedMinutes ? `Estimated time: ${occ.estimatedMinutes} minutes` : null,
+      occ.price != null ? `Quoted price: $${occ.price.toFixed(2)}` : null,
+      occ.job?.frequencyDays ? `Frequency: every ${occ.job.frequencyDays} days` : "One-time service",
+      occ.notes ? `Notes: ${occ.notes}` : null,
+      occ.proposalNotes ? `Team notes: ${occ.proposalNotes}` : null,
+      occ.proposalAmount != null ? `Team proposed amount: $${occ.proposalAmount.toFixed(2)}` : null,
+      occ.expenses?.length ? `Expenses: ${occ.expenses.map((e: any) => `$${e.amount.toFixed(2)} (${e.description})`).join(", ")}` : null,
+      prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
+    ].filter(Boolean).join("\n");
+
+    const prompt = `You are a professional estimator for Seedlings Lawn Care, a lawn care service company. Generate a friendly, professional estimate message that can be copy/pasted into a text message or email to the client.
+
+Here is the information about the job:
+
+${details}
+
+Rules:
+1. Address the client by their first name (${contactName})
+2. Be warm and professional — this is a small, personal lawn care business
+3. If a price is available, present it clearly as the estimated cost
+4. If no price is set, provide a reasonable range based on the service type and property size (use general market rates for the area)
+5. Include a clear but professional disclaimer that the estimate is based on available information and the final price may vary once the property has been assessed in person
+6. If it's a recurring service, mention the frequency and any potential discount
+7. Include a brief description of what the service includes
+8. End with an invitation to confirm or ask questions
+9. Keep it concise — suitable for a text message (under 200 words)
+10. Do NOT include a subject line — just the message body
+11. Sign off as "Seedlings Lawn Care"
+12. Do NOT use markdown formatting — plain text only`;
+
+    try {
+      const response = await ai.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = response.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("");
+
+      // Save to the occurrence
+      await prisma.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { generatedEstimate: text },
+      });
+
+      return { estimate: text };
+    } catch (err: any) {
+      throw app.httpErrors.internalServerError(`Estimate generation failed: ${err.message}`);
+    }
+  });
+
   // ── Worker Type & Compliance ──
 
   app.patch("/admin/users/:id/worker-type", adminGuard, async (req: any) => {
