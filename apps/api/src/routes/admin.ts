@@ -973,24 +973,19 @@ export default async function adminRoutes(app: FastifyInstance) {
       prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
     ].filter(Boolean).join("\n");
 
-    const prompt = `You are a professional estimator for Seedlings Lawn Care, a lawn care service company. Generate a friendly, professional estimate message that can be copy/pasted into a text message or email to the client.
+    const prompt = `Generate a short, friendly estimate message for a lawn care client. Text message style — under 120 words, plain text only, no subject line.
 
-Here is the information about the job:
-
+Job info:
 ${details}
 
 Rules:
-1. Address the client by their first name (${contactName})
-2. Be warm and professional — this is a small, personal lawn care business
-3. If a price is available, present it clearly as the estimated cost
-4. If no price is set, provide a reasonable range based on the service type and property size (use general market rates for the area)
-5. Include a clear but professional disclaimer that the estimate is based on available information and the final price may vary once the property has been assessed in person
-6. If it's a recurring service, mention the frequency and any potential discount
-7. Include a brief description of what the service includes
-8. End with an invitation to confirm or ask questions
-9. Keep it concise — suitable for a text message (under 200 words)
-10. Do NOT include a subject line — just the message body
-11. Sign off as "Seedlings Lawn Care"
+- Address client as ${contactName}
+- State the price directly if available. If not, say we need to assess the property first
+- NEVER offer discounts, bundles, or reduced pricing
+- Add one line: the final price may vary slightly based on actual property conditions
+- If recurring, mention the frequency
+- End with a short invite to confirm or ask questions
+- Sign off as "Seedlings Lawn Care"
 12. Do NOT use markdown formatting — plain text only`;
 
     try {
