@@ -973,35 +973,41 @@ export default async function adminRoutes(app: FastifyInstance) {
       prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
     ].filter(Boolean).join("\n");
 
-    const prompt = `You are estimating a lawn care job. First, calculate the price accurately, then write a client message.
+    const prompt = `You are estimating a lawn care job for Seedlings Lawn Care. Produce two outputs as JSON.
 
 Job info:
 ${details}
 
-STEP 1 — CALCULATE THE PRICE:
+STEP 1 — INTERNAL BREAKDOWN (for business eyes only):
 - Use the address to determine local market rates for the area (materials, labor, delivery)
-- If the notes contain measurements, square footage, material quantities (e.g. yards of mulch), use those exact numbers — do NOT estimate over them
-- Break down: material costs (using local supplier rates for the area), delivery fees, labor (crew hours × local labor rates), and any additional services mentioned (weed treatment, trimming, etc.)
-- If a price is already set in the job info, use that exact price
-- The estimate must reflect what a professional lawn care company would actually charge in this specific location
+- If the notes contain measurements, square footage, material quantities (e.g. yards of mulch), use those exact numbers
+- Itemize: materials (with per-unit costs), delivery, labor (hours × rate), additional services
+- Show subtotal of costs
+- Add 20% business margin (covers overhead, insurance, taxes, profit)
+- Show final client-facing price
+- If upgrade options are mentioned, calculate those too with the same margin
+- Be specific with numbers and sources of rates
 
-STEP 2 — WRITE THE MESSAGE:
+STEP 2 — CLIENT MESSAGE:
 - Address client as ${contactName}
 - Plain text only, no markdown, no subject line
-- State the total price clearly
-- Briefly list what's included
-- If the notes mention upgrade options (e.g. thicker depth), mention the approximate cost for that too
+- State the total price clearly as a single number — do NOT itemize costs or mention margin
+- Briefly list what's included in the service
+- If the notes mention upgrade options (e.g. thicker depth), mention the approximate price for that too
 - Add one line: final price may vary slightly based on actual conditions on-site
 - NEVER offer discounts or reduced pricing
 - End with a short invite to confirm
 - Sign off as "Seedlings Lawn Care"
-- Keep it concise but include all relevant details from the notes
+- Keep it concise
+
+Respond ONLY with valid JSON in this exact format:
+{"breakdown": "the internal cost breakdown text", "message": "the client-facing message text"}
 12. Do NOT use markdown formatting — plain text only`;
 
     try {
       const response = await ai.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 800,
+        max_tokens: 1500,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -1010,13 +1016,28 @@ STEP 2 — WRITE THE MESSAGE:
         .map((b: any) => b.text)
         .join("");
 
+      // Parse JSON response
+      let message = text;
+      let breakdown = "";
+      try {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          message = parsed.message || text;
+          breakdown = parsed.breakdown || "";
+        }
+      } catch {}
+
       // Save to the occurrence
       await prisma.jobOccurrence.update({
         where: { id: occurrenceId },
-        data: { generatedEstimate: text },
+        data: {
+          generatedEstimate: message,
+          generatedEstimateBreakdown: breakdown,
+        },
       });
 
-      return { estimate: text };
+      return { estimate: message, breakdown };
     } catch (err: any) {
       throw app.httpErrors.internalServerError(`Estimate generation failed: ${err.message}`);
     }
