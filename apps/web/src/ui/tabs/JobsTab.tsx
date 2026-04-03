@@ -1187,11 +1187,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
                       </Box>
                     )}
+                    {forAdmin && occ.generatedEstimateBreakdown && (
+                      <Box p={2} bg="gray.50" rounded="sm" mt={1} borderWidth="1px" borderColor="gray.200">
+                        <HStack gap={1} mb={1}>
+                          <Text fontSize="xs" fontWeight="medium" color="gray.700">Cost Breakdown</Text>
+                          <Badge size="sm" colorPalette="orange" variant="subtle">Internal</Badge>
+                        </HStack>
+                        <Text fontSize="xs" color="gray.600" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</Text>
+                      </Box>
+                    )}
                     {forAdmin && occ.generatedEstimate && (
-                      <Box p={2} bg="blue.50" rounded="sm" mt={1} position="relative">
+                      <Box p={2} bg="blue.50" rounded="sm" mt={1}>
                         <HStack justify="space-between" mb={1}>
                           <HStack gap={1}>
-                            <Text fontSize="xs" fontWeight="medium" color="blue.700">Generated Estimate</Text>
+                            <Text fontSize="xs" fontWeight="medium" color="blue.700">Client Message</Text>
                             <Badge size="sm" colorPalette="orange" variant="subtle">AI Generated</Badge>
                           </HStack>
                           <Button
@@ -1201,7 +1210,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             onClick={(e) => {
                               e.stopPropagation();
                               navigator.clipboard.writeText(occ.generatedEstimate!);
-                              publishInlineMessage({ type: "SUCCESS", text: "Estimate copied to clipboard." });
+                              publishInlineMessage({ type: "SUCCESS", text: "Client message copied to clipboard." });
                             }}
                           >
                             Copy
@@ -1477,10 +1486,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           onClick={async () => {
                             try {
                               publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
-                              const res = await apiPost<{ estimate: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
+                              const res = await apiPost<{ estimate: string; breakdown?: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
                               publishInlineMessage({ type: "SUCCESS", text: "AI estimate generated. Review carefully before sharing with the client." });
                               // Update the occurrence in local state
-                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate } : o));
+                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate, generatedEstimateBreakdown: res.breakdown ?? null } : o));
                             } catch (err: any) {
                               publishInlineMessage({ type: "ERROR", text: getErrorMessage("Estimate generation failed.", err) });
                             }
