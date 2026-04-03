@@ -487,6 +487,7 @@ model JobOccurrence {
   proposalAmount   Float?
   proposalNotes    String?
   rejectionReason  String?
+  generatedEstimate String?        // AI-generated estimate message for client
   isOneOff         Boolean @default(false)   // @deprecated — use workflow
   isTentative      Boolean @default(false)
   isEstimate       Boolean @default(false)   // @deprecated — use workflow

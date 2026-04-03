@@ -1187,6 +1187,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected</Text>
                       </Box>
                     )}
+                    {forAdmin && occ.generatedEstimate && (
+                      <Box p={2} bg="blue.50" rounded="sm" mt={1} position="relative">
+                        <HStack justify="space-between" mb={1}>
+                          <Text fontSize="xs" fontWeight="medium" color="blue.700">Generated Estimate:</Text>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette="blue"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(occ.generatedEstimate!);
+                              publishInlineMessage({ type: "SUCCESS", text: "Estimate copied to clipboard." });
+                            }}
+                          >
+                            Copy
+                          </Button>
+                        </HStack>
+                        <Text fontSize="xs" color="blue.600" whiteSpace="pre-wrap">{occ.generatedEstimate}</Text>
+                      </Box>
+                    )}
                     {(occ.startLat != null || occ.completeLat != null) && (
                       <VStack align="start" gap={0} fontSize="xs" color="fg.muted">
                         {occ.startLat != null && occ.startLng != null && (
@@ -1442,6 +1462,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           })}
                           variant="outline"
                           colorPalette="red"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      )}
+                      {forAdmin && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                        <StatusButton
+                          id="occ-generate-estimate"
+                          itemId={occ.id}
+                          label={occ.generatedEstimate ? "Regenerate Estimate" : "Generate Estimate"}
+                          onClick={async () => {
+                            try {
+                              const res = await apiPost<{ estimate: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
+                              publishInlineMessage({ type: "SUCCESS", text: "Estimate generated." });
+                              // Update the occurrence in local state
+                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate } : o));
+                            } catch (err: any) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Estimate generation failed.", err) });
+                            }
+                          }}
+                          variant="outline"
+                          colorPalette="blue"
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
