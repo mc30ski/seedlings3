@@ -973,16 +973,17 @@ export default async function adminRoutes(app: FastifyInstance) {
       prop?.accessNotes ? `Access notes: ${prop.accessNotes}` : null,
     ].filter(Boolean).join("\n");
 
-    const prompt = `Generate a short, friendly estimate message for a lawn care client. Text message style — under 120 words, plain text only, no subject line.
+    const prompt = `Generate a short, friendly estimate message for a lawn care client. Text message style — under 150 words, plain text only, no subject line.
 
 Job info:
 ${details}
 
 Rules:
 - Address client as ${contactName}
-- State the price directly if available. If not, say we need to assess the property first
-- NEVER offer discounts, bundles, or reduced pricing
-- Add one line: the final price may vary slightly based on actual property conditions
+- You MUST include a concrete dollar amount estimate. If a price is provided in the job info, use it. If no price is set, calculate a reasonable estimate based on the service type, property size, and location — use typical market rates for the region. Never omit the price.
+- If the property size is unknown, estimate based on typical lot sizes in the city/area and mention "based on typical lot sizes in [city]" so the client understands. If other key details are missing, note the price could adjust once we see the property
+- NEVER offer discounts, bundles, or reduced pricing of any kind
+- Add a brief note that the final price may vary based on actual property conditions
 - If recurring, mention the frequency
 - End with a short invite to confirm or ask questions
 - Sign off as "Seedlings Lawn Care"

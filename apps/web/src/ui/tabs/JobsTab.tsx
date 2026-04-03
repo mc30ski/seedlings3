@@ -1190,7 +1190,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {forAdmin && occ.generatedEstimate && (
                       <Box p={2} bg="blue.50" rounded="sm" mt={1} position="relative">
                         <HStack justify="space-between" mb={1}>
-                          <Text fontSize="xs" fontWeight="medium" color="blue.700">Generated Estimate:</Text>
+                          <HStack gap={1}>
+                            <Text fontSize="xs" fontWeight="medium" color="blue.700">Generated Estimate</Text>
+                            <Badge size="sm" colorPalette="orange" variant="subtle">AI Generated</Badge>
+                          </HStack>
                           <Button
                             size="xs"
                             variant="ghost"
@@ -1473,8 +1476,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           label={occ.generatedEstimate ? "Regenerate Estimate" : "Generate Estimate"}
                           onClick={async () => {
                             try {
+                              publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
                               const res = await apiPost<{ estimate: string }>(`/api/admin/occurrences/${occ.id}/generate-estimate`);
-                              publishInlineMessage({ type: "SUCCESS", text: "Estimate generated." });
+                              publishInlineMessage({ type: "SUCCESS", text: "AI estimate generated. Review carefully before sharing with the client." });
                               // Update the occurrence in local state
                               setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, generatedEstimate: res.estimate } : o));
                             } catch (err: any) {
