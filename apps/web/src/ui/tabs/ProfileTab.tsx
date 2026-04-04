@@ -55,6 +55,20 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
       .catch(() => {});
   }, [isAdmin]);
 
+  // Listen for external user selection (from clicking a user name in other tabs)
+  useEffect(() => {
+    const onSelect = (e: Event) => {
+      const { userId } = (e as CustomEvent).detail || {};
+      if (userId && userId !== me?.id) {
+        setSelectedUserId(userId);
+      } else {
+        setSelectedUserId("");
+      }
+    };
+    window.addEventListener("profile:selectUser", onSelect as EventListener);
+    return () => window.removeEventListener("profile:selectUser", onSelect as EventListener);
+  }, [me?.id]);
+
   // Close dropdown on outside click
   useEffect(() => {
     if (!dropOpen) return;

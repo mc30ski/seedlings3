@@ -11,6 +11,12 @@ export function openEventSearch(
   );
 }
 
+export function navigateToProfile(userId: string, forAdmin: boolean) {
+  window.dispatchEvent(
+    new CustomEvent("navigate:profile", { detail: { userId, forAdmin } })
+  );
+}
+
 export function onEventSearchRun(
   eventName: EventTypes,
   setQ: (q: string) => void,
