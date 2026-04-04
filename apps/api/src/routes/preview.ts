@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
+import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -34,20 +35,26 @@ export default async function previewRoutes(app: FastifyInstance) {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const targetStr = targetDateParam || tomorrow.toISOString().slice(0, 10);
-    // Search range: from target date, extending lookAhead days
-    const startStr = targetStr;
+    // Search range: lookAhead days before AND after target date, but never before today
+    const todayStr = now.toISOString().slice(0, 10);
+    const rangeStartDate = new Date(targetStr + "T12:00:00Z");
+    rangeStartDate.setDate(rangeStartDate.getDate() - lookAhead);
+    const startStr = rangeStartDate.toISOString().slice(0, 10) < todayStr ? todayStr : rangeStartDate.toISOString().slice(0, 10);
     const endDate = new Date(targetStr + "T12:00:00Z");
     endDate.setDate(endDate.getDate() + lookAhead + 1);
     const endStr = endDate.toISOString().slice(0, 10);
 
     // Fetch claimable occurrences only in "suggest" mode
+    // When admin is running routes (userId param set), include estimates in suggestions
+    // When worker is running their own routes, exclude estimates (must be admin-assigned)
+    const isAdminRoute = !!targetUserIdParam;
     const claimable = mode === "suggest" ? await prisma.jobOccurrence.findMany({
       where: {
         status: "SCHEDULED",
         assignees: { none: {} },
-        isAdminOnly: false,
+        ...(isAdminRoute ? {} : { isAdminOnly: false }),
         isTentative: false,
-        workflow: { not: "ESTIMATE" },
+        ...(isAdminRoute ? {} : { workflow: { not: "ESTIMATE" } }),
         OR: [
           { startAt: { gte: new Date(startStr + "T00:00:00Z"), lt: new Date(endStr + "T00:00:00Z") } },
           { startAt: null },
@@ -156,6 +163,69 @@ export default async function previewRoutes(app: FastifyInstance) {
       };
     }
 
+    // Route optimization using the selected provider
+    const routingProviderName = (req.query?.routingProvider as string) || "mapbox";
+    let optimizedRoute: OptimizedRoute | null = null;
+    let routeError: string | null = null;
+
+    try {
+      const router = getRoutingProvider(routingProviderName);
+
+      // Geocode all job addresses + home base
+      const addresses = allJobs.map((j) => j.address);
+      const geocoded = await router.geocodeMany(addresses);
+
+      // Filter to jobs that were successfully geocoded
+      const validIndices: number[] = [];
+      const validCoords: { lng: number; lat: number }[] = [];
+      for (let i = 0; i < geocoded.length; i++) {
+        if (geocoded[i]) {
+          validIndices.push(i);
+          validCoords.push(geocoded[i]!.coordinates);
+        }
+      }
+
+      // Geocode home base if available
+      let homeCoords: { lng: number; lat: number } | undefined;
+      if (user.homeBaseAddress) {
+        const homeGeo = await router.geocode(user.homeBaseAddress);
+        if (homeGeo) homeCoords = homeGeo.coordinates;
+      }
+
+      if (validCoords.length > 1) {
+        optimizedRoute = await router.optimizeRoute(validCoords, {
+          startCoords: homeCoords,
+          roundTrip: !!homeCoords,
+        });
+
+        // Map the optimized indices back to allJobs indices
+        for (const stop of optimizedRoute.stops) {
+          stop.inputIndex = validIndices[stop.inputIndex] ?? stop.inputIndex;
+        }
+      }
+    } catch (err: any) {
+      routeError = err.message;
+      app.log.warn({ where: "preview/route-optimization", err: err.message });
+    }
+
+    // Build route context for Claude
+    let routeContext = "";
+    if (optimizedRoute && optimizedRoute.stops.length > 0) {
+      const totalMins = Math.round(optimizedRoute.totalDuration / 60);
+      const totalMiles = Math.round(optimizedRoute.totalDistance / 1609.34 * 10) / 10;
+      routeContext = `\n\nROUTE OPTIMIZATION DATA (from ${routingProviderName}, real driving distances):
+Total driving time: ${totalMins} minutes (${totalMiles} miles)
+Optimized stop order (by driving efficiency):
+${optimizedRoute.stops.map((s, i) => {
+  const job = allJobs[s.inputIndex];
+  const driveMins = Math.round(s.durationFromPrev / 60);
+  const driveMiles = Math.round(s.distanceFromPrev / 1609.34 * 10) / 10;
+  return `  ${i + 1}. ${job?.property ?? "?"} (${job?.address ?? "?"}) — ${driveMins} min / ${driveMiles} mi from previous stop`;
+}).join("\n")}
+
+IMPORTANT: Use this optimized order as the basis for your route. The driving times above are REAL — use them instead of guessing. You may adjust the order slightly based on time constraints, job priority, or scheduling needs, but explain why.`;
+    }
+
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return {
@@ -181,7 +251,7 @@ Rules:
 
 Available hours: ${availableHours} hours (do not exceed this)
 Travel/setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated time to account for travel and setup. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min total.
-${lookAhead > 0 ? `Also considering jobs from the next ${lookAhead} days that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
+${lookAhead > 0 ? `Also considering jobs from ${lookAhead} days before and after ${targetStr} (but not before today) that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
 Rules:
 1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
@@ -207,6 +277,7 @@ This worker has previously serviced these properties (prioritize familiar proper
 ${JSON.stringify(workerHistory, null, 2)}
 ` : ""}
 ${modeInstructions}
+${routeContext}
 8. The worker has ${availableHours} hours available. Do NOT schedule more than ${availableHours} hours of work (include estimated travel time between jobs, roughly 15-20 min per stop)
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
@@ -265,6 +336,12 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
         raw: parsed ? undefined : text,
         jobs: allJobs,
         targetUser: { id: user.id, displayName: user.displayName },
+        routing: optimizedRoute ? {
+          provider: optimizedRoute.provider,
+          totalDriveMinutes: Math.round(optimizedRoute.totalDuration / 60),
+          totalDriveMiles: Math.round(optimizedRoute.totalDistance / 1609.34 * 10) / 10,
+        } : null,
+        routeError,
       };
     } catch (err: any) {
       app.log.error({ where: "preview/route-suggestions", err: err.message });
@@ -274,5 +351,9 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
         jobs: allJobs,
       };
     }
+  });
+
+  app.get("/preview/routing-providers", workerGuard, async () => {
+    return { providers: AVAILABLE_PROVIDERS };
   });
 }
