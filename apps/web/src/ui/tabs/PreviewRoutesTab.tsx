@@ -254,6 +254,36 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     setClaimingId(null);
   }
 
+  // Reschedule a claimed job to a new date
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  const [rescheduledIds, setRescheduledIds] = useState<Set<string>>(new Set());
+
+  async function rescheduleJob(occurrenceId: string, newDate: string, job: any) {
+    setReschedulingId(occurrenceId);
+    try {
+      const patchData: any = { startAt: newDate + "T09:00:00Z" };
+      if (job?.startAt && job?.endAt) {
+        const origStart = new Date(job.startAt).getTime();
+        const origEnd = new Date(job.endAt).getTime();
+        const durationMs = origEnd - origStart;
+        const newStart = new Date(newDate + "T09:00:00Z");
+        patchData.startAt = newStart.toISOString();
+        patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
+      }
+
+      const endpoint = userId
+        ? `/api/admin/occurrences/${occurrenceId}`
+        : `/api/occurrences/${occurrenceId}`;
+      await apiPatch(endpoint, patchData);
+
+      setRescheduledIds((prev) => new Set(prev).add(occurrenceId));
+      publishInlineMessage({ type: "SUCCESS", text: `Job rescheduled to ${fmtDate(newDate + "T12:00:00Z")}.` });
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message || "Reschedule failed." });
+    }
+    setReschedulingId(null);
+  }
+
 
   const jobMap = new Map((data?.jobs ?? []).map((j) => [j.id, j]));
   const days = data?.suggestions?.days ?? [];
@@ -616,13 +646,37 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                             </HStack>
 
                             {stop.dateChanged && (
-                              <HStack gap={1} fontSize="xs" wrap="wrap">
-                                <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                                  Reschedule needed
-                                </Badge>
-                                <Text color="orange.600">
-                                  Currently {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → move to {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : fmtDate(day.date + "T12:00:00Z")}
-                                </Text>
+                              <HStack gap={1} fontSize="xs" wrap="wrap" align="center">
+                                {rescheduledIds.has(stop.occurrenceId) ? (
+                                  <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                                    Rescheduled
+                                  </Badge>
+                                ) : (
+                                  <>
+                                    <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                                      Reschedule needed
+                                    </Badge>
+                                    <Text color="orange.600">
+                                      Currently {stop.originalDate ? fmtDate(stop.originalDate + "T12:00:00Z") : "unscheduled"} → {stop.suggestedDate ? fmtDate(stop.suggestedDate + "T12:00:00Z") : fmtDate(day.date + "T12:00:00Z")}
+                                    </Text>
+                                    <Button
+                                      size="xs"
+                                      colorPalette="orange"
+                                      variant="solid"
+                                      disabled={reschedulingId === stop.occurrenceId}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        rescheduleJob(
+                                          stop.occurrenceId,
+                                          stop.suggestedDate || day.date,
+                                          job,
+                                        );
+                                      }}
+                                    >
+                                      {reschedulingId === stop.occurrenceId ? "Moving..." : "Move"}
+                                    </Button>
+                                  </>
+                                )}
                               </HStack>
                             )}
 
