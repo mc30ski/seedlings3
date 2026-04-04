@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   TabsRoot,
   TabsList,
@@ -12,7 +11,6 @@ import {
   Flex,
   Icon,
   Button,
-  Text,
 } from "@chakra-ui/react";
 import { FiChevronLeft, FiChevronRight, FiMoreHorizontal } from "react-icons/fi";
 
@@ -389,8 +387,8 @@ export default function ScrollableUnderlineTabs({
         </Box>
       )}
     </TabsRoot>
-    {/* More dropdown via portal — escapes overflow clipping */}
-    {moreOpen && overflowTabs.length > 0 && createPortal(
+    {/* More dropdown — fixed position to escape overflow clipping */}
+    {moreOpen && overflowTabs.length > 0 && (
       <div
         ref={moreDropdownRef}
         style={{
@@ -439,8 +437,7 @@ export default function ScrollableUnderlineTabs({
             </div>
           );
         })}
-      </div>,
-      document.body,
+      </div>
     )}
     </>
   );
