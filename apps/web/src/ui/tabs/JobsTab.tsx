@@ -1060,17 +1060,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         if (occ.estimatedMinutes != null) return <Text color="fg.muted">{formatDuration(occ.estimatedMinutes)}</Text>;
                         return null;
                       })()}
-                      {!isUnassigned && (
-                        <Text color="fg.muted">
-                          {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                        </Text>
-                      )}
-                      {isUnassigned && occ.status !== "ARCHIVED" && (
-                        <Text color="orange.500" fontWeight="medium">
-                          {isTentative ? "Tentative" : isAdminOnlyOcc ? "Administered" : "Unclaimed"}
-                        </Text>
-                      )}
                     </Box>
+                    {!isUnassigned && (
+                      <Text fontSize="xs" fontWeight="semibold" color="teal.700" mt={1}>
+                        {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                      </Text>
+                    )}
+                    {isUnassigned && occ.status !== "ARCHIVED" && (
+                      <Text fontSize="xs" fontWeight="semibold" color="orange.500" mt={1}>
+                        {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                      </Text>
+                    )}
                   </Card.Body>
                 ) : (
                 <Card.Body pt="0">

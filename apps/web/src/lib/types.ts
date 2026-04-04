@@ -13,7 +13,8 @@ export type AdminTabs =
   | "routes"
   | "statistics"
   | "audit"
-  | "settings";
+  | "settings"
+  | "profile";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -27,6 +28,7 @@ export type WorkerTabs =
   | "clients"
   | "properties"
   | "jobs"
+  | "profile"
   | "payments";
 
 export type EventTypes =

@@ -1045,6 +1045,18 @@ Respond ONLY with valid JSON in this exact format:
 
   // ── Worker Type & Compliance ──
 
+  app.get("/admin/users/:id", adminGuard, async (req: any) => {
+    const userId = String(req.params.id);
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: {
+        id: true, email: true, displayName: true, workerType: true, homeBaseAddress: true,
+        isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
+      },
+    });
+    return user;
+  });
+
   app.patch("/admin/users/:id/worker-type", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const userId = String(req.params.id);
