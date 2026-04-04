@@ -284,13 +284,13 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                 </Text>
                 <Box display="flex" gap={2} flexWrap="wrap">
                   {[
+                    { value: 6, label: "Sat" },
                     { value: 0, label: "Sun" },
                     { value: 1, label: "Mon" },
                     { value: 2, label: "Tue" },
                     { value: 3, label: "Wed" },
                     { value: 4, label: "Thu" },
                     { value: 5, label: "Fri" },
-                    { value: 6, label: "Sat" },
                   ].map((day) => {
                     const selected = availableDays.includes(day.value);
                     return (
