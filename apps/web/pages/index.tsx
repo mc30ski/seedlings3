@@ -265,7 +265,7 @@ export default function HomePage() {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
-      pinned: false,
+
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<PreviewRoutesTab />),
     },
@@ -273,14 +273,14 @@ export default function HomePage() {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-      pinned: false,
+
       content: wrapWithInlineMessage(<ClientsTab me={me} purpose="WORKER" />),
     },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      pinned: false,
+
       content: wrapWithInlineMessage(
         <PropertiesTab me={me} purpose="WORKER" />
       ),
@@ -289,7 +289,7 @@ export default function HomePage() {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
-      pinned: false,
+
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<StatisticsTab myId={me?.id} />),
     },
@@ -297,7 +297,7 @@ export default function HomePage() {
       value: "profile",
       label: "Profile",
       icon: FiUser,
-      pinned: false,
+
       content: wrapWithInlineMessage(<ProfileTab me={me} onProfileUpdated={refreshMe} />),
     },
   ];
@@ -337,63 +337,63 @@ export default function HomePage() {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-      pinned: false,
+
       content: wrapWithInlineMessage(<ClientsTab me={me} purpose="ADMIN" />),
     },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-      pinned: false,
+
       content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
-      pinned: false,
+
       content: wrapWithInlineMessage(<AdminRoutesTab />),
     },
     {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
-      pinned: false,
+
       content: wrapWithInlineMessage(<UsersTab role="admin" />),
     },
     {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
-      pinned: false,
+
       content: wrapWithInlineMessage(<StatisticsTab />),
     },
     {
       value: "profile",
       label: "Profile",
       icon: FiUser,
-      pinned: false,
+
       content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin onProfileUpdated={refreshMe} />),
     },
     {
       value: "activity",
       label: "Activity",
       icon: FiActivity,
-      pinned: false,
+
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
     },
     {
       value: "audit",
       label: "Audit",
       icon: FiFileText,
-      pinned: false,
+
       content: wrapWithInlineMessage(<AuditLogTab role="admin" />),
     },
     {
       value: "settings",
       label: "Settings",
       icon: FiSettings,
-      pinned: false,
+
       content: wrapWithInlineMessage(<SettingsTab me={me} purpose="ADMIN" />),
     },
   ];

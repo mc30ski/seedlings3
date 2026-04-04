@@ -10,9 +10,8 @@ import {
   Box,
   Flex,
   Icon,
-  Button,
 } from "@chakra-ui/react";
-import { FiChevronLeft, FiChevronRight, FiMoreHorizontal } from "react-icons/fi";
+import { FiMoreHorizontal } from "react-icons/fi";
 
 export type TabItem = {
   value: string;
@@ -72,26 +71,52 @@ export default function ScrollableUnderlineTabs({
   headerClassName,
   contentClassName,
   headerRight,
-  edgeMode = "overlay",
-  edgeSize = 18,
 }: Props) {
   const visibleTabs = useMemo(
     () => tabs.filter((t) => isVisible(t.visible)),
     [tabs]
   );
 
-  // Split into pinned (shown in tab bar) and overflow (behind "More")
-  const pinnedTabs = useMemo(
-    () => visibleTabs.filter((t) => t.pinned !== false),
-    [visibleTabs]
-  );
-  const overflowTabs = useMemo(
-    () => visibleTabs.filter((t) => t.pinned === false),
-    [visibleTabs]
-  );
+  // Responsive overflow: measure which tabs fit, put rest in "More"
+  const containerRef = useRef<HTMLDivElement>(null);
+  const tabRefsMap = useRef<Map<string, HTMLElement>>(new Map());
+  const moreButtonWidth = 80; // approximate width of "⋯ More" button
+  const [fittingCount, setFittingCount] = useState(visibleTabs.length);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
   const moreDropdownRef = useRef<HTMLDivElement>(null);
+
+  const measureFit = () => {
+    const container = containerRef.current;
+    if (!container) return;
+    const containerWidth = container.clientWidth;
+    let usedWidth = 0;
+    let count = 0;
+    for (const t of visibleTabs) {
+      const el = tabRefsMap.current.get(t.value);
+      const w = el ? el.offsetWidth + 8 : 80; // 8 for gap
+      if (count < visibleTabs.length - 1) {
+        // Not the last tab — check if it fits with room for "More"
+        if (usedWidth + w + moreButtonWidth > containerWidth) break;
+      } else {
+        // Last tab — no need for "More" button
+        if (usedWidth + w > containerWidth) break;
+      }
+      usedWidth += w;
+      count++;
+    }
+    // If all tabs fit, show all. Otherwise show count that fit.
+    setFittingCount(count >= visibleTabs.length ? visibleTabs.length : count);
+  };
+
+  useEffect(() => {
+    measureFit();
+    const ro = new ResizeObserver(measureFit);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [visibleTabs.length, visibleTabs.map((t) => t.value).join("|")]);
+
+  const overflowTabs = visibleTabs.slice(fittingCount);
 
   // Close "More" on outside click
   useEffect(() => {
@@ -131,43 +156,7 @@ export default function ScrollableUnderlineTabs({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleTabs.map((t) => t.value).join("|")]);
 
-  // scroll indicators
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [canLeft, setCanLeft] = useState(false);
-  const [canRight, setCanRight] = useState(false);
-
-  const updateIndicators = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const { scrollLeft, scrollWidth, clientWidth } = el;
-    setCanLeft(scrollLeft > 0);
-    setCanRight(scrollLeft + clientWidth < scrollWidth - 1);
-  };
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    updateIndicators();
-    const onScroll = () => updateIndicators();
-    el.addEventListener("scroll", onScroll, { passive: true });
-    const ro = new ResizeObserver(updateIndicators);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      ro.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    updateIndicators();
-  }, [visibleTabs.length]);
-
-  const scrollByAmount = (dir: "left" | "right") => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const amt = Math.round(el.clientWidth * 0.75);
-    el.scrollBy({ left: dir === "left" ? -amt : amt, behavior: "smooth" });
-  };
 
   return (
     <>
@@ -193,7 +182,7 @@ export default function ScrollableUnderlineTabs({
         alignItems="center"
         gap={2}
       >
-        <Box position="relative" flex="1" minW={0}>
+        <Box ref={containerRef} position="relative" flex="1" minW={0}>
           {/* Make TabsList the actual scroll container */}
           <TabsList asChild>
             <Box
@@ -211,37 +200,41 @@ export default function ScrollableUnderlineTabs({
                 msOverflowStyle: "none",
                 "&::-webkit-scrollbar": { display: "none" },
               }}
-              onScroll={updateIndicators}
             >
-              {pinnedTabs.map((t) => (
-                <TabsTrigger
-                  key={t.value}
-                  value={t.value}
-                  disabled={t.disabled}
-                  asChild
-                >
-                  <Flex
-                    align="center"
-                    gap={2}
-                    px={3}
-                    py={2}
-                    flex="0 0 auto"
-                    borderBottom="2px solid transparent"
-                    color="gray.700"
-                    _hover={{ color: "gray.900", bg: "gray.50" }}
-                    css={{
-                      "&[data-state=active]": {
-                        borderColor: "blue.600",
-                        color: "blue.700",
-                        fontWeight: 600,
-                      },
-                    }}
+              {visibleTabs.map((t, i) => {
+                const isOverflow = i >= fittingCount;
+                return (
+                  <TabsTrigger
+                    key={t.value}
+                    value={t.value}
+                    disabled={t.disabled}
+                    asChild
                   >
-                    {t.icon && <Icon as={t.icon} boxSize="1em" />}
-                    <span>{t.label}</span>
-                  </Flex>
-                </TabsTrigger>
-              ))}
+                    <Flex
+                      ref={(el: HTMLElement | null) => { if (el) tabRefsMap.current.set(t.value, el); }}
+                      align="center"
+                      gap={2}
+                      px={3}
+                      py={2}
+                      flex="0 0 auto"
+                      borderBottom="2px solid transparent"
+                      color="gray.700"
+                      _hover={{ color: "gray.900", bg: "gray.50" }}
+                      css={{
+                        "&[data-state=active]": {
+                          borderColor: "blue.600",
+                          color: "blue.700",
+                          fontWeight: 600,
+                        },
+                      }}
+                      style={isOverflow ? { position: "absolute", visibility: "hidden", pointerEvents: "none" } : undefined}
+                    >
+                      {t.icon && <Icon as={t.icon} boxSize="1em" />}
+                      <span>{t.label}</span>
+                    </Flex>
+                  </TabsTrigger>
+                );
+              })}
               {/* "More" trigger inline with tabs */}
               {overflowTabs.length > 0 && (
                 <Flex
@@ -267,19 +260,8 @@ export default function ScrollableUnderlineTabs({
                 </Flex>
               )}
 
-              {/* Hidden triggers for overflow tabs so TabsRoot recognizes them */}
-              {overflowTabs.map((t) => (
-                <TabsTrigger
-                  key={t.value}
-                  value={t.value}
-                  asChild
-                >
-                  <Box display="none" />
-                </TabsTrigger>
-              ))}
-
-              {/* Keep the indicator INSIDE the scrollable list */}
-              {showIndicator && (
+              {/* Keep the indicator INSIDE the scrollable list — hide when overflow tab is active */}
+              {showIndicator && !overflowTabs.some((t) => t.value === current) && (
                 <TabsIndicator
                   position="absolute"
                   bottom="0"
@@ -292,79 +274,6 @@ export default function ScrollableUnderlineTabs({
             </Box>
           </TabsList>
 
-          {/* Slim fades */}
-          {edgeMode !== "none" && (
-            <>
-              <Box
-                pointerEvents="none"
-                position="absolute"
-                left="0"
-                top="0"
-                bottom="0"
-                width={`${edgeSize}px`}
-                bgGradient="linear(to-r, white, rgba(255,255,255,0))"
-              />
-              <Box
-                pointerEvents="none"
-                position="absolute"
-                right="0"
-                top="0"
-                bottom="0"
-                width={`${edgeSize}px`}
-                bgGradient="linear(to-l, white, rgba(255,255,255,0))"
-              />
-            </>
-          )}
-
-          {/* Overlay arrows */}
-          {edgeMode === "overlay" && canLeft && (
-            <Button
-              onClick={() => scrollByAmount("left")}
-              position="absolute"
-              left="4px"
-              top="50%"
-              transform="translateY(-50%)"
-              size="xs"
-              variant="ghost"
-              bg="whiteAlpha.700"
-              backdropFilter="saturate(120%) blur(2px)"
-              boxShadow="sm"
-              borderRadius="full"
-              _hover={{ bg: "whiteAlpha.800" }}
-              _active={{ bg: "whiteAlpha.900" }}
-              aria-label="Scroll left"
-              zIndex={1}
-              px={1.5}
-              minW="auto"
-              height="22px"
-            >
-              <Icon as={FiChevronLeft} />
-            </Button>
-          )}
-          {edgeMode === "overlay" && canRight && (
-            <Button
-              onClick={() => scrollByAmount("right")}
-              position="absolute"
-              right="4px"
-              top="50%"
-              transform="translateY(-50%)"
-              size="xs"
-              variant="ghost"
-              bg="whiteAlpha.700"
-              backdropFilter="saturate(120%) blur(2px)"
-              boxShadow="sm"
-              borderRadius="full"
-              _hover={{ bg: "whiteAlpha.800" }}
-              _active={{ bg: "whiteAlpha.900" }}
-              aria-label="Scroll right"
-              zIndex={1}
-              px={1.5}
-              minW="auto"
-              height="22px"
-            >
-              <Icon as={FiChevronRight} />
-            </Button>
-          )}
         </Box>
         {/* "More" dropdown rendered via portal to escape overflow clipping */}
         {headerRight && (
