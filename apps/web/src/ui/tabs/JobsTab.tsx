@@ -901,7 +901,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Card.Header py="3" px="4" pb="0">
                   <HStack gap={3} justify="space-between" align="center">
                     <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">
+                      <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold" overflow="hidden" textOverflow="ellipsis" whiteSpace={isCardCompact ? "nowrap" : undefined} maxW="100%">
                         {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
                           <> — {clientLabel(occ.job.property.client.displayName)}</>
@@ -950,7 +950,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       )}
                     </VStack>
                     {isCardCompact ? (
-                      <HStack gap={1} flexShrink={0}>
+                      <Box display="flex" gap={1} flexShrink={0} flexWrap="wrap" justifyContent="flex-end" alignItems="center" maxW="50%">
                         {isTentative ? (
                           <StatusBadge status="Tentative" palette="orange" variant="solid" />
                         ) : occ.status !== "SCHEDULED" ? (
@@ -965,7 +965,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
-                      </HStack>
+                      </Box>
                     ) : (
                       <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
                         {isTentative ? (
@@ -1020,8 +1020,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Header>
 
                 {isCardCompact ? (
-                  <Card.Body py="3" px="4" pt="0">
-                    <HStack gap={2} fontSize="xs">
+                  <Card.Body py="3" px="4" pt="0" overflow="hidden">
+                    <Box display="flex" gap={2} fontSize="xs" flexWrap="wrap" alignItems="center">
                       {(occ as any).jobType && (
                         <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                           {jobTypeLabel((occ as any).jobType)}
@@ -1070,7 +1070,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isTentative ? "Tentative" : isAdminOnlyOcc ? "Administered" : "Unclaimed"}
                         </Text>
                       )}
-                    </HStack>
+                    </Box>
                   </Card.Body>
                 ) : (
                 <Card.Body pt="0">
