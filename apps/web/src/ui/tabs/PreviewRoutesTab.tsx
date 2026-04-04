@@ -395,7 +395,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           </Box>
           <Box flex="1" minW="140px">
             <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Setup buffer</Text>
+              <Text fontSize="xs" fontWeight="medium">Buffer</Text>
               <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
             </HStack>
             <input
@@ -538,7 +538,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
                   <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
 
-                  <Text color="blue.600">Setup time:</Text>
+                  <Text color="blue.600">Buffer:</Text>
                   <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
 
                   <Text color="blue.600">Drive time:</Text>
