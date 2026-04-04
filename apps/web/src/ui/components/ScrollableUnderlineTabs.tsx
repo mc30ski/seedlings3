@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import {
   TabsRoot,
   TabsList,
@@ -11,8 +12,9 @@ import {
   Flex,
   Icon,
   Button,
+  Text,
 } from "@chakra-ui/react";
-import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import { FiChevronLeft, FiChevronRight, FiMoreHorizontal } from "react-icons/fi";
 
 export type TabItem = {
   value: string;
@@ -21,6 +23,8 @@ export type TabItem = {
   disabled?: boolean;
   content?: React.ReactNode;
   visible?: boolean | (() => boolean);
+  /** If false, tab is hidden behind "More" menu. Default true. */
+  pinned?: boolean;
 };
 
 type EdgeMode = "buttons" | "fade" | "overlay" | "none";
@@ -77,6 +81,35 @@ export default function ScrollableUnderlineTabs({
     () => tabs.filter((t) => isVisible(t.visible)),
     [tabs]
   );
+
+  // Split into pinned (shown in tab bar) and overflow (behind "More")
+  const pinnedTabs = useMemo(
+    () => visibleTabs.filter((t) => t.pinned !== false),
+    [visibleTabs]
+  );
+  const overflowTabs = useMemo(
+    () => visibleTabs.filter((t) => t.pinned === false),
+    [visibleTabs]
+  );
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close "More" on outside click
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        moreRef.current && !moreRef.current.contains(target) &&
+        moreDropdownRef.current && !moreDropdownRef.current.contains(target)
+      ) {
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [moreOpen]);
 
   const initial = useMemo(() => {
     if (value !== undefined) return value;
@@ -139,6 +172,7 @@ export default function ScrollableUnderlineTabs({
   };
 
   return (
+    <>
     <TabsRoot
       value={current}
       onValueChange={(d) => {
@@ -181,7 +215,7 @@ export default function ScrollableUnderlineTabs({
               }}
               onScroll={updateIndicators}
             >
-              {visibleTabs.map((t) => (
+              {pinnedTabs.map((t) => (
                 <TabsTrigger
                   key={t.value}
                   value={t.value}
@@ -193,7 +227,7 @@ export default function ScrollableUnderlineTabs({
                     gap={2}
                     px={3}
                     py={2}
-                    flex="0 0 auto" /* no growth → prevents width inflation */
+                    flex="0 0 auto"
                     borderBottom="2px solid transparent"
                     color="gray.700"
                     _hover={{ color: "gray.900", bg: "gray.50" }}
@@ -208,6 +242,41 @@ export default function ScrollableUnderlineTabs({
                     {t.icon && <Icon as={t.icon} boxSize="1em" />}
                     <span>{t.label}</span>
                   </Flex>
+                </TabsTrigger>
+              ))}
+              {/* "More" trigger inline with tabs */}
+              {overflowTabs.length > 0 && (
+                <Flex
+                  ref={moreRef}
+                  align="center"
+                  gap={2}
+                  px={3}
+                  py={2}
+                  flex="0 0 auto"
+                  cursor="pointer"
+                  fontSize="sm"
+                  borderBottom="2px solid transparent"
+                  color={overflowTabs.some((t) => t.value === current) ? "blue.700" : "gray.700"}
+                  fontWeight={overflowTabs.some((t) => t.value === current) ? 600 : undefined}
+                  _hover={{ color: "gray.900", bg: "gray.50" }}
+                  css={overflowTabs.some((t) => t.value === current) ? {
+                    borderColor: "blue.600",
+                  } : undefined}
+                  onClick={() => setMoreOpen((o) => !o)}
+                >
+                  <Icon as={FiMoreHorizontal} boxSize="1em" />
+                  <span>More</span>
+                </Flex>
+              )}
+
+              {/* Hidden triggers for overflow tabs so TabsRoot recognizes them */}
+              {overflowTabs.map((t) => (
+                <TabsTrigger
+                  key={t.value}
+                  value={t.value}
+                  asChild
+                >
+                  <Box display="none" />
                 </TabsTrigger>
               ))}
 
@@ -299,6 +368,7 @@ export default function ScrollableUnderlineTabs({
             </Button>
           )}
         </Box>
+        {/* "More" dropdown rendered via portal to escape overflow clipping */}
         {headerRight && (
           <Box flexShrink={0} display="flex" alignItems="center">
             {headerRight}
@@ -319,5 +389,59 @@ export default function ScrollableUnderlineTabs({
         </Box>
       )}
     </TabsRoot>
+    {/* More dropdown via portal — escapes overflow clipping */}
+    {moreOpen && overflowTabs.length > 0 && ReactDOM.createPortal(
+      <div
+        ref={moreDropdownRef}
+        style={{
+          position: "fixed",
+          zIndex: 99999,
+          backgroundColor: "#ffffff",
+          border: "1px solid #e2e8f0",
+          borderRadius: "6px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          maxHeight: "320px",
+          overflowY: "auto",
+          minWidth: "180px",
+          top: (moreRef.current?.getBoundingClientRect().bottom ?? 0) + 2,
+          left: Math.min(
+            moreRef.current?.getBoundingClientRect().left ?? 0,
+            window.innerWidth - 200,
+          ),
+        }}
+      >
+        {overflowTabs.map((t) => {
+          const isActive = current === t.value;
+          return (
+            <div
+              key={t.value}
+              style={{
+                padding: "8px 12px",
+                cursor: "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                backgroundColor: isActive ? "#ebf8ff" : "#ffffff",
+                color: isActive ? "#2b6cb0" : "#4a5568",
+                fontWeight: isActive ? 600 : 400,
+              }}
+              onMouseEnter={(e) => { if (!isActive) (e.currentTarget).style.backgroundColor = "#f7fafc"; }}
+              onMouseLeave={(e) => { (e.currentTarget).style.backgroundColor = isActive ? "#ebf8ff" : "#ffffff"; }}
+              onClick={() => {
+                if (isControlled) onValueChange?.(t.value);
+                else setInternal(t.value);
+                setMoreOpen(false);
+              }}
+            >
+              {t.icon && <Icon as={t.icon} boxSize="1em" />}
+              <span>{t.label}</span>
+            </div>
+          );
+        })}
+      </div>,
+      document.body,
+    )}
+    </>
   );
 }
