@@ -245,12 +245,12 @@ IMPORTANT: Use this optimized order as the basis for your route. The driving tim
 Rules:
 1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
 2. All claimed jobs must be included — just find the optimal order
-3. Travel/setup buffer: ${bufferPercent}% — add this on top of each job's estimated time for travel and setup
+3. Setup buffer: ${bufferPercent}% — add this on top of each job's estimated work time for setup/teardown (unloading equipment, etc.). Travel time is calculated separately by the mapping provider.
 4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
       : `MODE: Suggest Additional Jobs — optimize the route AND suggest additional available jobs to fill the day.
 
-Available hours: ${availableHours} hours TOTAL (this includes both work time AND driving time — do not exceed ${availableHours}h total by more than ~5%)
-Travel/setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated time to account for travel and setup. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min total.
+STRICT TIME BUDGET: ${availableHours} hours TOTAL. This means work time + driving time combined must not exceed ${availableHours}h (with up to 5% flexibility = max ${Math.round(availableHours * 1.05 * 60)} minutes total). If driving alone takes 1.5h and the budget is ${availableHours}h, you only have ${Math.round((availableHours - 1.5) * 60)} minutes of actual work time. Do the math before selecting jobs.
+Setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated work time for setup/teardown only (unloading, walking the property, etc.). Travel time between stops is calculated separately by the mapping provider and shown in the route data above. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min work time.
 ${lookAhead > 0 ? `Also considering jobs from ${lookAhead} days before and after ${targetStr} (but not before today) that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
 Rules:
@@ -278,7 +278,7 @@ ${JSON.stringify(workerHistory, null, 2)}
 ` : ""}
 ${modeInstructions}
 ${routeContext}
-8. The worker has ${availableHours} hours available TOTAL (work + driving combined). This is a hard cap with ~5% flexibility. Do NOT suggest a route where total time (work + driving) exceeds ${Math.round(availableHours * 1.05 * 10) / 10} hours
+8. CRITICAL: The worker has ${availableHours} hours available TOTAL. Calculate: (sum of all job durations × ${1 + bufferPercent / 100} for setup buffer) + (total driving time from route data). If that exceeds ${Math.round(availableHours * 1.05 * 60)} minutes, remove jobs until it fits. This is a hard constraint.
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
 

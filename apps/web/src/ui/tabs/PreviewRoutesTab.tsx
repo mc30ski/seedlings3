@@ -130,7 +130,22 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [profileHoursLoaded, setProfileHoursLoaded] = useState(false);
 
   // Buffer time between jobs (percentage)
-  const [bufferPercent, setBufferPercent] = usePersistedState("preview_buffer", 20);
+  const [bufferPercent, setBufferPercent] = usePersistedState("preview_buffer", 10);
+
+  // Commission/margin for payout calculation
+  const [marginPercent, setMarginPercent] = useState(20);
+  useEffect(() => {
+    apiGet<any[]>("/api/settings")
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        // Use the higher of the two as a conservative estimate
+        const c = list.find((r: any) => r.key === "CONTRACTOR_PLATFORM_FEE_PERCENT");
+        const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
+        const pct = Math.max(Number(c?.value ?? 0), Number(m?.value ?? 0));
+        if (pct > 0) setMarginPercent(pct);
+      })
+      .catch(() => {});
+  }, []);
 
   // Mode: "claimed" = only optimize route for claimed jobs, "suggest" = also suggest new jobs to claim
   const [mode, setMode] = usePersistedState<"claimed" | "suggest">("preview_mode", "claimed");
@@ -333,7 +348,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           </Box>
           <Box flex="1" minW="140px">
             <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Travel/Setup buffer</Text>
+              <Text fontSize="xs" fontWeight="medium">Setup buffer</Text>
               <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
             </HStack>
             <input
@@ -435,14 +450,17 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             <Text fontSize="sm" fontWeight="medium" color="blue.700" mb={3}>{data.suggestions.summary}</Text>
             {(() => {
               const jobCount = days.reduce((n, d) => n + (d.route ?? []).length, 0);
+              let assumedCount = 0;
               const totalWorkMins = days.reduce((total, d) => {
                 return total + (d.route ?? []).reduce((dayTotal, stop) => {
                   const job = jobMap.get(stop.occurrenceId);
+                  if (!job?.estimatedMinutes) assumedCount++;
                   return dayTotal + (job?.estimatedMinutes ?? 60);
                 }, 0);
               }, 0);
+              const setupMins = Math.round(totalWorkMins * bufferPercent / 100);
               const driveMins = data.routing?.totalDriveMinutes ?? 0;
-              const totalMins = totalWorkMins + driveMins;
+              const totalMins = totalWorkMins + setupMins + driveMins;
               const totalCustomerCost = days.reduce((total, d) => {
                 return total + (d.route ?? []).reduce((dayTotal, stop) => {
                   const job = jobMap.get(stop.occurrenceId);
@@ -450,7 +468,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                 }, 0);
               }, 0);
               return (
-                <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm" maxW="300px">
+                <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm" maxW="320px">
                   <Text color="blue.600">Jobs:</Text>
                   <Text fontWeight="semibold" color="blue.800">{jobCount}</Text>
 
@@ -461,28 +479,35 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                     </>
                   )}
 
-                  {data.suggestions.totalEstimatedEarnings > 0 && (
+                  {totalCustomerCost > 0 && (
                     <>
                       <Text color="blue.600">Est. payout:</Text>
-                      <Text fontWeight="semibold" color="green.700">${data.suggestions.totalEstimatedEarnings.toFixed(2)}</Text>
+                      <Text fontWeight="semibold" color="green.700">
+                        ${(totalCustomerCost * (1 - marginPercent / 100)).toFixed(2)}
+                      </Text>
                     </>
                   )}
 
-                  <Text color="blue.600">Work time:</Text>
-                  <Text fontWeight="semibold" color="blue.800">~{formatDuration(totalWorkMins)}</Text>
+                  <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
+                  <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
 
-                  {data.routing && (
-                    <>
-                      <Text color="blue.600">Drive time:</Text>
-                      <Text fontWeight="semibold" color="blue.800">{formatDuration(driveMins)}</Text>
+                  <Text color="blue.600">Setup time:</Text>
+                  <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
 
-                      <Text color="blue.600">Drive distance:</Text>
-                      <Text fontWeight="semibold" color="blue.800">{data.routing.totalDriveMiles} mi</Text>
-                    </>
-                  )}
+                  <Text color="blue.600">Drive time:</Text>
+                  <Text fontWeight="semibold" color="blue.800">{data.routing ? formatDuration(driveMins) : "N/A"}{data.routing ? ` / ${data.routing.totalDriveMiles} mi` : ""}</Text>
 
                   <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Total time:</Text>
                   <Text fontWeight="bold" color="blue.900" fontSize="md" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalMins)}</Text>
+
+                  {assumedCount > 0 && (
+                    <>
+                      <Text />
+                      <Text fontSize="xs" color="orange.500">
+                        * {assumedCount} job{assumedCount !== 1 ? "s" : ""} assumed 60 min (no duration set)
+                      </Text>
+                    </>
+                  )}
                 </Box>
               );
             })()}
