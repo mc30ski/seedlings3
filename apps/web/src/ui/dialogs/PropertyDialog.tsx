@@ -352,11 +352,11 @@ export default function PropertyDialog({
     setBusy(true);
     try {
       let saved: Property;
-      if (mode === “CREATE”) {
-        saved = await apiPost<Property>(“/api/admin/properties”, payload);
+      if (mode === "CREATE") {
+        saved = await apiPost<Property>("/api/admin/properties", payload);
         publishInlineMessage({
-          type: “SUCCESS”,
-          text: `Property “${payload.displayName}” created.`,
+          type: "SUCCESS",
+          text: `Property "${payload.displayName}" created.`,
         });
       } else {
         if (!initial?.id) throw new Error("Missing property id");
@@ -366,7 +366,7 @@ export default function PropertyDialog({
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Property “${payload.displayName}” updated.`,
+          text: `Property "${payload.displayName}" updated.`,
         });
       }
       onSaved?.(saved);
