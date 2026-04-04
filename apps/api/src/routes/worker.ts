@@ -609,6 +609,18 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // Update own profile (availability)
+  app.patch("/me/profile", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const data: any = {};
+    if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
+    if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
+    if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
+    await prisma.user.update({ where: { id: uid }, data });
+    return { ok: true };
+  });
+
   // List of approved workers (for co-worker selection)
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });

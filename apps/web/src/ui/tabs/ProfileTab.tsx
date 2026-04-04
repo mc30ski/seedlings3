@@ -40,6 +40,8 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
   // Profile fields
   const [homeBase, setHomeBase] = useState("");
+  const [availableDays, setAvailableDays] = useState<number[]>([]);
+  const [availableHours, setAvailableHours] = useState(4);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -87,6 +89,8 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
     if (!targetUserId) return;
     if (isSelf && me) {
       setHomeBase(me.homeBaseAddress ?? "");
+      setAvailableDays(me.availableDays ?? []);
+      setAvailableHours(me.availableHoursPerDay ?? 4);
       return;
     }
     // Admin viewing another user — fetch their data
@@ -94,19 +98,25 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
     apiGet<any>(`/api/admin/users/${targetUserId}`)
       .then((u) => {
         setHomeBase(u?.homeBaseAddress ?? "");
+        setAvailableDays(u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : []);
+        setAvailableHours(u?.availableHoursPerDay ?? 4);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [targetUserId, isSelf, me]);
 
-  async function saveHomeBase() {
+  async function saveProfile() {
     setSaving(true);
     try {
       const endpoint = isAdmin && !isSelf
-        ? `/api/admin/users/${targetUserId}/home-base`
-        : "/api/home-base";
-      await apiPatch(endpoint, { address: homeBase });
-      publishInlineMessage({ type: "SUCCESS", text: "Home base address saved." });
+        ? `/api/admin/users/${targetUserId}/profile`
+        : "/api/me/profile";
+      await apiPatch(endpoint, {
+        homeBaseAddress: homeBase,
+        availableDays,
+        availableHoursPerDay: availableHours,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Profile saved." });
       onProfileUpdated?.();
     } catch (err: any) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Save failed.", err) });
@@ -209,7 +219,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
       {loading ? (
         <Box py={10} textAlign="center"><Spinner size="lg" /></Box>
       ) : (
-        <VStack align="stretch" gap={4} maxW="lg">
+        <VStack align="stretch" gap={4} w="full">
           {/* Basic info card */}
           <Card.Root variant="outline">
             <Card.Header py="3" px="4" pb="0">
@@ -258,19 +268,92 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                   value={homeBase}
                   onChange={(e) => setHomeBase(e.target.value)}
                 />
-                <HStack>
-                  <Button
-                    size="sm"
-                    colorPalette="green"
-                    onClick={saveHomeBase}
-                    disabled={saving}
-                  >
-                    {saving ? "Saving..." : "Save"}
-                  </Button>
+              </VStack>
+            </Card.Body>
+          </Card.Root>
+
+          {/* Available days */}
+          <Card.Root variant="outline">
+            <Card.Header py="3" px="4" pb="0">
+              <Text fontWeight="semibold">Available Days</Text>
+            </Card.Header>
+            <Card.Body py="3" px="4">
+              <VStack align="stretch" gap={2}>
+                <Text fontSize="xs" color="fg.muted">
+                  Select which days of the week you're typically available to work.
+                </Text>
+                <Box display="flex" gap={2} flexWrap="wrap">
+                  {[
+                    { value: 0, label: "Sun" },
+                    { value: 1, label: "Mon" },
+                    { value: 2, label: "Tue" },
+                    { value: 3, label: "Wed" },
+                    { value: 4, label: "Thu" },
+                    { value: 5, label: "Fri" },
+                    { value: 6, label: "Sat" },
+                  ].map((day) => {
+                    const selected = availableDays.includes(day.value);
+                    return (
+                      <Button
+                        key={day.value}
+                        size="sm"
+                        variant={selected ? "solid" : "outline"}
+                        colorPalette={selected ? "green" : "gray"}
+                        onClick={() => {
+                          setAvailableDays((prev) =>
+                            selected ? prev.filter((d) => d !== day.value) : [...prev, day.value].sort()
+                          );
+                        }}
+                        minW="50px"
+                      >
+                        {day.label}
+                      </Button>
+                    );
+                  })}
+                </Box>
+              </VStack>
+            </Card.Body>
+          </Card.Root>
+
+          {/* Hours per day */}
+          <Card.Root variant="outline">
+            <Card.Header py="3" px="4" pb="0">
+              <Text fontWeight="semibold">Hours Per Day</Text>
+            </Card.Header>
+            <Card.Body py="3" px="4">
+              <VStack align="stretch" gap={2}>
+                <Text fontSize="xs" color="fg.muted">
+                  How many hours per day you're typically available to work.
+                </Text>
+                <HStack gap={3}>
+                  <input
+                    type="range"
+                    min={2}
+                    max={12}
+                    step={0.5}
+                    value={availableHours}
+                    onChange={(e) => setAvailableHours(Number(e.target.value))}
+                    style={{ flex: 1 }}
+                  />
+                  <Text fontSize="sm" fontWeight="semibold" minW="50px" textAlign="center">
+                    {availableHours}h
+                  </Text>
                 </HStack>
               </VStack>
             </Card.Body>
           </Card.Root>
+
+          {/* Save button */}
+          <Box>
+            <Button
+              size="sm"
+              colorPalette="green"
+              onClick={saveProfile}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : "Save Profile"}
+            </Button>
+          </Box>
         </VStack>
       )}
     </Box>

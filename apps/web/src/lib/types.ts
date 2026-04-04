@@ -57,6 +57,8 @@ export type Me = {
   displayName?: string | null;
   workerType?: WorkerType | null;
   homeBaseAddress?: string | null;
+  availableDays?: number[];
+  availableHoursPerDay?: number;
   hasInsuranceCert?: boolean;
   isInsuranceValid?: boolean;
   insuranceExpiresAt?: string | null;

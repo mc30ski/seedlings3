@@ -312,6 +312,8 @@ export const users: ServicesUsers = {
       displayName: user!.displayName ?? null,
       workerType: user!.workerType ?? null,
       homeBaseAddress: user!.homeBaseAddress ?? null,
+      availableDays: user!.availableDays ? JSON.parse(user!.availableDays) : [],
+      availableHoursPerDay: user!.availableHoursPerDay ?? 4,
       hasInsuranceCert: !!user!.insuranceCertR2Key,
       isInsuranceValid,
       insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,

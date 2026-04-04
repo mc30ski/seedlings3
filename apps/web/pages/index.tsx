@@ -216,17 +216,17 @@ export default function HomePage() {
 
   const clientTabs: TabItem[] = [
     {
+      value: "public",
+      label: "Community",
+      icon: FiActivity,
+      content: <ClientFeedTab />,
+    },
+    {
       value: "my-jobs",
       label: "My Properties",
       icon: FiBriefcase,
       visible: () => !!isSignedIn,
       content: <ClientMyJobsTab />,
-    },
-    {
-      value: "public",
-      label: "Community",
-      icon: FiActivity,
-      content: <ClientFeedTab />,
     },
     {
       value: "services",

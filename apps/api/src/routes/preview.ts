@@ -19,12 +19,14 @@ export default async function previewRoutes(app: FastifyInstance) {
 
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, displayName: true, email: true, workerType: true, homeBaseAddress: true },
+      select: { id: true, displayName: true, email: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true },
     });
     if (!user) throw app.httpErrors.notFound("User not found.");
 
     const lookAhead = Math.min(Math.max(Number(req.query?.lookAhead) || 5, 0), 5);
-    const availableHours = Math.min(Math.max(Number(req.query?.availableHours) || 8, 2), 12);
+    const availableHours = Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12);
+    const bufferPercent = Math.min(Math.max(Number(req.query?.bufferPercent) || 20, 0), 50);
+    const availableDays: number[] = user.availableDays ? JSON.parse(user.availableDays) : [];
     const now = new Date();
     // Target date = the specific day to plan a route for
     const targetDateParam = req.query?.targetDate as string | undefined;
@@ -171,6 +173,8 @@ Worker: ${user.displayName ?? user.email ?? "Unknown"}
 ${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
 Target day: ${targetStr}
 Available hours: ${availableHours} hours (do not exceed this)
+Travel/setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated time to account for travel and setup. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min total.
+${availableDays.length > 0 ? `Worker is typically available on: ${availableDays.map((d: number) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}` : ""}
 ${lookAhead > 0 ? `Also considering jobs from the next ${lookAhead} days that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
 Here are the available jobs (some on the target day, some on nearby days that could potentially be moved):

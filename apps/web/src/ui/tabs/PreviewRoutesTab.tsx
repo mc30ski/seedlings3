@@ -96,20 +96,28 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   // Look-ahead = how far to look for jobs that could be pulled into the target day
   const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 5);
 
-  // Available hours in the day
-  const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", 8);
+  // Available hours in the day — defaults from profile
+  const [availableHours, setAvailableHours] = usePersistedState("preview_availableHours", 0);
+  const [profileHoursLoaded, setProfileHoursLoaded] = useState(false);
+
+  // Buffer time between jobs (percentage)
+  const [bufferPercent, setBufferPercent] = usePersistedState("preview_buffer", 20);
 
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
   const [homeBaseSaving, setHomeBaseSaving] = useState(false);
 
   useEffect(() => {
-    apiGet<Me>("/api/me")
-      .then((me) => {
-        setHomeBase(me?.homeBaseAddress ?? "");
+    const endpoint = userId ? `/api/admin/users/${userId}` : "/api/me";
+    apiGet<any>(endpoint)
+      .then((u) => {
+        setHomeBase(u?.homeBaseAddress ?? "");
         setHomeBaseLoaded(true);
+        const profileHours = u?.availableHoursPerDay ?? 4;
+        setAvailableHours(profileHours);
+        setProfileHoursLoaded(true);
       })
-      .catch(() => setHomeBaseLoaded(true));
+      .catch(() => { setHomeBaseLoaded(true); setProfileHoursLoaded(true); });
   }, []);
 
   async function saveHomeBase() {
@@ -126,7 +134,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     setError(null);
     try {
       const userParam = userId ? `&userId=${userId}` : "";
-      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}${userParam}`);
+      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}&bufferPercent=${bufferPercent}${userParam}`);
       setData(res);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
@@ -211,6 +219,25 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             <HStack justify="space-between" fontSize="xs" color="fg.muted">
               <Text>2h</Text>
               <Text>12h</Text>
+            </HStack>
+          </Box>
+          <Box flex="1" minW="140px">
+            <HStack justify="space-between" mb={1}>
+              <Text fontSize="xs" fontWeight="medium">Travel buffer</Text>
+              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
+            </HStack>
+            <input
+              type="range"
+              min={0}
+              max={50}
+              step={5}
+              value={bufferPercent}
+              onChange={(e) => setBufferPercent(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--chakra-colors-orange-500)" }}
+            />
+            <HStack justify="space-between" fontSize="xs" color="fg.muted">
+              <Text>0%</Text>
+              <Text>50%</Text>
             </HStack>
           </Box>
         </HStack>
