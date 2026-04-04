@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { apiPost } from "@/src/lib/api";
+import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ClientDialog from "@/src/ui/dialogs/ClientDialog";
 import ContactDialog from "@/src/ui/dialogs/ContactDialog";
 import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 
-type Step = "idle" | "client" | "contact" | "property" | "job" | "occurrence";
+type Step = "idle" | "contact" | "client" | "property" | "job" | "occurrence" | "saving";
 
 type Props = {
   active: boolean;
@@ -17,9 +19,6 @@ type Props = {
 
 export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Props) {
   const [step, setStep] = useState<Step>("idle");
-
-  // stepRef is updated synchronously so close handlers can tell
-  // whether onSaved already advanced past their step.
   const stepRef = useRef<Step>("idle");
 
   function go(next: Step) {
@@ -27,22 +26,18 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
     setStep(next);
   }
 
-  const [clientId, setClientId] = useState<string | null>(null);
-  const [propertyId, setPropertyId] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [jobDefaults, setJobDefaults] = useState<{
-    defaultPrice?: number | null;
-    notes?: string | null;
-    frequencyDays?: number | null;
-    estimatedMinutes?: number | null;
-  }>({});
+  // Collected form data (deferred — not saved until the end)
+  const [contactData, setContactData] = useState<any>(null);
+  const [clientData, setClientData] = useState<any>(null);
+  const [propertyData, setPropertyData] = useState<any>(null);
+  const [jobData, setJobData] = useState<any>(null);
 
   function reset() {
     go("idle");
-    setClientId(null);
-    setPropertyId(null);
-    setJobId(null);
-    setJobDefaults({});
+    setContactData(null);
+    setClientData(null);
+    setPropertyData(null);
+    setJobData(null);
   }
 
   function handleCancel() {
@@ -50,9 +45,6 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
     onDone();
   }
 
-  // Only treat close as cancel if the step hasn't already advanced.
-  // The dialog's finally block calls onOpenChange(false) after onSaved,
-  // but by then stepRef has already moved to the next step.
   function closeGuard(forStep: Step) {
     return (open: boolean) => {
       if (!open && stepRef.current === forStep) {
@@ -63,13 +55,71 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
 
   useEffect(() => {
     if (active && step === "idle") {
-      go("client");
+      go("contact");
     }
   }, [active, step]);
 
+  // Default client display name from contact first+last name
+  const defaultClientName = contactData
+    ? [contactData.firstName, contactData.lastName].filter(Boolean).join(" ")
+    : undefined;
+
+  // Batch save everything at the end
+  async function batchSave(occurrenceData: any) {
+    go("saving");
+    try {
+      // 1. Create client
+      const client = await apiPost<{ id: string }>("/api/admin/clients", clientData);
+
+      // 2. Create contact for that client
+      await apiPost(`/api/admin/clients/${client.id}/contacts`, contactData);
+
+      // 3. Create property for that client
+      const property = await apiPost<{ id: string }>("/api/admin/properties", {
+        ...propertyData,
+        clientId: client.id,
+      });
+
+      // 4. Create job for that property
+      const job = await apiPost<{ id: string }>("/api/admin/jobs", {
+        ...jobData,
+        propertyId: property.id,
+      });
+
+      // 5. Create occurrence for that job
+      await apiPost(`/api/admin/jobs/${job.id}/occurrences`, occurrenceData);
+
+      publishInlineMessage({ type: "SUCCESS", text: "New job setup complete!" });
+      reset();
+      onDone();
+      onComplete?.();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Setup failed. Some items may have been partially created.", err) });
+      reset();
+      onDone();
+    }
+  }
+
   return (
     <>
-      {/* Step 1: Create Client */}
+      {/* Step 1: Collect Contact info (deferred) */}
+      {step === "contact" && (
+        <ContactDialog
+          open
+          onOpenChange={closeGuard("contact")}
+          mode="CREATE"
+          role="ADMIN"
+          clientId="__deferred__"
+          preventOutsideClose
+          deferSave
+          onSaved={(data) => {
+            setContactData(data);
+            go("client");
+          }}
+        />
+      )}
+
+      {/* Step 2: Collect Client info (deferred, pre-populated with contact name) */}
       {step === "client" && (
         <ClientDialog
           open
@@ -77,89 +127,81 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           mode="CREATE"
           role="ADMIN"
           preventOutsideClose
-          onSaved={(s) => {
-            setClientId(s.id);
-            go("contact");
-          }}
-        />
-      )}
-
-      {/* Step 2: Create Contact for Client */}
-      {step === "contact" && clientId && (
-        <ContactDialog
-          open
-          onOpenChange={closeGuard("contact")}
-          mode="CREATE"
-          role="ADMIN"
-          clientId={clientId}
-          preventOutsideClose
-          onSaved={() => {
+          deferSave
+          defaultDisplayName={defaultClientName}
+          onSaved={(data) => {
+            setClientData(data);
             go("property");
           }}
         />
       )}
 
-      {/* Step 3: Create Property for Client */}
+      {/* Step 3: Collect Property info (deferred) */}
       {step === "property" && (
         <PropertyDialog
           open
           onOpenChange={closeGuard("property")}
           mode="CREATE"
           role="ADMIN"
-          defaultClientId={clientId ?? undefined}
           preventOutsideClose
-          onSaved={(s) => {
-            setPropertyId(s.id);
+          deferSave
+          onSaved={(data) => {
+            setPropertyData(data);
             go("job");
           }}
         />
       )}
 
-      {/* Step 4: Create Job for Property */}
+      {/* Step 4: Collect Job info (deferred) */}
       {step === "job" && (
         <JobDialog
           open
           onOpenChange={closeGuard("job")}
           mode="CREATE"
-          defaultPropertyId={propertyId ?? undefined}
           preventOutsideClose
-          onSaved={(created) => {
-            if (created?.id) {
-              setJobId(created.id);
-              setJobDefaults({
-                defaultPrice: created.defaultPrice,
-                notes: created.notes,
-                frequencyDays: created.frequencyDays,
-                estimatedMinutes: created.estimatedMinutes,
-              });
-              go("occurrence");
-            } else {
-              handleCancel();
-            }
+          deferSave
+          onSaved={(data) => {
+            setJobData(data);
+            go("occurrence");
           }}
         />
       )}
 
-      {/* Step 5: Create first Occurrence */}
-      {step === "occurrence" && jobId && (
+      {/* Step 5: Collect Occurrence info then batch save everything */}
+      {step === "occurrence" && (
         <OccurrenceDialog
           open
           onOpenChange={closeGuard("occurrence")}
           mode="CREATE"
-          jobId={jobId}
+          jobId="__deferred__"
           isAdmin
           preventOutsideClose
-          defaultPrice={jobDefaults.defaultPrice}
-          defaultEstimatedMinutes={jobDefaults.estimatedMinutes}
-          defaultNotes={jobDefaults.notes}
+          defaultPrice={jobData?.defaultPrice}
+          defaultEstimatedMinutes={jobData?.estimatedMinutes}
+          defaultNotes={jobData?.notes}
           title="New Occurrence (Final Step)"
-          submitLabel="Create & Finish"
-          onSaved={() => {
-            reset();
-            onDone();
-            onComplete?.();
+          submitLabel="Create Everything"
+          deferSave
+          onSaved={(data) => {
+            void batchSave(data);
           }}
         />
+      )}
+
+      {/* Saving indicator */}
+      {step === "saving" && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 99999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(0,0,0,0.3)",
+        }}>
+          <div style={{
+            background: "white", padding: "24px 32px", borderRadius: "12px",
+            fontSize: "14px", fontWeight: 600,
+          }}>
+            Creating everything...
+          </div>
+        </div>
       )}
     </>
   );

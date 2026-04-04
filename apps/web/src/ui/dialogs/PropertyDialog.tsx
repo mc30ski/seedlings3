@@ -50,6 +50,7 @@ type Props = {
   // When creating from a Client context, pass clientId to pre-select
   defaultClientId?: string;
   preventOutsideClose?: boolean;
+  deferSave?: boolean;
 };
 
 export default function PropertyDialog({
@@ -61,6 +62,7 @@ export default function PropertyDialog({
   onSaved,
   defaultClientId,
   preventOutsideClose,
+  deferSave,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -341,13 +343,19 @@ export default function PropertyDialog({
       pointOfContactId: pocValue[0] === "NONE" ? null : pocValue[0],
     };
 
+    if (deferSave) {
+      onSaved?.(payload as any);
+      onOpenChange(false);
+      return;
+    }
+
     setBusy(true);
     try {
       let saved: Property;
-      if (mode === "CREATE") {
-        saved = await apiPost<Property>("/api/admin/properties", payload);
+      if (mode === “CREATE”) {
+        saved = await apiPost<Property>(“/api/admin/properties”, payload);
         publishInlineMessage({
-          type: "SUCCESS",
+          type: “SUCCESS”,
           text: `Property “${payload.displayName}” created.`,
         });
       } else {

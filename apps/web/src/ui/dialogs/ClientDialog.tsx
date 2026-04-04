@@ -37,6 +37,8 @@ type Props = {
   initial?: Client | null;
   onSaved?: (saved: any) => void;
   preventOutsideClose?: boolean;
+  defaultDisplayName?: string;
+  deferSave?: boolean;
 };
 
 export default function ClientDialog({
@@ -47,6 +49,8 @@ export default function ClientDialog({
   initial,
   onSaved,
   preventOutsideClose,
+  defaultDisplayName,
+  deferSave,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -100,10 +104,10 @@ export default function ClientDialog({
     } else {
       setKindValue([CLIENT_KIND[0]]);
       setStatusValue([CLIENT_STATUS[0]]);
-      setDisplayName("");
+      setDisplayName(defaultDisplayName ?? "");
       setNotesInternal("");
     }
-  }, [open, mode, initial]);
+  }, [open, mode, initial, defaultDisplayName]);
 
   async function handleSave() {
     if (!displayName.trim()) {
@@ -121,17 +125,23 @@ export default function ClientDialog({
       notesInternal: notesInternal || null,
     };
 
+    if (deferSave) {
+      onSaved?.(payload);
+      onOpenChange(false);
+      return;
+    }
+
     setBusy(true);
     try {
       let saved: Client;
-      if (mode === "CREATE") {
-        saved = await apiPost<Client>("/api/admin/clients", payload);
+      if (mode === “CREATE”) {
+        saved = await apiPost<Client>(“/api/admin/clients”, payload);
         publishInlineMessage({
-          type: "SUCCESS",
+          type: “SUCCESS”,
           text: `Client “${payload.displayName}” created.`,
         });
       } else {
-        if (!initial?.id) throw new Error("Missing client id");
+        if (!initial?.id) throw new Error(“Missing client id”);
         saved = await apiPatch<Client>(
           `/api/admin/clients/${initial.id}`,
           payload

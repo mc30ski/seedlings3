@@ -38,6 +38,8 @@ type Props = {
   onSaved?: (saved: any) => void;
   clientId: string;
   preventOutsideClose?: boolean;
+  /** When true, onSaved receives form data instead of saving to API */
+  deferSave?: boolean;
 };
 
 const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -52,6 +54,7 @@ export default function ClientDialog({
   onSaved,
   clientId,
   preventOutsideClose,
+  deferSave,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -162,6 +165,12 @@ export default function ClientDialog({
       phone: phone.trim(),
       isPrimary,
     };
+
+    if (deferSave) {
+      onSaved?.(payload);
+      onOpenChange(false);
+      return;
+    }
 
     setBusy(true);
     try {
