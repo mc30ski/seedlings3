@@ -208,6 +208,77 @@ export default async function previewRoutes(app: FastifyInstance) {
       app.log.warn({ where: "preview/route-optimization", err: err.message });
     }
 
+    // Enforce time budget: trim claimable jobs that don't fit
+    if (mode === "suggest" && availableHours > 0 && optimizedRoute && optimizedRoute.stops.length > 0) {
+      const budgetMins = availableHours * 60 * 1.05; // 5% flexibility
+      const totalDriveMins = Math.round(optimizedRoute.totalDuration / 60);
+
+      // Calculate total work + setup for all jobs in the optimized order
+      let workMins = 0;
+      for (const stop of optimizedRoute.stops) {
+        const job = allJobs[stop.inputIndex];
+        if (job) workMins += (job.estimatedMinutes ?? 60);
+      }
+      const setupMins = Math.round(workMins * bufferPercent / 100);
+      const totalMins = workMins + setupMins + totalDriveMins;
+
+      // If over budget, remove claimable jobs from the end of the route until it fits
+      if (totalMins > budgetMins) {
+        // Build a list of stop indices that are claimable (can be removed)
+        const removableStopIndices: number[] = [];
+        for (let i = optimizedRoute.stops.length - 1; i >= 0; i--) {
+          const job = allJobs[optimizedRoute.stops[i].inputIndex];
+          if (job?.type === "claimable") removableStopIndices.push(i);
+        }
+
+        let currentWork = workMins;
+        let currentDrive = totalDriveMins;
+        const removedJobIndices = new Set<number>();
+
+        for (const si of removableStopIndices) {
+          const currentSetup = Math.round(currentWork * bufferPercent / 100);
+          if (currentWork + currentSetup + currentDrive <= budgetMins) break;
+
+          const stop = optimizedRoute.stops[si];
+          const job = allJobs[stop.inputIndex];
+          if (job) {
+            currentWork -= (job.estimatedMinutes ?? 60);
+            currentDrive -= Math.round(stop.durationFromPrev / 60);
+            removedJobIndices.add(stop.inputIndex);
+          }
+        }
+
+        // Filter jobs and re-optimize if we removed any
+        if (removedJobIndices.size > 0) {
+          optimizedRoute.stops = optimizedRoute.stops.filter(
+            (s) => !removedJobIndices.has(s.inputIndex)
+          );
+          // Recalculate totals
+          let newDuration = 0;
+          let newDistance = 0;
+          for (const s of optimizedRoute.stops) {
+            newDuration += s.durationFromPrev;
+            newDistance += s.distanceFromPrev;
+          }
+          optimizedRoute.totalDuration = newDuration;
+          optimizedRoute.totalDistance = newDistance;
+
+          // Also remove from allJobs so Claude doesn't suggest them
+          for (const idx of Array.from(removedJobIndices).sort((a, b) => b - a)) {
+            allJobs.splice(idx, 1);
+          }
+          // Re-map stop inputIndex after splice
+          for (const stop of optimizedRoute.stops) {
+            let offset = 0;
+            for (const removed of Array.from(removedJobIndices).sort((a, b) => a - b)) {
+              if (removed < stop.inputIndex) offset++;
+            }
+            stop.inputIndex -= offset;
+          }
+        }
+      }
+    }
+
     // Build route context for Claude
     let routeContext = "";
     if (optimizedRoute && optimizedRoute.stops.length > 0) {
