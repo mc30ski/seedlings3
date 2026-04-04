@@ -134,21 +134,21 @@ export default function ClientDialog({
     setBusy(true);
     try {
       let saved: Client;
-      if (mode === “CREATE”) {
-        saved = await apiPost<Client>(“/api/admin/clients”, payload);
+      if (mode === "CREATE") {
+        saved = await apiPost<Client>("/api/admin/clients", payload);
         publishInlineMessage({
-          type: “SUCCESS”,
-          text: `Client “${payload.displayName}” created.`,
+          type: "SUCCESS",
+          text: `Client "${payload.displayName}" created.`,
         });
       } else {
-        if (!initial?.id) throw new Error(“Missing client id”);
+        if (!initial?.id) throw new Error("Missing client id");
         saved = await apiPatch<Client>(
           `/api/admin/clients/${initial.id}`,
           payload
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Client “${payload.displayName}” updated.`,
+          text: `Client "${payload.displayName}" updated.`,
         });
       }
       onSaved?.(saved);

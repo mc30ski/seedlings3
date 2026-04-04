@@ -160,14 +160,7 @@ export default function JobDialog({
       estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
     };
     if (deferSave) {
-      onSaved?.({
-        id: "__deferred__",
-        defaultPrice: payload.defaultPrice,
-        notes: payload.notes,
-        frequencyDays: payload.frequencyDays,
-        estimatedMinutes: payload.estimatedMinutes,
-        ...payload,
-      } as any);
+      onSaved?.({ id: "__deferred__", ...payload } as any);
       onOpenChange(false);
       return;
     }
