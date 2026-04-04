@@ -17,6 +17,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, bizDateKey } from "@/src/lib/lib";
 
 type RouteJob = {
@@ -258,7 +259,23 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduledIds, setRescheduledIds] = useState<Set<string>>(new Set());
 
+  const maxMoveDays = userId ? 5 : 1;
+
   async function rescheduleJob(occurrenceId: string, newDate: string, job: any) {
+    // Validate move is within allowed range
+    if (job?.currentDate) {
+      const orig = new Date(job.currentDate + "T12:00:00Z");
+      const dest = new Date(newDate + "T12:00:00Z");
+      const diffDays = Math.round(Math.abs(dest.getTime() - orig.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > maxMoveDays) {
+        publishInlineMessage({
+          type: "WARNING",
+          text: `${userId ? "Admins" : "Workers"} can only move jobs up to ${maxMoveDays} day${maxMoveDays !== 1 ? "s" : ""}. This move is ${diffDays} days.`,
+        });
+        return;
+      }
+    }
+
     setReschedulingId(occurrenceId);
     try {
       const patchData: any = { startAt: newDate + "T09:00:00Z" };
@@ -686,6 +703,24 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                             <Text fontSize="xs" color="fg.muted" fontStyle="italic">
                               {stop.reason}
                             </Text>
+                            {userId && job && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorPalette="blue"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEventSearch(
+                                    "jobsTabToServicesTabSearch",
+                                    stop.property,
+                                    true,
+                                    stop.occurrenceId,
+                                  );
+                                }}
+                              >
+                                Manage in Services
+                              </Button>
+                            )}
                           </VStack>
                         </HStack>
                       </Card.Body>
