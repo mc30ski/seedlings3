@@ -36,7 +36,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch } from "@/src/lib/bus";
+import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
@@ -1246,7 +1246,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               fontWeight={isMe ? "semibold" : "normal"}
                               color={isMe ? "teal.600" : "fg.muted"}
                             >
-                              {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              <span
+                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                              >
+                                {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              </span>
                               {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
                               {isMe ? " (you)" : ""}
                               {isClaimer ? " · Claimer" : ""}

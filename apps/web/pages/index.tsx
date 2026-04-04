@@ -682,6 +682,25 @@ export default function HomePage() {
       window.removeEventListener("seedlings3:users-changed", onUsersChanged);
   }, [loadPending]);
 
+  // Listen for profile navigation
+  useEffect(() => {
+    const onProfile = (e: Event) => {
+      const { userId, forAdmin } = (e as CustomEvent).detail || {};
+      if (forAdmin && isAdmin) {
+        setTopTab("admin");
+        setAdminInnerTab("profile");
+        // Set the selected user in profile via localStorage (ProfileTab reads it)
+        try { localStorage.setItem("seedlings_profile_userId", JSON.stringify(userId === me?.id ? "" : userId)); } catch {}
+        window.dispatchEvent(new CustomEvent("profile:selectUser", { detail: { userId } }));
+      } else {
+        setTopTab("worker");
+        setWorkerInnerTab("profile");
+      }
+    };
+    window.addEventListener("navigate:profile", onProfile as EventListener);
+    return () => window.removeEventListener("navigate:profile", onProfile as EventListener);
+  }, [isAdmin, me?.id]);
+
   const goToApprovals = useCallback(() => {
     window.dispatchEvent(
       new CustomEvent("admin:openUsers", {

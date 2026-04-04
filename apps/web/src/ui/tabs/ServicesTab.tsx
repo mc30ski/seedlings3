@@ -56,7 +56,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch, onEventSearchRun } from "@/src/lib/bus";
+import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
@@ -905,7 +905,17 @@ export default function ServicesTab({
                   )}
                   {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
                     <Text fontSize="xs" color="teal.600">
-                      Default crew: {detail.defaultAssignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                      Default crew: {detail.defaultAssignees.map((a, i) => (
+                        <span key={a.userId}>
+                          {i > 0 && ", "}
+                          <span
+                            style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                            onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                          >
+                            {a.user?.displayName ?? a.user?.email ?? a.userId}
+                          </span>
+                        </span>
+                      ))}
                     </Text>
                   )}
                 </VStack>
@@ -1097,7 +1107,12 @@ export default function ServicesTab({
                                       fontWeight={isClaimer ? "medium" : "normal"}
                                       color={isClaimer ? "teal.700" : "fg.muted"}
                                     >
-                                      {a.user.displayName ?? a.user.email ?? a.userId}
+                                      <span
+                                        style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                        onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                      >
+                                        {a.user.displayName ?? a.user.email ?? a.userId}
+                                      </span>
                                       {isClaimer ? " · Claimer" : ""}
                                     </Text>
                                   );
@@ -1138,7 +1153,14 @@ export default function ServicesTab({
                                       const label = isEmp ? "margin" : "commission";
                                       return (
                                         <HStack key={a.userId} gap={1} wrap="wrap">
-                                          <Text color="fg.muted">{a.user?.displayName ?? a.user?.email ?? a.userId}:</Text>
+                                          <Text color="fg.muted">
+                                            <span
+                                              style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                            >
+                                              {a.user?.displayName ?? a.user?.email ?? a.userId}
+                                            </span>:
+                                          </Text>
                                           <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
                                             ${payout.toFixed(2)}
                                           </Badge>
