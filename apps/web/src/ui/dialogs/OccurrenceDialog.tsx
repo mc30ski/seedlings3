@@ -72,7 +72,8 @@ type Props = {
   submitLabel?: string;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   preventOutsideClose?: boolean;
-  onSaved?: () => void;
+  deferSave?: boolean;
+  onSaved?: (data?: any) => void;
 };
 
 export default function OccurrenceDialog({
@@ -99,6 +100,7 @@ export default function OccurrenceDialog({
   title,
   submitLabel,
   preventOutsideClose,
+  deferSave,
   onSaved,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -183,21 +185,30 @@ export default function OccurrenceDialog({
       const priceVal = price !== "" ? Number(price) : null;
       const notesVal = notes.trim() || null;
 
+      const occPayload = {
+        ...createBody,
+        startAt: startAtIso,
+        endAt: endAtIso ?? undefined,
+        notes: notesVal ?? undefined,
+        price: priceVal ?? undefined,
+        estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
+        ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
+        workflow,
+        ...(isTentative ? { isTentative: true } : {}),
+        ...(isAdminOnly ? { isAdminOnly: true } : {}),
+        ...(jobType ? { jobType } : {}),
+      };
+
+      if (deferSave) {
+        onSaved?.(occPayload);
+        onOpenChange(false);
+        setBusy(false);
+        return;
+      }
+
       if (mode === "CREATE") {
         const endpoint = createEndpoint ?? `/api/admin/jobs/${jobId}/occurrences`;
-        const created = await apiPost<{ id: string }>(endpoint, {
-          ...createBody,
-          startAt: startAtIso,
-          endAt: endAtIso ?? undefined,
-          notes: notesVal ?? undefined,
-          price: priceVal ?? undefined,
-          estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
-          ...(selectedAssignees.size > 0 ? { assigneeUserIds: Array.from(selectedAssignees) } : {}),
-          workflow,
-          ...(isTentative ? { isTentative: true } : {}),
-          ...(isAdminOnly ? { isAdminOnly: true } : {}),
-          ...(jobType ? { jobType } : {}),
-        });
+        const created = await apiPost<{ id: string }>(endpoint, occPayload);
         // Create any inline expenses against the new occurrence
         const newOccId = created?.id;
         if (newOccId && expenses.length > 0) {

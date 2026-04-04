@@ -115,10 +115,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Target day = the day to optimize a route for (always defaults to tomorrow on mount)
+  // Target day = the day to optimize a route for
   const todayStr = bizDateKey(new Date());
   const tomorrowStr = bizDateKey(addDays(new Date(), 1));
-  const [targetDate, setTargetDate] = useState(tomorrowStr);
+  const [targetDate, setTargetDate] = usePersistedState("preview_targetDate", tomorrowStr);
 
   const dateBadge = targetDate === todayStr ? "Today" : targetDate === tomorrowStr ? "Tomorrow" : null;
 
@@ -189,6 +189,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     setData(null);
     saveCachedResults(null, userId);
     setClaimedIds(new Set());
+    setTargetDate(tomorrowStr);
   }
 
   // Track which jobs are being claimed or have been claimed
@@ -442,15 +443,28 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
               }, 0);
               const driveMins = data.routing?.totalDriveMinutes ?? 0;
               const totalMins = totalWorkMins + driveMins;
+              const totalCustomerCost = days.reduce((total, d) => {
+                return total + (d.route ?? []).reduce((dayTotal, stop) => {
+                  const job = jobMap.get(stop.occurrenceId);
+                  return dayTotal + (job?.price ?? 0);
+                }, 0);
+              }, 0);
               return (
                 <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm" maxW="300px">
                   <Text color="blue.600">Jobs:</Text>
                   <Text fontWeight="semibold" color="blue.800">{jobCount}</Text>
 
+                  {totalCustomerCost > 0 && (
+                    <>
+                      <Text color="blue.600">Customer cost:</Text>
+                      <Text fontWeight="semibold" color="blue.800">${totalCustomerCost.toFixed(2)}</Text>
+                    </>
+                  )}
+
                   {data.suggestions.totalEstimatedEarnings > 0 && (
                     <>
-                      <Text color="blue.600">Est. earnings:</Text>
-                      <Text fontWeight="semibold" color="blue.800">${data.suggestions.totalEstimatedEarnings.toFixed(2)}</Text>
+                      <Text color="blue.600">Est. payout:</Text>
+                      <Text fontWeight="semibold" color="green.700">${data.suggestions.totalEstimatedEarnings.toFixed(2)}</Text>
                     </>
                   )}
 

@@ -45,6 +45,7 @@ type Props = {
   onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null; estimatedMinutes?: number | null }) => void;
   defaultPropertyId?: string;
   preventOutsideClose?: boolean;
+  deferSave?: boolean;
 };
 
 export default function JobDialog({
@@ -55,6 +56,7 @@ export default function JobDialog({
   onSaved,
   defaultPropertyId,
   preventOutsideClose,
+  deferSave,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -157,6 +159,19 @@ export default function JobDialog({
       defaultPrice: defaultPrice !== "" ? Number(defaultPrice) : null,
       estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
     };
+    if (deferSave) {
+      onSaved?.({
+        id: "__deferred__",
+        defaultPrice: payload.defaultPrice,
+        notes: payload.notes,
+        frequencyDays: payload.frequencyDays,
+        estimatedMinutes: payload.estimatedMinutes,
+        ...payload,
+      } as any);
+      onOpenChange(false);
+      return;
+    }
+
     setBusy(true);
     try {
       if (mode === "CREATE") {

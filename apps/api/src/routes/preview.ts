@@ -249,7 +249,7 @@ Rules:
 4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
       : `MODE: Suggest Additional Jobs — optimize the route AND suggest additional available jobs to fill the day.
 
-Available hours: ${availableHours} hours (soft cap — can go up to ~5% over if a nearby job makes the route significantly more efficient)
+Available hours: ${availableHours} hours TOTAL (this includes both work time AND driving time — do not exceed ${availableHours}h total by more than ~5%)
 Travel/setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated time to account for travel and setup. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min total.
 ${lookAhead > 0 ? `Also considering jobs from ${lookAhead} days before and after ${targetStr} (but not before today) that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
@@ -278,7 +278,7 @@ ${JSON.stringify(workerHistory, null, 2)}
 ` : ""}
 ${modeInstructions}
 ${routeContext}
-8. The worker has ${availableHours} hours available. Treat this as a soft cap — you can go up to ~5% over if adding a nearby job makes the route significantly more efficient, but note it in the summary
+8. The worker has ${availableHours} hours available TOTAL (work + driving combined). This is a hard cap with ~5% flexibility. Do NOT suggest a route where total time (work + driving) exceeds ${Math.round(availableHours * 1.05 * 10) / 10} hours
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
 
