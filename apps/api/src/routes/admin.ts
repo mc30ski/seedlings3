@@ -1050,7 +1050,7 @@ Respond ONLY with valid JSON in this exact format:
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: {
-        id: true, email: true, displayName: true, workerType: true, homeBaseAddress: true,
+        id: true, email: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
         isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
       },
     });
@@ -1088,6 +1088,17 @@ Respond ONLY with valid JSON in this exact format:
       where: { id: userId },
       data: { homeBaseAddress: body.address != null ? String(body.address).trim() || null : null },
     });
+    return { ok: true };
+  });
+
+  app.patch("/admin/users/:id/profile", adminGuard, async (req: any) => {
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    const data: any = {};
+    if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
+    if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
+    if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
+    await prisma.user.update({ where: { id: userId }, data });
     return { ok: true };
   });
 

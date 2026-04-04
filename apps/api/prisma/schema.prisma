@@ -74,6 +74,8 @@ model User {
 
   workerType              WorkerType?
   homeBaseAddress         String?
+  availableDays           String?        // JSON array of day numbers, e.g. "[1,2,3,4,5]" (0=Sun,6=Sat)
+  availableHoursPerDay    Float?         // default 4 if null
 
   insuranceCertR2Key      String?
   insuranceCertFileName   String?
