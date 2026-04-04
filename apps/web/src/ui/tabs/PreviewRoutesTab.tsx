@@ -538,7 +538,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
                   <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
 
-                  <Text color="blue.600">Setup time:</Text>
+                  <Text color="blue.600">Buffer:</Text>
                   <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
 
                   <Text color="blue.600">Drive time:</Text>
