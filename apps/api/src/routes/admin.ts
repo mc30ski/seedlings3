@@ -683,6 +683,9 @@ export default async function adminRoutes(app: FastifyInstance) {
           st === "IN_PROGRESS" ||
           st === "COMPLETED" ||
           st === "PENDING_PAYMENT" ||
+          st === "PROPOSAL_SUBMITTED" ||
+          st === "ACCEPTED" ||
+          st === "REJECTED" ||
           st === "CLOSED" ||
           st === "CANCELED" ||
           st === "ARCHIVED";

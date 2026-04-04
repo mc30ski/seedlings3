@@ -42,6 +42,7 @@ import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
+import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -235,6 +236,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [acceptPaymentOcc, setAcceptPaymentOcc] = useState<WorkerOccurrence | null>(null);
 
   const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
+
+  // Prompt to create occurrence after accepting estimate
+  const [promptOccJobId, setPromptOccJobId] = useState<string | null>(null);
+  const [promptOccDefaults, setPromptOccDefaults] = useState<{ notes?: string | null; price?: number | null; estimatedMinutes?: number | null }>({});
 
   async function deleteExpense(expenseId: string) {
     try {
@@ -1440,9 +1445,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             inputOptional: true,
                             onConfirm: async (comment: string) => {
                               try {
-                                await apiPost(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
+                                const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
                                 publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
                                 await load(false);
+                                if (result.jobId) {
+                                  setPromptOccDefaults({
+                                    notes: result.occurrence?.notes ?? null,
+                                    price: result.occurrence?.price ?? null,
+                                    estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
+                                  });
+                                  setPromptOccJobId(result.jobId);
+                                }
                               } catch (err: any) {
                                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
                               }
@@ -1768,6 +1781,29 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+      {/* Prompt to create occurrence after accepting estimate */}
+      {promptOccJobId && (
+        <OccurrenceDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPromptOccJobId(null);
+          }}
+          mode="CREATE"
+          jobId={promptOccJobId}
+          isAdmin={forAdmin}
+          defaultPrice={promptOccDefaults.price}
+          defaultEstimatedMinutes={promptOccDefaults.estimatedMinutes}
+          defaultNotes={promptOccDefaults.notes}
+          title="Create First Occurrence"
+          submitLabel="Create"
+          createEndpoint={forAdmin ? `/api/admin/jobs/${promptOccJobId}/occurrences` : undefined}
+          onSaved={() => {
+            setPromptOccJobId(null);
+            publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
+            void load(false);
+          }}
+        />
+      )}
     </Box>
   );
 }
