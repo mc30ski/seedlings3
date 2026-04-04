@@ -259,7 +259,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduledIds, setRescheduledIds] = useState<Set<string>>(new Set());
 
-  const maxMoveDays = userId ? 5 : 1;
+  const maxMoveDays = userId ? 5 : 2;
 
   async function rescheduleJob(occurrenceId: string, newDate: string, job: any) {
     // Validate move is within allowed range
@@ -270,7 +270,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
       if (diffDays > maxMoveDays) {
         publishInlineMessage({
           type: "WARNING",
-          text: `${userId ? "Admins" : "Workers"} can only move jobs up to ${maxMoveDays} day${maxMoveDays !== 1 ? "s" : ""}. This move is ${diffDays} days.`,
+          text: `${userId ? "Admins" : "Workers"} can only move jobs up to ${maxMoveDays} days. This move is ${diffDays} days.`,
         });
         return;
       }
