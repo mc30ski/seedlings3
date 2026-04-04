@@ -431,27 +431,52 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         <VStack align="stretch" gap={4}>
           {/* Summary */}
           <Box p={4} bg="blue.50" rounded="xl" borderWidth="1px" borderColor="blue.200">
-            <Text fontSize="sm" fontWeight="medium" color="blue.700">{data.suggestions.summary}</Text>
-            <HStack gap={4} mt={2} wrap="wrap">
-              {data.suggestions.totalEstimatedEarnings > 0 && (
-                <Text fontSize="xs" color="blue.600">
-                  Est. earnings: ${data.suggestions.totalEstimatedEarnings.toFixed(2)}
-                </Text>
-              )}
-              <Text fontSize="xs" color="blue.600">
-                {days.reduce((n, d) => n + (d.route ?? []).length, 0)} jobs in route
-              </Text>
-              {data.routing && (
-                <Text fontSize="xs" color="blue.600">
-                  Drive: {formatDuration(data.routing.totalDriveMinutes)} / {data.routing.totalDriveMiles} mi
-                </Text>
-              )}
-              {data.routing && (
-                <Badge size="sm" colorPalette="blue" variant="subtle">{data.routing.provider}</Badge>
-              )}
-            </HStack>
+            <Text fontSize="sm" fontWeight="medium" color="blue.700" mb={3}>{data.suggestions.summary}</Text>
+            {(() => {
+              const jobCount = days.reduce((n, d) => n + (d.route ?? []).length, 0);
+              const totalWorkMins = days.reduce((total, d) => {
+                return total + (d.route ?? []).reduce((dayTotal, stop) => {
+                  const job = jobMap.get(stop.occurrenceId);
+                  return dayTotal + (job?.estimatedMinutes ?? 60);
+                }, 0);
+              }, 0);
+              const driveMins = data.routing?.totalDriveMinutes ?? 0;
+              const totalMins = totalWorkMins + driveMins;
+              return (
+                <Box display="grid" gridTemplateColumns="auto 1fr" gap={1} rowGap={1.5} fontSize="sm" maxW="300px">
+                  <Text color="blue.600">Jobs:</Text>
+                  <Text fontWeight="semibold" color="blue.800">{jobCount}</Text>
+
+                  {data.suggestions.totalEstimatedEarnings > 0 && (
+                    <>
+                      <Text color="blue.600">Est. earnings:</Text>
+                      <Text fontWeight="semibold" color="blue.800">${data.suggestions.totalEstimatedEarnings.toFixed(2)}</Text>
+                    </>
+                  )}
+
+                  <Text color="blue.600">Work time:</Text>
+                  <Text fontWeight="semibold" color="blue.800">~{formatDuration(totalWorkMins)}</Text>
+
+                  {data.routing && (
+                    <>
+                      <Text color="blue.600">Drive time:</Text>
+                      <Text fontWeight="semibold" color="blue.800">{formatDuration(driveMins)}</Text>
+
+                      <Text color="blue.600">Drive distance:</Text>
+                      <Text fontWeight="semibold" color="blue.800">{data.routing.totalDriveMiles} mi</Text>
+                    </>
+                  )}
+
+                  <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Total time:</Text>
+                  <Text fontWeight="bold" color="blue.900" fontSize="md" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalMins)}</Text>
+                </Box>
+              );
+            })()}
+            {data.routing && (
+              <Badge size="sm" colorPalette="blue" variant="subtle" mt={2}>{data.routing.provider}</Badge>
+            )}
             {data.routeError && (
-              <Text fontSize="xs" color="orange.500" mt={1}>Route optimization note: {data.routeError}</Text>
+              <Text fontSize="xs" color="orange.500" mt={2}>Route optimization note: {data.routeError}</Text>
             )}
           </Box>
 
