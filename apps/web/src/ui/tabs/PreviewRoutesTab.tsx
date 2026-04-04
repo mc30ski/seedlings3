@@ -430,7 +430,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
               />
               <HStack justify="space-between" fontSize="xs" color="fg.muted">
                 <Text>Same day only</Text>
-                <Text>{maxMoveDays} day{maxMoveDays !== 1 ? "s" : ""}</Text>
+                <Text>{maxMoveDays} days</Text>
               </HStack>
             </Box>
             <Box flex="1" minW="140px">
