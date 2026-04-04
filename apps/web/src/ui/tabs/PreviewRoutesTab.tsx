@@ -418,19 +418,19 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             <Box flex="1" minW="140px">
               <HStack justify="space-between" mb={1}>
                 <Text fontSize="xs" fontWeight="medium">Consider jobs within</Text>
-                <Text fontSize="xs" color="fg.muted" fontWeight="medium">±{lookAhead} days</Text>
+                <Text fontSize="xs" color="fg.muted" fontWeight="medium">±{Math.min(lookAhead, maxMoveDays)} days</Text>
               </HStack>
               <input
                 type="range"
                 min={0}
-                max={5}
-                value={lookAhead}
+                max={maxMoveDays}
+                value={Math.min(lookAhead, maxMoveDays)}
                 onChange={(e) => setLookAhead(Number(e.target.value))}
                 style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
               />
               <HStack justify="space-between" fontSize="xs" color="fg.muted">
                 <Text>Same day only</Text>
-                <Text>5 days</Text>
+                <Text>{maxMoveDays} day{maxMoveDays !== 1 ? "s" : ""}</Text>
               </HStack>
             </Box>
             <Box flex="1" minW="140px">

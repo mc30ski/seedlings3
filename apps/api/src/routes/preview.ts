@@ -25,7 +25,8 @@ export default async function previewRoutes(app: FastifyInstance) {
     if (!user) throw app.httpErrors.notFound("User not found.");
 
     const mode = (req.query?.mode as string) === "suggest" ? "suggest" : "claimed";
-    const lookAhead = mode === "suggest" ? Math.min(Math.max(Number(req.query?.lookAhead) || 5, 0), 5) : 0;
+    const maxLookAhead = targetUserIdParam ? 5 : 1;
+    const lookAhead = mode === "suggest" ? Math.min(Math.max(Number(req.query?.lookAhead) || maxLookAhead, 0), maxLookAhead) : 0;
     const availableHours = mode === "suggest" ? Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12) : 0;
     const bufferPercent = Math.min(Math.max(Number(req.query?.bufferPercent) || 20, 0), 50);
     const availableDays: number[] = user.availableDays ? JSON.parse(user.availableDays) : [];
