@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import ReactDOM from "react-dom";
+import { createPortal } from "react-dom";
 import {
   TabsRoot,
   TabsList,
@@ -390,7 +390,7 @@ export default function ScrollableUnderlineTabs({
       )}
     </TabsRoot>
     {/* More dropdown via portal — escapes overflow clipping */}
-    {moreOpen && overflowTabs.length > 0 && ReactDOM.createPortal(
+    {moreOpen && overflowTabs.length > 0 && createPortal(
       <div
         ref={moreDropdownRef}
         style={{
