@@ -25,6 +25,7 @@ import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
+import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 
@@ -288,6 +289,12 @@ export default function HomePage() {
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<StatisticsTab myId={me?.id} />),
     },
+    {
+      value: "profile",
+      label: "Profile",
+      icon: FiUser,
+      content: wrapWithInlineMessage(<ProfileTab me={me} onProfileUpdated={refreshMe} />),
+    },
   ];
 
   const adminTabs: TabItem[] = [
@@ -350,6 +357,12 @@ export default function HomePage() {
       label: "Statistics",
       icon: FiBarChart2,
       content: wrapWithInlineMessage(<StatisticsTab />),
+    },
+    {
+      value: "profile",
+      label: "Profile",
+      icon: FiUser,
+      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin onProfileUpdated={refreshMe} />),
     },
     {
       value: "activity",

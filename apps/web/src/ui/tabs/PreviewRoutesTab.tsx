@@ -154,9 +154,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         <HStack gap={2}>
           <Input
             size="sm"
-            value={homeBase}
+            value={homeBaseLoaded ? homeBase : ""}
             onChange={(e) => setHomeBase(e.target.value)}
-            placeholder="e.g. 123 Main St, Chapel Hill, NC"
+            placeholder={homeBaseLoaded ? "e.g. 123 Main St, Chapel Hill, NC" : "Loading..."}
+            disabled={!homeBaseLoaded}
           />
           <Button size="sm" onClick={saveHomeBase} loading={homeBaseSaving} disabled={!homeBaseLoaded}>
             Save
