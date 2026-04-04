@@ -395,7 +395,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           </Box>
           <Box flex="1" minW="140px">
             <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Setup buffer</Text>
+              <Text fontSize="xs" fontWeight="medium">Buffer</Text>
               <Text fontSize="xs" color="fg.muted" fontWeight="medium">{bufferPercent}%</Text>
             </HStack>
             <input
