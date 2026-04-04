@@ -89,9 +89,12 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Target day = the day to optimize a route for
-  const tomorrow = bizDateKey(addDays(new Date(), 1));
-  const [targetDate, setTargetDate] = usePersistedState("preview_targetDate", tomorrow);
+  // Target day = the day to optimize a route for (always defaults to tomorrow on mount)
+  const todayStr = bizDateKey(new Date());
+  const tomorrowStr = bizDateKey(addDays(new Date(), 1));
+  const [targetDate, setTargetDate] = useState(tomorrowStr);
+
+  const dateBadge = targetDate === todayStr ? "Today" : targetDate === tomorrowStr ? "Tomorrow" : null;
 
   // Look-ahead = how far to look for jobs that could be pulled into the target day
   const [lookAhead, setLookAhead] = usePersistedState("preview_lookAhead", 5);
@@ -102,6 +105,9 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
 
   // Buffer time between jobs (percentage)
   const [bufferPercent, setBufferPercent] = usePersistedState("preview_buffer", 20);
+
+  // Mode: "claimed" = only optimize route for claimed jobs, "suggest" = also suggest new jobs to claim
+  const [mode, setMode] = usePersistedState<"claimed" | "suggest">("preview_mode", "claimed");
 
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
@@ -134,7 +140,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     setError(null);
     try {
       const userParam = userId ? `&userId=${userId}` : "";
-      const res = await apiGet<Response>(`/api/preview/route-suggestions?targetDate=${targetDate}&lookAhead=${lookAhead}&availableHours=${availableHours}&bufferPercent=${bufferPercent}${userParam}`);
+      const params = `targetDate=${targetDate}&bufferPercent=${bufferPercent}&mode=${mode}` +
+        (mode === "suggest" ? `&lookAhead=${lookAhead}&availableHours=${availableHours}` : "") +
+        userParam;
+      const res = await apiGet<Response>(`/api/preview/route-suggestions?${params}`);
       setData(res);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
@@ -173,53 +182,48 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         </HStack>
       </Box>
 
+      {/* Mode toggle */}
+      <Box mb={3}>
+        <HStack gap={2}>
+          <Button
+            size="sm"
+            variant={mode === "claimed" ? "solid" : "outline"}
+            colorPalette={mode === "claimed" ? "blue" : "gray"}
+            onClick={() => setMode("claimed")}
+          >
+            Claimed Only
+          </Button>
+          <Button
+            size="sm"
+            variant={mode === "suggest" ? "solid" : "outline"}
+            colorPalette={mode === "suggest" ? "blue" : "gray"}
+            onClick={() => setMode("suggest")}
+          >
+            Suggest Additional Jobs
+          </Button>
+        </HStack>
+        <Text fontSize="xs" color="fg.muted" mt={1}>
+          {mode === "claimed"
+            ? "Optimize the route for jobs you've already claimed."
+            : "Also suggest nearby available jobs to fill your day."}
+        </Text>
+      </Box>
+
       {/* Planning controls */}
       <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
         <HStack gap={4} wrap="wrap" align="flex-end">
           <Box flex="1" minW="140px">
-            <Text fontSize="xs" fontWeight="medium" mb={1}>Plan for date</Text>
+            <HStack mb={1} gap={2}>
+              <Text fontSize="xs" fontWeight="medium">Plan for date</Text>
+              {dateBadge && <Badge size="sm" colorPalette="blue" variant="subtle">{dateBadge}</Badge>}
+            </HStack>
             <Input
               type="date"
               size="sm"
               value={targetDate}
+              min={todayStr}
               onChange={(e) => setTargetDate(e.target.value)}
             />
-          </Box>
-          <Box flex="1" minW="140px">
-            <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Also consider jobs within</Text>
-              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{lookAhead} days</Text>
-            </HStack>
-            <input
-              type="range"
-              min={0}
-              max={5}
-              value={lookAhead}
-              onChange={(e) => setLookAhead(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
-            />
-            <HStack justify="space-between" fontSize="xs" color="fg.muted">
-              <Text>Same day only</Text>
-              <Text>5 days</Text>
-            </HStack>
-          </Box>
-          <Box flex="1" minW="140px">
-            <HStack justify="space-between" mb={1}>
-              <Text fontSize="xs" fontWeight="medium">Available hours</Text>
-              <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
-            </HStack>
-            <input
-              type="range"
-              min={2}
-              max={12}
-              value={availableHours}
-              onChange={(e) => setAvailableHours(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
-            />
-            <HStack justify="space-between" fontSize="xs" color="fg.muted">
-              <Text>2h</Text>
-              <Text>12h</Text>
-            </HStack>
           </Box>
           <Box flex="1" minW="140px">
             <HStack justify="space-between" mb={1}>
@@ -241,6 +245,46 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             </HStack>
           </Box>
         </HStack>
+        {mode === "suggest" && (
+          <HStack gap={4} wrap="wrap" align="flex-end" mt={3}>
+            <Box flex="1" minW="140px">
+              <HStack justify="space-between" mb={1}>
+                <Text fontSize="xs" fontWeight="medium">Also consider jobs within</Text>
+                <Text fontSize="xs" color="fg.muted" fontWeight="medium">{lookAhead} days</Text>
+              </HStack>
+              <input
+                type="range"
+                min={0}
+                max={5}
+                value={lookAhead}
+                onChange={(e) => setLookAhead(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+              />
+              <HStack justify="space-between" fontSize="xs" color="fg.muted">
+                <Text>Same day only</Text>
+                <Text>5 days</Text>
+              </HStack>
+            </Box>
+            <Box flex="1" minW="140px">
+              <HStack justify="space-between" mb={1}>
+                <Text fontSize="xs" fontWeight="medium">Available hours</Text>
+                <Text fontSize="xs" color="fg.muted" fontWeight="medium">{availableHours}h</Text>
+              </HStack>
+              <input
+                type="range"
+                min={2}
+                max={12}
+                value={availableHours}
+                onChange={(e) => setAvailableHours(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--chakra-colors-blue-500)" }}
+              />
+              <HStack justify="space-between" fontSize="xs" color="fg.muted">
+                <Text>2h</Text>
+                <Text>12h</Text>
+              </HStack>
+            </Box>
+          </HStack>
+        )}
       </Box>
 
       <HStack justify="space-between" mb={4}>

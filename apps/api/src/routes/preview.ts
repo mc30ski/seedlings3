@@ -23,8 +23,9 @@ export default async function previewRoutes(app: FastifyInstance) {
     });
     if (!user) throw app.httpErrors.notFound("User not found.");
 
-    const lookAhead = Math.min(Math.max(Number(req.query?.lookAhead) || 5, 0), 5);
-    const availableHours = Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12);
+    const mode = (req.query?.mode as string) === "suggest" ? "suggest" : "claimed";
+    const lookAhead = mode === "suggest" ? Math.min(Math.max(Number(req.query?.lookAhead) || 5, 0), 5) : 0;
+    const availableHours = mode === "suggest" ? Math.min(Math.max(Number(req.query?.availableHours) || (user.availableHoursPerDay ?? 4), 2), 12) : 0;
     const bufferPercent = Math.min(Math.max(Number(req.query?.bufferPercent) || 20, 0), 50);
     const availableDays: number[] = user.availableDays ? JSON.parse(user.availableDays) : [];
     const now = new Date();
@@ -39,8 +40,8 @@ export default async function previewRoutes(app: FastifyInstance) {
     endDate.setDate(endDate.getDate() + lookAhead + 1);
     const endStr = endDate.toISOString().slice(0, 10);
 
-    // Fetch claimable occurrences (unassigned, scheduled, next 7 days or undated)
-    const claimable = await prisma.jobOccurrence.findMany({
+    // Fetch claimable occurrences only in "suggest" mode
+    const claimable = mode === "suggest" ? await prisma.jobOccurrence.findMany({
       where: {
         status: "SCHEDULED",
         assignees: { none: {} },
@@ -61,9 +62,9 @@ export default async function previewRoutes(app: FastifyInstance) {
           },
         },
       },
-    });
+    }) : [];
 
-    // Fetch already-claimed by this user (next 7 days)
+    // Fetch already-claimed by this user
     const claimed = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
@@ -167,24 +168,20 @@ export default async function previewRoutes(app: FastifyInstance) {
     const client = new Anthropic({ apiKey });
 
     const jobsJson = JSON.stringify(allJobs, null, 2);
-    const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan the most efficient route for a specific day.
 
-Worker: ${user.displayName ?? user.email ?? "Unknown"}
-${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
-Target day: ${targetStr}
+    const modeInstructions = mode === "claimed"
+      ? `MODE: Claimed Only — optimize the route order for ONLY the jobs this worker has already claimed. Do not suggest additional jobs. Focus purely on the most efficient ordering and travel path.
+
+Rules:
+1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
+2. All claimed jobs must be included — just find the optimal order
+3. Travel/setup buffer: ${bufferPercent}% — add this on top of each job's estimated time for travel and setup
+4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
+      : `MODE: Suggest Additional Jobs — optimize the route AND suggest additional available jobs to fill the day.
+
 Available hours: ${availableHours} hours (do not exceed this)
 Travel/setup buffer: ${bufferPercent}% — add this percentage on top of each job's estimated time to account for travel and setup. For example, a 60-min job with ${bufferPercent}% buffer = ${Math.round(60 * (1 + bufferPercent / 100))} min total.
-${availableDays.length > 0 ? `Worker is typically available on: ${availableDays.map((d: number) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}` : ""}
 ${lookAhead > 0 ? `Also considering jobs from the next ${lookAhead} days that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
-
-Here are the available jobs (some on the target day, some on nearby days that could potentially be moved):
-
-${jobsJson}
-${workerHistory.length > 0 ? `
-This worker has previously serviced these properties (prioritize familiar properties):
-${JSON.stringify(workerHistory, null, 2)}
-` : ""}
-Your primary goal is to build the BEST POSSIBLE route for ${targetStr}.
 
 Rules:
 1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
@@ -193,7 +190,23 @@ Rules:
 4. Already claimed jobs for ${targetStr} must be included
 5. For jobs from other days, clearly flag that a reschedule is needed (the worker must contact the client first)
 6. Don't suggest moving ALL jobs to one day — only suggest moves that genuinely improve the route
-7. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there
+7. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`;
+
+    const prompt = `You are a route optimizer for a lawn care service. A worker needs to plan the most efficient route for a specific day.
+
+Worker: ${user.displayName ?? user.email ?? "Unknown"}
+${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
+Target day: ${targetStr}
+${availableDays.length > 0 ? `Worker is typically available on: ${availableDays.map((d: number) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}` : ""}
+
+Here are the jobs:
+
+${jobsJson}
+${workerHistory.length > 0 ? `
+This worker has previously serviced these properties (prioritize familiar properties):
+${JSON.stringify(workerHistory, null, 2)}
+` : ""}
+${modeInstructions}
 8. The worker has ${availableHours} hours available. Do NOT schedule more than ${availableHours} hours of work (include estimated travel time between jobs, roughly 15-20 min per stop)
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
