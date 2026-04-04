@@ -165,8 +165,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
       .then((u) => {
         setHomeBase(u?.homeBaseAddress ?? "");
         setHomeBaseLoaded(true);
-        const profileHours = u?.availableHoursPerDay ?? 4;
-        setAvailableHours(profileHours);
+        // Only set from profile if user hasn't manually set a value
+        if (!availableHours || availableHours === 0) {
+          setAvailableHours(u?.availableHoursPerDay ?? 4);
+        }
         setProfileHoursLoaded(true);
       })
       .catch(() => { setHomeBaseLoaded(true); setProfileHoursLoaded(true); });
