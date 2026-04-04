@@ -12,7 +12,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { apiGet, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
@@ -59,12 +59,20 @@ type Suggestions = {
   additionalJobsToConsider?: string[];
 };
 
+type RoutingInfo = {
+  provider: string;
+  totalDriveMinutes: number;
+  totalDriveMiles: number;
+};
+
 type Response = {
   suggestions: Suggestions | null;
   raw?: string;
   message?: string;
   jobs: RouteJob[];
   targetUser?: { id: string; displayName: string | null };
+  routing?: RoutingInfo | null;
+  routeError?: string | null;
 };
 
 function formatDuration(mins: number): string {
@@ -84,8 +92,26 @@ type Props = {
   userId?: string;
 };
 
+const STORAGE_KEY_PREFIX = "preview_routeResults";
+
+function loadCachedResults(userId?: string): Response | null {
+  try {
+    const key = userId ? `${STORAGE_KEY_PREFIX}_${userId}` : STORAGE_KEY_PREFIX;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveCachedResults(data: Response | null, userId?: string) {
+  try {
+    const key = userId ? `${STORAGE_KEY_PREFIX}_${userId}` : STORAGE_KEY_PREFIX;
+    if (data) localStorage.setItem(key, JSON.stringify(data));
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
 export default function PreviewRoutesTab({ userId }: Props = {}) {
-  const [data, setData] = useState<Response | null>(null);
+  const [data, setData] = useState<Response | null>(() => loadCachedResults(userId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +134,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
 
   // Mode: "claimed" = only optimize route for claimed jobs, "suggest" = also suggest new jobs to claim
   const [mode, setMode] = usePersistedState<"claimed" | "suggest">("preview_mode", "claimed");
+
+  // Routing provider
+  const [routingProvider, setRoutingProvider] = usePersistedState("preview_routingProvider", "mapbox");
+  const providerOptions = [{ value: "mapbox", label: "Mapbox" }];
 
   const [homeBase, setHomeBase] = useState("");
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
@@ -140,17 +170,72 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     setError(null);
     try {
       const userParam = userId ? `&userId=${userId}` : "";
-      const params = `targetDate=${targetDate}&bufferPercent=${bufferPercent}&mode=${mode}` +
+      const params = `targetDate=${targetDate}&bufferPercent=${bufferPercent}&mode=${mode}&routingProvider=${routingProvider}` +
         (mode === "suggest" ? `&lookAhead=${lookAhead}&availableHours=${availableHours}` : "") +
         userParam;
       const res = await apiGet<Response>(`/api/preview/route-suggestions?${params}`);
       setData(res);
+      saveCachedResults(res, userId);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
       setError(err?.message || "Failed to load suggestions");
       setData(null);
+      saveCachedResults(null, userId);
     }
     setLoading(false);
+  }
+
+  function clearResults() {
+    setData(null);
+    saveCachedResults(null, userId);
+    setClaimedIds(new Set());
+  }
+
+  // Track which jobs are being claimed or have been claimed
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [claimedIds, setClaimedIds] = useState<Set<string>>(new Set());
+
+  async function claimJob(occurrenceId: string, job: any) {
+    setClaimingId(occurrenceId);
+    try {
+      // Calculate new start date based on targetDate, preserving duration if multi-day
+      const patchData: any = { startAt: targetDate + "T09:00:00Z" };
+      if (job?.startAt && job?.endAt) {
+        const origStart = new Date(job.startAt).getTime();
+        const origEnd = new Date(job.endAt).getTime();
+        const durationMs = origEnd - origStart;
+        const newStart = new Date(targetDate + "T09:00:00Z");
+        patchData.startAt = newStart.toISOString();
+        patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
+      }
+
+      if (userId) {
+        // Admin claiming on behalf of a worker — use admin assign endpoint
+        await apiPost(`/api/admin/occurrences/${occurrenceId}/add-assignee`, { userId });
+        // Update the date via admin endpoint
+        if (job?.startAt !== targetDate) {
+          await apiPatch(`/api/admin/occurrences/${occurrenceId}`, patchData);
+        }
+      } else {
+        // Worker claiming for themselves
+        await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
+        // Update the date to the target date
+        if (job?.startAt !== targetDate) {
+          await apiPatch(`/api/occurrences/${occurrenceId}`, patchData);
+        }
+      }
+
+      setClaimedIds((prev) => new Set(prev).add(occurrenceId));
+      publishInlineMessage({ type: "SUCCESS", text: `Job claimed and scheduled for ${fmtDate(targetDate + "T12:00:00Z")}.` });
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (msg.includes("already") || msg.includes("ALREADY") || msg.includes("claimed")) {
+        publishInlineMessage({ type: "WARNING", text: "This job was already claimed by someone else and is no longer available." });
+      } else {
+        publishInlineMessage({ type: "ERROR", text: msg || "Claim failed." });
+      }
+    }
+    setClaimingId(null);
   }
 
 
@@ -161,8 +246,8 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   return (
     <Box w="full" pb={8}>
       <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Preview Feature</Text>
-        <Text fontSize="xs" color="yellow.600">This feature is in preview and will be updated. Route suggestions are AI-generated and should be used as a starting point, not a final plan.</Text>
+        <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
+        <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>
       </Box>
 
       {/* Home base */}
@@ -202,11 +287,31 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             Suggest Additional Jobs
           </Button>
         </HStack>
-        <Text fontSize="xs" color="fg.muted" mt={1}>
-          {mode === "claimed"
-            ? "Optimize the route for jobs you've already claimed."
-            : "Also suggest nearby available jobs to fill your day."}
-        </Text>
+        <HStack gap={2} mt={2} align="center">
+          <Text fontSize="xs" color="fg.muted">
+            {mode === "claimed"
+              ? "Optimize the route for jobs you've already claimed."
+              : "Also suggest nearby available jobs to fill your day."}
+          </Text>
+          <HStack gap={1} flexShrink={0} align="center">
+            <Text fontSize="xs" color="fg.muted">Map:</Text>
+            <select
+              value={routingProvider}
+              onChange={(e) => setRoutingProvider(e.target.value)}
+              style={{
+                fontSize: "12px",
+                padding: "2px 6px",
+                borderRadius: "4px",
+                border: "1px solid #e2e8f0",
+                background: "#fff",
+              }}
+            >
+              {providerOptions.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </HStack>
+        </HStack>
       </Box>
 
       {/* Planning controls */}
@@ -249,8 +354,8 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           <HStack gap={4} wrap="wrap" align="flex-end" mt={3}>
             <Box flex="1" minW="140px">
               <HStack justify="space-between" mb={1}>
-                <Text fontSize="xs" fontWeight="medium">Also consider jobs within</Text>
-                <Text fontSize="xs" color="fg.muted" fontWeight="medium">{lookAhead} days</Text>
+                <Text fontSize="xs" fontWeight="medium">Consider jobs within</Text>
+                <Text fontSize="xs" color="fg.muted" fontWeight="medium">±{lookAhead} days</Text>
               </HStack>
               <input
                 type="range"
@@ -292,12 +397,19 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           <Text fontSize="lg" fontWeight="semibold">Route Planner</Text>
           <Text fontSize="xs" color="fg.muted">
             Optimizing {fmtDate(targetDate + "T12:00:00Z")}
-            {lookAhead > 0 ? ` · looking ${lookAhead} day${lookAhead !== 1 ? "s" : ""} ahead for nearby jobs` : ""}
+            {lookAhead > 0 ? ` · considering jobs ±${lookAhead} day${lookAhead !== 1 ? "s" : ""}` : ""}
           </Text>
         </VStack>
-        <Button size="sm" onClick={loadSuggestions} loading={loading}>
-          Analyze
-        </Button>
+        <HStack gap={2}>
+          <Button size="sm" onClick={loadSuggestions} loading={loading}>
+            Analyze
+          </Button>
+          {data && (
+            <Button size="sm" variant="ghost" onClick={clearResults}>
+              Clear
+            </Button>
+          )}
+        </HStack>
       </HStack>
 
       {loading && !data && (
@@ -329,7 +441,18 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
               <Text fontSize="xs" color="blue.600">
                 {days.reduce((n, d) => n + (d.route ?? []).length, 0)} jobs in route
               </Text>
+              {data.routing && (
+                <Text fontSize="xs" color="blue.600">
+                  Drive: {formatDuration(data.routing.totalDriveMinutes)} / {data.routing.totalDriveMiles} mi
+                </Text>
+              )}
+              {data.routing && (
+                <Badge size="sm" colorPalette="blue" variant="subtle">{data.routing.provider}</Badge>
+              )}
             </HStack>
+            {data.routeError && (
+              <Text fontSize="xs" color="orange.500" mt={1}>Route optimization note: {data.routeError}</Text>
+            )}
           </Box>
 
           {/* Date change warning */}
@@ -394,10 +517,21 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                           <VStack align="start" gap={1} flex="1" minW={0}>
                             <HStack gap={2} wrap="wrap">
                               <Text fontSize="sm" fontWeight="medium">{stop.property}</Text>
-                              {isClaimed ? (
+                              {isClaimed || claimedIds.has(stop.occurrenceId) ? (
                                 <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Claimed</Badge>
                               ) : (
-                                <Badge colorPalette="blue" variant="outline" fontSize="xs" borderRadius="full" px="2">Available</Badge>
+                                <>
+                                  <Badge colorPalette="blue" variant="outline" fontSize="xs" borderRadius="full" px="2">Available</Badge>
+                                  <Button
+                                    size="xs"
+                                    colorPalette="teal"
+                                    variant="solid"
+                                    disabled={claimingId === stop.occurrenceId}
+                                    onClick={(e) => { e.stopPropagation(); claimJob(stop.occurrenceId, job); }}
+                                  >
+                                    {claimingId === stop.occurrenceId ? "Claiming..." : userId ? "Assign" : "Claim"}
+                                  </Button>
+                                </>
                               )}
                               {job?.price != null && (
                                 <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
@@ -447,11 +581,24 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   const job = jobMap.get(id);
                   if (!job) return null;
                   return (
-                    <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.50" rounded="md" gap={2}>
+                    <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.50" rounded="md" gap={2} wrap="wrap">
                       <Text fontWeight="medium">{job.property}</Text>
                       <Text color="fg.muted">{job.city}</Text>
                       {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
                       {job.price != null && <Badge colorPalette="green" variant="solid" fontSize="xs" px="1.5" borderRadius="full">${job.price.toFixed(2)}</Badge>}
+                      {claimedIds.has(id) ? (
+                        <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Claimed</Badge>
+                      ) : (
+                        <Button
+                          size="xs"
+                          colorPalette="teal"
+                          variant="solid"
+                          disabled={claimingId === id}
+                          onClick={() => claimJob(id, job)}
+                        >
+                          {claimingId === id ? "Claiming..." : userId ? "Assign" : "Claim"}
+                        </Button>
+                      )}
                     </HStack>
                   );
                 })}
