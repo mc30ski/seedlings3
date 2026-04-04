@@ -508,6 +508,14 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                       </Text>
                     </>
                   )}
+                  {availableHours > 0 && totalMins > availableHours * 60 * 1.05 && (
+                    <>
+                      <Text />
+                      <Text fontSize="xs" color="red.500" fontWeight="medium">
+                        ⚠ Exceeds {availableHours}h available — over by ~{formatDuration(Math.round(totalMins - availableHours * 60))}
+                      </Text>
+                    </>
+                  )}
                 </Box>
               );
             })()}
