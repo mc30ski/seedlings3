@@ -300,6 +300,7 @@ export default function ScrollableUnderlineTabs({
     {moreOpen && overflowTabs.length > 0 && (
       <div
         ref={moreDropdownRef}
+        onTouchMove={(e) => e.stopPropagation()}
         style={{
           position: "fixed",
           zIndex: 99999,
@@ -309,6 +310,8 @@ export default function ScrollableUnderlineTabs({
           boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
           maxHeight: "320px",
           overflowY: "auto",
+          overscrollBehavior: "contain",
+          WebkitOverflowScrolling: "touch",
           minWidth: "180px",
           top: (moreRef.current?.getBoundingClientRect().bottom ?? 0) + 2,
           left: Math.min(
