@@ -208,72 +208,83 @@ export default async function previewRoutes(app: FastifyInstance) {
       app.log.warn({ where: "preview/route-optimization", err: err.message });
     }
 
-    // Enforce time budget: trim claimable jobs that don't fit
-    if (mode === "suggest" && availableHours > 0 && optimizedRoute && optimizedRoute.stops.length > 0) {
+    // Enforce time budget: remove claimable jobs that don't fit
+    if (mode === "suggest" && availableHours > 0) {
       const budgetMins = availableHours * 60 * 1.05; // 5% flexibility
-      const totalDriveMins = Math.round(optimizedRoute.totalDuration / 60);
+      const totalDriveMins = optimizedRoute ? Math.round(optimizedRoute.totalDuration / 60) : 0;
 
-      // Calculate total work + setup for all jobs in the optimized order
-      let workMins = 0;
-      for (const stop of optimizedRoute.stops) {
-        const job = allJobs[stop.inputIndex];
-        if (job) workMins += (job.estimatedMinutes ?? 60);
+      // Calculate total work time for ALL jobs (not just optimized stops)
+      let totalWorkMins = 0;
+      for (const job of allJobs) {
+        totalWorkMins += (job.estimatedMinutes ?? 60);
       }
-      const setupMins = Math.round(workMins * bufferPercent / 100);
-      const totalMins = workMins + setupMins + totalDriveMins;
+      const setupMins = Math.round(totalWorkMins * bufferPercent / 100);
+      const totalMins = totalWorkMins + setupMins + totalDriveMins;
 
-      // If over budget, remove claimable jobs from the end of the route until it fits
+      // If over budget, remove claimable jobs (lowest value first) until it fits
       if (totalMins > budgetMins) {
-        // Build a list of stop indices that are claimable (can be removed)
-        const removableStopIndices: number[] = [];
-        for (let i = optimizedRoute.stops.length - 1; i >= 0; i--) {
-          const job = allJobs[optimizedRoute.stops[i].inputIndex];
-          if (job?.type === "claimable") removableStopIndices.push(i);
-        }
+        // Score claimable jobs: lower score = remove first
+        const removeCandidates = allJobs
+          .map((job, idx) => ({ job, idx }))
+          .filter(({ job }) => job.type === "claimable")
+          // Remove lowest-value jobs first (price / time ratio)
+          .sort((a, b) => {
+            const aVal = (a.job.price ?? 0) / (a.job.estimatedMinutes ?? 60);
+            const bVal = (b.job.price ?? 0) / (b.job.estimatedMinutes ?? 60);
+            return aVal - bVal;
+          });
 
-        let currentWork = workMins;
+        let currentWork = totalWorkMins;
         let currentDrive = totalDriveMins;
-        const removedJobIndices = new Set<number>();
+        const removedIndices = new Set<number>();
 
-        for (const si of removableStopIndices) {
+        for (const { job, idx } of removeCandidates) {
           const currentSetup = Math.round(currentWork * bufferPercent / 100);
           if (currentWork + currentSetup + currentDrive <= budgetMins) break;
-
-          const stop = optimizedRoute.stops[si];
-          const job = allJobs[stop.inputIndex];
-          if (job) {
-            currentWork -= (job.estimatedMinutes ?? 60);
-            currentDrive -= Math.round(stop.durationFromPrev / 60);
-            removedJobIndices.add(stop.inputIndex);
-          }
+          currentWork -= (job.estimatedMinutes ?? 60);
+          removedIndices.add(idx);
         }
 
-        // Filter jobs and re-optimize if we removed any
-        if (removedJobIndices.size > 0) {
-          optimizedRoute.stops = optimizedRoute.stops.filter(
-            (s) => !removedJobIndices.has(s.inputIndex)
-          );
-          // Recalculate totals
-          let newDuration = 0;
-          let newDistance = 0;
-          for (const s of optimizedRoute.stops) {
-            newDuration += s.durationFromPrev;
-            newDistance += s.distanceFromPrev;
-          }
-          optimizedRoute.totalDuration = newDuration;
-          optimizedRoute.totalDistance = newDistance;
-
-          // Also remove from allJobs so Claude doesn't suggest them
-          for (const idx of Array.from(removedJobIndices).sort((a, b) => b - a)) {
+        if (removedIndices.size > 0) {
+          // Remove from allJobs (reverse order to preserve indices)
+          const sorted = Array.from(removedIndices).sort((a, b) => b - a);
+          for (const idx of sorted) {
             allJobs.splice(idx, 1);
           }
-          // Re-map stop inputIndex after splice
-          for (const stop of optimizedRoute.stops) {
-            let offset = 0;
-            for (const removed of Array.from(removedJobIndices).sort((a, b) => a - b)) {
-              if (removed < stop.inputIndex) offset++;
+
+          // Re-optimize route with remaining jobs if we have the provider
+          if (optimizedRoute) {
+            try {
+              const router = getRoutingProvider(routingProviderName);
+              const addresses = allJobs.map((j) => j.address);
+              const geocoded = await router.geocodeMany(addresses);
+              const validIndices2: number[] = [];
+              const validCoords2: { lng: number; lat: number }[] = [];
+              for (let i = 0; i < geocoded.length; i++) {
+                if (geocoded[i]) {
+                  validIndices2.push(i);
+                  validCoords2.push(geocoded[i]!.coordinates);
+                }
+              }
+              let homeCoords2: { lng: number; lat: number } | undefined;
+              if (user.homeBaseAddress) {
+                const hg = await router.geocode(user.homeBaseAddress);
+                if (hg) homeCoords2 = hg.coordinates;
+              }
+              if (validCoords2.length > 1) {
+                optimizedRoute = await router.optimizeRoute(validCoords2, {
+                  startCoords: homeCoords2,
+                  roundTrip: !!homeCoords2,
+                });
+                for (const stop of optimizedRoute.stops) {
+                  stop.inputIndex = validIndices2[stop.inputIndex] ?? stop.inputIndex;
+                }
+              } else {
+                optimizedRoute = null;
+              }
+            } catch {
+              // Keep existing route data if re-optimization fails
             }
-            stop.inputIndex -= offset;
           }
         }
       }
