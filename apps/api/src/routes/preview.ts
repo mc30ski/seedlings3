@@ -140,6 +140,7 @@ export default async function previewRoutes(app: FastifyInstance) {
       const address = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
       return {
         id: occ.id,
+        jobId: occ.jobId,
         type,
         property: prop?.displayName ?? "Unknown",
         address: address || "No address",

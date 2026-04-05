@@ -22,6 +22,7 @@ import { fmtDate, bizDateKey } from "@/src/lib/lib";
 
 type RouteJob = {
   id: string;
+  jobId?: string;
   type: "claimable" | "claimed";
   property: string;
   address: string;
@@ -720,7 +721,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                                     "jobsTabToServicesTabSearch",
                                     stop.property,
                                     true,
-                                    stop.occurrenceId,
+                                    `${job?.jobId ?? ""}:${stop.occurrenceId}`,
                                   );
                                 }}
                               >
