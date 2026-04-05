@@ -1367,18 +1367,47 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
-                      {isUnassigned && !isAdminOnlyOcc && (
-                        <StatusButton
-                          id="occ-claim"
-                          itemId={occ.id}
-                          label="Claim"
-                          onClick={async () => void claim(occ.id)}
-                          variant="outline"
-                          colorPalette="green"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
+                      {isUnassigned && !isAdminOnlyOcc && (() => {
+                        const isContractor = me?.workerType === "CONTRACTOR";
+                        const jobDate = occ.startAt ? new Date(occ.startAt) : null;
+                        const now = new Date();
+                        const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                        const contractorBlocked = isContractor && daysAhead > 2;
+
+                        if (forAdmin) {
+                          return (
+                            <StatusButton
+                              id="occ-claim"
+                              itemId={occ.id}
+                              label="Claim"
+                              onClick={async () => void claim(occ.id)}
+                              variant="outline"
+                              colorPalette="green"
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
+                          );
+                        }
+                        if (contractorBlocked) {
+                          return (
+                            <Text fontSize="xs" color="orange.500">
+                              Contractors can only claim jobs within 2 days. This job is {daysAhead} days out.
+                            </Text>
+                          );
+                        }
+                        return (
+                          <StatusButton
+                            id="occ-claim"
+                            itemId={occ.id}
+                            label="Claim"
+                            onClick={async () => void claim(occ.id)}
+                            variant="outline"
+                            colorPalette="green"
+                            busyId={statusButtonBusyId}
+                            setBusyId={setStatusButtonBusyId}
+                          />
+                        );
+                      })()}
                       {isAssignedToMe && occ.status === "SCHEDULED" && !isTentative && (
                         <StatusButton
                           id="occ-start"

@@ -726,6 +726,18 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("ADMIN_ONLY", "This job is administered and can only be assigned by an admin.", 409);
       }
 
+      // Contractors can only claim jobs within 2 days
+      {
+        const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
+        if (user.workerType === "CONTRACTOR" && occ.startAt) {
+          const now = new Date();
+          const daysAhead = Math.ceil((occ.startAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysAhead > 2) {
+            throw new ServiceError("CONTRACTOR_TOO_FAR", "Contractors can only claim jobs within 2 days. This job is " + daysAhead + " days out.", 403);
+          }
+        }
+      }
+
       // Tier gating for high-value jobs
       const thresholdSetting = await prisma.setting.findUnique({ where: { key: "HIGH_VALUE_JOB_THRESHOLD" } });
       const threshold = Number(thresholdSetting?.value ?? 200);
