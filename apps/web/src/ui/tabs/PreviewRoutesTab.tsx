@@ -537,32 +537,36 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                     </>
                   )}
 
-                  <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
-                  <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
-
-                  <Text color="blue.600">Buffer:</Text>
-                  <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
-
-                  <Text color="blue.600">Drive time:</Text>
-                  <Text fontWeight="semibold" color="blue.800">{data.routing ? formatDuration(driveMins) : "N/A"}{data.routing ? ` / ${data.routing.totalDriveMiles} mi` : ""}</Text>
-
-                  <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Total time:</Text>
-                  <Text fontWeight="bold" color="blue.900" fontSize="md" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalMins)}</Text>
-
-                  {assumedCount > 0 && (
+                  {jobCount > 0 && (
                     <>
-                      <Text />
-                      <Text fontSize="xs" color="orange.500">
-                        * {assumedCount} job{assumedCount !== 1 ? "s" : ""} assumed 60 min (no duration set)
-                      </Text>
-                    </>
-                  )}
-                  {availableHours > 0 && totalMins > availableHours * 60 * 1.05 && (
-                    <>
-                      <Text />
-                      <Text fontSize="xs" color="red.500" fontWeight="medium">
-                        ⚠ Exceeds {availableHours}h available — over by ~{formatDuration(Math.round(totalMins - availableHours * 60))}
-                      </Text>
+                      <Text color="blue.600" borderTop="1px solid" borderColor="blue.200" pt={1}>Job time:</Text>
+                      <Text fontWeight="semibold" color="blue.800" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalWorkMins)}</Text>
+
+                      <Text color="blue.600">Buffer:</Text>
+                      <Text fontWeight="semibold" color="blue.800">~{formatDuration(setupMins)} ({bufferPercent}%)</Text>
+
+                      <Text color="blue.600">Drive time:</Text>
+                      <Text fontWeight="semibold" color="blue.800">{data.routing ? formatDuration(driveMins) : "N/A"}{data.routing ? ` / ${data.routing.totalDriveMiles} mi` : ""}</Text>
+
+                      <Text color="blue.700" fontWeight="medium" borderTop="1px solid" borderColor="blue.200" pt={1}>Total time:</Text>
+                      <Text fontWeight="bold" color="blue.900" fontSize="md" borderTop="1px solid" borderColor="blue.200" pt={1}>~{formatDuration(totalMins)}</Text>
+
+                      {assumedCount > 0 && (
+                        <>
+                          <Text />
+                          <Text fontSize="xs" color="orange.500">
+                            * {assumedCount} job{assumedCount !== 1 ? "s" : ""} assumed 60 min (no duration set)
+                          </Text>
+                        </>
+                      )}
+                      {availableHours > 0 && totalMins > availableHours * 60 * 1.05 && (
+                        <>
+                          <Text />
+                          <Text fontSize="xs" color="red.500" fontWeight="medium">
+                            ⚠ Exceeds {availableHours}h available — over by ~{formatDuration(Math.round(totalMins - availableHours * 60))}
+                          </Text>
+                        </>
+                      )}
                     </>
                   )}
                 </Box>
