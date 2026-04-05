@@ -25,12 +25,51 @@ type Props = {
   forAdmin?: boolean;
 };
 
+const DISMISSED_KEY = "seedlings_reminders_dismissed";
+
+function loadDismissed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY);
+    if (!raw) return new Set();
+    const data = JSON.parse(raw);
+    const today = new Date().toISOString().slice(0, 10);
+    // Clean out old days — only keep today's dismissals
+    if (data.date !== today) {
+      localStorage.removeItem(DISMISSED_KEY);
+      return new Set();
+    }
+    return new Set(data.ids ?? []);
+  } catch { return new Set(); }
+}
+
+function saveDismissed(ids: Set<string>) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify({ date: today, ids: Array.from(ids) }));
+  } catch {}
+}
+
 export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [compact, setCompact] = useState(true);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
+
+  function dismissReminder(occId: string) {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(occId);
+      saveDismissed(next);
+      return next;
+    });
+  }
+
+  function undismissAll() {
+    setDismissed(new Set());
+    saveDismissed(new Set());
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -79,31 +118,35 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
     return rows;
   }, [items, myId, showAll, q]);
 
+  const notDismissed = (occ: WorkerOccurrence) => !dismissed.has(occ.id);
+
   const overdue = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED") return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) < today;
-  });
+  }).filter(notDismissed);
 
   const todayJobs = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS") return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === today;
-  });
+  }).filter(notDismissed);
 
   const tomorrowJobs = myItems.filter((occ) => {
     if (occ.status !== "SCHEDULED") return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === tomorrow;
-  });
+  }).filter(notDismissed);
 
-  const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT");
+  const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT").filter(notDismissed);
 
   const estimatesReady = myItems.filter((occ) =>
     occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
-  );
+  ).filter(notDismissed);
 
-  const hasReminders = overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
+  const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
+  const hasReminders = showRoutePlanReminder || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
+  const hasDismissed = dismissed.size > 0;
 
   if (loading) {
     return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
@@ -143,7 +186,55 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
       {!hasReminders && (
         <Box textAlign="center" py={10}>
           <Text fontSize="lg" fontWeight="semibold" color="green.600">All caught up!</Text>
-          <Text fontSize="sm" color="fg.muted" mt={1}>No reminders right now.</Text>
+          <Text fontSize="sm" color="fg.muted" mt={1}>
+            {hasDismissed ? `No reminders — ${dismissed.size} dismissed today.` : "No reminders right now."}
+          </Text>
+          {hasDismissed && (
+            <Button size="sm" variant="ghost" mt={2} onClick={undismissAll}>
+              Show dismissed
+            </Button>
+          )}
+        </Box>
+      )}
+
+      {/* Route planning reminder — always at top */}
+      {showRoutePlanReminder && (
+        <Box mb={4}>
+          <Card.Root variant="outline" borderColor="blue.300" bg="blue.50">
+            <Card.Body py="3" px="4">
+              <HStack justify="space-between" align="center">
+                <VStack align="start" gap={0.5} flex="1">
+                  <Text fontSize="sm" fontWeight="semibold" color="blue.700">
+                    Plan tomorrow's route
+                  </Text>
+                  <Text fontSize="xs" color="blue.600">
+                    Review and optimize your route for tomorrow to make the most of your day.
+                  </Text>
+                </VStack>
+                <HStack gap={2} flexShrink={0}>
+                  <Button
+                    size="sm"
+                    colorPalette="blue"
+                    variant="solid"
+                    onClick={() => {
+                      // Navigate to Routes tab
+                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
+                    }}
+                  >
+                    Plan Route
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette="gray"
+                    onClick={() => dismissReminder("__route_plan__")}
+                  >
+                    Dismiss
+                  </Button>
+                </HStack>
+              </HStack>
+            </Card.Body>
+          </Card.Root>
         </Box>
       )}
 
@@ -293,6 +384,14 @@ function Section({
                   >
                     View in Jobs
                   </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette="gray"
+                    onClick={(e) => { e.stopPropagation(); dismissReminder(occ.id); }}
+                  >
+                    Dismiss
+                  </Button>
                 </Box>
               )}
               <Card.Body py="3" px="4" pt={isExpanded ? "2" : "3"}>
@@ -324,19 +423,30 @@ function Section({
                       </>
                     )}
                     {!isExpanded && (
-                      <HStack gap={2} fontSize="xs">
-                        {badge(occ)}
-                        {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
-                        {occ.price != null && (
-                          <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                            ${occ.price.toFixed(2)}
-                          </Badge>
-                        )}
-                        {showAssignees && (occ.assignees ?? []).length > 0 && (
-                          <Text color="teal.600">
-                            {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                          </Text>
-                        )}
+                      <HStack gap={2} fontSize="xs" justify="space-between" w="full">
+                        <HStack gap={2} flexWrap="wrap" flex="1" minW={0}>
+                          {badge(occ)}
+                          {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
+                          {occ.price != null && (
+                            <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                              ${occ.price.toFixed(2)}
+                            </Badge>
+                          )}
+                          {showAssignees && (occ.assignees ?? []).length > 0 && (
+                            <Text color="teal.600">
+                              {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                            </Text>
+                          )}
+                        </HStack>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorPalette="gray"
+                          flexShrink={0}
+                          onClick={(e) => { e.stopPropagation(); dismissReminder(occ.id); }}
+                        >
+                          Dismiss
+                        </Button>
                       </HStack>
                     )}
                   </VStack>
