@@ -715,6 +715,19 @@ export default function HomePage() {
     return () => window.removeEventListener("navigate:profile", onProfile as EventListener);
   }, [isAdmin, me?.id]);
 
+  // Listen for worker tab navigation (from Reminders → Routes, etc.)
+  useEffect(() => {
+    const onNav = (e: Event) => {
+      const { tab } = (e as CustomEvent).detail || {};
+      if (tab) {
+        setTopTab("worker");
+        setWorkerInnerTab(tab);
+      }
+    };
+    window.addEventListener("navigate:workerTab", onNav as EventListener);
+    return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
+  }, []);
+
   const goToApprovals = useCallback(() => {
     window.dispatchEvent(
       new CustomEvent("admin:openUsers", {
