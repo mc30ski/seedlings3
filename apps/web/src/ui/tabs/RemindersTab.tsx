@@ -255,6 +255,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          onDismiss={dismissReminder}
         />
       )}
 
@@ -271,6 +272,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          onDismiss={dismissReminder}
         />
       )}
 
@@ -287,6 +289,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          onDismiss={dismissReminder}
         />
       )}
 
@@ -303,6 +306,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          onDismiss={dismissReminder}
         />
       )}
 
@@ -319,6 +323,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          onDismiss={dismissReminder}
         />
       )}
     </Box>
@@ -337,6 +342,7 @@ function Section({
   compact,
   expandedCards,
   toggleCard,
+  onDismiss,
 }: {
   title: string;
   subtitle: string;
@@ -349,6 +355,7 @@ function Section({
   compact: boolean;
   expandedCards: Set<string>;
   toggleCard: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }) {
   return (
     <Box mb={5}>
@@ -388,7 +395,7 @@ function Section({
                     size="xs"
                     variant="ghost"
                     colorPalette="gray"
-                    onClick={(e) => { e.stopPropagation(); dismissReminder(occ.id); }}
+                    onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
                   >
                     Dismiss
                   </Button>
@@ -443,7 +450,7 @@ function Section({
                           variant="ghost"
                           colorPalette="gray"
                           flexShrink={0}
-                          onClick={(e) => { e.stopPropagation(); dismissReminder(occ.id); }}
+                          onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
                         >
                           Dismiss
                         </Button>
