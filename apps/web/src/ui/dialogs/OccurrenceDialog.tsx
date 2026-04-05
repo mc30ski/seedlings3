@@ -137,8 +137,13 @@ export default function OccurrenceDialog({
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  useEffect(() => {
-    if (!open) return;
+  // Initialize form once when dialog opens — use ref to prevent re-init on re-renders
+  const initRef = useRef<string | null>(null);
+  const openKey = open ? `${mode}-${occurrenceId ?? jobId ?? "new"}` : null;
+  if (openKey && initRef.current !== openKey) {
+    initRef.current = openKey;
+    // Synchronous state init (runs once per dialog open, not in useEffect)
+    // React batches these setState calls during render
     setStatus(defaultStatus ?? "");
     setKind(defaultKind ?? "");
     setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
@@ -156,7 +161,10 @@ export default function OccurrenceDialog({
     setNewExpCost("");
     setNewExpDesc("");
     setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
-  }, [open, mode, defaultStatus, defaultKind, defaultStartAt, defaultEndAt, defaultNotes, defaultPrice, defaultEstimatedMinutes, defaultStartedAt, defaultCompletedAt, defaultAssignees]);
+  }
+  if (!open && initRef.current) {
+    initRef.current = null;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -291,7 +299,7 @@ export default function OccurrenceDialog({
               </Dialog.Title>
             </Dialog.Header>
 
-            <Dialog.Body>
+            <Dialog.Body style={{ maxHeight: "70vh", overflowY: "auto" }}>
               <VStack align="stretch" gap={3}>
                 {mode === "CREATE" && (
                   <div>
@@ -425,36 +433,52 @@ export default function OccurrenceDialog({
                 {isAdmin && mode === "UPDATE" && (
                   <>
                     <div>
-                      <Text mb="1">Started at</Text>
-                      <HStack gap={2}>
-                        <Input
-                          type="datetime-local"
-                          value={startedAt}
-                          onChange={(e) => setStartedAt(e.target.value)}
-                          flex="1"
-                        />
-                        {startedAt && (
-                          <Button size="sm" variant="ghost" onClick={() => setStartedAt("")}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <Text>Started at</Text>
+                      </div>
+                      {startedAt ? (
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <input
+                            type="datetime-local"
+                            value={startedAt}
+                            onChange={(e) => setStartedAt(e.target.value)}
+                            style={{ flex: 1, padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setStartedAt("")}
+                            style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e53e3e", color: "#e53e3e", background: "white", cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap" }}
+                          >
                             Clear
-                          </Button>
-                        )}
-                      </HStack>
+                          </button>
+                        </div>
+                      ) : (
+                        <Text fontSize="sm" color="fg.muted" fontStyle="italic">Not set</Text>
+                      )}
                     </div>
                     <div>
-                      <Text mb="1">Completed at</Text>
-                      <HStack gap={2}>
-                        <Input
-                          type="datetime-local"
-                          value={completedAt}
-                          onChange={(e) => setCompletedAt(e.target.value)}
-                          flex="1"
-                        />
-                        {completedAt && (
-                          <Button size="sm" variant="ghost" onClick={() => setCompletedAt("")}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <Text>Completed at</Text>
+                      </div>
+                      {completedAt ? (
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <input
+                            type="datetime-local"
+                            value={completedAt}
+                            onChange={(e) => setCompletedAt(e.target.value)}
+                            style={{ flex: 1, padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setCompletedAt("")}
+                            style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid #e53e3e", color: "#e53e3e", background: "white", cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap" }}
+                          >
                             Clear
-                          </Button>
-                        )}
-                      </HStack>
+                          </button>
+                        </div>
+                      ) : (
+                        <Text fontSize="sm" color="fg.muted" fontStyle="italic">Not set</Text>
+                      )}
                     </div>
                   </>
                 )}
