@@ -237,8 +237,13 @@ export default function OccurrenceDialog({
         if (status) body.status = status;
         if (kind) body.kind = kind;
         if (isAdmin) {
-          body.startedAt = startedAt ? new Date(startedAt).toISOString() : null;
-          body.completedAt = completedAt ? new Date(completedAt).toISOString() : null;
+          // Only send startedAt/completedAt if they differ from defaults to avoid accidental overwrite
+          const newStartedAt = startedAt ? new Date(startedAt).toISOString() : null;
+          const newCompletedAt = completedAt ? new Date(completedAt).toISOString() : null;
+          const origStartedAt = defaultStartedAt ? new Date(defaultStartedAt).toISOString() : null;
+          const origCompletedAt = defaultCompletedAt ? new Date(defaultCompletedAt).toISOString() : null;
+          if (newStartedAt !== origStartedAt) body.startedAt = newStartedAt;
+          if (newCompletedAt !== origCompletedAt) body.completedAt = newCompletedAt;
         }
         body.isAdminOnly = isAdminOnly;
         body.jobType = jobType || null;
@@ -421,19 +426,35 @@ export default function OccurrenceDialog({
                   <>
                     <div>
                       <Text mb="1">Started at</Text>
-                      <Input
-                        type="datetime-local"
-                        value={startedAt}
-                        onChange={(e) => setStartedAt(e.target.value)}
-                      />
+                      <HStack gap={2}>
+                        <Input
+                          type="datetime-local"
+                          value={startedAt}
+                          onChange={(e) => setStartedAt(e.target.value)}
+                          flex="1"
+                        />
+                        {startedAt && (
+                          <Button size="sm" variant="ghost" onClick={() => setStartedAt("")}>
+                            Clear
+                          </Button>
+                        )}
+                      </HStack>
                     </div>
                     <div>
                       <Text mb="1">Completed at</Text>
-                      <Input
-                        type="datetime-local"
-                        value={completedAt}
-                        onChange={(e) => setCompletedAt(e.target.value)}
-                      />
+                      <HStack gap={2}>
+                        <Input
+                          type="datetime-local"
+                          value={completedAt}
+                          onChange={(e) => setCompletedAt(e.target.value)}
+                          flex="1"
+                        />
+                        {completedAt && (
+                          <Button size="sm" variant="ghost" onClick={() => setCompletedAt("")}>
+                            Clear
+                          </Button>
+                        )}
+                      </HStack>
                     </div>
                   </>
                 )}
