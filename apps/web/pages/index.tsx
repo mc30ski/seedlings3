@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
-import { AlertTriangle, Plus } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
@@ -24,6 +24,7 @@ import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
+import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase } from "@/src/ui/tabs/AdminTasksTab";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
@@ -53,6 +54,7 @@ import {
   FiBell,
   FiNavigation,
   FiSettings,
+  FiSun,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -162,6 +164,50 @@ export default function HomePage() {
   const workflowItems = adminWorkflows.map((w) => ({ label: w.label, value: w.id }));
   const workflowCollection = createListCollection({ items: workflowItems });
 
+  const adminTasks: TaskDef[] = [
+    {
+      id: "new-job-setup",
+      label: "New Job",
+      description: "Create a new client, property, job, and first occurrence",
+      icon: FiPlus,
+      colorPalette: "green",
+      bgColor: "green.50",
+      onClick: () => setActiveWorkflow("new-job-setup"),
+    },
+    {
+      id: "export-summary",
+      label: "Export Summary",
+      description: "Download a human-readable summary of all your data",
+      icon: FiDownload,
+      colorPalette: "blue",
+      bgColor: "blue.50",
+      onClick: () =>
+        setConfirmAction({
+          title: "Export Summary",
+          message: "This will download a human-readable summary of all your data. Continue?",
+          confirmLabel: "Download",
+          colorPalette: "blue",
+          onConfirm: downloadSummary,
+        }),
+    },
+    {
+      id: "export-raw",
+      label: "Export All Data",
+      description: "Download all raw data as JSON for backup or analysis",
+      icon: FiDatabase,
+      colorPalette: "purple",
+      bgColor: "purple.50",
+      onClick: () =>
+        setConfirmAction({
+          title: "Export Raw Data",
+          message: "This will download all raw data as JSON. This may be a large file. Continue?",
+          confirmLabel: "Download",
+          colorPalette: "purple",
+          onConfirm: downloadRaw,
+        }),
+    },
+  ];
+
   const loadMe = useCallback(async () => {
     setMeLoading(true);
     try {
@@ -236,7 +282,50 @@ export default function HomePage() {
     },
   ];
 
+  const workerTasks: TaskDef[] = [
+    {
+      id: "plan-route",
+      label: "Plan Next Work Day",
+      description: "Optimize your route for tomorrow and claim nearby jobs",
+      icon: FiNavigation,
+      colorPalette: "blue",
+      bgColor: "blue.50",
+      onClick: () => {
+        setConfirmAction({
+          title: "Coming Soon",
+          message: "Route planning workflow is coming soon. In the meantime, use the Routes tab.",
+          confirmLabel: "OK",
+          colorPalette: "blue",
+          onConfirm: () => {},
+        });
+      },
+    },
+    {
+      id: "start-day",
+      label: "Begin Work Day",
+      description: "Review today's schedule, confirm jobs, and start your first stop",
+      icon: FiSun,
+      colorPalette: "green",
+      bgColor: "green.50",
+      onClick: () => {
+        setConfirmAction({
+          title: "Coming Soon",
+          message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
+          confirmLabel: "OK",
+          colorPalette: "green",
+          onConfirm: () => {},
+        });
+      },
+    },
+  ];
+
   const workerTabs: TabItem[] = [
+    {
+      value: "tasks",
+      label: "Tasks",
+      icon: FiPlus,
+      content: <AdminTasksTab tasks={workerTasks} />,
+    },
     {
       value: "reminders",
       label: "Reminders",
@@ -303,6 +392,12 @@ export default function HomePage() {
   ];
 
   const adminTabs: TabItem[] = [
+    {
+      value: "tasks",
+      label: "Tasks",
+      icon: FiPlus,
+      content: <AdminTasksTab tasks={adminTasks} />,
+    },
     {
       value: "reminders",
       label: "Reminders",
@@ -867,47 +962,6 @@ export default function HomePage() {
           edgeSize={16}
           headerPaddingY={0}
           unmountOnExit
-          headerRight={isAdmin && topTab === "admin" ? (
-            <Select.Root
-              collection={workflowCollection}
-              value={[]}
-              onValueChange={(e) => {
-                const wf = adminWorkflows.find((w) => w.id === e.value[0]);
-                if (wf) wf.onClick();
-              }}
-              size="sm"
-              positioning={{ strategy: "fixed", hideWhenDetached: true }}
-              css={{ width: "auto", flex: "0 0 auto" }}
-            >
-              <Select.Control>
-                <Select.Trigger
-                  w="auto"
-                  minW="0"
-                  px="2"
-                  py="1"
-                  mr="2"
-                  css={{
-                    background: "var(--chakra-colors-gray-100)",
-                    borderRadius: "6px",
-                    border: "1px solid var(--chakra-colors-gray-300)",
-                    "&:hover": { background: "var(--chakra-colors-gray-200)" },
-                  }}
-                >
-                  <Plus size={16} color="var(--chakra-colors-gray-600)" />
-                  <Select.Indicator display="none" />
-                </Select.Trigger>
-              </Select.Control>
-              <Select.Positioner>
-                <Select.Content>
-                  {workflowItems.map((it) => (
-                    <Select.Item key={it.value} item={it.value}>
-                      <Select.ItemText>{it.label}</Select.ItemText>
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Positioner>
-            </Select.Root>
-          ) : undefined}
         />
       )}
       <ConfirmDialog

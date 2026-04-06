@@ -1,6 +1,7 @@
 export type Role = "SUPER" | "ADMIN" | "WORKER";
 
 export type AdminTabs =
+  | "tasks"
   | "reminders"
   | "equipment"
   | "clients"
@@ -21,6 +22,7 @@ export type ClientTabs = "my-jobs" | "public" | "services";
 export type PreviewTabs = "routes";
 
 export type WorkerTabs =
+  | "tasks"
   | "reminders"
   | "routes"
   | "statistics"
