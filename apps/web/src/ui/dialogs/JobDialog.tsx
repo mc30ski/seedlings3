@@ -46,6 +46,7 @@ type Props = {
   defaultPropertyId?: string;
   preventOutsideClose?: boolean;
   deferSave?: boolean;
+  deferredProperty?: { id: string; displayName: string };
 };
 
 export default function JobDialog({
@@ -57,6 +58,7 @@ export default function JobDialog({
   defaultPropertyId,
   preventOutsideClose,
   deferSave,
+  deferredProperty,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -73,6 +75,11 @@ export default function JobDialog({
   // Load active properties when dialog opens
   useEffect(() => {
     if (!open) return;
+    if (deferSave && deferredProperty) {
+      setProperties([deferredProperty as any]);
+      setPropertyValue([deferredProperty.id]);
+      return;
+    }
     (async () => {
       try {
         const list = await apiGet<PropertyLite[]>(

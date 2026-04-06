@@ -309,8 +309,37 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const days = data?.suggestions?.days ?? [];
   const dateChangeCount = data?.suggestions?.dateChangeCount ?? 0;
 
+  const [workflowPaused] = useState(() => {
+    try { return localStorage.getItem("seedlings_planWorkday_paused") === "1"; } catch { return false; }
+  });
+
   return (
     <Box w="full" pb={8}>
+      {workflowPaused && !userId && (
+        <Box
+          mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.400" rounded="md"
+          display="flex" justifyContent="space-between" alignItems="center" gap={3}
+        >
+          <Text fontSize="sm" fontWeight="medium" color="blue.700">
+            You're in the Plan Workday workflow. When you're done here, return to continue.
+          </Text>
+          <Button
+            size="sm"
+            colorPalette="blue"
+            flexShrink={0}
+            onClick={() => {
+              try { localStorage.removeItem("seedlings_planWorkday_paused"); } catch {}
+              window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
+              // Small delay to let tab switch, then trigger the workflow
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: "plan-workday" } }));
+              }, 100);
+            }}
+          >
+            Return to Workflow
+          </Button>
+        </Box>
+      )}
       <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
         <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
         <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>

@@ -175,11 +175,12 @@ export const payments: ServicesPayments = {
         if (isAdminOnly) {
           const assigneeIds = fullOcc.assignees.map((a) => a.userId);
           if (assigneeIds.length > 0) {
+            const claimerId = assigneeIds[0];
             await tx.jobOccurrenceAssignee.createMany({
-              data: assigneeIds.map((uid) => ({
+              data: assigneeIds.map((uid, i) => ({
                 occurrenceId: nextOccurrence.id,
                 userId: uid,
-                assignedById: currentUserId,
+                assignedById: i === 0 ? uid : claimerId,
               })),
               skipDuplicates: true,
             });

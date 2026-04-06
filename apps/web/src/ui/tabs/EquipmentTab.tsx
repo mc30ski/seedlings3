@@ -540,8 +540,36 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
 
+  const workflowPaused = (() => {
+    try { return typeof window !== "undefined" && localStorage.getItem("seedlings_planWorkday_paused") === "1"; } catch { return false; }
+  })();
+
   return (
     <Box w="full">
+      {workflowPaused && purpose !== "ADMIN" && (
+        <Box
+          mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.400" rounded="md"
+          display="flex" justifyContent="space-between" alignItems="center" gap={3}
+        >
+          <Text fontSize="sm" fontWeight="medium" color="blue.700">
+            You're in the Plan Workday workflow. When you're done here, return to continue.
+          </Text>
+          <Button
+            size="sm"
+            colorPalette="blue"
+            flexShrink={0}
+            onClick={() => {
+              try { localStorage.removeItem("seedlings_planWorkday_paused"); } catch {}
+              window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: "plan-workday" } }));
+              }, 100);
+            }}
+          >
+            Return to Workflow
+          </Button>
+        </Box>
+      )}
       <HStack mb={2} gap={2}>
         <SearchWithClear
           ref={inputRef}

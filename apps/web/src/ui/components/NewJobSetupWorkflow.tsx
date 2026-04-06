@@ -72,13 +72,15 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
       const client = await apiPost<{ id: string }>("/api/admin/clients", clientData);
 
       // 2. Create contact for that client
-      await apiPost(`/api/admin/clients/${client.id}/contacts`, contactData);
+      const contact = await apiPost<{ id: string }>(`/api/admin/clients/${client.id}/contacts`, contactData);
 
-      // 3. Create property for that client
-      const property = await apiPost<{ id: string }>("/api/admin/properties", {
-        ...propertyData,
-        clientId: client.id,
-      });
+      // 3. Create property for that client — fix deferred references
+      const propPayload = { ...propertyData, clientId: client.id };
+      // Replace deferred POC ID with the real contact ID
+      if (propPayload.pointOfContactId === "__deferred__" || propPayload.pointOfContactId === "NONE") {
+        propPayload.pointOfContactId = contact?.id ?? null;
+      }
+      const property = await apiPost<{ id: string }>("/api/admin/properties", propPayload);
 
       // 4. Create job for that property
       const job = await apiPost<{ id: string }>("/api/admin/jobs", {
@@ -94,6 +96,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
       onDone();
       onComplete?.();
     } catch (err: any) {
+      console.error("NewJobSetupWorkflow batch save failed:", err);
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Setup failed. Some items may have been partially created.", err) });
       reset();
       onDone();
@@ -112,6 +115,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           clientId="__deferred__"
           preventOutsideClose
           deferSave
+          defaultIsPrimary
           onSaved={(data) => {
             setContactData(data);
             go("client");
@@ -145,6 +149,9 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           role="ADMIN"
           preventOutsideClose
           deferSave
+          deferredClient={clientData ? { id: "__deferred__", displayName: clientData.displayName } : undefined}
+          deferredContact={contactData ? { firstName: contactData.firstName, lastName: contactData.lastName, email: contactData.email, phone: contactData.phone } : undefined}
+          defaultClientId="__deferred__"
           onSaved={(data) => {
             setPropertyData(data);
             go("job");
@@ -160,6 +167,8 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           mode="CREATE"
           preventOutsideClose
           deferSave
+          deferredProperty={propertyData ? { id: "__deferred__", displayName: propertyData.displayName } : undefined}
+          defaultPropertyId="__deferred__"
           onSaved={(data) => {
             setJobData(data);
             go("occurrence");
