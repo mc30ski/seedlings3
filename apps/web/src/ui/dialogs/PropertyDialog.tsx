@@ -51,6 +51,10 @@ type Props = {
   defaultClientId?: string;
   preventOutsideClose?: boolean;
   deferSave?: boolean;
+  /** When in deferred mode, provide the client directly instead of loading from API */
+  deferredClient?: { id: string; displayName: string };
+  /** When in deferred mode, provide the contact directly */
+  deferredContact?: { firstName: string; lastName: string; email?: string | null; phone?: string | null };
 };
 
 export default function PropertyDialog({
@@ -63,6 +67,8 @@ export default function PropertyDialog({
   defaultClientId,
   preventOutsideClose,
   deferSave,
+  deferredClient,
+  deferredContact,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -174,6 +180,13 @@ export default function PropertyDialog({
   useEffect(() => {
     if (!open) return;
 
+    // In deferred mode with a deferred client, use that directly
+    if (deferSave && deferredClient) {
+      setClients([deferredClient]);
+      setClientValue([deferredClient.id]);
+      return;
+    }
+
     (async () => {
       try {
         const path = isAdmin
@@ -243,6 +256,20 @@ export default function PropertyDialog({
     if (!cid) {
       setContacts([]);
       setPocValue(["NONE"]);
+      return;
+    }
+
+    // In deferred mode, use the deferred contact directly
+    if (deferSave && deferredContact && cid === "__deferred__") {
+      const ct = {
+        id: "__deferred__",
+        firstName: deferredContact.firstName,
+        lastName: deferredContact.lastName,
+        email: deferredContact.email ?? null,
+        phone: deferredContact.phone ?? null,
+      };
+      setContacts([ct]);
+      setPocValue([ct.id]);
       return;
     }
 

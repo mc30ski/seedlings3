@@ -40,6 +40,7 @@ type Props = {
   preventOutsideClose?: boolean;
   /** When true, onSaved receives form data instead of saving to API */
   deferSave?: boolean;
+  defaultIsPrimary?: boolean;
 };
 
 const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -55,6 +56,7 @@ export default function ClientDialog({
   clientId,
   preventOutsideClose,
   deferSave,
+  defaultIsPrimary,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -134,7 +136,7 @@ export default function ClientDialog({
       setNickname("");
       setEmail("");
       setPhone("");
-      setIsPrimary(false);
+      setIsPrimary(defaultIsPrimary ?? false);
       setShowMissingWarning(false);
     }
   }, [open, mode, initial]);
@@ -296,31 +298,29 @@ export default function ClientDialog({
                     </Select.Root>
                   </div>
                 </HStack>
-                <HStack gap={3}>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">First name</Text>
-                    <Input
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="First name"
-                      autoFocus
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Nickname</Text>
-                    <Input
-                      value={nickname}
-                      onChange={(e) => setNickname(e.target.value)}
-                      placeholder="Optional"
-                    />
-                  </div>
-                </HStack>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">First name</Text>
+                  <Input
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="First name"
+                    autoFocus
+                  />
+                </div>
                 <div style={{ flex: 1 }}>
                   <Text mb="1">Last name</Text>
                   <Input
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     placeholder="Last name"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Text mb="1">Nickname</Text>
+                  <Input
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    placeholder="Optional"
                   />
                 </div>
                 <div style={{ flex: 1 }}>

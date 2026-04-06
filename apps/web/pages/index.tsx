@@ -24,6 +24,7 @@ import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
+import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase } from "@/src/ui/tabs/AdminTasksTab";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
@@ -282,22 +283,25 @@ export default function HomePage() {
     },
   ];
 
+  const isTraineeWorker = me?.workerType === "TRAINEE";
+  const traineeMessage = "Trainees cannot use this feature. Please work with your team lead.";
+
   const workerTasks: TaskDef[] = [
     {
       id: "plan-route",
       label: "Plan Next Work Day",
-      description: "Optimize your route for tomorrow and claim nearby jobs",
+      description: "Confirm your claimed jobs for tomorrow and notify clients",
       icon: FiNavigation,
       colorPalette: "blue",
       bgColor: "blue.50",
+      disabled: isTraineeWorker,
+      disabledMessage: traineeMessage,
       onClick: () => {
-        setConfirmAction({
-          title: "Coming Soon",
-          message: "Route planning workflow is coming soon. In the meantime, use the Routes tab.",
-          confirmLabel: "OK",
-          colorPalette: "blue",
-          onConfirm: () => {},
-        });
+        if (isTraineeWorker) {
+          setConfirmAction({ title: "Restricted", message: traineeMessage, confirmLabel: "OK", colorPalette: "blue", onConfirm: () => {} });
+        } else {
+          setActiveWorkflow("plan-workday");
+        }
       },
     },
     {
@@ -307,14 +311,20 @@ export default function HomePage() {
       icon: FiSun,
       colorPalette: "green",
       bgColor: "green.50",
+      disabled: isTraineeWorker,
+      disabledMessage: traineeMessage,
       onClick: () => {
-        setConfirmAction({
-          title: "Coming Soon",
-          message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
-          confirmLabel: "OK",
-          colorPalette: "green",
-          onConfirm: () => {},
-        });
+        if (isTraineeWorker) {
+          setConfirmAction({ title: "Restricted", message: traineeMessage, confirmLabel: "OK", colorPalette: "blue", onConfirm: () => {} });
+        } else {
+          setConfirmAction({
+            title: "Coming Soon",
+            message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
+            confirmLabel: "OK",
+            colorPalette: "green",
+            onConfirm: () => {},
+          });
+        }
       },
     },
   ];
@@ -549,6 +559,11 @@ export default function HomePage() {
               </HStack>
             </Box>
           )}
+          <PlanWorkdayWorkflow
+            active={activeWorkflow === "plan-workday"}
+            onDone={() => setActiveWorkflow(null)}
+            myId={me?.id}
+          />
           <ScrollableUnderlineTabs
             tabs={workerTabs}
             value={workerInnerTab}
@@ -821,6 +836,16 @@ export default function HomePage() {
     };
     window.addEventListener("navigate:workerTab", onNav as EventListener);
     return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
+  }, []);
+
+  // Listen for workflow triggers (e.g., returning from Routes to Plan Workday)
+  useEffect(() => {
+    const onTrigger = (e: Event) => {
+      const { id } = (e as CustomEvent).detail || {};
+      if (id) setActiveWorkflow(id);
+    };
+    window.addEventListener("trigger:workflow", onTrigger as EventListener);
+    return () => window.removeEventListener("trigger:workflow", onTrigger as EventListener);
   }, []);
 
   const goToApprovals = useCallback(() => {

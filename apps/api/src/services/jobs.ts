@@ -351,11 +351,14 @@ export const jobs: ServicesJobs = {
       }
 
       if (assigneeIds.length) {
+        // First assignee is the claimer (assignedById = themselves)
+        // Subsequent assignees are assigned by the claimer
+        const claimerId = assigneeIds[0];
         await tx.jobOccurrenceAssignee.createMany({
-          data: assigneeIds.map((uid) => ({
+          data: assigneeIds.map((uid, i) => ({
             occurrenceId: occ.id,
             userId: uid,
-            assignedById: currentUserId,
+            assignedById: i === 0 ? uid : claimerId,
           })),
           skipDuplicates: true,
         });
@@ -429,11 +432,21 @@ export const jobs: ServicesJobs = {
         },
       });
 
+      // Preserve existing claimer if possible, otherwise first person is claimer
+      const existing = await tx.jobOccurrenceAssignee.findMany({
+        where: { occurrenceId },
+        orderBy: { assignedAt: "asc" },
+      });
+      const existingClaimer = existing.find((a) => a.assignedById === a.userId);
+      const claimerId = existingClaimer && input.assigneeUserIds.includes(existingClaimer.userId)
+        ? existingClaimer.userId
+        : input.assigneeUserIds[0];
+
       await tx.jobOccurrenceAssignee.createMany({
         data: input.assigneeUserIds.map((uid) => ({
           occurrenceId,
           userId: uid,
-          assignedById: input.assignedById ?? currentUserId,
+          assignedById: uid === claimerId ? uid : claimerId,
         })),
         skipDuplicates: true,
       });

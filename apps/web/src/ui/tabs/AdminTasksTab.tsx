@@ -11,6 +11,8 @@ type TaskDef = {
   colorPalette: string;
   bgColor: string;
   onClick: () => void;
+  disabled?: boolean;
+  disabledMessage?: string;
 };
 
 type Props = {
@@ -29,13 +31,14 @@ export default function AdminTasksTab({ tasks }: Props) {
             p={5}
             rounded="xl"
             borderWidth="1px"
-            borderColor={`${task.colorPalette}.200`}
-            bg={task.bgColor}
+            borderColor={task.disabled ? "gray.200" : `${task.colorPalette}.200`}
+            bg={task.disabled ? "gray.50" : task.bgColor}
             textAlign="left"
-            cursor="pointer"
+            cursor={task.disabled ? "default" : "pointer"}
+            opacity={task.disabled ? 0.7 : 1}
             transition="all 0.15s"
-            _hover={{ shadow: "md", borderColor: `${task.colorPalette}.400` }}
-            _active={{ shadow: "sm" }}
+            _hover={task.disabled ? {} : { shadow: "md", borderColor: `${task.colorPalette}.400` }}
+            _active={task.disabled ? {} : { shadow: "sm" }}
             display="flex"
             alignItems="center"
             gap={4}
@@ -43,8 +46,8 @@ export default function AdminTasksTab({ tasks }: Props) {
             <Box
               p={3}
               rounded="lg"
-              bg={`${task.colorPalette}.100`}
-              color={`${task.colorPalette}.600`}
+              bg={task.disabled ? "gray.100" : `${task.colorPalette}.100`}
+              color={task.disabled ? "gray.400" : `${task.colorPalette}.600`}
               display="flex"
               alignItems="center"
               justifyContent="center"
@@ -53,11 +56,11 @@ export default function AdminTasksTab({ tasks }: Props) {
               <task.icon size={24} />
             </Box>
             <Box flex="1">
-              <Text fontWeight="semibold" fontSize="md" color={`${task.colorPalette}.800`}>
+              <Text fontWeight="semibold" fontSize="md" color={task.disabled ? "gray.500" : `${task.colorPalette}.800`}>
                 {task.label}
               </Text>
-              <Text fontSize="sm" color={`${task.colorPalette}.600`} mt={0.5}>
-                {task.description}
+              <Text fontSize="sm" color={task.disabled ? "gray.400" : `${task.colorPalette}.600`} mt={0.5}>
+                {task.disabled && task.disabledMessage ? task.disabledMessage : task.description}
               </Text>
             </Box>
           </Box>
