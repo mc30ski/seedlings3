@@ -193,7 +193,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
       {expanded && loading && <Spinner size="sm" />}
 
       {expanded && photos.length > 0 && (
-        <SimpleGrid columns={{ base: 3, md: 4 }} gap={2} w="full">
+        <SimpleGrid columns={{ base: 3, md: 4 }} gap={2} w="full" maxH="200px" overflowY="auto" overflowX="hidden">
           {photos.map((p) => (
             <Box
               key={p.id}
