@@ -518,6 +518,11 @@ export const jobs: ServicesJobs = {
           orderBy: { createdAt: "asc" as const },
         },
         _count: { select: { photos: true } },
+        photos: {
+          select: { id: true, r2Key: true, contentType: true, createdAt: true },
+          orderBy: { createdAt: "desc" as const },
+          take: 3,
+        },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });

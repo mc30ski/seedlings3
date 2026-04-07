@@ -480,6 +480,18 @@ export default function PropertiesTab({
                       Lot size: {(p as any).lotSize.toLocaleString()} {(p as any).lotSizeUnit ?? "sqft"}
                     </Text>
                   )}
+                  {(p.lastPhotos ?? []).length > 0 && (
+                    <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+                      {(p.lastPhotos ?? []).map((photo) => (
+                        <img
+                          key={photo.id}
+                          src={photo.url}
+                          alt=""
+                          style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4 }}
+                        />
+                      ))}
+                    </Box>
+                  )}
                 </VStack>
               </Card.Body>
               {forAdmin && (
