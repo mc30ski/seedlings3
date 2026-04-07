@@ -1076,6 +1076,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
                       </Text>
                     )}
+                    {(occ.photos ?? []).length > 0 && (
+                      <Box display="flex" gap={1} mt={1} flexWrap="wrap">
+                        {(occ.photos ?? []).map((p) => (
+                          <img
+                            key={p.id}
+                            src={p.url}
+                            alt=""
+                            style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
+                          />
+                        ))}
+                      </Box>
+                    )}
                   </Card.Body>
                 ) : (
                 <Card.Body pt="0">

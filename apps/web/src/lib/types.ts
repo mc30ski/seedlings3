@@ -170,6 +170,7 @@ export type Property = {
   createdAt: string | undefined;
   updatedAt?: string | undefined;
   archivedAt?: string | undefined;
+  lastPhotos?: { id: string; url: string; contentType?: string | null }[];
 };
 
 export type Client = {
@@ -518,6 +519,7 @@ export type WorkerOccurrence = {
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
   _count?: { photos: number };
+  photos?: { id: string; url: string; contentType?: string | null }[];
   job: {
     id: string;
     kind: JobKind;

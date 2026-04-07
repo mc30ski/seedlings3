@@ -32,13 +32,12 @@ type PersistedState = {
   currentIndex: number; // which occurrence we're on in the confirm step
 };
 
-function loadState(): PersistedState | null {
+function loadState(todayKey: string): PersistedState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    const today = new Date().toISOString().slice(0, 10);
-    if (data.date !== today) {
+    if (data.date !== todayKey) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -78,7 +77,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   // Restore persisted state on mount
   useEffect(() => {
     if (!active) return;
-    const saved = loadState();
+    const saved = loadState(today);
     if (saved && saved.step === "routes") {
       setTargetDate(saved.targetDate);
       setStep("routes");
@@ -256,9 +255,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
-                  <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-                    <Text fontSize="xs" color="yellow.700">This feature is a work in progress and will change substantially. Use for preview purposes only.</Text>
-                  </Box>
                   <Text fontSize="sm" color="fg.muted">
                     Choose which day to plan. We'll go through your claimed jobs so you can confirm or release them.
                   </Text>

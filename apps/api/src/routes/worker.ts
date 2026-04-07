@@ -105,13 +105,47 @@ export default async function workerRoutes(app: FastifyInstance) {
       kind?: string | "ALL";
       limit?: string;
     };
-    return services.properties.list({
+    const props = await services.properties.list({
       q,
       clientId,
       status: status as any,
       kind: (kind as any) ?? "ALL",
       limit: limit ? Number(limit) : undefined,
     });
+    // Attach last 3 photos from most recent occurrence for each property
+    const propIds = (Array.isArray(props) ? props : []).map((p: any) => p.id);
+    if (propIds.length > 0) {
+      const photos = await prisma.jobOccurrencePhoto.findMany({
+        where: {
+          occurrence: { job: { propertyId: { in: propIds } } },
+        },
+        select: {
+          id: true, r2Key: true, contentType: true, createdAt: true,
+          occurrence: { select: { job: { select: { propertyId: true } } } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      // Group by property, take last 3 per property
+      const byProperty = new Map<string, any[]>();
+      for (const p of photos) {
+        const pid = p.occurrence.job.propertyId;
+        if (!byProperty.has(pid)) byProperty.set(pid, []);
+        const arr = byProperty.get(pid)!;
+        if (arr.length < 3) arr.push(p);
+      }
+      // Generate URLs and attach
+      for (const prop of (Array.isArray(props) ? props : []) as any[]) {
+        const propPhotos = byProperty.get(prop.id) ?? [];
+        prop.lastPhotos = await Promise.all(
+          propPhotos.map(async (p: any) => ({
+            id: p.id,
+            url: await getDownloadUrl(p.r2Key),
+            contentType: p.contentType,
+          }))
+        );
+      }
+    }
+    return props;
   });
 
   app.get("/properties/:id", workerGuard, async (req: any) => {
@@ -122,7 +156,20 @@ export default async function workerRoutes(app: FastifyInstance) {
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    return services.jobs.listAllOccurrences({ from, to });
+    const occs = await services.jobs.listAllOccurrences({ from, to });
+    // Generate download URLs for preview photos
+    for (const occ of occs) {
+      if ((occ as any).photos?.length) {
+        (occ as any).photos = await Promise.all(
+          (occ as any).photos.map(async (p: any) => ({
+            id: p.id,
+            url: await getDownloadUrl(p.r2Key),
+            contentType: p.contentType,
+          }))
+        );
+      }
+    }
+    return occs;
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {
