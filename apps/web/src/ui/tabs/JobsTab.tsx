@@ -876,6 +876,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 variant="outline"
                 borderColor={cardBorderColor}
                 bg={cardBg}
+                overflow="hidden"
                 css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
