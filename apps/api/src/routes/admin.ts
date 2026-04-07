@@ -299,13 +299,46 @@ export default async function adminRoutes(app: FastifyInstance) {
       kind?: string | "ALL";
       limit?: string;
     };
-    return services.properties.list({
+    const props = await services.properties.list({
       q,
       clientId,
       status: status as any,
       kind: (kind as any) ?? "ALL",
       limit: limit ? Number(limit) : undefined,
     });
+    // Attach last 3 photos from most recent occurrence for each property
+    const propIds = (Array.isArray(props) ? props : []).map((p: any) => p.id);
+    if (propIds.length > 0) {
+      const { getDownloadUrl } = await import("../lib/r2");
+      const photos = await prisma.jobOccurrencePhoto.findMany({
+        where: {
+          occurrence: { job: { propertyId: { in: propIds } } },
+        },
+        select: {
+          id: true, r2Key: true, contentType: true, createdAt: true,
+          occurrence: { select: { job: { select: { propertyId: true } } } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      const byProperty = new Map<string, any[]>();
+      for (const p of photos) {
+        const pid = p.occurrence.job.propertyId;
+        if (!byProperty.has(pid)) byProperty.set(pid, []);
+        const arr = byProperty.get(pid)!;
+        if (arr.length < 3) arr.push(p);
+      }
+      for (const prop of (Array.isArray(props) ? props : []) as any[]) {
+        const propPhotos = byProperty.get(prop.id) ?? [];
+        prop.lastPhotos = await Promise.all(
+          propPhotos.map(async (p: any) => ({
+            id: p.id,
+            url: await getDownloadUrl(p.r2Key),
+            contentType: p.contentType,
+          }))
+        );
+      }
+    }
+    return props;
   });
 
   app.get("/admin/properties/:id", adminGuard, async (req: any) => {

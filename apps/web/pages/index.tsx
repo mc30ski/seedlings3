@@ -128,7 +128,7 @@ export default function HomePage() {
   const adminWorkflows: WorkflowDef[] = [
     {
       id: "new-job-setup",
-      label: "New Job",
+      label: "New Job Service",
       colorPalette: "green",
       onClick: () => setActiveWorkflow("new-job-setup"),
     },
@@ -168,7 +168,7 @@ export default function HomePage() {
   const adminTasks: TaskDef[] = [
     {
       id: "new-job-setup",
-      label: "New Job",
+      label: "New Job Service",
       description: "Create a new client, property, job, and first occurrence",
       icon: FiPlus,
       colorPalette: "green",
