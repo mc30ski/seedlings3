@@ -692,41 +692,9 @@ export default function HomePage() {
 
   const BRAND_ICON_H = 26; // px
 
-  // De-dup the Clerk button robustly
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
-  const [showLocalUserBtn, setShowLocalUserBtn] = useState(false);
   const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-
-    const isInsideHeader = (el: Element | null) =>
-      !!(el && headerBtnRef.current && headerBtnRef.current.contains(el));
-
-    const hasExternalClerkButton = () => {
-      const nodes = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '.cl-userButton-root, [class*="cl-userButton"], [data-cl-component="UserButton"]'
-        )
-      );
-      return nodes.some((n) => !isInsideHeader(n));
-    };
-
-    const raf = requestAnimationFrame(() => {
-      setShowLocalUserBtn(!hasExternalClerkButton());
-    });
-
-    const obs = new MutationObserver(() => {
-      const external = hasExternalClerkButton();
-      setShowLocalUserBtn(!external);
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-
-    return () => {
-      cancelAnimationFrame(raf);
-      obs.disconnect();
-    };
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   // ---- Pending approvals badge (admin only) ----
   const [pending, setPending] = useState<number>(0);
@@ -772,6 +740,10 @@ export default function HomePage() {
 
   useEffect(() => {
     void loadOverdue();
+    // Also refresh when jobs change (e.g., status update, payment accepted)
+    const onRefresh = () => void loadOverdue();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadOverdue]);
 
   const goToOverdue = useCallback(() => {
@@ -916,28 +888,15 @@ export default function HomePage() {
           columnGap={3}
           minH={`${BRAND_ICON_H}px`}
         >
-          {/* Left: brand with your 1px nudge */}
+          {/* Left: brand + alert badges */}
           <Box
             display="flex"
             alignItems="center"
+            gap="8px"
             lineHeight="0"
             style={{ transform: "translateY(1px)" }}
           >
-            <BrandLabel size={BRAND_ICON_H} showText />
-          </Box>
-
-          {/* Right: badge (left) + Clerk (right). Order is enforced explicitly. */}
-          <HStack
-            ref={headerBtnRef}
-            justifySelf="end"
-            align="center"
-            gap="8px"
-            lineHeight="0"
-            minH={`${BRAND_ICON_H}px`}
-            // Ensure LTR flow
-            style={{ direction: "ltr" }}
-          >
-            {/* Pending badge */}
+            <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
             {isAdmin && pending > 0 && (
               <Box
                 as="button"
@@ -957,13 +916,10 @@ export default function HomePage() {
                 justifyContent="center"
                 _hover={{ bg: "orange.500" }}
                 _active={{ transform: "translateY(1px)" }}
-                style={{ order: 0 }}
               >
                 {pending}
               </Box>
             )}
-
-            {/* Overdue badge */}
             {isAdmin && overdueCount > 0 && (
               <Box
                 as="button"
@@ -983,16 +939,26 @@ export default function HomePage() {
                 justifyContent="center"
                 _hover={{ bg: "red.600" }}
                 _active={{ transform: "translateY(1px)" }}
-                style={{ order: 0 }}
               >
                 {overdueCount}
               </Box>
             )}
+          </Box>
 
-            {/* Worker type badge (order 1) */}
+          {/* Right: worker type + Clerk */}
+          <div
+            ref={headerBtnRef as any}
+            style={{
+              justifySelf: "end",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              lineHeight: 0,
+              minHeight: `${BRAND_ICON_H}px`,
+            }}
+          >
             {me && hasAnyRole && (
               <Badge
-                style={{ order: 1 }}
                 size="sm"
                 variant="subtle"
                 colorPalette={
@@ -1010,34 +976,30 @@ export default function HomePage() {
               </Badge>
             )}
             {isSignedIn && !hasAnyRole && (
-              <Badge style={{ order: 1 }} size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
+              <Badge size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
                 Client
               </Badge>
             )}
-
-            {/* Clerk (order 2) */}
-            <Box style={{ order: 2 }} display="flex" alignItems="center">
-              {mounted && showLocalUserBtn ? (
-                <UserButton
-                  appearance={{
-                    elements: {
-                      rootBox: { display: "flex", alignItems: "center" },
-                      userButtonBox: { display: "flex", alignItems: "center" },
-                      userButtonTrigger: {
-                        display: "flex",
-                        alignItems: "center",
-                        padding: 0,
-                      },
-                      userButtonAvatarBox: {
-                        display: "flex",
-                        alignItems: "center",
-                      },
+            {mounted ? (
+              <UserButton
+                appearance={{
+                  elements: {
+                    rootBox: { display: "flex", alignItems: "center" },
+                    userButtonBox: { display: "flex", alignItems: "center" },
+                    userButtonTrigger: {
+                      display: "flex",
+                      alignItems: "center",
+                      padding: 0,
                     },
-                  }}
-                />
-              ) : null}
-            </Box>
-          </HStack>
+                    userButtonAvatarBox: {
+                      display: "flex",
+                      alignItems: "center",
+                    },
+                  },
+                }}
+              />
+            ) : null}
+          </div>
         </Box>
       </Box>
       {!meLoading && me && !me.isApproved && topTab !== "client" && <AwaitingApprovalNotice />}
