@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, Container, HStack, Select, Text, createListCollection } from "@chakra-ui/react";
+import { Badge, Box, Container, HStack, Text } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
@@ -36,7 +36,6 @@ import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
 import InlineMessage from "@/src/ui/components/InlineMessage";
-import { type WorkflowDef } from "@/src/ui/components/WorkflowToolbar";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -126,45 +125,7 @@ export default function HomePage() {
     }
   }
 
-  const adminWorkflows: WorkflowDef[] = [
-    {
-      id: "new-job-setup",
-      label: "New Job Service",
-      colorPalette: "green",
-      onClick: () => setActiveWorkflow("new-job-setup"),
-    },
-    {
-      id: "export-summary",
-      label: "Summary",
-      colorPalette: "blue",
-      shades: [50, 600, 300, 100] as [number, number, number, number],
-      onClick: () =>
-        setConfirmAction({
-          title: "Export Summary",
-          message: "This will download a human-readable summary of all your data. Continue?",
-          confirmLabel: "Download",
-          colorPalette: "blue",
-          onConfirm: downloadSummary,
-        }),
-    },
-    {
-      id: "export-raw",
-      label: "Export All",
-      colorPalette: "blue",
-      shades: [200, 900, 500, 300] as [number, number, number, number],
-      onClick: () =>
-        setConfirmAction({
-          title: "Export Raw Data",
-          message: "This will download all raw data as JSON. This may be a large file. Continue?",
-          confirmLabel: "Download",
-          colorPalette: "blue",
-          onConfirm: downloadRaw,
-        }),
-    },
-  ];
 
-  const workflowItems = adminWorkflows.map((w) => ({ label: w.label, value: w.id }));
-  const workflowCollection = createListCollection({ items: workflowItems });
 
   const adminTasks: TaskDef[] = [
     {
@@ -788,17 +749,19 @@ export default function HomePage() {
     void loadPending();
   }, [loadPending]);
 
-  // Overdue count for admin header badge
+  // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
     if (!isAdmin) { setOverdueCount(0); return; }
     try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const toStr = yesterday.toISOString().slice(0, 10);
+      const now = new Date();
+      const yesterdayET = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      yesterdayET.setDate(yesterdayET.getDate() - 1);
+      const toStr = `${yesterdayET.getFullYear()}-${String(yesterdayET.getMonth() + 1).padStart(2, "0")}-${String(yesterdayET.getDate()).padStart(2, "0")}`;
       const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
+      const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.status === "SCHEDULED" && o.startAt
+        (o) => o.startAt && !excludeStatuses.has(o.status)
       ).length;
       setOverdueCount(count);
     } catch {

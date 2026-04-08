@@ -480,7 +480,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     }
     if (overdueActive) {
-      rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.status !== "ACCEPTED" && occ.status !== "REJECTED");
+      rows = rows.filter((occ) => occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.status !== "ACCEPTED" && occ.status !== "REJECTED" && occ.status !== "CANCELED");
     }
     // If navigated from Reminders to a specific occurrence, show only that one (bypass all filters)
     if (highlightOccId) {
