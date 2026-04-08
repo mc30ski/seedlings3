@@ -729,10 +729,15 @@ export default function HomePage() {
       const toStr = bizDateKey(yesterday);
       const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
       const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-      const count = (Array.isArray(list) ? list : []).filter(
+      const overdueItems = (Array.isArray(list) ? list : []).filter(
         (o) => o.startAt && !excludeStatuses.has(o.status) && bizDateKey(o.startAt) < today
-      ).length;
-      setOverdueCount(count);
+      );
+      console.log("[Overdue debug]", overdueItems.map((o) => ({
+        id: o.id, status: o.status, startAt: o.startAt, bizDate: bizDateKey(o.startAt),
+        property: o.job?.property?.displayName, isTentative: o.isTentative,
+        workflow: o.workflow,
+      })));
+      setOverdueCount(overdueItems.length);
     } catch {
       setOverdueCount(0);
     }
