@@ -936,17 +936,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
                 <Card.Header py="3" px="4" pb="0">
                   {isCardCompact ? (
-                    /* ── COMPACT HEADER: stacked rows ── */
-                    <VStack align="stretch" gap={1}>
-                      {/* Row 1: Full-width title */}
+                    /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
+                    <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
                       <Text fontSize="sm" fontWeight="semibold">
                         {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
                           <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
                         )}
                       </Text>
-                      {/* Row 2: Badges — wrapping */}
-                      <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                      <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                         {isTentative ? (
                           <StatusBadge status="Tentative" palette="orange" variant="solid" />
                         ) : occ.status !== "SCHEDULED" ? (
@@ -962,54 +960,57 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
                       </Box>
-                    </VStack>
+                    </Box>
                     ) : (
-                      /* ── EXPANDED HEADER: stacked rows ── */
+                      /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                       <VStack align="stretch" gap={1}>
-                        <Text fontSize="md" fontWeight="semibold">
-                          {occ.job?.property?.displayName}
-                          {occ.job?.property?.client?.displayName && (
-                            <> — {clientLabel(occ.job.property.client.displayName)}</>
-                          )}
-                        </Text>
-                        <Box fontSize="sm">
-                          <MapLink address={[
-                              occ.job?.property?.street1,
-                              occ.job?.property?.city,
-                              occ.job?.property?.state,
-                            ]
-                              .filter(Boolean)
-                              .join(", ")} />
-                        </Box>
-                        <HStack gap={3} fontSize="xs">
-                          {occ.job?.property?.displayName && (
-                            <TextLink
-                              text="View Property"
-                              onClick={() =>
-                                openEventSearch(
-                                  "jobsTabToPropertiesTabSearch",
-                                  occ.job?.property?.displayName ?? "",
-                                  forAdmin,
-                                  occ.job?.property?.id,
-                                )
-                              }
-                            />
-                          )}
-                          {occ.job?.property?.client?.displayName && (
-                            <TextLink
-                              text="View Client"
-                              onClick={() =>
-                                openEventSearch(
-                                  "jobsTabToClientsTabSearch",
-                                  occ.job?.property?.client?.displayName ?? "",
-                                  forAdmin,
-                                  occ.job?.property?.client?.id,
-                                )
-                              }
-                            />
-                          )}
-                        </HStack>
-                        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                        <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "flex-start" }}>
+                          <VStack align="start" gap={0} flex="1" minW={0}>
+                            <Text fontSize="md" fontWeight="semibold">
+                              {occ.job?.property?.displayName}
+                              {occ.job?.property?.client?.displayName && (
+                                <> — {clientLabel(occ.job.property.client.displayName)}</>
+                              )}
+                            </Text>
+                            <Box fontSize="sm">
+                              <MapLink address={[
+                                  occ.job?.property?.street1,
+                                  occ.job?.property?.city,
+                                  occ.job?.property?.state,
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ")} />
+                            </Box>
+                            <HStack gap={3} fontSize="xs">
+                              {occ.job?.property?.displayName && (
+                                <TextLink
+                                  text="View Property"
+                                  onClick={() =>
+                                    openEventSearch(
+                                      "jobsTabToPropertiesTabSearch",
+                                      occ.job?.property?.displayName ?? "",
+                                      forAdmin,
+                                      occ.job?.property?.id,
+                                    )
+                                  }
+                                />
+                              )}
+                              {occ.job?.property?.client?.displayName && (
+                                <TextLink
+                                  text="View Client"
+                                  onClick={() =>
+                                    openEventSearch(
+                                      "jobsTabToClientsTabSearch",
+                                      occ.job?.property?.client?.displayName ?? "",
+                                      forAdmin,
+                                      occ.job?.property?.client?.id,
+                                    )
+                                  }
+                                />
+                              )}
+                            </HStack>
+                          </VStack>
+                          <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                           {isTentative ? (
                             <StatusBadge status="Tentative" palette="orange" variant="solid" />
                           ) : occ.status !== "SCHEDULED" ? (
@@ -1032,6 +1033,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
                             </span>
                           )}
+                          </Box>
                         </Box>
                       </VStack>
                     )}
