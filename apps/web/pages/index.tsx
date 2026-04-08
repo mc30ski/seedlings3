@@ -7,7 +7,7 @@ import { apiGet } from "@/src/lib/api";
 import { bizDateKey } from "@/src/lib/lib";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
-import { UserButton, useAuth } from "@clerk/clerk-react";
+import { UserButton, SignInButton, useAuth } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
@@ -984,7 +984,7 @@ export default function HomePage() {
                 Client
               </Badge>
             )}
-            {mounted ? (
+            {mounted && isSignedIn ? (
               <UserButton
                 appearance={{
                   elements: {
@@ -1002,6 +1002,17 @@ export default function HomePage() {
                   },
                 }}
               />
+            ) : mounted && !isSignedIn ? (
+              <SignInButton mode="modal">
+                <Text
+                  as="button"
+                  fontSize="sm"
+                  color="blue.600"
+                  _hover={{ textDecoration: "underline" }}
+                >
+                  Sign in
+                </Text>
+              </SignInButton>
             ) : null}
           </div>
         </Box>
