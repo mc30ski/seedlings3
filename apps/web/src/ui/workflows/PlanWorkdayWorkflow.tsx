@@ -113,6 +113,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   const [copied, setCopied] = useState(false);
   const [editableMessage, setEditableMessage] = useState("");
   const [contactMap, setContactMap] = useState<Map<string, { phone?: string | null; email?: string | null; firstName?: string }>>(new Map());
+  const [propertyPhotos, setPropertyPhotos] = useState<Map<string, { id: string; url: string }[]>>(new Map());
+  const [viewPhoto, setViewPhoto] = useState<{ url: string } | null>(null);
   const [marginPercent, setMarginPercent] = useState(20);
   const [equipmentCost, setEquipmentCost] = useState(0);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -224,6 +226,21 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       );
       setContactMap(cMap);
 
+      // Fetch last photos for each property
+      const propIds = [...new Set(myOccs.map((o) => o.job?.property?.id).filter(Boolean))] as string[];
+      if (propIds.length > 0) {
+        try {
+          const props = await apiGet<any[]>("/api/properties?limit=500");
+          const pMap = new Map<string, { id: string; url: string }[]>();
+          for (const p of (Array.isArray(props) ? props : [])) {
+            if (propIds.includes(p.id) && p.lastPhotos?.length) {
+              pMap.set(p.id, p.lastPhotos);
+            }
+          }
+          setPropertyPhotos(pMap);
+        } catch {}
+      }
+
       return myOccs;
     } catch {
       setOccurrences([]);
@@ -246,6 +263,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   function advance() {
     setCopied(false);
     setEditableMessage("");
+    setViewPhoto(null);
     const nextIdx = currentIndex + 1;
     if (nextIdx >= occurrences.length) {
       setStep("equipment");
@@ -289,6 +307,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   function goBack() {
     setCopied(false);
     setEditableMessage("");
+    setViewPhoto(null);
     if (currentIndex > 0) {
       const prevIdx = currentIndex - 1;
       setCurrentIndex(prevIdx);
@@ -912,6 +931,85 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     <Text fontSize="xs" color="fg.muted" mt={1}>{occ.notes}</Text>
                   )}
                 </Box>
+
+                {/* Last photos from this property */}
+                {(() => {
+                  const photos = propertyPhotos.get(prop?.id ?? "") ?? [];
+                  if (photos.length === 0) return null;
+                  return (
+                    <Box w="full">
+                      <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={1}>Recent photos:</Text>
+                      <Box display="flex" gap={1} flexWrap="wrap">
+                        {photos.map((p) => (
+                          <img
+                            key={p.id}
+                            src={p.url}
+                            alt=""
+                            onClick={(e) => { e.stopPropagation(); setViewPhoto(p); }}
+                            style={{
+                              width: 56,
+                              height: 56,
+                              objectFit: "cover",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                            }}
+                          />
+                        ))}
+                      </Box>
+                    </Box>
+                  );
+                })()}
+
+                {/* Photo viewer overlay */}
+                {viewPhoto && (
+                  <div
+                    onClick={() => setViewPhoto(null)}
+                    style={{
+                      position: "fixed",
+                      inset: 0,
+                      zIndex: 99999,
+                      background: "rgba(0,0,0,0.85)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <img
+                      src={viewPhoto.url}
+                      alt=""
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        maxWidth: "90vw",
+                        maxHeight: "85vh",
+                        objectFit: "contain",
+                        borderRadius: 8,
+                        cursor: "default",
+                      }}
+                    />
+                    <button
+                      onClick={() => setViewPhoto(null)}
+                      style={{
+                        position: "absolute",
+                        top: 16,
+                        right: 16,
+                        background: "rgba(255,255,255,0.2)",
+                        border: "none",
+                        color: "white",
+                        fontSize: 24,
+                        cursor: "pointer",
+                        borderRadius: "50%",
+                        width: 36,
+                        height: 36,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
 
                 {/* Copy/paste message */}
                 <Box w="full">
