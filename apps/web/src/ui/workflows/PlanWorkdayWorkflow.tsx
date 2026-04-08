@@ -97,9 +97,10 @@ type Props = {
   onDone: () => void;
   myId?: string;
   defaultTargetDate?: string;
+  trainee?: boolean;
 };
 
-export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate }: Props) {
+export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, trainee }: Props) {
   const today = bizDateKey(new Date());
   const tomorrow = bizDateKey(new Date(Date.now() + 86400000));
 
@@ -157,6 +158,14 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       setTargetDate(saved.targetDate);
       setConfirmedIds(saved.confirmedIds);
       setReleasedIds(saved.releasedIds);
+    } else if (trainee) {
+      // Trainee mode — skip straight to summary with date picker
+      setStep("loading");
+      const tDate = defaultTargetDate ?? tomorrow;
+      setTargetDate(tDate);
+      loadOccurrences(tDate).then(() => {
+        setStep("summary");
+      });
     } else {
       // Fresh start — find next day with jobs, defaulting to tomorrow
       setStep("loading");
