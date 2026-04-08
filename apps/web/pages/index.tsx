@@ -76,6 +76,7 @@ export default function HomePage() {
   const [meLoading, setMeLoading] = useState(true);
   const isAdmin = hasRole(me?.roles, "ADMIN");
   const isWorker = hasRole(me?.roles, "WORKER");
+  const isSuper = hasRole(me?.roles, "SUPER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
   const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
@@ -198,14 +199,21 @@ export default function HomePage() {
       icon: FiDatabase,
       colorPalette: "purple",
       bgColor: "purple.50",
-      onClick: () =>
-        setConfirmAction({
-          title: "Export Raw Data",
-          message: "This will download all raw data as JSON. This may be a large file. Continue?",
-          confirmLabel: "Download",
-          colorPalette: "purple",
-          onConfirm: downloadRaw,
-        }),
+      disabled: !isSuper,
+      disabledMessage: "Only super administrators can export all data.",
+      onClick: () => {
+        if (!isSuper) {
+          setConfirmAction({ title: "Restricted", message: "Only super administrators can export all data.", confirmLabel: "OK", colorPalette: "purple", onConfirm: () => {} });
+        } else {
+          setConfirmAction({
+            title: "Export Raw Data",
+            message: "This will download all raw data as JSON. This may be a large file. Continue?",
+            confirmLabel: "Download",
+            colorPalette: "purple",
+            onConfirm: downloadRaw,
+          });
+        }
+      },
     },
   ];
 
