@@ -836,7 +836,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   </Button>
                   <HStack gap={2}>
                     <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
-                    <Button size="sm" colorPalette="blue" onClick={handleClose}>Done</Button>
+                    <Button size="sm" colorPalette="green" onClick={handleClose}>Finish</Button>
                   </HStack>
                 </HStack>
               </Dialog.Footer>
@@ -1019,7 +1019,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   </Button>
                   <HStack gap={2}>
                     <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
-                    <Button size="sm" variant="ghost" colorPalette="blue" onClick={advance}>
+                    <Button size="sm" colorPalette="blue" onClick={advance}>
                       Next
                     </Button>
                   </HStack>
