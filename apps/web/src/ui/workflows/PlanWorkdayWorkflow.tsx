@@ -159,13 +159,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       setConfirmedIds(saved.confirmedIds);
       setReleasedIds(saved.releasedIds);
     } else if (trainee) {
-      // Trainee mode — skip straight to summary with date picker
-      setStep("loading");
-      const tDate = defaultTargetDate ?? tomorrow;
-      setTargetDate(tDate);
-      loadOccurrences(tDate).then(() => {
-        setStep("summary");
-      });
+      // Trainee mode — show date picker, then go to summary
+      setStep("choose-date");
     } else {
       // Fresh start — find next day with jobs, defaulting to tomorrow
       setStep("loading");
@@ -393,10 +388,13 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   if (!active || step === "idle") return null;
 
   function startWithDate() {
-    // Check if there are any jobs first
     setStep("loading");
     loadOccurrences(targetDate).then((occs) => {
-      if (occs.length > 0) {
+      if (trainee) {
+        // Trainee — skip to summary directly
+        setStep("summary");
+        persist({ step: "summary", targetDate });
+      } else if (occs.length > 0) {
         setStep("routes");
         persist({ step: "routes", targetDate });
       } else {
@@ -426,7 +424,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={(e) => { if (!e.open) { onDone(); } }}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <Dialog.Title fontSize="md">Plan Work Day</Dialog.Title>
@@ -469,7 +467,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={(e) => { if (!e.open) { persist({ step: "routes" }); onDone(); } }}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
@@ -538,7 +536,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={() => {}}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="6">
               <Box textAlign="center" py={6}>
                 <Spinner size="lg" />
@@ -556,7 +554,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={(e) => { if (!e.open) { persist({ step: "equipment" }); onDone(); } }}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
@@ -651,7 +649,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={(e) => { if (!e.open) handleClose(); }}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <Dialog.Title fontSize="md">No Jobs Found</Dialog.Title>
@@ -699,7 +697,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Dialog.Root open onOpenChange={(e) => { if (!e.open) { persist({ step: "summary" }); onDone(); } }}>
         <Portal>
           <Dialog.Backdrop />
-          <Dialog.Positioner>
+          <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.Header>
                 <VStack align="start" gap={1} w="full">
@@ -854,17 +852,19 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
-                <HStack justify="space-between" w="full">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    colorPalette="gray"
-                    onClick={() => { setStep("equipment"); persist({ step: "equipment" }); }}
-                  >
-                    Back
-                  </Button>
+                <HStack justify={trainee ? "flex-end" : "space-between"} w="full">
+                  {!trainee && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      colorPalette="gray"
+                      onClick={() => { setStep("equipment"); persist({ step: "equipment" }); }}
+                    >
+                      Back
+                    </Button>
+                  )}
                   <HStack gap={2}>
-                    <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>
+                    {!trainee && <Button size="sm" variant="ghost" colorPalette="red" onClick={handleClose}>Cancel</Button>}
                     <Button size="sm" colorPalette="green" onClick={handleClose}>Finish</Button>
                   </HStack>
                 </HStack>
@@ -903,7 +903,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     >
       <Portal>
         <Dialog.Backdrop />
-        <Dialog.Positioner>
+        <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
           <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
               <VStack align="start" gap={1} w="full">
