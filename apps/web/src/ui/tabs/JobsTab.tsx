@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -176,6 +176,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     window.addEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
     return () => window.removeEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
   }, []);
+
+  // Check for "show overdue" flag from header badge — on mount and via event
+  const applyOverdue = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setStatusFilter(["ALL"]);
+    setOverdueActive(true);
+  }, []);
+
+  useEffect(() => {
+    if (!forAdmin) return;
+    try {
+      const flag = localStorage.getItem("seedlings_adminJobs_showOverdue");
+      if (flag) {
+        localStorage.removeItem("seedlings_adminJobs_showOverdue");
+        applyOverdue();
+      }
+    } catch {}
+    const onShowOverdue = () => applyOverdue();
+    window.addEventListener("adminJobs:showOverdue", onShowOverdue);
+    return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
+  }, [forAdmin]);
 
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "nextMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);

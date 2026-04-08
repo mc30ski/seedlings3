@@ -111,6 +111,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   const [releasedIds, setReleasedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editableMessage, setEditableMessage] = useState("");
   const [contactMap, setContactMap] = useState<Map<string, { phone?: string | null; email?: string | null; firstName?: string }>>(new Map());
   const [marginPercent, setMarginPercent] = useState(20);
   const [equipmentCost, setEquipmentCost] = useState(0);
@@ -244,6 +245,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
 
   function advance() {
     setCopied(false);
+    setEditableMessage("");
     const nextIdx = currentIndex + 1;
     if (nextIdx >= occurrences.length) {
       setStep("equipment");
@@ -286,6 +288,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
 
   function goBack() {
     setCopied(false);
+    setEditableMessage("");
     if (currentIndex > 0) {
       const prevIdx = currentIndex - 1;
       setCurrentIndex(prevIdx);
@@ -326,11 +329,11 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     return `${greeting} This is Seedlings Lawn Care. Just confirming we'll be out${locationNote} on ${dateStr}. Please let us know if anything has changed or if there's anything we should be aware of. Thanks!`;
   }
 
-  function getSendInfo(occ: WorkerOccurrence) {
+  function getSendInfo(occ: WorkerOccurrence, customMessage?: string) {
     const clientId = occ.job?.property?.client?.id;
     const contact = clientId ? contactMap.get(clientId) : null;
-    const message = generateMessage(occ);
-    const encoded = encodeURIComponent(message);
+    const msg = customMessage || generateMessage(occ);
+    const encoded = encodeURIComponent(msg);
 
     if (contact?.phone) {
       // Clean phone number — keep digits and leading +
@@ -858,7 +861,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   }
 
   const prop = occ.job?.property;
-  const message = generateMessage(occ);
+  const defaultMessage = generateMessage(occ);
+  const message = editableMessage || defaultMessage;
+  // Initialize editable message on first render of each job
+  if (!editableMessage && defaultMessage) setEditableMessage(defaultMessage);
   const progress = `${currentIndex + 1} of ${occurrences.length}`;
 
   return (
@@ -935,18 +941,22 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       </button>
                     </HStack>
                   </HStack>
-                  <Box
-                    p={3}
-                    bg="blue.50"
-                    rounded="md"
-                    fontSize="xs"
-                    color="blue.800"
-                    whiteSpace="pre-wrap"
-                    borderWidth="1px"
-                    borderColor="blue.200"
-                  >
-                    {message}
-                  </Box>
+                  <textarea
+                    value={editableMessage}
+                    onChange={(e) => setEditableMessage(e.target.value)}
+                    rows={4}
+                    style={{
+                      width: "100%",
+                      padding: "10px",
+                      fontSize: "12px",
+                      color: "#2c5282",
+                      backgroundColor: "#ebf8ff",
+                      border: "1px solid #bee3f8",
+                      borderRadius: "6px",
+                      resize: "vertical",
+                      lineHeight: 1.5,
+                    }}
+                  />
                 </Box>
               </VStack>
             </Dialog.Body>
@@ -963,7 +973,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     {busy ? "Releasing..." : "Release"}
                   </Button>
                   {(() => {
-                    const send = getSendInfo(occ);
+                    const send = getSendInfo(occ, editableMessage);
                     return (
                       <a
                         href={send.available ? send.url : undefined}
@@ -985,7 +995,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                           gap: "4px",
                         }}
                       >
-                        {send.method === "sms" ? "💬" : send.method === "email" ? "✉️" : ""}
+                        {send.method === "sms" ? "💬 " : send.method === "email" ? "✉️ " : ""}
                         {send.available ? send.label : "No contact info"}
                       </a>
                     );

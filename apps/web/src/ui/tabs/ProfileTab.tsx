@@ -43,9 +43,26 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   const [homeBase, setHomeBase] = useState("");
   const [savedHomeBase, setSavedHomeBase] = useState("");
   const [availableDays, setAvailableDays] = useState<number[]>([]);
+  const [savedAvailableDays, setSavedAvailableDays] = useState<number[]>([]);
   const [availableHours, setAvailableHours] = useState(4);
+  const [savedAvailableHours, setSavedAvailableHours] = useState(4);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const hasChanges = homeBase !== savedHomeBase ||
+    JSON.stringify(availableDays) !== JSON.stringify(savedAvailableDays) ||
+    availableHours !== savedAvailableHours;
+
+  // Warn on page refresh/close with unsaved changes
+  useEffect(() => {
+    if (!hasChanges) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasChanges]);
 
   // The user we're viewing — admin can switch, worker is always self
   const targetUserId = isAdmin && selectedUserId ? selectedUserId : me?.id ?? "";
@@ -93,7 +110,9 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
       setHomeBase(me.homeBaseAddress ?? "");
       setSavedHomeBase(me.homeBaseAddress ?? "");
       setAvailableDays(me.availableDays ?? []);
+      setSavedAvailableDays(me.availableDays ?? []);
       setAvailableHours(me.availableHoursPerDay ?? 4);
+      setSavedAvailableHours(me.availableHoursPerDay ?? 4);
       return;
     }
     // Admin viewing another user — fetch their data
@@ -102,8 +121,12 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
       .then((u) => {
         setHomeBase(u?.homeBaseAddress ?? "");
         setSavedHomeBase(u?.homeBaseAddress ?? "");
-        setAvailableDays(u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : []);
-        setAvailableHours(u?.availableHoursPerDay ?? 4);
+        const days = u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : [];
+        setAvailableDays(days);
+        setSavedAvailableDays(days);
+        const hours = u?.availableHoursPerDay ?? 4;
+        setAvailableHours(hours);
+        setSavedAvailableHours(hours);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -121,6 +144,8 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         availableHoursPerDay: availableHours,
       });
       setSavedHomeBase(homeBase);
+      setSavedAvailableDays([...availableDays]);
+      setSavedAvailableHours(availableHours);
       publishInlineMessage({ type: "SUCCESS", text: "Profile saved." });
       onProfileUpdated?.();
     } catch (err: any) {
@@ -279,23 +304,12 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                 <Text fontSize="xs" color="fg.muted">
                   Used as the starting point for route optimization.
                 </Text>
-                <HStack gap={2}>
-                  <AddressAutocomplete
-                    value={homeBase}
-                    onChange={setHomeBase}
-                    placeholder="e.g. 123 Main St, Chapel Hill, NC"
-                    showValidation
-                  />
-                  <Button
-                    size="sm"
-                    colorPalette="green"
-                    flexShrink={0}
-                    onClick={saveProfile}
-                    disabled={saving || homeBase === savedHomeBase}
-                  >
-                    {saving ? "Saving..." : "Save"}
-                  </Button>
-                </HStack>
+                <AddressAutocomplete
+                  value={homeBase}
+                  onChange={setHomeBase}
+                  placeholder="e.g. 123 Main St, Chapel Hill, NC"
+                  showValidation
+                />
               </VStack>
             </Card.Body>
           </Card.Root>
@@ -371,13 +385,20 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
             </Card.Body>
           </Card.Root>
 
+          {/* Unsaved changes warning */}
+          {hasChanges && (
+            <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+              <Text fontSize="xs" color="yellow.700">You have unsaved changes.</Text>
+            </Box>
+          )}
+
           {/* Save button */}
           <Box>
             <Button
               size="sm"
               colorPalette="green"
               onClick={saveProfile}
-              disabled={saving}
+              disabled={saving || !hasChanges}
             >
               {saving ? "Saving..." : "Save Profile"}
             </Button>
