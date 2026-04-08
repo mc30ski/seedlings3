@@ -766,13 +766,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     ) : null
                   ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                      No charge
+                      No charge (employee)
                     </Badge>
                   ) : e.dailyRate != null && e.dailyRate > 0 ? (
                     <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
-                      ${e.dailyRate.toFixed(2)}/day
+                      ${e.dailyRate.toFixed(2)}/day rental
                     </Badge>
-                  ) : null}
+                  ) : (
+                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                      No charge
+                    </Badge>
+                  )}
                   {e.holder && (
                     <Text color="orange.500" fontWeight="medium">
                       {e.holder.state === "CHECKED_OUT" ? "Out: " : "Reserved: "}
@@ -824,7 +828,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
                   <HStack gap={2} mt={0.5}>
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                      No charge
+                      No charge — employees use equipment at no cost
                     </Badge>
                     {e.dailyRate != null && e.dailyRate > 0 && (
                       <Text fontSize="xs" color="gray.400">(${e.dailyRate.toFixed(2)}/day for contractors)</Text>
@@ -1077,14 +1081,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                           {[reserveConfirmEquip.brand, reserveConfirmEquip.model].filter(Boolean).join(" ")}
                         </Text>
                       )}
-                      {reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 && (
-                        (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                          <Badge colorPalette="green" variant="subtle" fontSize="xs" mt={1}>No charge</Badge>
-                        ) : (
-                          <Badge colorPalette="orange" variant="solid" fontSize="xs" mt={1}>
-                            ${reserveConfirmEquip.dailyRate.toFixed(2)}/day rental
-                          </Badge>
-                        )
+                      {(me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                        <Box mt={1} p={2} bg="green.50" rounded="md">
+                          <Text fontSize="xs" color="green.700" fontWeight="medium">
+                            No charge — employees use equipment at no cost
+                          </Text>
+                        </Box>
+                      ) : reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 ? (
+                        <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
+                          <Text fontSize="sm" color="orange.800" fontWeight="semibold">
+                            Rental charge: ${reserveConfirmEquip.dailyRate.toFixed(2)}/day
+                          </Text>
+                          <Text fontSize="xs" color="orange.600" mt={0.5}>
+                            This amount will be deducted from your payout for each day the equipment is reserved.
+                          </Text>
+                        </Box>
+                      ) : (
+                        <Box mt={1} p={2} bg="green.50" rounded="md">
+                          <Text fontSize="xs" color="green.700" fontWeight="medium">No rental charge for this equipment</Text>
+                        </Box>
                       )}
                     </Box>
 

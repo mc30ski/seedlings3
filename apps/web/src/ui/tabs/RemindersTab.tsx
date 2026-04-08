@@ -217,7 +217,10 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
                     colorPalette="blue"
                     variant="solid"
                     onClick={() => {
-                      // Navigate to Routes tab
+                      // Set date to tomorrow and navigate to Routes tab
+                      const tomorrow = new Date(Date.now() + 86400000);
+                      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+                      try { localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(tomorrowStr)); } catch {}
                       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
                     }}
                   >
