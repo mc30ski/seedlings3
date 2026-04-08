@@ -120,9 +120,10 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
 
   const notDismissed = (occ: WorkerOccurrence) => !dismissed.has(occ.id);
 
+  const overdueExclude = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
   const overdue = myItems.filter((occ) => {
-    if (occ.status !== "SCHEDULED") return false;
     if (!occ.startAt) return false;
+    if (overdueExclude.has(occ.status)) return false;
     return bizDateKey(occ.startAt) < today;
   }).filter(notDismissed);
 
