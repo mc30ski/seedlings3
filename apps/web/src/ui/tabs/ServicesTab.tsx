@@ -812,7 +812,7 @@ export default function ServicesTab({
                 if (tf === "ONE_OFF" && !o.isOneOff) return false;
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
-                if (overdueActive && (o.status === "CLOSED" || o.status === "ARCHIVED" || o.status === "ACCEPTED" || o.status === "REJECTED" || o.status === "CANCELED")) return false;
+                if (overdueActive && (new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
                 if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
                 if (osf === "UNCLAIMED") return isUnclaimed;
