@@ -372,8 +372,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       }
 
       const overdueExcludeCount = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      const todayKey = bizDateKey(new Date());
       const count = list.filter((o) => {
-        return o.startAt && !overdueExcludeCount.has(o.status as string);
+        return o.startAt && !overdueExcludeCount.has(o.status as string) && bizDateKey(o.startAt) < todayKey;
       }).length;
       setOverdueCount(count);
     } catch {

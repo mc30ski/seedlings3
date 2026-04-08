@@ -747,7 +747,11 @@ export default function HomePage() {
   }, [loadOverdue]);
 
   const goToOverdue = useCallback(() => {
-    try { localStorage.setItem("seedlings_adminJobs_showOverdue", "1"); } catch {}
+    try {
+      localStorage.setItem("seedlings_adminJobs_showOverdue", "1");
+      // Clear the "View as" user filter so all overdue jobs are shown
+      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+    } catch {}
     setTopTab("admin");
     setAdminInnerTab("admin-jobs");
     // Also dispatch event for when component is already mounted

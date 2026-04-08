@@ -17,6 +17,16 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 
+  // Clear selected workers when overdue is triggered from header
+  useEffect(() => {
+    const onShowOverdue = () => {
+      setSelectedWorkers([]);
+      setSearchText("");
+    };
+    window.addEventListener("adminJobs:showOverdue", onShowOverdue);
+    return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
+  }, []);
+
   useEffect(() => {
     apiGet<Worker[]>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list : []))
