@@ -935,15 +935,43 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Box>
                 )}
                 <Card.Header py="3" px="4" pb="0">
-                  <HStack gap={3} justify="space-between" align="center">
-                    <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold" overflow="hidden" textOverflow="ellipsis" whiteSpace={isCardCompact ? "nowrap" : undefined} maxW="100%">
+                  {isCardCompact ? (
+                    /* ── COMPACT HEADER: stacked rows ── */
+                    <VStack align="stretch" gap={1}>
+                      {/* Row 1: Full-width title */}
+                      <Text fontSize="sm" fontWeight="semibold">
                         {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
-                          <> — {clientLabel(occ.job.property.client.displayName)}</>
+                          <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
                         )}
                       </Text>
-                      {!isCardCompact && (
+                      {/* Row 2: Badges — wrapping */}
+                      <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                        {isTentative ? (
+                          <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                        ) : occ.status !== "SCHEDULED" ? (
+                          <StatusBadge
+                            status={occ.status}
+                            palette={occurrenceStatusColor(occ.status)}
+                            variant="solid"
+                          />
+                        ) : null}
+                        {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
+                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
+                        {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
+                        {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
+                      </Box>
+                    </VStack>
+                    ) : (
+                      /* ── EXPANDED HEADER: stacked rows ── */
+                      <VStack align="stretch" gap={1}>
+                        <Text fontSize="md" fontWeight="semibold">
+                          {occ.job?.property?.displayName}
+                          {occ.job?.property?.client?.displayName && (
+                            <> — {clientLabel(occ.job.property.client.displayName)}</>
+                          )}
+                        </Text>
                         <Box fontSize="sm">
                           <MapLink address={[
                               occ.job?.property?.street1,
@@ -953,8 +981,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               .filter(Boolean)
                               .join(", ")} />
                         </Box>
-                      )}
-                      {!isCardCompact && (
                         <HStack gap={3} fontSize="xs">
                           {occ.job?.property?.displayName && (
                             <TextLink
@@ -983,120 +1009,78 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             />
                           )}
                         </HStack>
-                      )}
-                    </VStack>
-                    {isCardCompact ? (
-                      <Box display="flex" gap={1} flexShrink={0} flexWrap="wrap" justifyContent="flex-end" alignItems="center" maxW="50%">
-                        {isTentative ? (
-                          <StatusBadge status="Tentative" palette="orange" variant="solid" />
-                        ) : occ.status !== "SCHEDULED" ? (
-                          <StatusBadge
-                            status={occ.status}
-                            palette={occurrenceStatusColor(occ.status)}
-                            variant="solid"
-                          />
-                        ) : null}
-                        {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
-                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
-                        {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
-                        {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
-                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
-                      </Box>
-                    ) : (
-                      <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
-                        {isTentative ? (
-                          <StatusBadge
-                            status="Tentative"
-                            palette="orange"
-                            variant="solid"
-                          />
-                        ) : occ.status !== "SCHEDULED" ? (
-                          <StatusBadge
-                            status={occ.status}
-                            palette={occurrenceStatusColor(occ.status)}
-                            variant="solid"
-                          />
-                        ) : null}
-                        {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
-                          <StatusBadge
-                            status="Repeating"
-                            palette="blue"
-                            variant="outline"
-                          />
-                        )}
-                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                          <StatusBadge
-                            status="Estimate"
-                            palette="purple"
-                            variant="solid"
-                          />
-                        )}
-                        {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
-                          <StatusBadge
-                            status="One-off"
-                            palette="gray"
-                            variant="solid"
-                          />
-                        )}
-                        {isAdminOnlyOcc && (
-                          <StatusBadge status="Administered" palette="red" variant="outline" />
-                        )}
-                        {(occ.price ?? 0) >= highValueThreshold && (
-                          <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
-                            <StatusBadge
-                              status="Insured Only"
-                              palette="yellow"
-                              variant="solid"
-                            />
-                          </span>
-                        )}
-                      </Box>
+                        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                          {isTentative ? (
+                            <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                          ) : occ.status !== "SCHEDULED" ? (
+                            <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
+                          ) : null}
+                          {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
+                            <StatusBadge status="Repeating" palette="blue" variant="outline" />
+                          )}
+                          {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                            <StatusBadge status="Estimate" palette="purple" variant="solid" />
+                          )}
+                          {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
+                            <StatusBadge status="One-off" palette="gray" variant="solid" />
+                          )}
+                          {isAdminOnlyOcc && (
+                            <StatusBadge status="Administered" palette="red" variant="outline" />
+                          )}
+                          {(occ.price ?? 0) >= highValueThreshold && (
+                            <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
+                              <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
+                            </span>
+                          )}
+                        </Box>
+                      </VStack>
                     )}
-                  </HStack>
                 </Card.Header>
 
                 {isCardCompact ? (
-                  <Card.Body py="3" px="4" pt="0" overflow="hidden">
-                    <Box display="flex" gap={2} fontSize="xs" flexWrap="wrap" alignItems="center">
-                      {(occ as any).jobType && (
-                        <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                          {jobTypeLabel((occ as any).jobType)}
-                        </Badge>
-                      )}
-                      {occ.price != null && (
-                        <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                          ${occ.price.toFixed(2)}
-                        </Badge>
-                      )}
-                      {occ.payment && (
-                        <Badge colorPalette="teal" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                          Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
-                        </Badge>
-                      )}
-                      {occ.price != null && !occ.payment && (() => {
-                        const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                        const net = occ.price! - expTotal;
-                        const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-                        const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
-                        const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                        const deduction = Math.round(net * pct) / 100;
-                        const payout = net - deduction;
-                        return pct > 0 ? (
-                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                            Payout: ${payout.toFixed(2)}
+                  <Card.Body py="3" px="4" pt="1" overflow="hidden">
+                    <VStack align="start" gap={1} fontSize="xs">
+                      {/* Job type */}
+                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {(occ as any).jobType ? jobTypeLabel((occ as any).jobType) : "Unspecified"}
+                      </Badge>
+                      {/* Price / payout / time */}
+                      <Box display="flex" gap={2} flexWrap="wrap" alignItems="center">
+                        {occ.price != null && (
+                          <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                            ${occ.price.toFixed(2)}
                           </Badge>
-                        ) : null;
-                      })()}
-                      {(() => {
-                        const actual = actualMinutes(occ);
-                        if (actual != null && occ.estimatedMinutes) {
-                          const color = actual <= occ.estimatedMinutes ? "green.600" : "red.600";
-                          return <Text color={color} fontWeight="medium">{formatDuration(actual)}</Text>;
-                        }
-                        if (occ.estimatedMinutes != null) return <Text color="fg.muted">{formatDuration(occ.estimatedMinutes)}</Text>;
-                        return null;
-                      })()}
-                    </Box>
+                        )}
+                        {occ.payment && (
+                          <Badge colorPalette="teal" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                            Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                          </Badge>
+                        )}
+                        {occ.price != null && !occ.payment && (() => {
+                          const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                          const net = occ.price! - expTotal;
+                          const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+                          const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
+                          const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
+                          const deduction = Math.round(net * pct) / 100;
+                          const payout = net - deduction;
+                          return pct > 0 ? (
+                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                              Payout: ${payout.toFixed(2)}
+                            </Badge>
+                          ) : null;
+                        })()}
+                        {(() => {
+                          const actual = actualMinutes(occ);
+                          if (actual != null && occ.estimatedMinutes) {
+                            const color = actual <= occ.estimatedMinutes ? "green.600" : "red.600";
+                            return <Text color={color} fontWeight="medium">{formatDuration(actual)}</Text>;
+                          }
+                          if (occ.estimatedMinutes != null) return <Text color="fg.muted">{formatDuration(occ.estimatedMinutes)}</Text>;
+                          return null;
+                        })()}
+                      </Box>
+                    </VStack>
                     {!isUnassigned && (
                       <Text fontSize="xs" fontWeight="semibold" color="teal.700" mt={1}>
                         {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
