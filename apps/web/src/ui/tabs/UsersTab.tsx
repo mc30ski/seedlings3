@@ -112,6 +112,24 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     "users_role", "all"
   );
   const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
+
+  // Check for pending approvals navigation from header badge — on mount and via event
+  useEffect(() => {
+    try {
+      const flag = sessionStorage.getItem("admin:usersOpenOnce");
+      if (flag) {
+        sessionStorage.removeItem("admin:usersOpenOnce");
+        const { status: targetStatus } = JSON.parse(flag);
+        if (targetStatus) setStatus(targetStatus);
+      }
+    } catch {}
+    const onOpen = (e: Event) => {
+      const { status: targetStatus } = (e as CustomEvent).detail || {};
+      if (targetStatus) setStatus(targetStatus);
+    };
+    window.addEventListener("admin:openUsers", onOpen as EventListener);
+    return () => window.removeEventListener("admin:openUsers", onOpen as EventListener);
+  }, []);
   const [showInfoOverlay, setShowInfoOverlay] = useState(() => {
     try {
       return !localStorage.getItem("seedlings_users_infoDismissed");

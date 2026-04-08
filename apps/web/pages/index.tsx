@@ -780,6 +780,38 @@ export default function HomePage() {
     void loadPending();
   }, [loadPending]);
 
+  // Overdue count for admin header badge
+  const [overdueCount, setOverdueCount] = useState(0);
+  const loadOverdue = useCallback(async () => {
+    if (!isAdmin) { setOverdueCount(0); return; }
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const toStr = yesterday.toISOString().slice(0, 10);
+      const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
+      const count = (Array.isArray(list) ? list : []).filter(
+        (o) => o.status === "SCHEDULED" && o.startAt
+      ).length;
+      setOverdueCount(count);
+    } catch {
+      setOverdueCount(0);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    void loadOverdue();
+  }, [loadOverdue]);
+
+  const goToOverdue = useCallback(() => {
+    try { localStorage.setItem("seedlings_adminJobs_showOverdue", "1"); } catch {}
+    setTopTab("admin");
+    setAdminInnerTab("admin-jobs");
+    // Also dispatch event for when component is already mounted
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
+    }, 100);
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -877,11 +909,17 @@ export default function HomePage() {
   }, [router.query.workflow, me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {
-    window.dispatchEvent(
-      new CustomEvent("admin:openUsers", {
-        detail: { status: "pending" as const },
-      })
-    );
+    window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending" }));
+    setTopTab("admin");
+    setAdminInnerTab("users");
+    // Also dispatch event for when component is already mounted
+    setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("admin:openUsers", {
+          detail: { status: "pending" as const },
+        })
+      );
+    }, 100);
   }, []);
 
   return (
@@ -932,8 +970,34 @@ export default function HomePage() {
               <Box
                 as="button"
                 aria-label="Pending approvals"
-                title="Pending approvals"
+                title={`${pending} pending approval${pending !== 1 ? "s" : ""}`}
                 onClick={goToApprovals}
+                width="22px"
+                height="22px"
+                minW="22px"
+                borderRadius="9999px"
+                bg="orange.400"
+                color="white"
+                fontSize="12px"
+                fontWeight="bold"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "orange.500" }}
+                _active={{ transform: "translateY(1px)" }}
+                style={{ order: 0 }}
+              >
+                {pending}
+              </Box>
+            )}
+
+            {/* Overdue badge */}
+            {isAdmin && overdueCount > 0 && (
+              <Box
+                as="button"
+                aria-label="Overdue jobs"
+                title={`${overdueCount} overdue job${overdueCount !== 1 ? "s" : ""}`}
+                onClick={goToOverdue}
                 width="22px"
                 height="22px"
                 minW="22px"
@@ -949,7 +1013,7 @@ export default function HomePage() {
                 _active={{ transform: "translateY(1px)" }}
                 style={{ order: 0 }}
               >
-                {pending}
+                {overdueCount}
               </Box>
             )}
 
