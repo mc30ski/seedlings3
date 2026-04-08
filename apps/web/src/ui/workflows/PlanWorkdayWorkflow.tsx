@@ -114,7 +114,8 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   const [editableMessage, setEditableMessage] = useState("");
   const [contactMap, setContactMap] = useState<Map<string, { phone?: string | null; email?: string | null; firstName?: string }>>(new Map());
   const [propertyPhotos, setPropertyPhotos] = useState<Map<string, { id: string; url: string }[]>>(new Map());
-  const [viewPhoto, setViewPhoto] = useState<{ url: string } | null>(null);
+  const [viewPhotoIndex, setViewPhotoIndex] = useState<number>(-1);
+  const [viewPhotoList, setViewPhotoList] = useState<{ id: string; url: string }[]>([]);
   const [marginPercent, setMarginPercent] = useState(20);
   const [equipmentCost, setEquipmentCost] = useState(0);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -263,7 +264,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   function advance() {
     setCopied(false);
     setEditableMessage("");
-    setViewPhoto(null);
+    setViewPhotoIndex(-1);
     const nextIdx = currentIndex + 1;
     if (nextIdx >= occurrences.length) {
       setStep("equipment");
@@ -307,7 +308,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   function goBack() {
     setCopied(false);
     setEditableMessage("");
-    setViewPhoto(null);
+    setViewPhotoIndex(-1);
     if (currentIndex > 0) {
       const prevIdx = currentIndex - 1;
       setCurrentIndex(prevIdx);
@@ -940,12 +941,12 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     <Box w="full">
                       <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={1}>Recent photos:</Text>
                       <Box display="flex" gap={1} flexWrap="wrap">
-                        {photos.map((p) => (
+                        {photos.map((p, i) => (
                           <img
                             key={p.id}
                             src={p.url}
                             alt=""
-                            onClick={(e) => { e.stopPropagation(); setViewPhoto(p); }}
+                            onClick={(e) => { e.stopPropagation(); setViewPhotoList(photos); setViewPhotoIndex(i); }}
                             style={{
                               width: 56,
                               height: 56,
@@ -960,10 +961,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   );
                 })()}
 
-                {/* Photo viewer overlay */}
-                {viewPhoto && (
+                {/* Photo viewer overlay with navigation */}
+                {viewPhotoIndex >= 0 && viewPhotoList.length > 0 && (
                   <div
-                    onClick={() => setViewPhoto(null)}
+                    onClick={() => setViewPhotoIndex(-1)}
                     style={{
                       position: "fixed",
                       inset: 0,
@@ -975,20 +976,86 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       cursor: "pointer",
                     }}
                   >
+                    {/* Left arrow */}
+                    {viewPhotoIndex > 0 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setViewPhotoIndex(viewPhotoIndex - 1); }}
+                        style={{
+                          position: "absolute",
+                          left: 12,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "rgba(255,255,255,0.2)",
+                          border: "none",
+                          color: "white",
+                          fontSize: 28,
+                          cursor: "pointer",
+                          borderRadius: "50%",
+                          width: 44,
+                          height: 44,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        ‹
+                      </button>
+                    )}
+
                     <img
-                      src={viewPhoto.url}
+                      src={viewPhotoList[viewPhotoIndex]?.url}
                       alt=""
                       onClick={(e) => e.stopPropagation()}
                       style={{
-                        maxWidth: "90vw",
-                        maxHeight: "85vh",
+                        maxWidth: "85vw",
+                        maxHeight: "80vh",
                         objectFit: "contain",
                         borderRadius: 8,
                         cursor: "default",
                       }}
                     />
+
+                    {/* Right arrow */}
+                    {viewPhotoIndex < viewPhotoList.length - 1 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setViewPhotoIndex(viewPhotoIndex + 1); }}
+                        style={{
+                          position: "absolute",
+                          right: 12,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "rgba(255,255,255,0.2)",
+                          border: "none",
+                          color: "white",
+                          fontSize: 28,
+                          cursor: "pointer",
+                          borderRadius: "50%",
+                          width: 44,
+                          height: 44,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        ›
+                      </button>
+                    )}
+
+                    {/* Counter */}
+                    <div style={{
+                      position: "absolute",
+                      bottom: 16,
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      color: "rgba(255,255,255,0.7)",
+                      fontSize: 14,
+                    }}>
+                      {viewPhotoIndex + 1} / {viewPhotoList.length}
+                    </div>
+
+                    {/* Close */}
                     <button
-                      onClick={() => setViewPhoto(null)}
+                      onClick={() => setViewPhotoIndex(-1)}
                       style={{
                         position: "absolute",
                         top: 16,
