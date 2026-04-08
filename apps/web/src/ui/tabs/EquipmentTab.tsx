@@ -734,9 +734,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             }}
           >
             <Card.Header py="3" px="4" pb="0">
-              <HStack gap={3} justify="space-between" align="center">
-                <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold" flex="1" minW={0}>{e.shortDesc}</Text>
-                <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
+              <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
+                <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">{e.shortDesc}</Text>
+                <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                   <StatusBadge
                     status={e.status ?? ""}
                     palette={equipmentStatusColor(e.status ?? "")}
@@ -749,7 +749,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </span>
                   )}
                 </Box>
-              </HStack>
+              </Box>
             </Card.Header>
             {isCardCompact ? (
               <Card.Body py="3" px="4" pt="0">
