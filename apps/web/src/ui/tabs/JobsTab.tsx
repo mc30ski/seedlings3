@@ -182,6 +182,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setQ("");
     setHighlightOccId(null);
     setStatusFilter(["ALL"]);
+    setDatePreset(null);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    setDateFrom("");
+    setDateTo(localDate(yesterday));
     setOverdueActive(true);
   }, []);
 
@@ -310,6 +315,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         }
       }
       setItems(list);
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -772,7 +778,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           } : undefined}
         >
           <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
-          {!overdueActive && overdueCount > 0 && (
+          {overdueCount > 0 && (
             <Badge
               size="xs"
               colorPalette="red"
