@@ -103,7 +103,7 @@ export default function ConfirmDialog({
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full" gap={2}>
-                <Button ref={cancelRef} variant="ghost" onClick={onCancel}>
+                <Button ref={cancelRef} variant="ghost" colorPalette="red" onClick={onCancel}>
                   Cancel
                 </Button>
                 <Button

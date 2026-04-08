@@ -432,7 +432,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
                   <Text fontSize="sm" color="fg.muted">
-                    Choose which day to plan. We'll go through your claimed jobs so you can confirm or release them.
+                    {trainee
+                      ? "Choose a day to view your job summary."
+                      : "Choose which day to plan. We'll go through your claimed jobs so you can confirm or release them."}
                   </Text>
                   <Box>
                     <HStack mb={1} gap={2}>
