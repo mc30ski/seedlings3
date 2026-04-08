@@ -2,6 +2,7 @@ import { prisma } from "../db/prisma";
 import { JobOccurrenceStatus, PaymentMethod } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
+import { etMidnight, etEndOfDay } from "../lib/dates";
 
 const VALID_METHODS = Object.values(PaymentMethod);
 
@@ -196,8 +197,8 @@ export const payments: ServicesPayments = {
     const where: any = { userId };
     if (params?.from || params?.to) {
       where.createdAt = {};
-      if (params.from) where.createdAt.gte = new Date(params.from + "T00:00:00");
-      if (params.to) where.createdAt.lte = new Date(params.to + "T23:59:59.999");
+      if (params.from) where.createdAt.gte = etMidnight(params.from);
+      if (params.to) where.createdAt.lte = etEndOfDay(params.to);
     }
 
     const splits = await prisma.paymentSplit.findMany({
@@ -262,8 +263,8 @@ export const payments: ServicesPayments = {
     const where: any = {};
     if (params?.from || params?.to) {
       where.createdAt = {};
-      if (params.from) where.createdAt.gte = new Date(params.from + "T00:00:00");
-      if (params.to) where.createdAt.lte = new Date(params.to + "T23:59:59.999");
+      if (params.from) where.createdAt.gte = etMidnight(params.from);
+      if (params.to) where.createdAt.lte = etEndOfDay(params.to);
     }
     if (params?.method && params.method !== "ALL") {
       where.method = params.method;

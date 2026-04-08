@@ -48,28 +48,30 @@ export default fp(async function auth(app: FastifyInstance) {
       // Ensures a corresponding user exists in your DB
       // If not found, fetches the Clerk user (server-side SDK), derives information, and creates a new row with isApproved: false.
       const existing = await prisma.user.findUnique({ where: { clerkUserId } });
-      if (!existing) {
-        let email: string | null = null;
-        let displayName: string | null = null;
 
+      // Helper to fetch Clerk user data
+      let clerkUser: any = null;
+      async function fetchClerkUser() {
+        if (clerkUser) return clerkUser;
         try {
-          const u = await clerk.users.getUser(clerkUserId);
-          email =
-            u.primaryEmailAddress?.emailAddress ??
-            u.emailAddresses?.[0]?.emailAddress ??
-            null;
-          const name = [u.firstName, u.lastName]
-            .filter(Boolean)
-            .join(" ")
-            .trim();
-          displayName = name || u.username || null;
+          clerkUser = await clerk.users.getUser(clerkUserId);
         } catch (e) {
-          app.log.warn({
-            where: "auth",
-            reason: "clerk-users.getUser failed",
-            err: (e as Error).message,
-          });
+          app.log.warn({ where: "auth", reason: "clerk-users.getUser failed", err: (e as Error).message });
         }
+        return clerkUser;
+      }
+
+      function extractClerkData(u: any) {
+        const email = u?.primaryEmailAddress?.emailAddress ?? u?.emailAddresses?.[0]?.emailAddress ?? null;
+        const phone = u?.primaryPhoneNumber?.phoneNumber ?? u?.phoneNumbers?.[0]?.phoneNumber ?? null;
+        const name = [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim();
+        const displayName = name || u?.username || null;
+        return { email, phone, displayName };
+      }
+
+      if (!existing) {
+        const u = await fetchClerkUser();
+        const { email, phone, displayName } = extractClerkData(u);
 
         // Auto-approve if their email matches a ClientContact (they're a client, not a worker applicant)
         let isClient = false;
@@ -84,10 +86,25 @@ export default fp(async function auth(app: FastifyInstance) {
           data: {
             clerkUserId,
             email: email ?? undefined,
+            phone: phone ?? undefined,
             displayName: displayName ?? undefined,
             isApproved: isClient,
           },
         });
+      } else {
+        // Existing user — sync phone from Clerk if missing locally
+        if (!existing.phone) {
+          const u = await fetchClerkUser();
+          if (u) {
+            const { phone } = extractClerkData(u);
+            if (phone) {
+              await prisma.user.update({
+                where: { id: existing.id },
+                data: { phone },
+              });
+            }
+          }
+        }
       }
     } catch (e) {
       app.log.warn({

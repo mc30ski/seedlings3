@@ -56,6 +56,7 @@ export type Me = {
   isApproved?: boolean;
   roles?: Role[];
   email?: string | null;
+  phone?: string | null;
   displayName?: string | null;
   workerType?: WorkerType | null;
   homeBaseAddress?: string | null;

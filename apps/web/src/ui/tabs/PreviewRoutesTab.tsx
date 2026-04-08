@@ -19,6 +19,7 @@ import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
 import { fmtDate, bizDateKey } from "@/src/lib/lib";
+import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type RouteJob = {
   id: string;
@@ -157,14 +158,22 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const providerOptions = [{ value: "mapbox", label: "Mapbox" }];
 
   const [homeBase, setHomeBase] = useState("");
+  const [profileHomeBase, setProfileHomeBase] = useState("");
+  const [activeHomeBase, setActiveHomeBase] = useState(""); // what's currently "set" (persisted or profile)
   const [homeBaseLoaded, setHomeBaseLoaded] = useState(false);
-  const [homeBaseSaving, setHomeBaseSaving] = useState(false);
 
   useEffect(() => {
     const endpoint = userId ? `/api/admin/users/${userId}` : "/api/me";
     apiGet<any>(endpoint)
       .then((u) => {
-        setHomeBase(u?.homeBaseAddress ?? "");
+        const profileAddr = u?.homeBaseAddress ?? "";
+        setProfileHomeBase(profileAddr);
+        // Use localStorage override if set, otherwise profile
+        let override = "";
+        try { override = localStorage.getItem("seedlings_routes_homeBaseOverride") ?? ""; } catch {}
+        const activeAddr = override || profileAddr;
+        setHomeBase(activeAddr);
+        setActiveHomeBase(activeAddr);
         setHomeBaseLoaded(true);
         // Only set from profile if user hasn't manually set a value
         if (!availableHours || availableHours === 0) {
@@ -175,13 +184,20 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
       .catch(() => { setHomeBaseLoaded(true); setProfileHoursLoaded(true); });
   }, []);
 
-  async function saveHomeBase() {
-    setHomeBaseSaving(true);
-    try {
-      await apiPatch("/api/me/home-base", { address: homeBase });
-      publishInlineMessage({ type: "SUCCESS", text: "Home base saved." });
-    } catch {}
-    setHomeBaseSaving(false);
+  // Listen for auto-analyze trigger from workflow
+  useEffect(() => {
+    const onAutoAnalyze = () => {
+      // Small delay to let the tab render and state settle
+      setTimeout(() => loadSuggestions(), 500);
+    };
+    window.addEventListener("routes:autoAnalyze", onAutoAnalyze);
+    return () => window.removeEventListener("routes:autoAnalyze", onAutoAnalyze);
+  }, [targetDate, mode, bufferPercent, lookAhead, availableHours, routingProvider]);
+
+  function setHomeBaseOverride() {
+    try { localStorage.setItem("seedlings_routes_homeBaseOverride", homeBase); } catch {}
+    setActiveHomeBase(homeBase);
+    publishInlineMessage({ type: "SUCCESS", text: "Home base set for route planning." });
   }
 
   async function loadSuggestions() {
@@ -317,26 +333,34 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     <Box w="full" pb={8}>
       {workflowPaused && !userId && (
         <Box
-          mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.400" rounded="md"
+          mb={3} p={4} rounded="lg"
           display="flex" justifyContent="space-between" alignItems="center" gap={3}
+          style={{
+            background: "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
+            border: "2px solid #2c5282",
+            boxShadow: "0 2px 8px rgba(49, 130, 206, 0.3)",
+          }}
         >
-          <Text fontSize="sm" fontWeight="medium" color="blue.700">
-            You're in the Plan Workday workflow. When you're done here, return to continue.
+          <Text fontSize="sm" fontWeight="semibold" color="white">
+            You're in the Plan Workday workflow. Return when you're done here.
           </Text>
           <Button
             size="sm"
-            colorPalette="blue"
             flexShrink={0}
+            style={{
+              background: "white",
+              color: "#2b6cb0",
+              fontWeight: 700,
+            }}
             onClick={() => {
               try { localStorage.removeItem("seedlings_planWorkday_paused"); } catch {}
               window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
-              // Small delay to let tab switch, then trigger the workflow
               setTimeout(() => {
                 window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: "plan-workday" } }));
               }, 100);
             }}
           >
-            Return to Workflow
+            ← Return to Workflow
           </Button>
         </Box>
       )}
@@ -349,16 +373,31 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
       <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
         <Text fontSize="xs" fontWeight="medium" mb={1}>Home Base</Text>
         <HStack gap={2}>
-          <Input
+          <AddressAutocomplete
             size="sm"
             value={homeBaseLoaded ? homeBase : ""}
-            onChange={(e) => setHomeBase(e.target.value)}
+            onChange={setHomeBase}
             placeholder={homeBaseLoaded ? "e.g. 123 Main St, Chapel Hill, NC" : "Loading..."}
             disabled={!homeBaseLoaded}
+            showValidation
           />
-          <Button size="sm" onClick={saveHomeBase} loading={homeBaseSaving} disabled={!homeBaseLoaded}>
-            Save
+          <Button size="sm" onClick={setHomeBaseOverride} disabled={!homeBaseLoaded || homeBase === activeHomeBase}>
+            Set
           </Button>
+          {homeBase !== profileHomeBase && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setHomeBase(profileHomeBase);
+                setActiveHomeBase(profileHomeBase);
+                try { localStorage.removeItem("seedlings_routes_homeBaseOverride"); } catch {}
+              }}
+              disabled={!homeBaseLoaded}
+            >
+              Reset
+            </Button>
+          )}
         </HStack>
       </Box>
 

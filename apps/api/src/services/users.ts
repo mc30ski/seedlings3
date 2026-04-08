@@ -309,6 +309,7 @@ export const users: ServicesUsers = {
       isApproved: !!user!.isApproved,
       roles: (user!.roles ?? []).map((r) => r.role) as Role[],
       email: user!.email ?? null,
+      phone: user!.phone ?? null,
       displayName: user!.displayName ?? null,
       workerType: user!.workerType ?? null,
       homeBaseAddress: user!.homeBaseAddress ?? null,

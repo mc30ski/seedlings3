@@ -55,9 +55,73 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 - Returns both an internal cost breakdown and a client message
 - Triggered by "Generate Estimate" button on admin Jobs tab for estimate occurrences
 
+### Notifications (SMS & Email)
+
+| Variable | Description | Where to get it |
+|----------|-------------|-----------------|
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID (starts with `AC...`) | [Twilio Console](https://console.twilio.com) → Dashboard |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Same page, click to reveal |
+| `TWILIO_PHONE_NUMBER` | Your Twilio SMS number in E.164 format (e.g. `+19196944750`) | Twilio Console → Phone Numbers → Manage → Active Numbers |
+| `RESEND_API_KEY` | Resend email API key (starts with `re_...`) | [Resend](https://resend.com) → API Keys → Create |
+
+**Twilio (SMS) Setup:**
+- Sign up at [twilio.com](https://www.twilio.com)
+- Buy a local US number with SMS capability (~$1.15/month). Pick an area code matching your business area (e.g., 919 for Chapel Hill)
+- **A2P 10DLC Registration required** — US carriers require this for application-to-person messaging:
+  1. Go to Messaging → Trust Hub → A2P Registration
+  2. Register as Sole Proprietor (no EIN needed) or Business
+  3. Create a Messaging Service and register a Campaign (category: "Staff notifications")
+  4. Costs: ~$2 one-time brand registration + ~$1.50/month campaign fee
+  5. Takes 1-3 business days for approval
+  6. During trial/pending approval, you can still test with Verified Caller IDs
+- Total cost: ~$3/month for phone number + registration
+
+**Resend (Email) Setup:**
+- Sign up at [resend.com](https://resend.com)
+- Free tier: 100 emails/day, 3,000/month
+- Optional: verify your domain (Domains → Add Domain) to send from `notifications@seedlingslawncare.com` instead of `onboarding@resend.dev`
+
+**Notification System** (`apps/api/src/lib/notifications.ts`):
+- `sendSMS(phone, message)` — Twilio wrapper
+- `sendEmail(to, subject, body)` — Resend wrapper
+- `notifyWorker(userId, message, link)` — auto-picks SMS (if phone) or email
+
+**Daily Cron Job** (`/api/cron/daily-notifications`):
+- Configured in `vercel.json` to run daily at 6pm ET (10pm UTC)
+- Queries workers with jobs tomorrow
+- Sends SMS or email with link to start Plan Next Work Day workflow
+- Requires Vercel Pro plan for cron jobs
+
 ### Adding a New Routing Provider
 
 1. Create `apps/api/src/lib/routing/yourprovider.ts` implementing `RoutingProvider` from `types.ts`
 2. Register it in `apps/api/src/lib/routing/index.ts` in the `providers` map
 3. Add any required env vars to `.env` and Vercel
 4. The UI dropdown will automatically include it via the `/api/preview/routing-providers` endpoint
+
+### All Vercel Environment Variables (copy-paste checklist)
+
+For production deployment, add these to Vercel → Project Settings → Environment Variables:
+
+```
+DATABASE_URL=<your Neon production connection string>
+CLERK_SECRET_KEY=<your Clerk secret key>
+R2_ACCESS_KEY_ID=<your Cloudflare R2 access key>
+R2_SECRET_ACCESS_KEY=<your Cloudflare R2 secret key>
+R2_ENDPOINT=<your R2 endpoint URL>
+R2_BUCKET_NAME=<photo bucket name>
+R2_DOCS_BUCKET_NAME=<documents bucket name>
+ANTHROPIC_API_KEY=<your Anthropic API key>
+MAPBOX_ACCESS_TOKEN=<your Mapbox public token>
+TWILIO_ACCOUNT_SID=<your Twilio Account SID>
+TWILIO_AUTH_TOKEN=<your Twilio Auth Token>
+TWILIO_PHONE_NUMBER=<your Twilio number in +1XXXXXXXXXX format>
+RESEND_API_KEY=<your Resend API key>
+```
+
+For the web app (Next.js), also add:
+```
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=<your Mapbox public token>
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<your Clerk publishable key>
+NEXT_PUBLIC_API_BASE_URL=<your API URL>
+```

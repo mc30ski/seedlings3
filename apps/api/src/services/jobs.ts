@@ -22,6 +22,7 @@ import {
 import type { ServicesJobs } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 
 // ---- helpers ----
@@ -94,8 +95,8 @@ export const jobs: ServicesJobs = {
 
     if (params?.from || params?.to) {
       const dateRange: Prisma.DateTimeFilter = {};
-      if (params.from) dateRange.gte = new Date(params.from + "T00:00:00");
-      if (params.to) dateRange.lte = new Date(params.to + "T23:59:59.999");
+      if (params.from) dateRange.gte = etMidnight(params.from);
+      if (params.to) dateRange.lte = etEndOfDay(params.to);
       // Include jobs with an occurrence in range OR jobs with no occurrences yet
       andClauses.push({
         OR: [
@@ -484,8 +485,8 @@ export const jobs: ServicesJobs = {
 
   async listAllOccurrences(params) {
     const dateRange: Prisma.DateTimeFilter = {};
-    if (params?.from) dateRange.gte = new Date(params.from + "T00:00:00");
-    if (params?.to) dateRange.lte = new Date(params.to + "T23:59:59.999");
+    if (params?.from) dateRange.gte = etMidnight(params.from);
+    if (params?.to) dateRange.lte = etEndOfDay(params.to);
     const hasDates = params?.from || params?.to;
 
     return prisma.jobOccurrence.findMany({
