@@ -3,6 +3,8 @@ import { prisma } from "../db/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { getRoutingProvider, AVAILABLE_PROVIDERS, type OptimizedRoute } from "../lib/routing";
 
+import { etMidnight, etToday } from "../lib/dates";
+
 const workerGuard = {
   preHandler: (req: FastifyRequest, reply: FastifyReply) =>
     (req.server as any).requireRole(req, reply, "WORKER"),
@@ -37,10 +39,12 @@ export default async function previewRoutes(app: FastifyInstance) {
     tomorrow.setDate(tomorrow.getDate() + 1);
     const targetStr = targetDateParam || tomorrow.toISOString().slice(0, 10);
     // Search range: lookAhead days before AND after target date, but never before today
-    const todayStr = now.toISOString().slice(0, 10);
+    // Use Eastern time for "today" to match frontend's bizDateKey
+    const todayStr = etToday();
     const rangeStartDate = new Date(targetStr + "T12:00:00Z");
     rangeStartDate.setDate(rangeStartDate.getDate() - lookAhead);
-    const startStr = rangeStartDate.toISOString().slice(0, 10) < todayStr ? todayStr : rangeStartDate.toISOString().slice(0, 10);
+    const rangeStartStr = rangeStartDate.toISOString().slice(0, 10);
+    const startStr = rangeStartStr < todayStr ? todayStr : rangeStartStr;
     const endDate = new Date(targetStr + "T12:00:00Z");
     endDate.setDate(endDate.getDate() + lookAhead + 1);
     const endStr = endDate.toISOString().slice(0, 10);
@@ -57,7 +61,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         isTentative: false,
         ...(isAdminRoute ? {} : { workflow: { not: "ESTIMATE" } }),
         OR: [
-          { startAt: { gte: new Date(startStr + "T00:00:00Z"), lt: new Date(endStr + "T00:00:00Z") } },
+          { startAt: { gte: etMidnight(startStr), lt: etMidnight(endStr) } },
           { startAt: null },
         ],
       },
@@ -78,7 +82,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
         assignees: { some: { userId: targetUserId } },
         OR: [
-          { startAt: { gte: new Date(startStr + "T00:00:00Z"), lt: new Date(endStr + "T00:00:00Z") } },
+          { startAt: { gte: etMidnight(startStr), lt: etMidnight(endStr) } },
           { startAt: null },
         ],
       },
@@ -362,7 +366,7 @@ ${JSON.stringify(workerHistory, null, 2)}
 ` : ""}
 ${modeInstructions}
 ${routeContext}
-8. CRITICAL: The worker has ${availableHours} hours available TOTAL. Calculate: (sum of all job durations × ${1 + bufferPercent / 100} for setup buffer) + (total driving time from route data). If that exceeds ${Math.round(availableHours * 1.05 * 60)} minutes, remove jobs until it fits. This is a hard constraint.
+${mode === "suggest" ? `8. CRITICAL: The worker has ${availableHours} hours available TOTAL. Calculate: (sum of all job durations × ${1 + bufferPercent / 100} for setup buffer) + (total driving time from route data). If that exceeds ${Math.round(availableHours * 1.05 * 60)} minutes, remove jobs until it fits. This is a hard constraint.` : "8. Include ALL claimed jobs in the route — do not remove any."}
 9. For jobs without an estimated duration, assume 60 minutes (err on the larger side)
 10. Consider earnings and estimated duration for workload balance
 

@@ -3,6 +3,7 @@ import { Prisma, Equipment, EquipmentStatus } from "@prisma/client";
 import type { ServicesEquipment, EquipmentWithHolder } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
+import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 
 type Tx = Prisma.TransactionClient;
@@ -690,8 +691,8 @@ export const equipment: ServicesEquipment = {
     if (params?.userId) where.userId = params.userId;
     if (params?.from || params?.to) {
       where.releasedAt = {};
-      if (params.from) where.releasedAt.gte = new Date(params.from + "T00:00:00");
-      if (params.to) where.releasedAt.lte = new Date(params.to + "T23:59:59.999");
+      if (params.from) where.releasedAt.gte = etMidnight(params.from);
+      if (params.to) where.releasedAt.lte = etEndOfDay(params.to);
     }
     return prisma.checkout.findMany({
       where,

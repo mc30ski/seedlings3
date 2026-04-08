@@ -567,7 +567,17 @@ export default function HomePage() {
           <ScrollableUnderlineTabs
             tabs={workerTabs}
             value={workerInnerTab}
-            onValueChange={(v) => setWorkerInnerTab(v as WorkerTabs)}
+            onValueChange={(v) => {
+              setWorkerInnerTab(v as WorkerTabs);
+              // Clear workflow paused banner and reset workflow when navigating away from routes/equipment
+              if (v !== "routes" && v !== "equipment") {
+                try {
+                  localStorage.removeItem("seedlings_planWorkday_paused");
+                  localStorage.removeItem("seedlings_planWorkday");
+                } catch {}
+                setActiveWorkflow(null);
+              }
+            }}
             edgeMode="overlay"
             edgeSize={16}
             headerPaddingY={0}
@@ -828,10 +838,15 @@ export default function HomePage() {
   // Listen for worker tab navigation (from Reminders → Routes, etc.)
   useEffect(() => {
     const onNav = (e: Event) => {
-      const { tab } = (e as CustomEvent).detail || {};
+      const { tab, autoAnalyze } = (e as CustomEvent).detail || {};
       if (tab) {
         setTopTab("worker");
         setWorkerInnerTab(tab);
+        if (autoAnalyze && tab === "routes") {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
+          }, 300);
+        }
       }
     };
     window.addEventListener("navigate:workerTab", onNav as EventListener);
@@ -847,6 +862,19 @@ export default function HomePage() {
     window.addEventListener("trigger:workflow", onTrigger as EventListener);
     return () => window.removeEventListener("trigger:workflow", onTrigger as EventListener);
   }, []);
+
+  // Auto-launch workflow from URL parameter (e.g., ?workflow=plan-workday from notification link)
+  useEffect(() => {
+    if (meLoading) return; // Wait for user data to load
+    const wf = router.query.workflow as string | undefined;
+    if (wf && me?.isApproved) {
+      setTopTab("worker");
+      setWorkerInnerTab("tasks");
+      setActiveWorkflow(wf);
+      // Clean the URL without reloading
+      router.replace("/", undefined, { shallow: true });
+    }
+  }, [router.query.workflow, me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {
     window.dispatchEvent(

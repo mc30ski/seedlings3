@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
+import { etMidnight, etEndOfDay } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 
 async function currentUserId(req: any) {
@@ -563,8 +564,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     const to = req.query?.to as string | undefined;
 
     const dateFilter: any = {};
-    if (from) dateFilter.gte = new Date(from + "T00:00:00Z");
-    if (to) dateFilter.lte = new Date(to + "T23:59:59.999Z");
+    if (from) dateFilter.gte = etMidnight(from);
+    if (to) dateFilter.lte = etEndOfDay(to);
     const hasDate = from || to;
 
     const occurrences = await prisma.jobOccurrence.findMany({
@@ -664,6 +665,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
+    if (body.phone !== undefined) data.phone = body.phone ? String(body.phone).trim() : null;
     await prisma.user.update({ where: { id: uid }, data });
     return { ok: true };
   });

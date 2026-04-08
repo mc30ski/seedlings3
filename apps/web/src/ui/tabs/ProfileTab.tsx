@@ -14,6 +14,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { X } from "lucide-react";
+import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import { apiGet, apiPatch } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -40,6 +41,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
   // Profile fields
   const [homeBase, setHomeBase] = useState("");
+  const [savedHomeBase, setSavedHomeBase] = useState("");
   const [availableDays, setAvailableDays] = useState<number[]>([]);
   const [availableHours, setAvailableHours] = useState(4);
   const [saving, setSaving] = useState(false);
@@ -89,6 +91,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
     if (!targetUserId) return;
     if (isSelf && me) {
       setHomeBase(me.homeBaseAddress ?? "");
+      setSavedHomeBase(me.homeBaseAddress ?? "");
       setAvailableDays(me.availableDays ?? []);
       setAvailableHours(me.availableHoursPerDay ?? 4);
       return;
@@ -98,6 +101,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
     apiGet<any>(`/api/admin/users/${targetUserId}`)
       .then((u) => {
         setHomeBase(u?.homeBaseAddress ?? "");
+        setSavedHomeBase(u?.homeBaseAddress ?? "");
         setAvailableDays(u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : []);
         setAvailableHours(u?.availableHoursPerDay ?? 4);
       })
@@ -116,6 +120,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         availableDays,
         availableHoursPerDay: availableHours,
       });
+      setSavedHomeBase(homeBase);
       publishInlineMessage({ type: "SUCCESS", text: "Profile saved." });
       onProfileUpdated?.();
     } catch (err: any) {
@@ -235,6 +240,18 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                     <Text>{targetUser.email}</Text>
                   </HStack>
                 )}
+                {(targetUser as any)?.phone && (
+                  <HStack fontSize="sm">
+                    <Text color="fg.muted" w="80px">Phone:</Text>
+                    <Text>{(targetUser as any).phone}</Text>
+                  </HStack>
+                )}
+                {!(targetUser as any)?.phone && (
+                  <HStack fontSize="sm">
+                    <Text color="fg.muted" w="80px">Phone:</Text>
+                    <Text fontSize="xs" color="orange.500">Not set — update in your Clerk account to receive SMS notifications</Text>
+                  </HStack>
+                )}
                 <HStack fontSize="sm">
                   <Text color="fg.muted" w="80px">Type:</Text>
                   <Badge
@@ -262,12 +279,23 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                 <Text fontSize="xs" color="fg.muted">
                   Used as the starting point for route optimization.
                 </Text>
-                <Input
-                  size="sm"
-                  placeholder="e.g. 123 Main St, Chapel Hill, NC"
-                  value={homeBase}
-                  onChange={(e) => setHomeBase(e.target.value)}
-                />
+                <HStack gap={2}>
+                  <AddressAutocomplete
+                    value={homeBase}
+                    onChange={setHomeBase}
+                    placeholder="e.g. 123 Main St, Chapel Hill, NC"
+                    showValidation
+                  />
+                  <Button
+                    size="sm"
+                    colorPalette="green"
+                    flexShrink={0}
+                    onClick={saveProfile}
+                    disabled={saving || homeBase === savedHomeBase}
+                  >
+                    {saving ? "Saving..." : "Save"}
+                  </Button>
+                </HStack>
               </VStack>
             </Card.Body>
           </Card.Root>

@@ -548,16 +548,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     <Box w="full">
       {workflowPaused && purpose !== "ADMIN" && (
         <Box
-          mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.400" rounded="md"
+          mb={3} p={4} rounded="lg"
           display="flex" justifyContent="space-between" alignItems="center" gap={3}
+          style={{
+            background: "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
+            border: "2px solid #2c5282",
+            boxShadow: "0 2px 8px rgba(49, 130, 206, 0.3)",
+          }}
         >
-          <Text fontSize="sm" fontWeight="medium" color="blue.700">
-            You're in the Plan Workday workflow. When you're done here, return to continue.
+          <Text fontSize="sm" fontWeight="semibold" color="white">
+            You're in the Plan Workday workflow. Return when you're done here.
           </Text>
           <Button
             size="sm"
-            colorPalette="blue"
             flexShrink={0}
+            style={{
+              background: "white",
+              color: "#2b6cb0",
+              fontWeight: 700,
+            }}
             onClick={() => {
               try { localStorage.removeItem("seedlings_planWorkday_paused"); } catch {}
               window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
@@ -566,7 +575,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               }, 100);
             }}
           >
-            Return to Workflow
+            ← Return to Workflow
           </Button>
         </Box>
       )}

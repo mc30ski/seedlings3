@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl, deleteObject } from "../lib/r2";
+import { etMidnight, etEndOfDay } from "../lib/dates";
 import { Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
@@ -1086,7 +1087,7 @@ Respond ONLY with valid JSON in this exact format:
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: {
-        id: true, email: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
+        id: true, email: true, phone: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
         isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
       },
     });
@@ -1134,6 +1135,7 @@ Respond ONLY with valid JSON in this exact format:
     if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
+    if (body.phone !== undefined) data.phone = body.phone ? String(body.phone).trim() : null;
     await prisma.user.update({ where: { id: userId }, data });
     return { ok: true };
   });
@@ -1145,8 +1147,8 @@ Respond ONLY with valid JSON in this exact format:
     const to = req.query?.to as string | undefined;
 
     const dateFilter: any = {};
-    if (from) dateFilter.gte = new Date(from + "T00:00:00Z");
-    if (to) dateFilter.lte = new Date(to + "T23:59:59.999Z");
+    if (from) dateFilter.gte = etMidnight(from);
+    if (to) dateFilter.lte = etEndOfDay(to);
     const hasDate = from || to;
 
     // Get all closed occurrences with assignees, payment splits, timing
