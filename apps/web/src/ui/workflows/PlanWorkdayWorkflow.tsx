@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -54,7 +54,7 @@ function clearState() {
 }
 
 /** Inline component to show current equipment reservations */
-function EquipmentSummary({ myId, onCostLoaded }: { myId?: string; onCostLoaded?: (cost: number) => void }) {
+function EquipmentSummary({ onCostLoaded }: { myId?: string; onCostLoaded?: (cost: number) => void }) {
   const [items, setItems] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
@@ -119,7 +119,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
   const [viewPhotoList, setViewPhotoList] = useState<{ id: string; url: string }[]>([]);
   const [marginPercent, setMarginPercent] = useState(20);
   const [equipmentCost, setEquipmentCost] = useState(0);
-  const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   // Restore persisted state on mount
   useEffect(() => {
@@ -277,17 +276,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       setCurrentIndex(nextIdx);
       persist({ currentIndex: nextIdx });
     }
-  }
-
-  async function confirmJob() {
-    const occ = occurrences[currentIndex];
-    if (!occ) return;
-    setConfirmedIds((prev) => {
-      const next = [...prev, occ.id];
-      persist({ confirmedIds: next });
-      return next;
-    });
-    advance();
   }
 
   async function releaseJob() {
@@ -658,11 +646,22 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
               </Dialog.Header>
               <Dialog.Body>
                 <Text fontSize="sm" color="fg.muted">
-                  You have no claimed jobs for {fmtDate(targetDate + "T12:00:00Z")}. Use the Routes tab to find and claim jobs, or ask your administrator to assign work to you.
+                  You have no claimed jobs for {fmtDate(targetDate + "T12:00:00Z")}. Use the Jobs or Routes tab to find and claim jobs, or ask your administrator to assign work to you.
                 </Text>
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="space-between" w="full">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    colorPalette="gray"
+                    onClick={() => {
+                      handleClose();
+                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+                    }}
+                  >
+                    Go to Jobs
+                  </Button>
                   <Button
                     size="sm"
                     variant="ghost"
