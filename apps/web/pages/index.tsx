@@ -260,15 +260,19 @@ export default function HomePage() {
     {
       id: "plan-route",
       label: "Plan Next Work Day",
-      description: "Confirm your claimed jobs for tomorrow and notify clients",
+      description: isTraineeWorker ? "View your upcoming job summary" : "Confirm your claimed jobs for tomorrow and notify clients",
       icon: FiNavigation,
       colorPalette: "blue",
       bgColor: "blue.50",
-      disabled: isTraineeWorker,
-      disabledMessage: traineeMessage,
       onClick: () => {
         if (isTraineeWorker) {
-          setConfirmAction({ title: "Restricted", message: traineeMessage, confirmLabel: "OK", colorPalette: "blue", onConfirm: () => {} });
+          setConfirmAction({
+            title: "Trainee — Read Only",
+            message: "As a trainee, you can view your upcoming job summary but cannot confirm, release, or message clients. Contact your team lead to manage your schedule.",
+            confirmLabel: "View Summary",
+            colorPalette: "blue",
+            onConfirm: () => setActiveWorkflow("plan-workday-trainee"),
+          });
         } else {
           setActiveWorkflow("plan-workday");
         }
@@ -281,20 +285,14 @@ export default function HomePage() {
       icon: FiSun,
       colorPalette: "green",
       bgColor: "green.50",
-      disabled: isTraineeWorker,
-      disabledMessage: traineeMessage,
       onClick: () => {
-        if (isTraineeWorker) {
-          setConfirmAction({ title: "Restricted", message: traineeMessage, confirmLabel: "OK", colorPalette: "blue", onConfirm: () => {} });
-        } else {
-          setConfirmAction({
-            title: "Coming Soon",
-            message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
-            confirmLabel: "OK",
-            colorPalette: "green",
-            onConfirm: () => {},
-          });
-        }
+        setConfirmAction({
+          title: "Coming Soon",
+          message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
+          confirmLabel: "OK",
+          colorPalette: "green",
+          onConfirm: () => {},
+        });
       },
     },
   ];
@@ -530,9 +528,10 @@ export default function HomePage() {
             </Box>
           )}
           <PlanWorkdayWorkflow
-            active={activeWorkflow === "plan-workday"}
+            active={activeWorkflow === "plan-workday" || activeWorkflow === "plan-workday-trainee"}
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
+            trainee={activeWorkflow === "plan-workday-trainee"}
           />
           <ScrollableUnderlineTabs
             tabs={workerTabs}
