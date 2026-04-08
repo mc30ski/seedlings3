@@ -24,6 +24,16 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
+  // Disable browser pull-to-refresh when any dialog is open
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const hasDialog = !!document.querySelector("[role='dialog']");
+      document.body.style.overscrollBehavior = hasDialog ? "none" : "";
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
   // Detect standalone (Home Screen) display mode
   const [standalone, setStandalone] = useState(false);
   useEffect(() => {

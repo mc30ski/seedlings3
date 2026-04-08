@@ -4,6 +4,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Container, HStack, Text } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
+import { bizDateKey } from "@/src/lib/lib";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton, useAuth } from "@clerk/clerk-react";
@@ -754,14 +755,14 @@ export default function HomePage() {
   const loadOverdue = useCallback(async () => {
     if (!isAdmin) { setOverdueCount(0); return; }
     try {
-      const now = new Date();
-      const yesterdayET = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-      yesterdayET.setDate(yesterdayET.getDate() - 1);
-      const toStr = `${yesterdayET.getFullYear()}-${String(yesterdayET.getMonth() + 1).padStart(2, "0")}-${String(yesterdayET.getDate()).padStart(2, "0")}`;
+      const today = bizDateKey(new Date());
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const toStr = bizDateKey(yesterday);
       const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
       const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.startAt && !excludeStatuses.has(o.status)
+        (o) => o.startAt && !excludeStatuses.has(o.status) && bizDateKey(o.startAt) < today
       ).length;
       setOverdueCount(count);
     } catch {

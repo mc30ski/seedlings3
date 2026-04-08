@@ -56,6 +56,13 @@ export default function PWAPullToRefresh({
 
     const onTouchStart = (e: TouchEvent) => {
       if (refreshing) return;
+      // Don't trigger pull-to-refresh when a dialog/modal is open
+      if (document.querySelector("[data-scope='dialog']") ||
+          document.querySelector("[role='dialog']") ||
+          document.querySelector("[data-state='open'][data-scope='dialog']")) {
+        startY.current = null;
+        return;
+      }
       // Only start if we're at very top
       if (readScrollTop() <= 0) {
         startY.current = e.touches[0].clientY;
