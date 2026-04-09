@@ -666,6 +666,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
     if (body.phone !== undefined) data.phone = body.phone ? String(body.phone).trim() : null;
+    if (body.firstName !== undefined) data.firstName = body.firstName ? String(body.firstName).trim() : null;
+    if (body.lastName !== undefined) data.lastName = body.lastName ? String(body.lastName).trim() : null;
+    if (body.displayName !== undefined) data.displayName = body.displayName ? String(body.displayName).trim() : null;
     await prisma.user.update({ where: { id: uid }, data });
     return { ok: true };
   });

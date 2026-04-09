@@ -248,7 +248,7 @@ export default function HomePage() {
       value: "my-jobs",
       label: "My Properties",
       icon: FiBriefcase,
-      visible: () => !!isSignedIn,
+      visible: () => !!isSignedIn && !!me?.isApproved,
       content: <ClientMyJobsTab />,
     },
     {
@@ -260,7 +260,6 @@ export default function HomePage() {
   ];
 
   const isTraineeWorker = me?.workerType === "TRAINEE";
-  const traineeMessage = "Trainees cannot use this feature. Please work with your team lead.";
 
   const workerTasks: TaskDef[] = [
     {
@@ -1064,7 +1063,7 @@ export default function HomePage() {
                   : "Unclassified"}
               </Badge>
             )}
-            {isSignedIn && !hasAnyRole && (
+            {isSignedIn && !hasAnyRole && me?.isApproved && (
               <Badge size="sm" variant="subtle" colorPalette="green" lineHeight="normal">
                 Client
               </Badge>
@@ -1102,7 +1101,7 @@ export default function HomePage() {
           </div>
         </Box>
       </Box>
-      {!meLoading && me && !me.isApproved && topTab !== "client" && <AwaitingApprovalNotice />}
+      {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {authLoaded && (!isSignedIn || me) && (
         <ScrollableUnderlineTabs

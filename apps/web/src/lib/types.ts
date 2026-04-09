@@ -59,6 +59,8 @@ export type Me = {
   roles?: Role[];
   email?: string | null;
   phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   displayName?: string | null;
   workerType?: WorkerType | null;
   homeBaseAddress?: string | null;

@@ -64,43 +64,43 @@ export default fp(async function auth(app: FastifyInstance) {
       function extractClerkData(u: any) {
         const email = u?.primaryEmailAddress?.emailAddress ?? u?.emailAddresses?.[0]?.emailAddress ?? null;
         const phone = u?.primaryPhoneNumber?.phoneNumber ?? u?.phoneNumbers?.[0]?.phoneNumber ?? null;
-        const name = [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim();
+        const firstName = u?.firstName ?? null;
+        const lastName = u?.lastName ?? null;
+        const name = [firstName, lastName].filter(Boolean).join(" ").trim();
         const displayName = name || u?.username || null;
-        return { email, phone, displayName };
+        return { email, phone, firstName, lastName, displayName };
       }
 
       if (!existing) {
         const u = await fetchClerkUser();
-        const { email, phone, displayName } = extractClerkData(u);
-
-        // Auto-approve if their email matches a ClientContact (they're a client, not a worker applicant)
-        let isClient = false;
-        if (email) {
-          const contact = await prisma.clientContact.findFirst({
-            where: { email: { equals: email, mode: "insensitive" } },
-          });
-          if (contact) isClient = true;
-        }
+        const { email, phone, firstName, lastName, displayName } = extractClerkData(u);
 
         await prisma.user.create({
           data: {
             clerkUserId,
             email: email ?? undefined,
             phone: phone ?? undefined,
+            firstName: firstName ?? undefined,
+            lastName: lastName ?? undefined,
             displayName: displayName ?? undefined,
-            isApproved: isClient,
+            isApproved: false,
           },
         });
       } else {
-        // Existing user — sync phone from Clerk if missing locally
-        if (!existing.phone) {
+        // Existing user — sync missing fields from Clerk
+        if (!existing.phone || !existing.firstName || !existing.lastName) {
           const u = await fetchClerkUser();
           if (u) {
-            const { phone } = extractClerkData(u);
-            if (phone) {
+            const { phone, firstName, lastName, displayName } = extractClerkData(u);
+            const updates: any = {};
+            if (!existing.phone && phone) updates.phone = phone;
+            if (!existing.firstName && firstName) updates.firstName = firstName;
+            if (!existing.lastName && lastName) updates.lastName = lastName;
+            if (!existing.displayName && displayName) updates.displayName = displayName;
+            if (Object.keys(updates).length > 0) {
               await prisma.user.update({
                 where: { id: existing.id },
-                data: { phone },
+                data: updates,
               });
             }
           }

@@ -65,7 +65,7 @@ type Holding = {
 };
 
 // Inline confirm state
-type ConfirmKind = "delete" | "decline";
+type ConfirmKind = "delete" | "decline" | "approve-worker";
 type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 
 // Status filter type for this page
@@ -519,7 +519,22 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
       {/* List */}
       {loading && <LoadingCenter />}
       {!loading && filtered.length === 0 && (
-        <Text>No users match the current filters.</Text>
+        <Box textAlign="center" py={6}>
+          <Text color="fg.muted">No users match the current filters.</Text>
+          <Button
+            size="sm"
+            variant="outline"
+            mt={2}
+            onClick={() => {
+              setStatus("all");
+              setAccessRole("all");
+              setWorkerTypeFilter("all");
+              setQ("");
+            }}
+          >
+            Clear filters
+          </Button>
+        </Box>
       )}
       {!loading &&
         filtered.map((u) => {
@@ -535,12 +550,14 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           const confirmKind = confirm?.kind;
 
           const confirmCopy =
-            confirmKind === "decline"
+            confirmKind === "approve-worker"
+              ? "Approve this user as a worker? They will be able to claim jobs, manage equipment, and access the Worker tab."
+              : confirmKind === "decline"
               ? "Decline this user? This removes their account and Clerk entry. This action cannot be undone."
               : "Delete this user? This removes their account and Clerk entry. This action cannot be undone.";
 
           const confirmCTA =
-            confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
+            confirmKind === "approve-worker" ? "Confirm approve" : confirmKind === "decline" ? "Confirm decline" : "Confirm delete";
 
           const isContractor = u.workerType === "CONTRACTOR";
           const isEmployee = u.workerType === "EMPLOYEE";
@@ -613,7 +630,16 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                               size={{ base: "xs", md: "sm" }}
                               onClick={() => approve(u.id)}
                             >
-                              Approve
+                              Approve as Client
+                            </Button>
+                            <Button
+                              size={{ base: "xs", md: "sm" }}
+                              variant="ghost"
+                              onClick={() =>
+                                setConfirm({ userId: u.id, kind: "approve-worker" as any })
+                              }
+                            >
+                              Approve as Worker
                             </Button>
                             {!isConfirming && showDecline && (
                               <Button
@@ -631,7 +657,16 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                           </>
                         ) : (
                           <>
-                            {/* Role toggles — hidden for client-only users */}
+                            {/* Role toggles */}
+                            {isClient && (
+                              <Button
+                                size={{ base: "xs", md: "sm" }}
+                                onClick={() => addRole(u.id, "WORKER")}
+                                variant="subtle"
+                              >
+                                Make Worker
+                              </Button>
+                            )}
                             {!isClient && (
                               <>
                                 {isAdmin && !isSuper ? (
@@ -759,15 +794,15 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                   p={3}
                   borderRadius="md"
                   borderWidth="1px"
-                  borderColor="red.300"
-                  bg="red.50"
+                  borderColor={confirmKind === "approve-worker" ? "green.300" : "red.300"}
+                  bg={confirmKind === "approve-worker" ? "green.50" : "red.50"}
                   justify="space-between"
                   flexWrap="wrap"
                   gap="2"
                 >
                   <Text
                     fontSize="sm"
-                    color="red.900"
+                    color={confirmKind === "approve-worker" ? "green.900" : "red.900"}
                     flex="1 1 auto"
                     minW="220px"
                   >
@@ -783,8 +818,23 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     </Button>
                     <Button
                       size="xs"
-                      colorPalette="red"
-                      onClick={() => deleteUser(u.id)}
+                      colorPalette={confirmKind === "approve-worker" ? "green" : "red"}
+                      onClick={async () => {
+                        if (confirmKind === "approve-worker") {
+                          try {
+                            await apiPost(`/api/admin/users/${u.id}/approve`);
+                            await addRole(u.id, "WORKER");
+                            window.dispatchEvent(new Event("seedlings3:users-changed"));
+                            publishInlineMessage({ type: "SUCCESS", text: "User approved as worker." });
+                            setConfirm(null);
+                            load();
+                          } catch (err: any) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Approve failed.", err) });
+                          }
+                        } else {
+                          deleteUser(u.id);
+                        }
+                      }}
                     >
                       {confirmCTA}
                     </Button>

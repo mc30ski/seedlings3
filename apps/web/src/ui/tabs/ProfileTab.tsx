@@ -40,6 +40,12 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   const dropRef = useRef<HTMLDivElement>(null);
 
   // Profile fields
+  const [firstName, setFirstName] = useState("");
+  const [savedFirstName, setSavedFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [savedLastName, setSavedLastName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [savedDisplayName, setSavedDisplayName] = useState("");
   const [homeBase, setHomeBase] = useState("");
   const [savedHomeBase, setSavedHomeBase] = useState("");
   const [availableDays, setAvailableDays] = useState<number[]>([]);
@@ -49,7 +55,10 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const hasChanges = homeBase !== savedHomeBase ||
+  const hasChanges = firstName !== savedFirstName ||
+    lastName !== savedLastName ||
+    displayName !== savedDisplayName ||
+    homeBase !== savedHomeBase ||
     JSON.stringify(availableDays) !== JSON.stringify(savedAvailableDays) ||
     availableHours !== savedAvailableHours;
 
@@ -107,23 +116,24 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   useEffect(() => {
     if (!targetUserId) return;
     if (isSelf && me) {
-      setHomeBase(me.homeBaseAddress ?? "");
-      setSavedHomeBase(me.homeBaseAddress ?? "");
-      setAvailableDays(me.availableDays ?? []);
-      setSavedAvailableDays(me.availableDays ?? []);
-      setAvailableHours(me.availableHoursPerDay ?? 4);
-      setSavedAvailableHours(me.availableHoursPerDay ?? 4);
+      setFirstName(me.firstName ?? ""); setSavedFirstName(me.firstName ?? "");
+      setLastName(me.lastName ?? ""); setSavedLastName(me.lastName ?? "");
+      setDisplayName(me.displayName ?? ""); setSavedDisplayName(me.displayName ?? "");
+      setHomeBase(me.homeBaseAddress ?? ""); setSavedHomeBase(me.homeBaseAddress ?? "");
+      setAvailableDays(me.availableDays ?? []); setSavedAvailableDays(me.availableDays ?? []);
+      setAvailableHours(me.availableHoursPerDay ?? 4); setSavedAvailableHours(me.availableHoursPerDay ?? 4);
       return;
     }
     // Admin viewing another user — fetch their data
     setLoading(true);
     apiGet<any>(`/api/admin/users/${targetUserId}`)
       .then((u) => {
-        setHomeBase(u?.homeBaseAddress ?? "");
-        setSavedHomeBase(u?.homeBaseAddress ?? "");
+        setFirstName(u?.firstName ?? ""); setSavedFirstName(u?.firstName ?? "");
+        setLastName(u?.lastName ?? ""); setSavedLastName(u?.lastName ?? "");
+        setDisplayName(u?.displayName ?? ""); setSavedDisplayName(u?.displayName ?? "");
+        setHomeBase(u?.homeBaseAddress ?? ""); setSavedHomeBase(u?.homeBaseAddress ?? "");
         const days = u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : [];
-        setAvailableDays(days);
-        setSavedAvailableDays(days);
+        setAvailableDays(days); setSavedAvailableDays(days);
         const hours = u?.availableHoursPerDay ?? 4;
         setAvailableHours(hours);
         setSavedAvailableHours(hours);
@@ -139,10 +149,16 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         ? `/api/admin/users/${targetUserId}/profile`
         : "/api/me/profile";
       await apiPatch(endpoint, {
+        firstName,
+        lastName,
+        displayName,
         homeBaseAddress: homeBase,
         availableDays,
         availableHoursPerDay: availableHours,
       });
+      setSavedFirstName(firstName);
+      setSavedLastName(lastName);
+      setSavedDisplayName(displayName);
       setSavedHomeBase(homeBase);
       setSavedAvailableDays([...availableDays]);
       setSavedAvailableHours(availableHours);
@@ -250,33 +266,76 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         <Box py={10} textAlign="center"><Spinner size="lg" /></Box>
       ) : (
         <VStack align="stretch" gap={4} w="full">
-          {/* Basic info card */}
+          {/* Name & info card */}
           <Card.Root variant="outline">
             <Card.Header py="3" px="4" pb="0">
-              <Text fontWeight="semibold">
-                {targetUser?.displayName || targetUser?.email || "Profile"}
-              </Text>
+              <Text fontWeight="semibold">Personal Information</Text>
             </Card.Header>
             <Card.Body py="3" px="4">
-              <VStack align="start" gap={2}>
-                {targetUser?.email && (
-                  <HStack fontSize="sm">
-                    <Text color="fg.muted" w="80px">Email:</Text>
-                    <Text>{targetUser.email}</Text>
-                  </HStack>
-                )}
-                {(targetUser as any)?.phone && (
-                  <HStack fontSize="sm">
-                    <Text color="fg.muted" w="80px">Phone:</Text>
-                    <Text>{(targetUser as any).phone}</Text>
-                  </HStack>
-                )}
-                {!(targetUser as any)?.phone && (
-                  <HStack fontSize="sm">
-                    <Text color="fg.muted" w="80px">Phone:</Text>
-                    <Text fontSize="xs" color="orange.500">Not set — update in your Clerk account to receive SMS notifications</Text>
-                  </HStack>
-                )}
+              <VStack align="stretch" gap={3}>
+                <HStack gap={3}>
+                  <Box flex="1">
+                    <Text fontSize="xs" fontWeight="medium" mb="1">First Name</Text>
+                    <Input
+                      size="sm"
+                      value={firstName}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        // Auto-update display name if it matches the old first+last pattern
+                        const oldAuto = [savedFirstName, savedLastName].filter(Boolean).join(" ");
+                        if (!savedDisplayName || savedDisplayName === oldAuto || displayName === oldAuto) {
+                          setDisplayName([e.target.value, lastName].filter(Boolean).join(" "));
+                        }
+                      }}
+                      placeholder="First name"
+                    />
+                  </Box>
+                  <Box flex="1">
+                    <Text fontSize="xs" fontWeight="medium" mb="1">Last Name</Text>
+                    <Input
+                      size="sm"
+                      value={lastName}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        const oldAuto = [savedFirstName, savedLastName].filter(Boolean).join(" ");
+                        if (!savedDisplayName || savedDisplayName === oldAuto || displayName === oldAuto) {
+                          setDisplayName([firstName, e.target.value].filter(Boolean).join(" "));
+                        }
+                      }}
+                      placeholder="Last name"
+                    />
+                  </Box>
+                </HStack>
+                <Box>
+                  <Text fontSize="xs" fontWeight="medium" mb="1">Display Name</Text>
+                  <Input
+                    size="sm"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="How your name appears in the app"
+                  />
+                  <Text fontSize="xs" color="fg.muted" mt="0.5">Auto-generated from first + last name. Edit to customize.</Text>
+                </Box>
+                <VStack align="start" gap={1}>
+                  {targetUser?.email && (
+                    <HStack fontSize="sm">
+                      <Text color="fg.muted" w="80px">Email:</Text>
+                      <Text>{targetUser.email}</Text>
+                    </HStack>
+                  )}
+                  {(targetUser as any)?.phone && (
+                    <HStack fontSize="sm">
+                      <Text color="fg.muted" w="80px">Phone:</Text>
+                      <Text>{(targetUser as any).phone}</Text>
+                    </HStack>
+                  )}
+                  {!(targetUser as any)?.phone && (
+                    <HStack fontSize="sm">
+                      <Text color="fg.muted" w="80px">Phone:</Text>
+                      <Text fontSize="xs" color="orange.500">Not set — add in Clerk to receive SMS</Text>
+                    </HStack>
+                  )}
+                </VStack>
                 <HStack fontSize="sm">
                   <Text color="fg.muted" w="80px">Type:</Text>
                   <Badge
