@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -14,7 +14,8 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, RefreshCw, X } from "lucide-react";
+import { CalendarRange, RefreshCw, X } from "lucide-react";
+import DateInput from "@/src/ui/components/DateInput";
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel, occurrenceStatusColor, prettyStatus } from "@/src/lib/lib";
@@ -28,8 +29,12 @@ function localDate(d: Date): string {
   return bizDateKey(d);
 }
 
-const presetItems = Object.entries(PRESET_LABELS).map(([value, label]) => ({ value, label }));
-const presetCollection = createListCollection({ items: presetItems });
+const superPresetItems = [
+  { value: "overdueOnly", label: "Overdue only" },
+  { value: "overdueAndNext3", label: "Overdue + Next 3 days" },
+  { value: "overdueAndNextWeek", label: "Overdue + Next week" },
+];
+const superPresetCollection = createListCollection({ items: superPresetItems });
 
 export default function SuperUnclaimedTab() {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
@@ -37,15 +42,13 @@ export default function SuperUnclaimedTab() {
   const [q, setQ] = useState("");
 
   // Date preset (default: next week)
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("super_unclaimed_datePreset", "nextWeek");
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("super_unclaimed_datePreset", "overdueAndNext3");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = useState(presetDates.from);
   const [dateTo, setDateTo] = useState(presetDates.to);
 
   // Overdue
   const [overdueActive, setOverdueActive] = usePersistedState("super_unclaimed_overdue", false);
-  const [overdueCount, setOverdueCount] = useState(0);
-  const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
 
   // Re-apply preset dates when preset changes
   useEffect(() => {
@@ -80,25 +83,6 @@ export default function SuperUnclaimedTab() {
   useEffect(() => { void load(); }, [dateFrom, dateTo]);
 
   // Refresh overdue count
-  async function refreshOverdueCount() {
-    try {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const list = await apiGet<WorkerOccurrence[]>(`/api/occurrences?to=${localDate(yesterday)}`);
-      const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-      const todayKey = bizDateKey(new Date());
-      const count = (Array.isArray(list) ? list : []).filter((o) =>
-        (o.assignees ?? []).length === 0 &&
-        o.startAt &&
-        !excludeStatuses.has(o.status as string) &&
-        bizDateKey(o.startAt) < todayKey
-      ).length;
-      setOverdueCount(count);
-    } catch {}
-  }
-
-  useEffect(() => { void refreshOverdueCount(); }, [items]);
-
   const filtered = useMemo(() => {
     const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
     let rows = items.filter((occ) =>
@@ -146,38 +130,63 @@ export default function SuperUnclaimedTab() {
 
   return (
     <Box w="full" pb={8}>
-      <Box mb={3} p={3} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
-        <Text fontSize="sm" fontWeight="medium" color="red.700">Unclaimed Jobs</Text>
-        <Text fontSize="xs" color="red.600">These jobs have no one assigned and need attention. Assign workers or follow up with the team.</Text>
+      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Unclaimed Jobs</Text>
+        <Text fontSize="xs" color="yellow.600">Showing overdue and upcoming unassigned jobs. Red = overdue, yellow = today/tomorrow, green = upcoming. Default view: overdue + next 3 days.</Text>
       </Box>
 
-      <HStack mb={3} gap={2} wrap="wrap">
+      <HStack mb={2} gap={2}>
         <SearchWithClear
           value={q}
           onChange={setQ}
           placeholder="Search…"
           inputId="super-unclaimed-search"
         />
+      </HStack>
+
+      <HStack mb={3} gap={2} align="center" wrap="wrap">
+        <DateInput
+          value={dateFrom}
+          onChange={(val) => {
+            setDateFrom(val);
+            setDatePreset(null);
+            setOverdueActive(false);
+            if (dateTo && val && val > dateTo) setDateTo(val);
+          }}
+        />
+        <Text fontSize="sm">–</Text>
+        <DateInput
+          value={dateTo}
+          onChange={(val) => {
+            setDateTo(val);
+            setDatePreset(null);
+            setOverdueActive(false);
+            if (dateFrom && val && val < dateFrom) setDateFrom(val);
+          }}
+        />
         <Select.Root
-          collection={presetCollection}
+          collection={superPresetCollection}
           value={datePreset ? [datePreset] : []}
           onValueChange={(e) => {
+            const val = e.value[0] as DatePreset;
+            if (!val) return;
+            setDatePreset(val);
             setOverdueActive(false);
-            setDatePreset((e.value[0] as DatePreset) ?? "nextWeek");
           }}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <CalendarRange size={14} />
               <Select.ValueText placeholder="Date range" />
               <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
             <Select.Content>
-              {presetItems.map((it) => (
+              {superPresetItems.map((it) => (
                 <Select.Item key={it.value} item={it.value}>
                   <Select.ItemText>{it.label}</Select.ItemText>
                 </Select.Item>
@@ -186,57 +195,14 @@ export default function SuperUnclaimedTab() {
           </Select.Positioner>
         </Select.Root>
         <Button
-          size="sm"
-          variant={overdueActive ? "solid" : "ghost"}
-          px="2"
-          onClick={() => {
-            if (overdueActive) {
-              setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? "nextWeek");
-            } else {
-              presetBeforeOverdueRef.current = datePreset;
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
-              setDatePreset(null);
-              setDateFrom("");
-              const overdueTo = localDate(yesterday);
-              setDateTo(overdueTo);
-              setOverdueActive(true);
-              void load(true, { from: "", to: overdueTo });
-            }
-          }}
-          css={overdueActive ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
-          } : undefined}
-        >
-          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
-          {overdueCount > 0 && (
-            <Badge
-              size="xs"
-              colorPalette="red"
-              variant="solid"
-              borderRadius="full"
-              px="1.5"
-              fontSize="2xs"
-              lineHeight="1"
-              minW="0"
-            >
-              {overdueCount}
-            </Badge>
-          )}
-        </Button>
-        <Button
           variant="ghost"
           size="sm"
           px="2"
           minW="0"
-          disabled={!overdueActive && datePreset === "nextWeek" && !q}
+          disabled={datePreset === "overdueAndNext3" && !q}
           onClick={() => {
             setOverdueActive(false);
-            setDatePreset("nextWeek");
+            setDatePreset("overdueAndNext3");
             setQ("");
           }}
         >
@@ -247,10 +213,16 @@ export default function SuperUnclaimedTab() {
         </Button>
       </HStack>
 
+      {datePreset && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle">
+            {PRESET_LABELS[datePreset] ?? datePreset}
+          </Badge>
+        </HStack>
+      )}
+
       <Text fontSize="xs" color="fg.muted" mb={2}>
         {filtered.length} unclaimed job{filtered.length !== 1 ? "s" : ""}
-        {datePreset && !overdueActive && ` · ${PRESET_LABELS[datePreset] ?? datePreset}`}
-        {overdueActive && " · Overdue"}
       </Text>
 
       {filtered.length === 0 && !loading && (
@@ -265,13 +237,25 @@ export default function SuperUnclaimedTab() {
           const prop = occ.job?.property;
           const isVip = !!(prop?.client as any)?.isVip;
           const vipReason = (prop?.client as any)?.vipReason;
-          const isOverdue = occ.startAt && bizDateKey(occ.startAt) < bizDateKey(new Date());
+          const today = bizDateKey(new Date());
+          const tomorrowDate = new Date();
+          tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+          const tomorrow = bizDateKey(tomorrowDate);
+          const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
+          const isOverdue = occDate && occDate < today;
+          const isTodayOrTomorrow = occDate === today || occDate === tomorrow;
+          const isFuture = occDate > tomorrow;
+
+          // Card colors: overdue=red, today/tomorrow=yellow, future=green, VIP overlay
+          const cardBg = isOverdue ? "red.50" : isTodayOrTomorrow ? "yellow.50" : isFuture ? "green.50" : undefined;
+          const cardBorder = isOverdue ? "red.300" : isTodayOrTomorrow ? "yellow.400" : isFuture ? "green.300" : isVip ? "yellow.400" : undefined;
+
           return (
             <Card.Root
               key={occ.id}
               variant="outline"
-              borderColor={isOverdue ? "red.300" : isVip ? "yellow.400" : undefined}
-              bg={isOverdue ? "red.50" : isVip ? "yellow.50" : undefined}
+              borderColor={cardBorder}
+              bg={cardBg}
             >
               <Card.Body py="3" px="4">
                 <VStack align="start" gap={1}>
@@ -289,6 +273,8 @@ export default function SuperUnclaimedTab() {
 
                   <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
                     {isOverdue && <StatusBadge status="Overdue" palette="red" variant="solid" />}
+                    {isTodayOrTomorrow && <StatusBadge status={occDate === today ? "Today" : "Tomorrow"} palette="yellow" variant="solid" />}
+                    {isFuture && <StatusBadge status="Upcoming" palette="green" variant="subtle" />}
                     {occ.isTentative ? (
                       <StatusBadge status="Tentative" palette="orange" variant="solid" />
                     ) : occ.status !== "SCHEDULED" ? (
@@ -301,7 +287,7 @@ export default function SuperUnclaimedTab() {
                   </Box>
 
                   <HStack gap={3} fontSize="xs" wrap="wrap">
-                    {occ.startAt && <Text color={isOverdue ? "red.600" : "fg.muted"} fontWeight={isOverdue ? "medium" : "normal"}>{fmtDate(occ.startAt)}</Text>}
+                    {occ.startAt && <Text color={isOverdue ? "red.600" : isTodayOrTomorrow ? "yellow.700" : isFuture ? "green.700" : "fg.muted"} fontWeight={isOverdue || isTodayOrTomorrow ? "medium" : "normal"}>{fmtDate(occ.startAt)}</Text>}
                     {(occ as any).jobType && (
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         {prettyStatus((occ as any).jobType)}
