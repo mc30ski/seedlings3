@@ -185,9 +185,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setDatePreset(null);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
+    const overdueTo = localDate(yesterday);
     setDateFrom("");
-    setDateTo(localDate(yesterday));
+    setDateTo(overdueTo);
     setOverdueActive(true);
+    // Load immediately with correct dates (don't wait for state to cascade)
+    void load(true, { from: "", to: overdueTo });
   }, []);
 
   useEffect(() => {
@@ -281,12 +284,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
-  async function load(displayLoading = true) {
+  async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }) {
     setLoading(displayLoading);
     try {
       const qs = new URLSearchParams();
-      if (dateFrom) qs.set("from", dateFrom);
-      if (dateTo) qs.set("to", dateTo);
+      const qFrom = overrideDates?.from ?? dateFrom;
+      const qTo = overrideDates?.to ?? dateTo;
+      if (qFrom) qs.set("from", qFrom);
+      if (qTo) qs.set("to", qTo);
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
@@ -870,6 +875,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isAcceptedEstimate = isEstimateOcc && occ.status === "ACCEPTED";
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
             const isAdminOnlyOcc = !!occ.isAdminOnly;
+            const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
+            const vipReason = (occ.job?.property?.client as any)?.vipReason;
 
             const cardBorderColor = (isClosed || isAcceptedEstimate)
               ? "gray.200"
@@ -939,6 +946,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
                       <Text fontSize="sm" fontWeight="semibold">
+                        {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
                         {occ.job?.property?.displayName}
                         {occ.job?.property?.client?.displayName && (
                           <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
@@ -967,6 +975,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "flex-start" }}>
                           <VStack align="start" gap={0} flex="1" minW={0}>
                             <Text fontSize="md" fontWeight="semibold">
+                              {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
                               {occ.job?.property?.displayName}
                               {occ.job?.property?.client?.displayName && (
                                 <> — {clientLabel(occ.job.property.client.displayName)}</>
@@ -1009,6 +1018,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 />
                               )}
                             </HStack>
+                            {isVipClient && vipReason && (
+                              <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {vipReason}</Text>
+                            )}
                           </VStack>
                           <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                           {isTentative ? (

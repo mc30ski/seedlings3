@@ -224,6 +224,9 @@ model Client {
 
   status        ClientStatus @default(ACTIVE)
 
+  isVip         Boolean      @default(false)
+  vipReason     String?
+
   notesInternal String?
 
   createdAt     DateTime     @default(now())

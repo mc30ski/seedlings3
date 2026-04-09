@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
+  Box,
   Button,
+  Checkbox,
   Dialog,
   HStack,
   Input,
@@ -62,6 +64,8 @@ export default function ClientDialog({
 
   const [displayName, setDisplayName] = useState("");
   const [notesInternal, setNotesInternal] = useState("");
+  const [isVip, setIsVip] = useState(false);
+  const [vipReason, setVipReason] = useState("");
 
   const statusItems = useMemo(
     () =>
@@ -101,11 +105,15 @@ export default function ClientDialog({
       setStatusValue([initial.status ?? CLIENT_STATUS[0]]);
       setDisplayName(initial.displayName ?? "");
       setNotesInternal(initial.notesInternal ?? "");
+      setIsVip(initial.isVip ?? false);
+      setVipReason(initial.vipReason ?? "");
     } else {
       setKindValue([CLIENT_KIND[0]]);
       setStatusValue([CLIENT_STATUS[0]]);
       setDisplayName(defaultDisplayName ?? "");
       setNotesInternal("");
+      setIsVip(false);
+      setVipReason("");
     }
   }, [open, mode, initial, defaultDisplayName]);
 
@@ -123,6 +131,8 @@ export default function ClientDialog({
       status: (statusValue[0] as ClientStatus) ?? CLIENT_STATUS[0],
       displayName: displayName.trim(),
       notesInternal: notesInternal || null,
+      isVip,
+      vipReason: isVip ? (vipReason.trim() || null) : null,
     };
 
     if (deferSave) {
@@ -274,6 +284,27 @@ export default function ClientDialog({
                     rows={3}
                   />
                 </div>
+                <Box p={3} bg={isVip ? "yellow.50" : "gray.50"} rounded="md" borderWidth="1px" borderColor={isVip ? "yellow.300" : "gray.200"}>
+                  <Checkbox.Root
+                    checked={isVip}
+                    onCheckedChange={(e) => setIsVip(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label>⭐ VIP Client — prioritize this client</Checkbox.Label>
+                  </Checkbox.Root>
+                  {isVip && (
+                    <Box mt={2}>
+                      <Text fontSize="xs" mb="1" color="fg.muted">Why is this client a VIP?</Text>
+                      <Input
+                        size="sm"
+                        value={vipReason}
+                        onChange={(e) => setVipReason(e.target.value)}
+                        placeholder="e.g. Long-time customer, large contract, referral source..."
+                      />
+                    </Box>
+                  )}
+                </Box>
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

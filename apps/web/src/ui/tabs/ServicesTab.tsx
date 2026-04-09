@@ -826,11 +826,15 @@ export default function ServicesTab({
                 <HStack gap={3} justify="space-between" align="start">
                   <VStack align="start" gap={0} flex="1" minW={0}>
                     <Text fontSize="md" fontWeight="semibold">
+                      {(job.property?.client as any)?.isVip && <span title={(job.property?.client as any)?.vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
                       {job.property?.displayName ?? job.propertyId}
                       {job.property?.client?.displayName && (
                         <> — {clientLabel(job.property.client.displayName)}</>
                       )}
                     </Text>
+                    {(job.property?.client as any)?.isVip && (job.property?.client as any)?.vipReason && (
+                      <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {(job.property?.client as any).vipReason}</Text>
+                    )}
                     <HStack gap={3} fontSize="xs">
                       {job.property?.displayName && (
                         <TextLink

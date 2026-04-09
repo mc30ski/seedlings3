@@ -179,6 +179,8 @@ export type Client = {
   type: ClientKind;
   displayName: string;
   status: ClientStatus;
+  isVip?: boolean;
+  vipReason?: string | null;
   notesInternal?: string | null;
 
   createdAt?: string | null;
@@ -531,7 +533,7 @@ export type WorkerOccurrence = {
       street1: string;
       city: string;
       state: string;
-      client?: { id: string; displayName: string };
+      client?: { id: string; displayName: string; isVip?: boolean; vipReason?: string | null };
     };
   };
   assignees?: {
