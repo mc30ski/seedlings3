@@ -213,6 +213,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [dateTo, setDateTo] = useState(presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = usePersistedState(`${pfx}_overdue`, false);
+  const [vipOnly, setVipOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
 
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
@@ -495,6 +496,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       const overdueExclude = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       rows = rows.filter((occ) => !overdueExclude.has(occ.status));
     }
+    if (vipOnly) {
+      rows = rows.filter((occ) => !!(occ.job?.property?.client as any)?.isVip);
+    }
     // If navigated from Reminders to a specific occurrence, show only that one (bypass all filters)
     if (highlightOccId) {
       const exact = items.find((occ) => occ.id === highlightOccId);
@@ -523,7 +527,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, isTrainee, highlightOccId]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, isTrainee, highlightOccId]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -649,12 +653,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive}
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly}
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
             setOverdueActive(false);
+            setVipOnly(false);
             setDatePreset("nextMonth");
           }}
         >
@@ -799,9 +804,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
         </Button>
+        <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "ghost"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          ⭐
+        </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || datePreset) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
