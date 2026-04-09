@@ -97,6 +97,7 @@ export default function ServicesTab({
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("services_type", ["ALL"]);
 
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
+  const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
   const presetBeforeOverdueRef = useRef<DatePreset>("nextMonth");
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("services_datePreset", "nextMonth");
@@ -476,6 +477,9 @@ export default function ServicesTab({
           .some((s) => s!.toLowerCase().includes(qlc))
       );
     }
+    if (vipOnly) {
+      rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
+    }
     return rows;
   }, [items, q, kind, jobStatusFilter]);
 
@@ -594,13 +598,14 @@ export default function ServicesTab({
           variant="ghost"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive}
+          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly}
           onClick={() => {
             setKind(["ALL"]);
             setJobStatusFilter(["ALL"]);
             setOccStatusFilter(["ALL"]);
             setTypeFilter(["ALL"]);
             setOverdueActive(false);
+            setVipOnly(false);
             setDatePreset("nextMonth");
           }}
         >
@@ -740,9 +745,23 @@ export default function ServicesTab({
             </Badge>
           )}
         </Button>
+        <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "ghost"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          ⭐
+        </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || datePreset) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">

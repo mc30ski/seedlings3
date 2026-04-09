@@ -13,6 +13,7 @@ import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import AuditLogTab from "@/src/ui/tabs/AuditLogTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
+import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -40,7 +41,7 @@ import InlineMessage from "@/src/ui/components/InlineMessage";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
-import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, EventTypes } from "@/src/lib/types";
+import { Me, Role, AdminTabs, ClientTabs, WorkerTabs, SuperTabs, EventTypes } from "@/src/lib/types";
 import {
   FiBriefcase,
   FiClipboard,
@@ -55,6 +56,8 @@ import {
   FiBell,
   FiNavigation,
   FiSettings,
+  FiShield,
+  FiAlertCircle,
   FiSun,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
@@ -79,11 +82,12 @@ export default function HomePage() {
   const isSuper = hasRole(me?.roles, "SUPER");
   const hasAnyRole = (me?.roles?.length ?? 0) > 0;
 
-  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin">("topTab", "client");
+  const [topTab, setTopTab] = usePersistedState<"client" | "worker" | "admin" | "super">("topTab", "client");
 
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
+  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
 
@@ -215,6 +219,8 @@ export default function HomePage() {
       setTopTab(isWorker ? "worker" : "client");
     if (topTab === "worker" && !isWorker)
       setTopTab(isAdmin ? "admin" : "client");
+    if (topTab === "super" && !isSuper)
+      setTopTab(isAdmin ? "admin" : isWorker ? "worker" : "client");
   }, [isAdmin, isWorker, topTab, me]);
 
   // Re-fetch me silently when switching top tabs so admin changes are reflected
@@ -579,6 +585,30 @@ export default function HomePage() {
         </>
       ),
     },
+    {
+      value: "super",
+      label: "Super",
+      icon: FiShield,
+      visible: () => !!isSignedIn && isSuper,
+      content: (
+        <ScrollableUnderlineTabs
+          tabs={[
+            {
+              value: "unclaimed",
+              label: "Unclaimed",
+              icon: FiAlertCircle,
+              content: <SuperUnclaimedTab />,
+            },
+          ]}
+          value={superInnerTab}
+          onValueChange={(v) => setSuperInnerTab(v as SuperTabs)}
+          edgeMode="overlay"
+          edgeSize={16}
+          headerPaddingY={0}
+          unmountOnExit
+        />
+      ),
+    },
   ];
 
   const setupSearchEvent = (
@@ -744,6 +774,39 @@ export default function HomePage() {
     window.addEventListener("seedlings3:jobs-changed", onRefresh);
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadOverdue]);
+
+  // Unclaimed count for super admin header badge
+  const [unclaimedCount, setUnclaimedCount] = useState(0);
+  const loadUnclaimed = useCallback(async () => {
+    if (!isSuper) { setUnclaimedCount(0); return; }
+    try {
+      const today = bizDateKey(new Date());
+      const weekOut = new Date();
+      weekOut.setDate(weekOut.getDate() + 7);
+      const toStr = bizDateKey(weekOut);
+      const list = await apiGet<any[]>(`/api/occurrences?from=${today}&to=${toStr}`);
+      const count = (Array.isArray(list) ? list : []).filter(
+        (o) => (o.assignees ?? []).length === 0 &&
+          o.status === "SCHEDULED" &&
+          !o.isTentative
+      ).length;
+      setUnclaimedCount(count);
+    } catch {
+      setUnclaimedCount(0);
+    }
+  }, [isSuper]);
+
+  useEffect(() => {
+    void loadUnclaimed();
+    const onRefresh = () => void loadUnclaimed();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+  }, [loadUnclaimed]);
+
+  const goToUnclaimed = useCallback(() => {
+    setTopTab("super");
+    setSuperInnerTab("unclaimed");
+  }, []);
 
   const goToOverdue = useCallback(() => {
     try {
@@ -921,6 +984,29 @@ export default function HomePage() {
                 _active={{ transform: "translateY(1px)" }}
               >
                 {pending}
+              </Box>
+            )}
+            {isSuper && unclaimedCount > 0 && (
+              <Box
+                as="button"
+                aria-label="Unclaimed jobs"
+                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} this week`}
+                onClick={goToUnclaimed}
+                width="22px"
+                height="22px"
+                minW="22px"
+                borderRadius="9999px"
+                bg="yellow.400"
+                color="yellow.900"
+                fontSize="12px"
+                fontWeight="bold"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "yellow.500" }}
+                _active={{ transform: "translateY(1px)" }}
+              >
+                {unclaimedCount}
               </Box>
             )}
             {isAdmin && overdueCount > 0 && (

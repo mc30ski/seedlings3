@@ -63,6 +63,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
+  const [vipOnly, setVipOnly] = useState(false);
 
   const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -203,6 +204,10 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       });
     }
 
+    if (vipOnly) {
+      rows = rows.filter((r) => (r as any).isVip);
+    }
+
     return rows;
   }, [items, q, kind, statusFilter, highlightId, isTrainee, traineeClientIds]);
 
@@ -338,14 +343,29 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Select.Positioner>
         </Select.Root>
         <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "ghost"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          ⭐
+        </Button>
+        <Button
           variant="ghost"
           size="sm"
           px="2"
           minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly}
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
+            setVipOnly(false);
           }}
         >
           <X size={14} />
