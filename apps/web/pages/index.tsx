@@ -779,15 +779,14 @@ export default function HomePage() {
   const loadUnclaimed = useCallback(async () => {
     if (!isSuper) { setUnclaimedCount(0); return; }
     try {
-      const today = bizDateKey(new Date());
-      const weekOut = new Date();
-      weekOut.setDate(weekOut.getDate() + 7);
-      const toStr = bizDateKey(weekOut);
-      const list = await apiGet<any[]>(`/api/occurrences?from=${today}&to=${toStr}`);
+      const threeDaysOut = new Date();
+      threeDaysOut.setDate(threeDaysOut.getDate() + 3);
+      const toStr = bizDateKey(threeDaysOut);
+      const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
+      const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => (o.assignees ?? []).length === 0 &&
-          o.status === "SCHEDULED" &&
-          !o.isTentative
+          !excludeStatuses.has(o.status)
       ).length;
       setUnclaimedCount(count);
     } catch {
@@ -989,7 +988,7 @@ export default function HomePage() {
               <Box
                 as="button"
                 aria-label="Unclaimed jobs"
-                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} this week`}
+                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} (overdue + next 3 days)`}
                 onClick={goToUnclaimed}
                 width="22px"
                 height="22px"

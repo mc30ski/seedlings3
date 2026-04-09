@@ -11,6 +11,7 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "db:reset": "tsx prisma/seed.ts --reset-only",
     "postinstall": "npm run prisma:generate"
   },
   "prisma": {
