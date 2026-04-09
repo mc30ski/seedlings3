@@ -112,14 +112,8 @@ export default function SuperUnclaimedTab() {
       );
     }
 
-    // Sort: VIP first, then by date
-    rows.sort((a, b) => {
-      const aVip = !!(a.job?.property?.client as any)?.isVip;
-      const bVip = !!(b.job?.property?.client as any)?.isVip;
-      if (aVip && !bVip) return -1;
-      if (!aVip && bVip) return 1;
-      return (a.startAt ?? "").localeCompare(b.startAt ?? "");
-    });
+    // Sort chronologically (most urgent first)
+    rows.sort((a, b) => (a.startAt ?? "").localeCompare(b.startAt ?? ""));
 
     return rows;
   }, [items, q, overdueActive]);

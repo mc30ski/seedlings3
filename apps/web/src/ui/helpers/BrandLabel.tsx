@@ -9,7 +9,7 @@ import {
 type Props = {
   /** Pixel height for the icon */
   size?: number;
-  /** Show "Seedlings Lawn Care" text next to the icon */
+  /** Show "Seedlings" text next to the icon */
   showText?: boolean;
   /** Hide the right-side auth controls if you need a bare brand label somewhere else */
   showUserControls?: boolean;
@@ -35,14 +35,14 @@ export default function BrandLabel({
       <HStack gap="2" align="center">
         <Image
           src={src}
-          alt="Seedlings Lawn Care"
+          alt="Seedlings"
           height={`${size}px`}
           width="auto"
           style={{ imageRendering: "auto", display: "block" }}
         />
         {showText && (
           <Text fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
-            Seedlings Lawn Care
+            Seedlings
           </Text>
         )}
       </HStack>
