@@ -180,6 +180,8 @@ export const clients: ServicesClients = {
         displayName: payload.displayName,
         status: payload.status ?? "ACTIVE",
         notesInternal: payload.notesInternal,
+        isVip: payload.isVip ?? false,
+        vipReason: payload.vipReason ?? null,
       };
       const record = await tx.client.create({
         data: data,
@@ -194,12 +196,14 @@ export const clients: ServicesClients = {
 
   async update(currentUserId: string, id: string, payload: any) {
     return prisma.$transaction(async (tx) => {
-      const data = {
+      const data: any = {
         type: payload.type,
         displayName: payload.displayName,
         status: payload.status,
         notesInternal: payload.notesInternal,
       };
+      if (payload.isVip !== undefined) data.isVip = !!payload.isVip;
+      if (payload.vipReason !== undefined) data.vipReason = payload.isVip ? (payload.vipReason || null) : null;
       const record = await tx.client.update({
         where: { id },
         data: data,

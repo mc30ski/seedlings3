@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Client" ADD COLUMN "isVip" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Client" ADD COLUMN "vipReason" TEXT;
