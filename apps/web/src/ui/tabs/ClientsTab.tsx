@@ -42,6 +42,7 @@ import DeleteDialog, {
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
+import TruncatedText from "@/src/ui/components/TruncatedText";
 import { apiGet, apiDelete } from "@/src/lib/api";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
@@ -442,9 +443,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Card.Header>
             {c.notesInternal && (
               <Card.Body py="3" px="4" pt="1" pb="0">
-                <Text fontSize="xs" color="fg.muted">
-                  {c.notesInternal}
-                </Text>
+                <TruncatedText>{c.notesInternal}</TruncatedText>
               </Card.Body>
             )}
             <Card.Footer py="3" px="4" pt="2">

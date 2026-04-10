@@ -59,6 +59,7 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
+import TruncatedText from "@/src/ui/components/TruncatedText";
 import { type JobOccurrenceAssigneeWithUser } from "@/src/lib/types";
 
 function localDate(d: Date): string {
@@ -922,9 +923,7 @@ export default function ServicesTab({
                     </Text>
                   )}
                   {job.notes && (
-                    <Text fontSize="xs" color="fg.muted">
-                      {job.notes}
-                    </Text>
+                    <TruncatedText>{job.notes}</TruncatedText>
                   )}
                   {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
                     <Text fontSize="xs" color="teal.600">
@@ -1259,12 +1258,12 @@ export default function ServicesTab({
                               return (
                                 <>
                                   {otherLines && (
-                                    <Text fontSize="xs" color="fg.muted">{otherLines}</Text>
+                                    <TruncatedText>{otherLines}</TruncatedText>
                                   )}
                                   {(occ as any).proposalNotes && (
                                     <Box mt={1} p={1} bg="purple.50" rounded="sm">
                                       <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
-                                      <Text fontSize="xs" color="purple.600">{(occ as any).proposalNotes}</Text>
+                                      <TruncatedText color="purple.600">{(occ as any).proposalNotes}</TruncatedText>
                                       {(occ as any).proposalAmount != null && (
                                         <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${(occ as any).proposalAmount.toFixed(2)}</Text>
                                       )}
@@ -1273,13 +1272,13 @@ export default function ServicesTab({
                                   {(occ.status === "ACCEPTED" || acceptComment) && (
                                     <Box mt={1} p={1} bg="green.50" rounded="sm">
                                       <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
-                                      {acceptComment && <Text fontSize="xs" color="green.600">{acceptComment}</Text>}
+                                      {acceptComment && <TruncatedText color="green.600">{acceptComment}</TruncatedText>}
                                     </Box>
                                   )}
                                   {(occ as any).rejectionReason && (
                                     <Box mt={1} p={1} bg="red.50" rounded="sm">
                                       <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
-                                      <Text fontSize="xs" color="red.600">{(occ as any).rejectionReason}</Text>
+                                      <TruncatedText color="red.600">{(occ as any).rejectionReason}</TruncatedText>
                                     </Box>
                                   )}
                                   {occ.status === "REJECTED" && !(occ as any).rejectionReason && (
@@ -1318,7 +1317,7 @@ export default function ServicesTab({
                                     Paid: ${pay.amountPaid.toFixed(2)} via {prettyStatus(pay.method)}
                                   </Text>
                                   {pay.note && (
-                                    <Text fontSize="xs" color="green.600">{pay.note}</Text>
+                                    <TruncatedText color="green.600">{pay.note}</TruncatedText>
                                   )}
                                   {(pay.splits ?? []).length > 0 && (
                                     <VStack align="start" gap={1} mt={1}>
