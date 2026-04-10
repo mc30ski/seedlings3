@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, CalendarRange, Filter, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -84,7 +84,7 @@ type JobsTabProps = TabPropsType & {
 };
 
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot }: JobsTabProps) {
-  const { isAvail, forAdmin } = determineRoles(me, purpose);
+  const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
@@ -161,6 +161,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Pin failed.", err) });
+    }
+  }
+
+  // Reminder dialog state
+  const [reminderDialogOccId, setReminderDialogOccId] = useState<string | null>(null);
+  const [reminderDate, setReminderDate] = useState("");
+  const [reminderNote, setReminderNote] = useState("");
+
+  async function setReminder(occId: string, remindAt: string, note: string) {
+    try {
+      await apiPost(`/api/occurrences/${occId}/reminder`, { remindAt, note: note || undefined });
+      publishInlineMessage({ type: "SUCCESS", text: "Reminder set." });
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to set reminder.", err) });
+    }
+  }
+
+  async function clearReminder(occId: string) {
+    try {
+      await apiPost(`/api/occurrences/${occId}/reminder/clear`);
+      publishInlineMessage({ type: "SUCCESS", text: "Reminder cleared." });
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to clear reminder.", err) });
     }
   }
 
@@ -579,20 +604,37 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return fmtDateWeekday(d, { year: d.getFullYear() !== todayD.getFullYear() });
     };
 
-    // Separate pinned items into their own group (worker view only)
+    // Separate pinned and reminder-due items into their own groups (worker view only)
     const pinnedGroup: WorkerOccurrence[] = [];
-    const unpinned: WorkerOccurrence[] = [];
-    for (const occ of filtered) {
-      if (isWorkerView && pinnedIds.has(occ.id)) pinnedGroup.push(occ);
-      else unpinned.push(occ);
+    const reminderDueGroup: WorkerOccurrence[] = [];
+    const pinnedIds_ = new Set(pinnedIds);
+    const reminderDueIds = new Set<string>();
+    const rest: WorkerOccurrence[] = [];
+
+    if (isWorkerView) {
+      for (const occ of filtered) {
+        const isPinned = pinnedIds_.has(occ.id);
+        const hasReminderDue = occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey;
+        if (isPinned) pinnedGroup.push(occ);
+        if (hasReminderDue && !isPinned) {
+          reminderDueGroup.push(occ);
+          reminderDueIds.add(occ.id);
+        }
+        if (!isPinned && !hasReminderDue) rest.push(occ);
+      }
+    } else {
+      rest.push(...filtered);
     }
 
     if (pinnedGroup.length > 0) {
       groups.push({ key: "pinned", label: `Pinned (${pinnedGroup.length})`, items: pinnedGroup });
     }
+    if (reminderDueGroup.length > 0) {
+      groups.push({ key: "reminders-due", label: `Reminders Due (${reminderDueGroup.length})`, items: reminderDueGroup });
+    }
 
     let current: (typeof groups)[number] | null = null;
-    for (const occ of unpinned) {
+    for (const occ of rest) {
       const dateKey = occ.startAt ? bizDateKey(occ.startAt) : "no-date";
       if (!current || current.key !== dateKey) {
         current = {
@@ -988,7 +1030,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
-                {forAdmin && !isCardCompact && (
+                {(isAdmin || isSuper) && !isCardCompact && (
                   <Box px="4" pt="3" pb="0">
                     <Button
                       size="xs"
@@ -1040,6 +1082,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
+                        {isWorkerView && occ.reminder && (
+                          <Badge colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"} variant="subtle" fontSize="xs" borderRadius="full" px="2">
+                            <Bell size={10} style={{ marginRight: 3 }} />
+                            {fmtDate(occ.reminder.remindAt)}
+                          </Badge>
+                        )}
                       </Box>
                     </Box>
                     ) : (
@@ -1124,6 +1172,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
                               <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
                             </span>
+                          )}
+                          {isWorkerView && occ.reminder && (
+                            <Badge colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"} variant="subtle" fontSize="xs" borderRadius="full" px="2">
+                              <Bell size={10} style={{ marginRight: 3 }} />
+                              {fmtDate(occ.reminder.remindAt)}
+                            </Badge>
                           )}
                           </Box>
                         </Box>
@@ -1534,13 +1588,39 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-start"
                           itemId={occ.id}
                           label="Start"
-                          onClick={async () => setConfirmAction({
-                            title: "Start Job?",
-                            message: "Are you sure you want to start this job?",
-                            confirmLabel: "Start",
-                            colorPalette: "blue",
-                            onConfirm: () => void updateStatus(occ, "start"),
-                          })}
+                          onClick={async () => {
+                            const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
+                            const todayDate = bizDateKey(new Date());
+                            const isEarly = occDate && occDate !== todayDate;
+                            if (isEarly) {
+                              setConfirmAction({
+                                title: "Start Job Early?",
+                                message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Do you want to update the date to today?`,
+                                confirmLabel: "Yes, update date & start",
+                                colorPalette: "blue",
+                                onConfirm: async () => {
+                                  try {
+                                    const loc = await getLocation();
+                                    const body: Record<string, unknown> = { updateStartAt: true };
+                                    if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+                                    await apiPost(`/api/occurrences/${occ.id}/start`, body);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
+                                    await load(false);
+                                  } catch (err) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+                                  }
+                                },
+                              });
+                            } else {
+                              setConfirmAction({
+                                title: "Start Job?",
+                                message: "Are you sure you want to start this job?",
+                                confirmLabel: "Start",
+                                colorPalette: "blue",
+                                onConfirm: () => void updateStatus(occ, "start"),
+                              });
+                            }
+                          }}
                           variant="outline"
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
@@ -1725,6 +1805,64 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
+                      {isWorkerView && !occ.reminder && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="orange"
+                          onClick={() => {
+                            setReminderDialogOccId(occ.id);
+                            setReminderDate("");
+                            setReminderNote("");
+                          }}
+                        >
+                          <Bell size={12} /> Set Reminder
+                        </Button>
+                      )}
+                      {isWorkerView && occ.reminder && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="gray"
+                          onClick={() => void clearReminder(occ.id)}
+                        >
+                          <BellOff size={12} /> Clear Reminder
+                        </Button>
+                      )}
+                    </HStack>
+                  </Card.Footer>
+                )}
+
+                {/* Reminder buttons when the regular footer doesn't show */}
+                {isWorkerView && !isCardCompact && !(
+                  !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative &&
+                  (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED")
+                ) && (
+                  <Card.Footer py="3" px="4" pt="0">
+                    <HStack gap={2}>
+                      {!occ.reminder ? (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="orange"
+                          onClick={() => {
+                            setReminderDialogOccId(occ.id);
+                            setReminderDate("");
+                            setReminderNote("");
+                          }}
+                        >
+                          <Bell size={12} /> Set Reminder
+                        </Button>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="gray"
+                          onClick={() => void clearReminder(occ.id)}
+                        >
+                          <BellOff size={12} /> Clear Reminder
+                        </Button>
+                      )}
                     </HStack>
                   </Card.Footer>
                 )}
@@ -1775,6 +1913,77 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         }}
         onCancel={() => setConfirmAction(null)}
       />
+
+      {/* Set Reminder Dialog */}
+      <Dialog.Root open={!!reminderDialogOccId} onOpenChange={(e) => { if (!e.open) setReminderDialogOccId(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="sm">
+              <Dialog.Header>
+                <Dialog.Title>Set Reminder</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.muted">When should you be reminded?</Text>
+                  <HStack gap={2} wrap="wrap">
+                    {[
+                      { label: "Tomorrow", days: 1 },
+                      { label: "In 3 days", days: 3 },
+                      { label: "In 1 week", days: 7 },
+                      { label: "In 2 weeks", days: 14 },
+                      { label: "In 1 month", days: 30 },
+                    ].map((opt) => (
+                      <Button
+                        key={opt.days}
+                        size="xs"
+                        variant={reminderDate === localDate((() => { const d = new Date(); d.setDate(d.getDate() + opt.days); return d; })()) ? "solid" : "outline"}
+                        colorPalette="orange"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + opt.days);
+                          setReminderDate(localDate(d));
+                        }}
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                  </HStack>
+                  <HStack gap={2} align="center">
+                    <Text fontSize="sm" flexShrink={0}>Or pick a date:</Text>
+                    <DateInput value={reminderDate} onChange={setReminderDate} />
+                  </HStack>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Note (optional)</Text>
+                    <input
+                      type="text"
+                      placeholder="e.g., Follow up with client on pricing"
+                      value={reminderNote}
+                      onChange={(e) => setReminderNote(e.target.value)}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    />
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="ghost" onClick={() => setReminderDialogOccId(null)}>Cancel</Button>
+                <Button
+                  colorPalette="orange"
+                  disabled={!reminderDate}
+                  onClick={() => {
+                    if (reminderDialogOccId && reminderDate) {
+                      void setReminder(reminderDialogOccId, reminderDate + "T09:00:00", reminderNote);
+                      setReminderDialogOccId(null);
+                    }
+                  }}
+                >
+                  Set Reminder
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       <ManageExpensesDialog
         open={!!expenseDialogOccId}

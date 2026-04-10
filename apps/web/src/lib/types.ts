@@ -545,6 +545,7 @@ export type WorkerOccurrence = {
     assignedById?: string | null;
     user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
   }[];
+  reminder?: { remindAt: string; note?: string | null } | null;
 };
 
 export type OccurrencePhoto = {
