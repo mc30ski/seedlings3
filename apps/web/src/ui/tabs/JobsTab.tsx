@@ -39,6 +39,7 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
+import TruncatedText from "@/src/ui/components/TruncatedText";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
@@ -89,7 +90,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
   const [q, setQ] = useState("");
-  const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
+  const [compact, setCompact] = usePersistedState(`${pfx}_compact`, true);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
@@ -753,15 +754,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Button>
         <Button
           size="sm"
-          variant={compact ? "solid" : "ghost"}
+          variant={!compact ? "solid" : "ghost"}
           px="2"
           onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
-          css={compact ? {
+          css={!compact ? {
             background: "var(--chakra-colors-gray-200)",
             color: "var(--chakra-colors-gray-700)",
           } : undefined}
+          title={compact ? "Expand all cards" : "Collapse all cards"}
         >
-          {compact ? <Maximize2 size={14} /> : <List size={14} />}
+          {compact ? <Maximize2 size={14} /> : <Maximize2 size={14} />}
         </Button>
         <Button
           size="sm"
@@ -1336,12 +1338,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       return (
                         <>
                           {otherLines && (
-                            <Text fontSize="xs" color="fg.muted">{otherLines}</Text>
+                            <TruncatedText color="fg.muted">{otherLines}</TruncatedText>
                           )}
                           {occ.proposalNotes && (
                             <Box p={2} bg="purple.50" rounded="sm" mt={1}>
                               <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
-                              <Text fontSize="xs" color="purple.600">{occ.proposalNotes}</Text>
+                              <TruncatedText color="purple.600">{occ.proposalNotes}</TruncatedText>
                               {occ.proposalAmount != null && (
                                 <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${occ.proposalAmount.toFixed(2)}</Text>
                               )}
@@ -1350,7 +1352,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {(occ.status === "ACCEPTED" || acceptComment) && (
                             <Box p={2} bg="green.50" rounded="sm" mt={1}>
                               <Text fontSize="xs" fontWeight="medium" color="green.700">Accepted{acceptComment ? ":" : ""}</Text>
-                              {acceptComment && <Text fontSize="xs" color="green.600">{acceptComment}</Text>}
+                              {acceptComment && <TruncatedText color="green.600">{acceptComment}</TruncatedText>}
                             </Box>
                           )}
                         </>
@@ -1359,7 +1361,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {occ.rejectionReason && (
                       <Box p={2} bg="red.50" rounded="sm" mt={1}>
                         <Text fontSize="xs" fontWeight="medium" color="red.700">Rejected:</Text>
-                        <Text fontSize="xs" color="red.600">{occ.rejectionReason}</Text>
+                        <TruncatedText color="red.600">{occ.rejectionReason}</TruncatedText>
                       </Box>
                     )}
                     {occ.status === "REJECTED" && !occ.rejectionReason && (
@@ -1373,7 +1375,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <Text fontSize="xs" fontWeight="medium" color="gray.700">Cost Breakdown</Text>
                           <Badge size="sm" colorPalette="orange" variant="subtle">Internal</Badge>
                         </HStack>
-                        <Text fontSize="xs" color="gray.600" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</Text>
+                        <TruncatedText color="gray.600" whiteSpace="pre-wrap">{occ.generatedEstimateBreakdown}</TruncatedText>
                       </Box>
                     )}
                     {forAdmin && occ.generatedEstimate && (
@@ -1396,7 +1398,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             Copy
                           </Button>
                         </HStack>
-                        <Text fontSize="xs" color="blue.600" whiteSpace="pre-wrap">{occ.generatedEstimate}</Text>
+                        <TruncatedText color="blue.600" whiteSpace="pre-wrap">{occ.generatedEstimate}</TruncatedText>
                       </Box>
                     )}
                     {(occ.startLat != null || occ.completeLat != null) && (
