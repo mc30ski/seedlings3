@@ -529,6 +529,44 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async getOccurrencesByIds(ids: string[]) {
+    if (ids.length === 0) return [];
+    return prisma.jobOccurrence.findMany({
+      where: { id: { in: ids } },
+      include: {
+        job: {
+          include: {
+            property: {
+              select: {
+                id: true, displayName: true, street1: true, city: true, state: true,
+                client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
+              },
+            },
+          },
+        },
+        assignees: {
+          include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } },
+        },
+        payment: {
+          include: {
+            splits: { include: { user: { select: { id: true, displayName: true, email: true } } } },
+            collectedBy: { select: { id: true, displayName: true, email: true } },
+          },
+        },
+        expenses: {
+          include: { createdBy: { select: { id: true, displayName: true } } },
+          orderBy: { createdAt: "asc" as const },
+        },
+        _count: { select: { photos: true } },
+        photos: {
+          select: { id: true, r2Key: true, contentType: true, createdAt: true },
+          orderBy: { createdAt: "desc" as const },
+          take: 3,
+        },
+      },
+    });
+  },
+
   async listMyOccurrences(userId) {
     return prisma.jobOccurrence.findMany({
       where: {
