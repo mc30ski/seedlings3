@@ -52,6 +52,7 @@ function addMinutes(d: Date, mins: number): Date {
 // ── Clear database ──────────────────────────────────────────────────────────
 async function clearDatabase() {
   console.log("  Clearing leaf tables...");
+  await prisma.reminder.deleteMany();
   await prisma.pinnedOccurrence.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
@@ -680,8 +681,8 @@ async function seedDatabase() {
   await occ({ jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 9), endAt: addMinutes(daysAgo(21, 9), 60), status: "CANCELED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60 });
 
   // ─── ESTIMATES ────────────────────────────────────────────────────────────
-  await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "TREE_TRIMMING", isEstimate: true, isAdminOnly: true, proposalAmount: 450, proposalNotes: "3 large oaks in backyard, estimate includes debris removal" });
-  await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "PRESSURE_WASH", isEstimate: true, isAdminOnly: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash, ~5000 sqft" });
+  const estChenTree = await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "TREE_TRIMMING", isEstimate: true, isAdminOnly: true, proposalAmount: 450, proposalNotes: "3 large oaks in backyard, estimate includes debris removal" });
+  const estChurchWash = await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "PRESSURE_WASH", isEstimate: true, isAdminOnly: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash, ~5000 sqft" });
 
   // ─── ONE-OFF (aeration) ───────────────────────────────────────────────────
   await occ(
@@ -878,6 +879,22 @@ async function seedDatabase() {
   // Garcia paused
   await prisma.auditEvent.create({
     data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
+  });
+
+  // ── Reminders ──────────────────────────────────────────────────────────────
+  console.log("  Creating reminders...");
+
+  // Admin Worker: reminder due today to follow up on Chen tree estimate
+  await prisma.reminder.create({
+    data: { userId: ADMIN_WORKER_ID, occurrenceId: estChenTree.id, remindAt: daysFromNow(0, 9), note: "Follow up with Lisa Chen on tree trimming pricing" },
+  });
+  // Admin Worker: future reminder on church pressure wash
+  await prisma.reminder.create({
+    data: { userId: ADMIN_WORKER_ID, occurrenceId: estChurchWash.id, remindAt: daysFromNow(5, 9), note: "Check if church board approved pressure wash" },
+  });
+  // Employee: reminder due yesterday (overdue) on a completed job
+  await prisma.reminder.create({
+    data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id, remindAt: daysAgo(1, 9), note: "Ask O'Brien about recurring schedule change" },
   });
 
   // ── Pinned occurrences ─────────────────────────────────────────────────────

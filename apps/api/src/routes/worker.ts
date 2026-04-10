@@ -159,18 +159,29 @@ export default async function workerRoutes(app: FastifyInstance) {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
     const occs = await services.jobs.listAllOccurrences({ from, to });
 
-    // Merge pinned occurrences that fall outside the date range
+    // Merge pinned & reminded occurrences that fall outside the date range
     const uid = await currentUserId(req);
-    const pins = await prisma.pinnedOccurrence.findMany({
-      where: { userId: uid },
-      select: { occurrenceId: true },
-    });
-    if (pins.length > 0) {
-      const loadedIds = new Set(occs.map((o: any) => o.id));
-      const missingPinIds = pins.map((p: any) => p.occurrenceId).filter((id: string) => !loadedIds.has(id));
-      if (missingPinIds.length > 0) {
-        const pinnedOccs = await services.jobs.getOccurrencesByIds(missingPinIds);
-        occs.push(...(pinnedOccs as any[]));
+    const [pins, reminders] = await Promise.all([
+      prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
+      prisma.reminder.findMany({ where: { userId: uid, dismissedAt: null }, select: { occurrenceId: true, remindAt: true, note: true } }),
+    ]);
+
+    const loadedIds = new Set(occs.map((o: any) => o.id));
+    const extraIds = new Set<string>();
+    for (const p of pins) if (!loadedIds.has(p.occurrenceId)) extraIds.add(p.occurrenceId);
+    for (const r of reminders) if (!loadedIds.has(r.occurrenceId)) extraIds.add(r.occurrenceId);
+
+    if (extraIds.size > 0) {
+      const extraOccs = await services.jobs.getOccurrencesByIds([...extraIds]);
+      occs.push(...(extraOccs as any[]));
+    }
+
+    // Attach reminder data to occurrences
+    if (reminders.length > 0) {
+      const reminderMap = new Map(reminders.map((r) => [r.occurrenceId, { remindAt: r.remindAt, note: r.note }]));
+      for (const occ of occs) {
+        const rem = reminderMap.get((occ as any).id);
+        if (rem) (occ as any).reminder = rem;
       }
     }
 
@@ -209,6 +220,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     const location = (body.lat != null && body.lng != null)
       ? { lat: Number(body.lat), lng: Number(body.lng) }
       : undefined;
+
+    // Optionally update startAt to now when starting early
+    if (body.updateStartAt) {
+      const now = new Date();
+      const occ = await prisma.jobOccurrence.findUnique({ where: { id: String(req.params.id) } });
+      if (occ) {
+        // Preserve the duration: shift endAt by the same delta
+        const newStart = now;
+        let newEnd: Date | undefined;
+        if (occ.startAt && occ.endAt) {
+          const duration = occ.endAt.getTime() - occ.startAt.getTime();
+          newEnd = new Date(newStart.getTime() + duration);
+        }
+        await prisma.jobOccurrence.update({
+          where: { id: occ.id },
+          data: { startAt: newStart, ...(newEnd ? { endAt: newEnd } : {}) },
+        });
+      }
+    }
+
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
@@ -426,6 +457,56 @@ export default async function workerRoutes(app: FastifyInstance) {
     const occurrenceId = String(req.params.id);
     await prisma.pinnedOccurrence.deleteMany({
       where: { userId: uid, occurrenceId },
+    });
+    return { ok: true };
+  });
+
+  // ── Reminders ──
+
+  app.get("/reminders", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return prisma.reminder.findMany({
+      where: { userId: uid, dismissedAt: null },
+      orderBy: { remindAt: "asc" },
+    });
+  });
+
+  app.post("/occurrences/:id/reminder", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+    const remindAt = new Date(body.remindAt);
+    if (isNaN(remindAt.getTime())) throw app.httpErrors.badRequest("Invalid remindAt date");
+    const note = body.note ? String(body.note) : null;
+
+    await prisma.reminder.upsert({
+      where: { userId_occurrenceId: { userId: uid, occurrenceId } },
+      create: { userId: uid, occurrenceId, remindAt, note },
+      update: { remindAt, note, dismissedAt: null },
+    });
+    return { ok: true };
+  });
+
+  app.post("/occurrences/:id/reminder/clear", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    await prisma.reminder.updateMany({
+      where: { userId: uid, occurrenceId },
+      data: { dismissedAt: new Date() },
+    });
+    return { ok: true };
+  });
+
+  app.post("/occurrences/:id/reminder/snooze", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+    const remindAt = new Date(body.remindAt);
+    if (isNaN(remindAt.getTime())) throw app.httpErrors.badRequest("Invalid remindAt date");
+
+    await prisma.reminder.updateMany({
+      where: { userId: uid, occurrenceId },
+      data: { remindAt, dismissedAt: null },
     });
     return { ok: true };
   });

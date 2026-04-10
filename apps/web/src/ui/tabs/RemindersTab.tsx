@@ -11,7 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { List, Maximize2, Pin } from "lucide-react";
+import { Bell, List, Maximize2, Pin } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
@@ -168,8 +168,17 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
     return items.filter((occ) => pinnedIds.has(occ.id)).filter(notDismissed);
   }, [items, pinnedIds, forAdmin, dismissed]);
 
+  // Follow-ups — occurrences with reminders due today or earlier
+  const followUps = useMemo(() => {
+    if (forAdmin) return [];
+    return items.filter((occ) => {
+      if (!occ.reminder) return false;
+      return bizDateKey(occ.reminder.remindAt) <= today;
+    }).filter(notDismissed);
+  }, [items, forAdmin, today, dismissed]);
+
   const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
-  const hasReminders = showRoutePlanReminder || pinnedJobs.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
+  const hasReminders = showRoutePlanReminder || pinnedJobs.length > 0 || followUps.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
   const hasDismissed = dismissed.size > 0;
 
   if (loading) {
@@ -280,6 +289,35 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           toggleCard={toggleCard}
           onDismiss={(occId) => void unpinOccurrence(occId)}
           dismissLabel="Unpin"
+        />
+      )}
+
+      {followUps.length > 0 && (
+        <Section
+          title="Follow-ups"
+          subtitle="Reminders you set that are now due"
+          color="orange.600"
+          items={followUps}
+          badge={(occ) => {
+            const note = occ.reminder?.note;
+            return (
+              <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                <Bell size={10} style={{ marginRight: 3 }} />
+                {note || "Follow up"}
+              </Badge>
+            );
+          }}
+          message="Follow up on this job"
+          showAssignees={showAll}
+          forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
+          onDismiss={(occId) => {
+            void apiPost(`/api/occurrences/${occId}/reminder/clear`);
+            dismissReminder(occId);
+          }}
+          dismissLabel="Clear Reminder"
         />
       )}
 
