@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
-import { Text } from "@chakra-ui/react";
+import { Box, Text } from "@chakra-ui/react";
 
 type Props = {
   children: string;
@@ -35,39 +35,59 @@ export default function TruncatedText({
 
   if (expanded) {
     return (
-      <Text
-        fontSize={fontSize}
-        color={color}
-        fontWeight={fontWeight}
-        whiteSpace={whiteSpace ?? "pre-wrap"}
-        cursor="pointer"
-        onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
-      >
-        {children}{" "}
-        <Text as="span" color="blue.500" fontSize={fontSize} fontWeight="medium">Show less</Text>
-      </Text>
+      <Box>
+        <Text
+          fontSize={fontSize}
+          color={color}
+          fontWeight={fontWeight}
+          whiteSpace={whiteSpace ?? "pre-wrap"}
+        >
+          {children}
+        </Text>
+        <Text
+          as="span"
+          color="blue.500"
+          fontSize={fontSize}
+          fontWeight="medium"
+          cursor="pointer"
+          onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
+        >
+          Show less
+        </Text>
+      </Box>
     );
   }
 
   return (
-    <Text
-      ref={ref}
-      fontSize={fontSize}
-      color={color}
-      fontWeight={fontWeight}
-      css={{
-        display: "-webkit-box",
-        WebkitLineClamp: maxLines,
-        WebkitBoxOrient: "vertical",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: whiteSpace ?? "pre-wrap",
-        cursor: isClamped ? "pointer" : undefined,
-      }}
-      onClick={isClamped ? (e) => { e.stopPropagation(); setExpanded(true); } : undefined}
-    >
-      {children}
-      {isClamped && <Text as="span" color="blue.500" fontSize={fontSize} fontWeight="medium"> ...show more</Text>}
-    </Text>
+    <Box>
+      <Text
+        ref={ref}
+        fontSize={fontSize}
+        color={color}
+        fontWeight={fontWeight}
+        css={{
+          display: "-webkit-box",
+          WebkitLineClamp: maxLines,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: whiteSpace ?? "pre-wrap",
+        }}
+      >
+        {children}
+      </Text>
+      {isClamped && (
+        <Text
+          as="span"
+          color="blue.500"
+          fontSize={fontSize}
+          fontWeight="medium"
+          cursor="pointer"
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+        >
+          Show more
+        </Text>
+      )}
+    </Box>
   );
 }
