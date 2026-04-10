@@ -11,8 +11,8 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { List, Maximize2 } from "lucide-react";
-import { apiGet } from "@/src/lib/api";
+import { List, Maximize2, Pin } from "lucide-react";
+import { apiGet, apiPost } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -69,6 +69,23 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
   function undismissAll() {
     setDismissed(new Set());
     saveDismissed(new Set());
+  }
+
+  // Pinned occurrences
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (forAdmin) return;
+    apiGet<string[]>("/api/occurrences/pinned")
+      .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
+      .catch(() => {});
+  }, [forAdmin]);
+
+  async function unpinOccurrence(occId: string) {
+    try {
+      await apiPost(`/api/occurrences/${occId}/unpin`);
+      setPinnedIds((prev) => { const next = new Set(prev); next.delete(occId); return next; });
+    } catch {}
   }
 
   useEffect(() => {
@@ -145,8 +162,14 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
     occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
   ).filter(notDismissed);
 
+  // Pinned jobs — show all pinned occurrences regardless of status (unless dismissed)
+  const pinnedJobs = useMemo(() => {
+    if (forAdmin || pinnedIds.size === 0) return [];
+    return items.filter((occ) => pinnedIds.has(occ.id)).filter(notDismissed);
+  }, [items, pinnedIds, forAdmin, dismissed]);
+
   const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
-  const hasReminders = showRoutePlanReminder || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
+  const hasReminders = showRoutePlanReminder || pinnedJobs.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
   const hasDismissed = dismissed.size > 0;
 
   if (loading) {
@@ -240,6 +263,24 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
             </Card.Body>
           </Card.Root>
         </Box>
+      )}
+
+      {pinnedJobs.length > 0 && (
+        <Section
+          title="Pinned"
+          subtitle="Jobs you've pinned for quick reference"
+          color="blue.600"
+          items={pinnedJobs}
+          badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2"><Pin size={10} style={{ marginRight: 4 }} />Pinned</Badge>}
+          message="Unpin from the Jobs tab when no longer needed"
+          showAssignees={showAll}
+          forAdmin={forAdmin}
+          compact={compact}
+          expandedCards={expandedCards}
+          toggleCard={toggleCard}
+          onDismiss={(occId) => void unpinOccurrence(occId)}
+          dismissLabel="Unpin"
+        />
       )}
 
       {overdue.length > 0 && (
@@ -347,6 +388,7 @@ function Section({
   expandedCards,
   toggleCard,
   onDismiss,
+  dismissLabel = "Dismiss",
 }: {
   title: string;
   subtitle: string;
@@ -360,6 +402,7 @@ function Section({
   expandedCards: Set<string>;
   toggleCard: (id: string) => void;
   onDismiss?: (id: string) => void;
+  dismissLabel?: string;
 }) {
   return (
     <Box mb={5}>
@@ -401,7 +444,7 @@ function Section({
                     colorPalette="gray"
                     onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
                   >
-                    Dismiss
+                    {dismissLabel}
                   </Button>
                 </Box>
               )}
@@ -456,7 +499,7 @@ function Section({
                           flexShrink={0}
                           onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
                         >
-                          Dismiss
+                          {dismissLabel}
                         </Button>
                       </HStack>
                     )}

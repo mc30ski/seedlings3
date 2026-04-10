@@ -52,6 +52,7 @@ function addMinutes(d: Date, mins: number): Date {
 // ── Clear database ──────────────────────────────────────────────────────────
 async function clearDatabase() {
   console.log("  Clearing leaf tables...");
+  await prisma.pinnedOccurrence.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
@@ -589,11 +590,11 @@ async function seedDatabase() {
 
   // ─── TODAY / TOMORROW ─────────────────────────────────────────────────────
   // Assigned today
-  await occ(
+  const todayHarrington = await occ(
     { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
-  await occ(
+  const todayWillowbrook = await occ(
     { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 7), endAt: addMinutes(daysFromNow(0, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }],
   );
@@ -616,7 +617,7 @@ async function seedDatabase() {
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90 });
 
   // Assigned tomorrow
-  await occ(
+  const tomorrowChenLeaf = await occ(
     { jobId: chenLeafCleanup.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 9), endAt: addMinutes(daysFromNow(1, 9), 90), status: "SCHEDULED", workflow: "ONE_OFF", jobType: "LEAF_CLEANUP", price: 120.0, estimatedMinutes: 90, isOneOff: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
@@ -878,6 +879,15 @@ async function seedDatabase() {
   await prisma.auditEvent.create({
     data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
   });
+
+  // ── Pinned occurrences ─────────────────────────────────────────────────────
+  console.log("  Creating pinned occurrences...");
+
+  // Admin Worker pins today's Harrington mow and Willowbrook
+  await prisma.pinnedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayHarrington.id } });
+  await prisma.pinnedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayWillowbrook.id } });
+  // Employee pins tomorrow's leaf cleanup
+  await prisma.pinnedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: tomorrowChenLeaf.id } });
 
   console.log("  Seed complete!");
 }

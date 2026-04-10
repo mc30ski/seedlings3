@@ -158,6 +158,22 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/occurrences", workerGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
     const occs = await services.jobs.listAllOccurrences({ from, to });
+
+    // Merge pinned occurrences that fall outside the date range
+    const uid = await currentUserId(req);
+    const pins = await prisma.pinnedOccurrence.findMany({
+      where: { userId: uid },
+      select: { occurrenceId: true },
+    });
+    if (pins.length > 0) {
+      const loadedIds = new Set(occs.map((o: any) => o.id));
+      const missingPinIds = pins.map((p: any) => p.occurrenceId).filter((id: string) => !loadedIds.has(id));
+      if (missingPinIds.length > 0) {
+        const pinnedOccs = await services.jobs.getOccurrencesByIds(missingPinIds);
+        occs.push(...(pinnedOccs as any[]));
+      }
+    }
+
     // Generate download URLs for preview photos
     for (const occ of occs) {
       if ((occ as any).photos?.length) {
@@ -381,6 +397,37 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/occurrences/:id/unclaim", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     return services.jobs.unclaimOccurrence(uid, String(req.params.id));
+  });
+
+  // ── Pin / Unpin occurrences ──
+
+  app.get("/occurrences/pinned", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const pins = await prisma.pinnedOccurrence.findMany({
+      where: { userId: uid },
+      select: { occurrenceId: true },
+    });
+    return pins.map((p: any) => p.occurrenceId);
+  });
+
+  app.post("/occurrences/:id/pin", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    await prisma.pinnedOccurrence.upsert({
+      where: { userId_occurrenceId: { userId: uid, occurrenceId } },
+      create: { userId: uid, occurrenceId },
+      update: {},
+    });
+    return { ok: true };
+  });
+
+  app.post("/occurrences/:id/unpin", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    await prisma.pinnedOccurrence.deleteMany({
+      where: { userId: uid, occurrenceId },
+    });
+    return { ok: true };
   });
 
   // ── Expenses (claimer only) ──

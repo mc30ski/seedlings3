@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -137,6 +137,32 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
+
+  // Pinned occurrences (worker only)
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const isWorkerView = purpose === "WORKER";
+
+  useEffect(() => {
+    if (!isWorkerView) return;
+    apiGet<string[]>("/api/occurrences/pinned")
+      .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
+      .catch(() => {});
+  }, [isWorkerView]);
+
+  async function togglePin(occId: string) {
+    const isPinned = pinnedIds.has(occId);
+    try {
+      await apiPost(`/api/occurrences/${occId}/${isPinned ? "unpin" : "pin"}`);
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        if (isPinned) next.delete(occId);
+        else next.add(occId);
+        return next;
+      });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Pin failed.", err) });
+    }
+  }
 
   // Listen for navigation from Reminders tab
   const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
@@ -522,12 +548,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       );
     }
     rows.sort((a, b) => {
+      // Pinned items first (worker view only)
+      if (isWorkerView) {
+        const aPin = pinnedIds.has(a.id) ? 0 : 1;
+        const bPin = pinnedIds.has(b.id) ? 0 : 1;
+        if (aPin !== bPin) return aPin - bPin;
+      }
       const da = a.startAt ?? "";
       const db = b.startAt ?? "";
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, isTrainee, highlightOccId]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, isTrainee, highlightOccId, pinnedIds, isWorkerView]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -547,8 +579,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return fmtDateWeekday(d, { year: d.getFullYear() !== todayD.getFullYear() });
     };
 
-    let current: (typeof groups)[number] | null = null;
+    // Separate pinned items into their own group (worker view only)
+    const pinnedGroup: WorkerOccurrence[] = [];
+    const unpinned: WorkerOccurrence[] = [];
     for (const occ of filtered) {
+      if (isWorkerView && pinnedIds.has(occ.id)) pinnedGroup.push(occ);
+      else unpinned.push(occ);
+    }
+
+    if (pinnedGroup.length > 0) {
+      groups.push({ key: "pinned", label: `Pinned (${pinnedGroup.length})`, items: pinnedGroup });
+    }
+
+    let current: (typeof groups)[number] | null = null;
+    for (const occ of unpinned) {
       const dateKey = occ.startAt ? bizDateKey(occ.startAt) : "no-date";
       if (!current || current.key !== dateKey) {
         current = {
@@ -561,7 +605,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       current.items.push(occ);
     }
     return groups;
-  }, [filtered]);
+  }, [filtered, pinnedIds, isWorkerView]);
 
   if (!isAvail) return <UnavailableNotice />;
 
@@ -896,8 +940,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isAdminOnlyOcc = !!occ.isAdminOnly;
             const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
             const vipReason = (occ.job?.property?.client as any)?.vipReason;
+            const isPinned = isWorkerView && pinnedIds.has(occ.id);
 
-            const cardBorderColor = (isClosed || isAcceptedEstimate)
+            const cardBorderColor = isPinned
+              ? "blue.400"
+              : (isClosed || isAcceptedEstimate)
               ? "gray.200"
               : isTentative
               ? "orange.300"
@@ -964,13 +1011,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   {isCardCompact ? (
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
-                      <Text fontSize="sm" fontWeight="semibold">
-                        {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                        {occ.job?.property?.displayName}
-                        {occ.job?.property?.client?.displayName && (
-                          <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                      <HStack gap={1} minW={0} flex="1">
+                        {isWorkerView && (
+                          <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                            {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                          </Button>
                         )}
-                      </Text>
+                        <Text fontSize="sm" fontWeight="semibold">
+                          {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
+                          {occ.job?.property?.displayName}
+                          {occ.job?.property?.client?.displayName && (
+                            <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                          )}
+                        </Text>
+                      </HStack>
                       <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                         {isTentative ? (
                           <StatusBadge status="Tentative" palette="orange" variant="solid" />
@@ -993,13 +1047,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <VStack align="stretch" gap={1}>
                         <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "flex-start" }}>
                           <VStack align="start" gap={0} flex="1" minW={0}>
-                            <Text fontSize="md" fontWeight="semibold">
-                              {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                              {occ.job?.property?.displayName}
-                              {occ.job?.property?.client?.displayName && (
-                                <> — {clientLabel(occ.job.property.client.displayName)}</>
+                            <HStack gap={1}>
+                              {isWorkerView && (
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={() => void togglePin(occ.id)} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                                  {pinnedIds.has(occ.id) ? <Pin size={16} fill="currentColor" /> : <Pin size={16} />}
+                                </Button>
                               )}
-                            </Text>
+                              <Text fontSize="md" fontWeight="semibold">
+                                {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
+                                {occ.job?.property?.displayName}
+                                {occ.job?.property?.client?.displayName && (
+                                  <> — {clientLabel(occ.job.property.client.displayName)}</>
+                                )}
+                              </Text>
+                            </HStack>
                             <Box fontSize="sm">
                               <MapLink address={[
                                   occ.job?.property?.street1,
@@ -1526,12 +1587,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           label="Accept Estimate"
                           onClick={async () => setConfirmAction({
                             title: "Accept Estimate?",
-                            message: "Add a comment (optional):",
+                            message: "Add a comment:",
                             confirmLabel: "Accept",
                             colorPalette: "green",
                             inputPlaceholder: "Comment...",
                             inputLabel: "Comment",
-                            inputOptional: true,
                             onConfirm: async (comment: string) => {
                               try {
                                 const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
@@ -1563,12 +1623,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           label="Reject Estimate"
                           onClick={async () => setConfirmAction({
                             title: "Reject Estimate?",
-                            message: "Add a reason (optional):",
+                            message: "Add a reason:",
                             confirmLabel: "Reject",
                             colorPalette: "red",
                             inputPlaceholder: "Reason...",
                             inputLabel: "Reason",
-                            inputOptional: true,
                             onConfirm: async (reason: string) => {
                               try {
                                 await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
