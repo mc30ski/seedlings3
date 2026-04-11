@@ -184,7 +184,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
     const occs = await services.jobs.listAllOccurrences({ from, to });
 
-    // Merge pinned & reminded occurrences that fall outside the date range
+    // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
     const uid = await currentUserId(req);
     const [pins, reminders] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
@@ -192,26 +192,42 @@ export default async function workerRoutes(app: FastifyInstance) {
     ]);
 
     const loadedIds = new Set(occs.map((o: any) => o.id));
-    const extraIds = new Set<string>();
-    for (const p of pins) if (!loadedIds.has(p.occurrenceId)) extraIds.add(p.occurrenceId);
-    for (const r of reminders) if (!loadedIds.has(r.occurrenceId)) extraIds.add(r.occurrenceId);
 
-    if (extraIds.size > 0) {
-      const extraOccs = await services.jobs.getOccurrencesByIds([...extraIds]);
-      occs.push(...(extraOccs as any[]));
+    // Only merge pinned (not reminded)
+    const missingPinIds = pins.map((p) => p.occurrenceId).filter((id) => !loadedIds.has(id));
+    if (missingPinIds.length > 0) {
+      const pinnedOccs = await services.jobs.getOccurrencesByIds(missingPinIds);
+      occs.push(...(pinnedOccs as any[]));
+      for (const po of pinnedOccs) loadedIds.add((po as any).id);
     }
 
-    // Attach reminder data to occurrences
-    if (reminders.length > 0) {
-      const reminderMap = new Map(reminders.map((r) => [r.occurrenceId, { remindAt: r.remindAt, note: r.note }]));
-      for (const occ of occs) {
-        const rem = reminderMap.get((occ as any).id);
-        if (rem) (occ as any).reminder = rem;
-      }
+    // Attach reminder data to occurrences already in the list
+    const reminderMap = new Map(reminders.map((r) => [r.occurrenceId, { remindAt: r.remindAt, note: r.note }]));
+    for (const occ of occs) {
+      const rem = reminderMap.get((occ as any).id);
+      if (rem) (occ as any).reminder = rem;
     }
+
+    // Build reminder ghosts: reminders whose occurrence is NOT in the loaded list
+    // These will appear as ghost cards on the reminder's date
+    const ghostReminderIds = reminders
+      .map((r) => r.occurrenceId)
+      .filter((id) => !loadedIds.has(id));
+
+    let reminderGhosts: any[] = [];
+    if (ghostReminderIds.length > 0) {
+      const ghostOccs = await services.jobs.getOccurrencesByIds(ghostReminderIds);
+      reminderGhosts = ghostOccs.map((go: any) => {
+        const rem = reminderMap.get(go.id);
+        return { ...go, reminder: rem, _isReminderGhost: true, _ghostDate: rem?.remindAt };
+      });
+    }
+
+    // Add ghost reminders to the list
+    const allOccs = [...occs, ...reminderGhosts];
 
     // Generate download URLs for preview photos
-    for (const occ of occs) {
+    for (const occ of allOccs) {
       if ((occ as any).photos?.length) {
         (occ as any).photos = await Promise.all(
           (occ as any).photos.map(async (p: any) => ({
@@ -222,7 +238,7 @@ export default async function workerRoutes(app: FastifyInstance) {
         );
       }
     }
-    return occs;
+    return allOccs;
   });
 
   app.get("/occurrences/mine", workerGuard, async (req: any) => {

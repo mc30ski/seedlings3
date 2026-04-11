@@ -550,6 +550,8 @@ export type WorkerOccurrence = {
     user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
   }[];
   reminder?: { remindAt: string; note?: string | null } | null;
+  _isReminderGhost?: boolean;
+  _ghostDate?: string;
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {
     id: string;
