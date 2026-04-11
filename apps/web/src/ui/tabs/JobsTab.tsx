@@ -1244,12 +1244,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {(occ.photos ?? []).length > 0 && (
                       <Box display="flex" gap={1} mt={1} flexWrap="wrap">
                         {(occ.photos ?? []).map((p) => (
-                          <img
+                          <a
                             key={p.id}
-                            src={p.url}
-                            alt=""
-                            style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
-                          />
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <img
+                              src={p.url}
+                              alt=""
+                              style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
+                            />
+                          </a>
                         ))}
                       </Box>
                     )}

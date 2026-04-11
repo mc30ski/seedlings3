@@ -419,10 +419,13 @@ export default function PropertiesTab({
                   {clientName}
                 </Text>
               )}
-            <Card.Root variant="outline">
+            <Card.Root variant="outline" borderColor={p.status === "ARCHIVED" ? "gray.200" : (p.client as any)?.isVip ? "yellow.300" : undefined} bg={p.status === "ARCHIVED" ? "gray.50" : undefined}>
               <Card.Header py="3" px="4" pb="0">
                 <HStack gap={3} justify="space-between" align="center">
-                  <Text fontSize="md" fontWeight="semibold" flex="1" minW={0}>{p.displayName}</Text>
+                  <HStack gap={1} flex="1" minW={0}>
+                    {(p.client as any)?.isVip && <Text title={(p.client as any)?.vipReason || "VIP Client"} cursor="help">⭐</Text>}
+                    <Text fontSize="md" fontWeight="semibold">{p.displayName}</Text>
+                  </HStack>
                   <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
                     <StatusBadge
                       status={p.status}
@@ -434,61 +437,70 @@ export default function PropertiesTab({
                       palette="gray"
                       variant="outline"
                     />
+                    {(p as any).lotSize != null && (
+                      <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {(p as any).lotSize.toLocaleString()} {(p as any).lotSizeUnit ?? "sqft"}
+                      </Badge>
+                    )}
                   </Box>
                 </HStack>
               </Card.Header>
 
-              <Card.Body py="3" px="4" pt="0">
-                <VStack align="start" gap={1}>
+              <Card.Body py="3" px="4" pt="1">
+                <VStack align="start" gap={1.5}>
                   <Box fontSize="sm">
                     <MapLink address={address} />
                   </Box>
-                  <Text fontSize="xs">
-                    Client:{" "}
-                    <TextLink
-                      text={clientLabel(p.client?.displayName) || p.clientId || ""}
-                      onClick={() =>
-                        openEventSearch(
-                          "propertyTabToClientTabSearch",
-                          p.client?.displayName,
-                          forAdmin,
-                          p.clientId,
-                        )
-                      }
-                    />
-                  </Text>
-                  <Text fontSize="xs">
-                    Default contact:{" "}
-                    {p.pointOfContactId ? (
+                  <HStack gap={4} fontSize="xs" wrap="wrap">
+                    <Text>
+                      Client:{" "}
                       <TextLink
-                        text={`${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`}
+                        text={clientLabel(p.client?.displayName) || p.clientId || ""}
                         onClick={() =>
                           openEventSearch(
-                            "propertyTabToClientTabContactSearch",
-                            `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
+                            "propertyTabToClientTabSearch",
+                            p.client?.displayName,
                             forAdmin,
                             p.clientId,
                           )
                         }
                       />
-                    ) : (
-                      "None"
-                    )}
-                  </Text>
-                  {(p as any).lotSize != null && (
-                    <Text fontSize="xs" color="fg.muted">
-                      Lot size: {(p as any).lotSize.toLocaleString()} {(p as any).lotSizeUnit ?? "sqft"}
                     </Text>
+                    <Text>
+                      Contact:{" "}
+                      {p.pointOfContactId ? (
+                        <TextLink
+                          text={`${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`}
+                          onClick={() =>
+                            openEventSearch(
+                              "propertyTabToClientTabContactSearch",
+                              `${p.pointOfContact.firstName} ${p.pointOfContact.lastName}`,
+                              forAdmin,
+                              p.clientId,
+                            )
+                          }
+                        />
+                      ) : (
+                        <Text as="span" color="fg.muted">None</Text>
+                      )}
+                    </Text>
+                  </HStack>
+                  {(p as any).accessNotes && (
+                    <Box p={2} bg="orange.50" rounded="sm" w="full">
+                      <Text fontSize="xs" fontWeight="medium" color="orange.700">Access Notes</Text>
+                      <Text fontSize="xs" color="orange.600">{(p as any).accessNotes}</Text>
+                    </Box>
                   )}
                   {(p.lastPhotos ?? []).length > 0 && (
                     <Box display="flex" gap={1} mt={1} flexWrap="wrap">
                       {(p.lastPhotos ?? []).map((photo) => (
-                        <img
-                          key={photo.id}
-                          src={photo.url}
-                          alt=""
-                          style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4 }}
-                        />
+                        <a key={photo.id} href={photo.url} target="_blank" rel="noopener noreferrer">
+                          <img
+                            src={photo.url}
+                            alt=""
+                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, cursor: "pointer" }}
+                          />
+                        </a>
                       ))}
                     </Box>
                   )}

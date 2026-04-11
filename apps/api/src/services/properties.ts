@@ -44,7 +44,7 @@ export const properties: ServicesProperties = {
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
       take: limit,
       include: {
-        client: { select: { id: true, displayName: true } },
+        client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
         pointOfContact: {
           select: {
             id: true,
