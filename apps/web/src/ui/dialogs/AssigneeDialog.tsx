@@ -48,6 +48,7 @@ export default function AssigneeDialog({
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [addBusy, setAddBusy] = useState(false);
+  const [addAsObserver, setAddAsObserver] = useState(false);
   const [removingId, setRemovingId] = useState<string>("");
   const [assigneesChanged, setAssigneesChanged] = useState(false);
   const [showRecalcPrompt, setShowRecalcPrompt] = useState(false);
@@ -95,11 +96,12 @@ export default function AssigneeDialog({
   async function handleAdd() {
     if (selected.length === 0) return;
     setAddBusy(true);
+    const role = addAsObserver ? "observer" : null;
     try {
       for (const userId of selected) {
         const result = await apiPost<{ added: boolean; reason?: string }>(
           `/api/admin/occurrences/${occurrenceId}/add-assignee`,
-          { userId }
+          { userId, role }
         );
         if (result.added) {
           const worker = workers.find((w) => w.id === userId);
@@ -114,6 +116,7 @@ export default function AssigneeDialog({
                 occurrenceId,
                 userId,
                 assignedById: isClaimer ? userId : claimerId,
+                role,
                 user: { id: userId, displayName: worker.displayName, email: worker.email },
               },
             ]);
@@ -180,6 +183,7 @@ export default function AssigneeDialog({
                   <VStack align="stretch" gap={1}>
                     {assignees.map((a) => {
                       const isClaimer = a.assignedById === a.userId;
+                      const isObs = a.role === "observer";
                       return (
                         <HStack
                           key={a.userId}
@@ -187,16 +191,19 @@ export default function AssigneeDialog({
                           py={1}
                           rounded="md"
                           borderWidth="1px"
-                          borderColor={isClaimer ? "teal.200" : "gray.200"}
-                          bg={isClaimer ? "teal.50" : undefined}
+                          borderColor={isObs ? "blue.200" : isClaimer ? "teal.200" : "gray.200"}
+                          bg={isObs ? "blue.50" : isClaimer ? "teal.50" : undefined}
                           justify="space-between"
                         >
                           <VStack align="start" gap={0}>
-                            <Text fontSize="sm" fontWeight={isClaimer ? "medium" : "normal"} color={isClaimer ? "teal.700" : undefined}>
+                            <Text fontSize="sm" fontWeight={isClaimer ? "medium" : "normal"} color={isObs ? "blue.700" : isClaimer ? "teal.700" : undefined}>
                               {a.user.displayName ?? a.user.email ?? a.userId}
                             </Text>
                             {isClaimer && (
                               <Text fontSize="xs" color="teal.500">Claimer</Text>
+                            )}
+                            {isObs && (
+                              <Text fontSize="xs" color="blue.500">Observer</Text>
                             )}
                           </VStack>
                           <Button
@@ -216,7 +223,32 @@ export default function AssigneeDialog({
                 </div>
 
                 <div>
-                  <Text fontWeight="medium" mb="2">Add workers</Text>
+                  <Text fontWeight="medium" mb="2">Add to team</Text>
+
+                  <HStack gap={2} mb={2}>
+                    <Button
+                      size="sm"
+                      variant={!addAsObserver ? "solid" : "outline"}
+                      colorPalette={!addAsObserver ? "teal" : "gray"}
+                      onClick={() => setAddAsObserver(false)}
+                    >
+                      Worker
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={addAsObserver ? "solid" : "outline"}
+                      colorPalette={addAsObserver ? "blue" : "gray"}
+                      onClick={() => setAddAsObserver(true)}
+                    >
+                      Observer
+                    </Button>
+                  </HStack>
+                  <Text fontSize="xs" color="fg.muted" mb={2}>
+                    {addAsObserver
+                      ? "Observers can see the job and set reminders, but cannot start, complete, or manage it."
+                      : "Workers can take actions on the job — start, complete, manage expenses, etc."}
+                  </Text>
+
                   <HStack gap={2} align="flex-end">
                     <Box flex="1">
                       <Select.Root
@@ -254,11 +286,12 @@ export default function AssigneeDialog({
                     </Box>
                     <Button
                       size="sm"
+                      colorPalette={addAsObserver ? "blue" : "teal"}
                       onClick={handleAdd}
                       loading={addBusy}
                       disabled={selected.length === 0 || removingId !== ""}
                     >
-                      Add
+                      {addAsObserver ? "Add as Observer" : "Add as Worker"}
                     </Button>
                   </HStack>
                 </div>
