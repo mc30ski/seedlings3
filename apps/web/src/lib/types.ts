@@ -320,6 +320,7 @@ export type JobOccurrenceAssigneeWithUser = {
   userId: string;
   assignedById?: string | null;
   assignedAt?: string | null;
+  role?: string | null;
   user: { id: string; displayName?: string | null; email?: string | null };
 };
 
