@@ -3,6 +3,8 @@ import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay } from "../lib/dates";
+import { AUDIT } from "../lib/auditActions";
+import { writeAudit } from "../lib/auditLogger";
 import { Role as RoleVal } from "@prisma/client";
 import {
   JobKind,
@@ -994,6 +996,17 @@ export default async function adminRoutes(app: FastifyInstance) {
       ? occ.jobType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase())
       : "Lawn Care Service";
 
+    // Fetch pricing guide for AI context
+    const pricingSettings = await prisma.setting.findMany({
+      where: { key: { startsWith: "pricing_" } },
+    });
+    const pricingGuide = pricingSettings.map((s: any) => {
+      try {
+        const v = JSON.parse(s.value);
+        return `- ${v.label}: $${v.amount} ${v.unit} — ${v.description}`;
+      } catch { return null; }
+    }).filter(Boolean).join("\n");
+
     const details = [
       `Client: ${contactName}`,
       `Property: ${prop?.displayName ?? "N/A"}`,
@@ -1014,8 +1027,9 @@ export default async function adminRoutes(app: FastifyInstance) {
 
 Job info:
 ${details}
-
+${pricingGuide ? `\nCompany pricing guide (use these rates as your baseline):\n${pricingGuide}\n` : ""}
 STEP 1 — INTERNAL BREAKDOWN (for business eyes only):
+- Use the company pricing guide rates as your baseline where applicable
 - Use the address to determine local market rates for the area (materials, labor, delivery)
 - If the notes contain measurements, square footage, material quantities (e.g. yards of mulch), use those exact numbers
 - Itemize: materials (with per-unit costs), delivery, labor (hours × rate), additional services
@@ -1392,6 +1406,81 @@ Respond ONLY with valid JSON in this exact format:
     const body = req.body || {};
     if (body.value === undefined) throw app.httpErrors.badRequest("value is required");
     return services.settings.set(uid, key, String(body.value));
+  });
+
+  // ── Pricing ──
+
+  app.get("/admin/pricing", adminGuard, async () => {
+    const rows = await prisma.setting.findMany({
+      where: { key: { startsWith: "pricing_" } },
+      include: { updatedBy: { select: { id: true, displayName: true } } },
+      orderBy: { key: "asc" },
+    });
+    return rows.map((r: any) => {
+      try {
+        return { ...r, parsedValue: JSON.parse(r.value) };
+      } catch {
+        return { ...r, parsedValue: null };
+      }
+    });
+  });
+
+  app.post("/admin/pricing", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.label) throw app.httpErrors.badRequest("label is required");
+    if (body.amount == null) throw app.httpErrors.badRequest("amount is required");
+    if (!body.unit) throw app.httpErrors.badRequest("unit is required");
+
+    // Generate key from label
+    const key = "pricing_" + String(body.label).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+    // Check for duplicate
+    const existing = await prisma.setting.findUnique({ where: { key } });
+    if (existing) throw app.httpErrors.conflict("A pricing entry with a similar name already exists");
+
+    const value = JSON.stringify({
+      label: String(body.label),
+      description: body.description ? String(body.description) : "",
+      unit: String(body.unit),
+      amount: Number(body.amount),
+      sortOrder: body.sortOrder != null ? Number(body.sortOrder) : 100,
+    });
+
+    return services.settings.set(uid, key, value);
+  });
+
+  app.patch("/admin/pricing/:key", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const key = String(req.params.key);
+    if (!key.startsWith("pricing_")) throw app.httpErrors.badRequest("Invalid pricing key");
+
+    const existing = await prisma.setting.findUnique({ where: { key } });
+    if (!existing) throw app.httpErrors.notFound("Pricing entry not found");
+
+    let current: any = {};
+    try { current = JSON.parse(existing.value); } catch {}
+
+    const body = req.body || {};
+    const value = JSON.stringify({
+      label: body.label != null ? String(body.label) : current.label,
+      description: body.description != null ? String(body.description) : current.description,
+      unit: body.unit != null ? String(body.unit) : current.unit,
+      amount: body.amount != null ? Number(body.amount) : current.amount,
+      sortOrder: body.sortOrder != null ? Number(body.sortOrder) : current.sortOrder,
+    });
+
+    return services.settings.set(uid, key, value);
+  });
+
+  app.delete("/admin/pricing/:key", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const key = String(req.params.key);
+    if (!key.startsWith("pricing_")) throw app.httpErrors.badRequest("Invalid pricing key");
+
+    await writeAudit(prisma, AUDIT.SETTING.UPDATED, uid, { key, action: "deleted" });
+    await prisma.setting.delete({ where: { key } });
+    return { ok: true };
   });
 
   // ── Full Data Export ──

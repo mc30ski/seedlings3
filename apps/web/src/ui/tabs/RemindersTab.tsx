@@ -11,7 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Bell, List, Maximize2, Pin } from "lucide-react";
+import { Bell, Copy, List, Maximize2, Pin } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
@@ -47,6 +47,14 @@ function saveDismissed(ids: Set<string>) {
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(DISMISSED_KEY, JSON.stringify({ date: today, ids: Array.from(ids) }));
   } catch {}
+}
+
+function contactName(occ: WorkerOccurrence): string {
+  const poc = (occ.job?.property as any)?.pointOfContact;
+  if (poc?.firstName) return poc.firstName;
+  const clientDisplay = occ.job?.property?.client?.displayName;
+  if (clientDisplay) return `${clientDisplay}`;
+  return "there";
 }
 
 export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
@@ -332,7 +340,11 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
             const daysLate = d ? Math.round((new Date(today + "T12:00:00Z").getTime() - new Date(d + "T12:00:00Z").getTime()) / 86400000) : 0;
             return <Badge colorPalette="red" variant="solid" fontSize="xs" borderRadius="full" px="2">{daysLate} day{daysLate !== 1 ? "s" : ""} overdue</Badge>;
           }}
-          message="Contact the client to reschedule or complete this job"
+          message={(occ) => {
+            const name = contactName(occ);
+            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+            return `Hi ${name}, this is Seedlings Lawn Care. We had a service scheduled at ${address} that we weren't able to complete. Would you like us to reschedule? Please let us know a good time. Thank you!`;
+          }}
           showAssignees={showAll}
           forAdmin={forAdmin}
           compact={compact}
@@ -349,7 +361,11 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           color="blue.600"
           items={todayJobs}
           badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2">Today</Badge>}
-          message="Confirm with the client that the job is still on for today"
+          message={(occ) => {
+            const name = contactName(occ);
+            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+            return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service today at ${address}. Please let us know if anything has changed. Thank you!`;
+          }}
           showAssignees={showAll}
           forAdmin={forAdmin}
           compact={compact}
@@ -366,7 +382,11 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           color="teal.600"
           items={tomorrowJobs}
           badge={() => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Tomorrow</Badge>}
-          message="Contact the client to confirm they want the job done tomorrow"
+          message={(occ) => {
+            const name = contactName(occ);
+            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+            return `Hi ${name}, this is Seedlings Lawn Care. We have you scheduled for service tomorrow at ${address}. Please let us know if you need to make any changes. Thank you!`;
+          }}
           showAssignees={showAll}
           forAdmin={forAdmin}
           compact={compact}
@@ -383,13 +403,17 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           color="orange.600"
           items={pendingPayment}
           badge={() => <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">Awaiting payment</Badge>}
-          message="Collect payment from the client"
+          message={(occ) => {
+            const name = contactName(occ);
+            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+            const amount = occ.price != null ? ` The total is $${occ.price.toFixed(2)}.` : "";
+            return `Hi ${name}, this is Seedlings Lawn Care. We've completed the service at ${address}.${amount} Please let us know how you'd like to handle payment. Thank you!`;
+          }}
           showAssignees={showAll}
           forAdmin={forAdmin}
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
-          onDismiss={dismissReminder}
         />
       )}
 
@@ -433,7 +457,7 @@ function Section({
   color: string;
   items: WorkerOccurrence[];
   badge: (occ: WorkerOccurrence) => React.ReactNode;
-  message: string;
+  message: string | ((occ: WorkerOccurrence) => string);
   showAssignees?: boolean;
   forAdmin?: boolean;
   compact: boolean;
@@ -509,9 +533,29 @@ function Section({
                             {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
                           </Text>
                         )}
-                        <Text fontSize="xs" color="fg.muted" fontStyle="italic">
-                          {message}
-                        </Text>
+                        {(() => {
+                          const msg = typeof message === "function" ? message(occ) : message;
+                          return (
+                            <HStack gap={1} align="start">
+                              <Text fontSize="xs" color="fg.muted" fontStyle="italic" flex="1">{msg}</Text>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="gray"
+                                px="1"
+                                minW="0"
+                                flexShrink={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(msg);
+                                }}
+                                title="Copy to clipboard"
+                              >
+                                <Copy size={12} />
+                              </Button>
+                            </HStack>
+                          );
+                        })()}
                       </>
                     )}
                     {!isExpanded && (

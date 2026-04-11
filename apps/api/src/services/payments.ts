@@ -106,6 +106,13 @@ export const payments: ServicesPayments = {
         }
       }
 
+      // Remove any existing payment (e.g. if occurrence was reopened after being closed)
+      const existingPayment = await tx.payment.findUnique({ where: { occurrenceId } });
+      if (existingPayment) {
+        await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
+        await tx.payment.delete({ where: { id: existingPayment.id } });
+      }
+
       // Create payment + splits
       const payment = await tx.payment.create({
         data: {

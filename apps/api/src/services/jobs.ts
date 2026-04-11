@@ -501,6 +501,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
+                pointOfContact: { select: { firstName: true, lastName: true } },
               },
             },
           },
@@ -540,6 +541,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
+                pointOfContact: { select: { firstName: true, lastName: true } },
               },
             },
           },
@@ -580,6 +582,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
+                pointOfContact: { select: { firstName: true, lastName: true } },
               },
             },
           },
@@ -616,6 +619,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
+                pointOfContact: { select: { firstName: true, lastName: true } },
               },
             },
           },
