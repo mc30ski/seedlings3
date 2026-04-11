@@ -114,16 +114,21 @@ export default function ClientMyJobsTab() {
 
   if (!profile?.linked) {
     return (
-      <Box py={10} textAlign="center">
-        <VStack gap={3}>
-          <Text fontSize="lg" fontWeight="semibold">Welcome!</Text>
-          <Text fontSize="sm" color="fg.muted" maxW="sm">
-            Your account isn't linked to a client profile yet. If you're an existing client, make sure you signed up with the same email address we have on file.
-          </Text>
-          <Text fontSize="sm" color="fg.muted" maxW="sm">
-            Need to become a client? Visit our Services tab to get in touch.
-          </Text>
-        </VStack>
+      <Box w="full" pb={8}>
+        <Box p={5} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="lg">
+          <VStack gap={3} align="start">
+            <Text fontSize="xl" fontWeight="bold" color="blue.800">Welcome to Seedlings Lawn Care</Text>
+            <Text fontSize="sm" color="blue.700">
+              Your account isn't linked to a client profile yet. An administrator will connect your account once your profile has been approved.
+            </Text>
+            <Text fontSize="sm" color="blue.600">
+              Once linked, you'll be able to see your properties, upcoming services, completed work with photos, and payment history right here.
+            </Text>
+            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="3" py="1" borderRadius="full">
+              Pending setup
+            </Badge>
+          </VStack>
+        </Box>
       </Box>
     );
   }
@@ -131,23 +136,41 @@ export default function ClientMyJobsTab() {
   return (
     <Box w="full" pb={8}>
       {/* Welcome header */}
-      <Box mb={4} px={1}>
-        <Text fontSize="lg" fontWeight="semibold">
-          Welcome, {profile.contact?.firstName}
+      <Box mb={4} p={4} bg="green.50" borderWidth="1px" borderColor="green.200" rounded="lg">
+        <Text fontSize="xl" fontWeight="bold" color="green.800">
+          Welcome back, {profile.contact?.firstName}!
         </Text>
-        {profile.client && (
-          <>
-            <Text fontSize="sm" color="fg.muted">
-              {profile.client.properties.length} propert{profile.client.properties.length === 1 ? "y" : "ies"} on file
-            </Text>
-            {profile.client.properties.map((p) => (
-              <Box key={p.id} fontSize="xs">
-                <MapLink address={[p.street1, p.city, p.state].filter(Boolean).join(", ")} />
-              </Box>
-            ))}
-          </>
-        )}
+        <Text fontSize="sm" color="green.700" mt={1}>{profile.client?.displayName}</Text>
       </Box>
+
+      {/* Properties */}
+      {profile.client && profile.client.properties.length > 0 && (
+        <Box mb={5}>
+          <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+            Your Properties ({profile.client.properties.length})
+          </Text>
+          <VStack align="stretch" gap={2}>
+            {profile.client.properties.map((p) => {
+              const addr = [p.street1, p.city, p.state].filter(Boolean).join(", ");
+              return (
+                <Card.Root key={p.id} variant="outline">
+                  <Card.Body py="3" px="4">
+                    <HStack justify="space-between" align="start" gap={3}>
+                      <VStack align="start" gap={1} flex="1" minW={0}>
+                        <Text fontSize="sm" fontWeight="semibold">{p.displayName}</Text>
+                        <Box fontSize="xs">
+                          <MapLink address={addr} />
+                        </Box>
+                      </VStack>
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Active</Badge>
+                    </HStack>
+                  </Card.Body>
+                </Card.Root>
+              );
+            })}
+          </VStack>
+        </Box>
+      )}
 
       {/* Upcoming / In Progress */}
       {upcoming.length > 0 && (
@@ -257,7 +280,10 @@ export default function ClientMyJobsTab() {
       )}
 
       {completed.length === 0 && upcoming.length === 0 && (
-        <Text textAlign="center" color="fg.muted" py={8}>No jobs to show yet. Check back soon!</Text>
+        <Box p={4} bg="gray.50" rounded="lg" textAlign="center">
+          <Text fontSize="md" fontWeight="semibold" color="fg.muted">No services scheduled yet</Text>
+          <Text fontSize="sm" color="fg.muted" mt={1}>When your lawn care services are scheduled, you'll see them here along with photos and status updates.</Text>
+        </Box>
       )}
 
       {/* Photo viewer */}

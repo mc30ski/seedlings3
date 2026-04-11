@@ -126,10 +126,13 @@ async function seedDatabase() {
     data: { type: "ORGANIZATION", displayName: "River Bend Office Park", notesInternal: "Property manager Tom Walters onsite M-F 7am-4pm. After-hours access via loading dock keypad (code changes monthly, get from Tom). They have a strict no-noise policy before 8am near Building A due to a medical office. Invoice goes to their corporate office in Dallas, not Tom directly. Net-30 payment terms. They also want a proposal for seasonal flower bed rotations in spring and fall." },
   });
   const kimResidence = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Kim Residence" },
+    data: { type: "PERSON", displayName: "Kim Residence", status: "PAUSED", notesInternal: "Traveling abroad, resume in June" },
   });
   const garciaFamily = await prisma.client.create({
     data: { type: "PERSON", displayName: "Garcia Family", status: "PAUSED", notesInternal: "Paused for winter, resume March" },
+  });
+  const oldClient = await prisma.client.create({
+    data: { type: "PERSON", displayName: "Dawson Residence", status: "ARCHIVED", notesInternal: "Moved out of area, no longer servicing", archivedAt: daysAgo(60) },
   });
   const lakesideChurch = await prisma.client.create({
     data: { type: "ORGANIZATION", displayName: "Lakeside Community Church" },
@@ -879,6 +882,16 @@ async function seedDatabase() {
   // Garcia paused
   await prisma.auditEvent.create({
     data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
+  });
+
+  // Kim paused
+  await prisma.auditEvent.create({
+    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: kimResidence.id, displayName: "Kim Residence", status: "PAUSED", reason: "Traveling abroad" }, createdAt: daysAgo(5, 11) },
+  });
+
+  // Dawson archived
+  await prisma.auditEvent.create({
+    data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: MICHAEL_ID, metadata: { clientId: oldClient.id, displayName: "Dawson Residence", status: "ARCHIVED", reason: "Moved out of area" }, createdAt: daysAgo(60, 11) },
   });
 
   // ── Pricing settings ───────────────────────────────────────────────────────

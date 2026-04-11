@@ -395,6 +395,20 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Button>
         )}
       </HStack>
+      <HStack mb={2} gap={2} px={1} wrap="wrap">
+        {(() => {
+          const active = items.filter((c) => c.status === "ACTIVE").length;
+          const paused = items.filter((c) => c.status === "PAUSED").length;
+          const archived = items.filter((c) => c.status === "ARCHIVED").length;
+          return (
+            <>
+              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
+              {paused > 0 && <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>}
+              {archived > 0 && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>}
+            </>
+          );
+        })()}
+      </HStack>
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
