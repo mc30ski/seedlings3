@@ -264,7 +264,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [dateFrom, setDateFrom] = useState(presetDates.from);
   const [dateTo, setDateTo] = useState(presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
-  const [overdueActive, setOverdueActive] = usePersistedState(`${pfx}_overdue`, false);
+  const [overdueActive, setOverdueActive] = useState(false);
   const [vipOnly, setVipOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
 
