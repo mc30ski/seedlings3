@@ -45,7 +45,7 @@ export default function ClientServicesTab() {
               <ExternalLink size={14} /> Visit Our Website
             </Button>
           </a>
-          <a href="mailto:seedlings@wanderski.com?subject=Service%20Request">
+          <a href="mailto:contact@seedlingslawncare.com?subject=Service%20Request">
             <Button size="sm" colorPalette="green" variant="outline">
               <Mail size={14} /> Email Us
             </Button>

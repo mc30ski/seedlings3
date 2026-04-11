@@ -969,12 +969,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               <VStack align="stretch" gap={3}>
           {group.items.map((occ) => {
             const assignees = occ.assignees ?? [];
+            const myAssignee = assignees.find((a) => a.userId === myId);
+            const isObserver = myAssignee?.role === "observer";
             const isAssignedToMe = !!myId && assignees.some((a) => a.userId === myId);
-            const isUnassigned = assignees.length === 0;
+            const isActiveAssignee = isAssignedToMe && !isObserver;
+            const isUnassigned = assignees.filter((a) => a.role !== "observer").length === 0;
             const isAssignedToOthers = !isUnassigned && !isAssignedToMe;
 
-            const myAssignee = assignees.find((a) => a.userId === myId);
-            const isClaimer = !!myAssignee && myAssignee.assignedById === myId;
+            const isClaimer = !!myAssignee && !isObserver && myAssignee.assignedById === myId;
 
             const isTentative = !!occ.isTentative;
 
@@ -1444,6 +1446,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
                               {isMe ? " (you)" : ""}
                               {isClaimer ? " · Claimer" : ""}
+                              {a.role === "observer" ? " · Observer" : ""}
                             </Text>
                           );
                         })}
@@ -1536,11 +1539,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </VStack>
                       </Box>
                     )}
-                    {((occ._count?.photos ?? 0) > 0 || isAssignedToMe) && (
+                    {((occ._count?.photos ?? 0) > 0 || isActiveAssignee) && (
                       <OccurrencePhotos
                         occurrenceId={occ.id}
                         isAdmin={forAdmin}
-                        canUpload={isAssignedToMe}
+                        canUpload={isActiveAssignee}
                         photoCount={occ._count?.photos ?? 0}
                       />
                     )}
@@ -1548,7 +1551,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Body>
                 )}
 
-                {!isCardCompact && !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && !isAdminOnlyOcc && (() => {
@@ -1592,7 +1595,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           />
                         );
                       })()}
-                      {isAssignedToMe && occ.status === "SCHEDULED" && !isTentative && (
+                      {isActiveAssignee && occ.status === "SCHEDULED" && !isTentative && (
                         <StatusButton
                           id="occ-start"
                           itemId={occ.id}
@@ -1635,7 +1638,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                      {isActiveAssignee && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                         <StatusButton
                           id="occ-complete"
                           itemId={occ.id}
@@ -1647,7 +1650,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                      {isActiveAssignee && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                         <StatusButton
                           id="occ-submit-proposal"
                           itemId={occ.id}
@@ -1669,7 +1672,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                      {isActiveAssignee && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                         <StatusButton
                           id="occ-accept-estimate"
                           itemId={occ.id}
@@ -1705,7 +1708,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                      {isActiveAssignee && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                         <StatusButton
                           id="occ-reject-estimate"
                           itemId={occ.id}
@@ -1755,7 +1758,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isAssignedToMe && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (
+                      {isActiveAssignee && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (
                         <StatusButton
                           id="occ-accept-payment"
                           itemId={occ.id}
@@ -1770,7 +1773,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isClaimer && occ.status !== "PENDING_PAYMENT" && (
+                      {(isClaimer || isAdmin || isSuper) && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-manage-team"
                           itemId={occ.id}
@@ -1844,7 +1847,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                 {/* Reminder buttons when the regular footer doesn't show */}
                 {isWorkerView && !isCardCompact && !(
-                  !isTrainee && (isUnassigned || isAssignedToMe) && !isTentative &&
+                  !isTrainee && (isUnassigned || isActiveAssignee) && !isTentative &&
                   (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
                   <Card.Footer py="3" px="4" pt="0">

@@ -629,7 +629,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async addOccurrenceAssignee(currentUserId, occurrenceId, targetUserId) {
+  async addOccurrenceAssignee(currentUserId, occurrenceId, targetUserId, role?: string | null) {
     return prisma.$transaction(async (tx) => {
       // Only someone already assigned can add team members
       const isClaimer = await tx.jobOccurrenceAssignee.findFirst({
@@ -648,13 +648,14 @@ export const jobs: ServicesJobs = {
       if (existing) return { added: false as const, reason: "already_assigned" };
 
       await tx.jobOccurrenceAssignee.create({
-        data: { occurrenceId, userId: targetUserId, assignedById: currentUserId },
+        data: { occurrenceId, userId: targetUserId, assignedById: currentUserId, role: role ?? null },
       });
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
         targetUserId,
         action: "added",
+        role: role ?? undefined,
       });
 
       return { added: true as const };
@@ -689,7 +690,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async adminAddOccurrenceAssignee(adminUserId, occurrenceId, targetUserId) {
+  async adminAddOccurrenceAssignee(adminUserId, occurrenceId, targetUserId, role?: string | null) {
     return prisma.$transaction(async (tx) => {
       const existing = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: targetUserId },
@@ -708,7 +709,7 @@ export const jobs: ServicesJobs = {
           : existingAssignees[0].assignedById ?? existingAssignees[0].userId;
 
       await tx.jobOccurrenceAssignee.create({
-        data: { occurrenceId, userId: targetUserId, assignedById },
+        data: { occurrenceId, userId: targetUserId, assignedById, role: role ?? null },
       });
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {

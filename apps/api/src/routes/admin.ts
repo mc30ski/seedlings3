@@ -676,12 +676,15 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   // Admin: add individual assignee
   app.post("/admin/occurrences/:id/add-assignee", adminGuard, async (req: any) => {
-    const targetUserId = String(req.body?.userId ?? "");
+    const body = req.body || {};
+    const targetUserId = String(body.userId ?? "");
     if (!targetUserId) throw app.httpErrors.badRequest("userId is required");
+    const role = body.role ? String(body.role) : null;
     return services.jobs.adminAddOccurrenceAssignee(
       await currentUserId(req),
       String(req.params.id),
-      targetUserId
+      targetUserId,
+      role
     );
   });
 

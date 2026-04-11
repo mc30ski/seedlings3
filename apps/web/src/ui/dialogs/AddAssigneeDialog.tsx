@@ -26,6 +26,7 @@ type WorkerLite = {
 
 type Assignee = {
   userId: string;
+  role?: string | null;
   user: { id: string; displayName?: string | null; email?: string | null };
 };
 
@@ -90,17 +91,20 @@ export default function AddAssigneeDialog({
     [workerItems]
   );
 
+  const [addAsObserver, setAddAsObserver] = useState(false);
+
   async function handleAdd() {
     if (selected.length === 0) return;
     setAddBusy(true);
+    const role = addAsObserver ? "observer" : null;
     try {
       for (const userId of selected) {
-        await apiPost(`/api/occurrences/${occurrenceId}/add-assignee`, { userId });
+        await apiPost(`/api/occurrences/${occurrenceId}/add-assignee`, { userId, role });
         const worker = workers.find((w) => w.id === userId);
         if (worker) {
           setAssignees((prev) => [
             ...prev,
-            { userId, user: { id: userId, displayName: worker.displayName, email: worker.email } },
+            { userId, role, user: { id: userId, displayName: worker.displayName, email: worker.email } },
           ]);
         }
       }
@@ -178,7 +182,7 @@ export default function AddAssigneeDialog({
                       >
                         <Text fontSize="sm" fontWeight="medium" color="teal.700">
                           {myAssignee.user.displayName ?? myAssignee.user.email ?? myId}{" "}
-                          <Box as="span" fontWeight="normal" color="teal.500">(you)</Box>
+                          <Box as="span" fontWeight="normal" color="teal.500">(you){myAssignee.role === "observer" ? " · Observer" : ""}</Box>
                         </Text>
                       </HStack>
                     )}
@@ -194,6 +198,7 @@ export default function AddAssigneeDialog({
                       >
                         <Text fontSize="sm">
                           {a.user.displayName ?? a.user.email ?? a.userId}
+                          {a.role === "observer" && <Box as="span" color="blue.500" fontSize="xs"> · Observer</Box>}
                         </Text>
                         <Button
                           size="xs"
@@ -256,6 +261,19 @@ export default function AddAssigneeDialog({
                     >
                       Add
                     </Button>
+                  </HStack>
+                  <HStack gap={2} mt={1}>
+                    <Button
+                      size="xs"
+                      variant={addAsObserver ? "solid" : "outline"}
+                      colorPalette={addAsObserver ? "blue" : "gray"}
+                      onClick={() => setAddAsObserver(!addAsObserver)}
+                    >
+                      {addAsObserver ? "Adding as Observer" : "Add as Observer"}
+                    </Button>
+                    {addAsObserver && (
+                      <Text fontSize="xs" color="fg.muted">Observers can see the job but cannot take actions</Text>
+                    )}
                   </HStack>
                 </div>
 

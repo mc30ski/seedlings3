@@ -415,9 +415,11 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/add-assignee", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    const targetUserId = String(req.body?.userId ?? "");
+    const body = req.body || {};
+    const targetUserId = String(body.userId ?? "");
     if (!targetUserId) throw app.httpErrors.badRequest("userId is required");
-    return services.jobs.addOccurrenceAssignee(uid, String(req.params.id), targetUserId);
+    const role = body.role ? String(body.role) : null;
+    return services.jobs.addOccurrenceAssignee(uid, String(req.params.id), targetUserId, role);
   });
 
   app.delete("/occurrences/:id/assignees/:userId", workerGuard, async (req: any) => {
