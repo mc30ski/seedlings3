@@ -22,6 +22,12 @@ type Props = {
 export default function AdminTasksTab({ tasks }: Props) {
   return (
     <Box w="full" pb={8}>
+      <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+        <Text fontSize="sm" fontWeight="medium" color="yellow.700">Actions</Text>
+        <Text fontSize="xs" color="yellow.600">
+          Workflows that guide you through multi-step processes. Each action chains together the steps needed to get the job done — from setup to completion.
+        </Text>
+      </Box>
       <VStack align="stretch" gap={3} pt={2}>
         {tasks.map((task) => (
           <Box

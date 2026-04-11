@@ -466,16 +466,16 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {!(status === "all" && accessRole === "all" && workerTypeFilter === "all") && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={status === "all" && accessRole === "all" && workerTypeFilter === "all"}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => { setStatus("all"); setAccessRole("all"); setWorkerTypeFilter("all"); }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

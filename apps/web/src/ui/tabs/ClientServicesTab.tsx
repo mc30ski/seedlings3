@@ -23,7 +23,6 @@ export default function ClientServicesTab() {
           { title: "Tree & Hedge Trimming", desc: "Professional pruning and shaping for trees, hedges, and shrubs. We handle small to medium jobs safely." },
           { title: "Leaf & Debris Cleanup", desc: "Seasonal cleanups to clear leaves, branches, and debris. Keeps your yard tidy year-round." },
           { title: "Aeration & Overseeding", desc: "Core aeration and overseeding to promote a thick, healthy lawn. Recommended annually in fall." },
-          { title: "Pressure Washing", desc: "Driveways, walkways, patios, and siding. We'll make your hardscapes look brand new." },
         ].map((svc) => (
           <Card.Root key={svc.title} variant="outline" borderColor="green.200">
             <Card.Body py="3" px="4">

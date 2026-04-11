@@ -926,6 +926,34 @@ async function seedDatabase() {
     data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id, remindAt: daysAgo(1, 9), note: "Ask O'Brien about recurring schedule change" },
   });
 
+  // ── Tasks ──────────────────────────────────────────────────────────────────
+  console.log("  Creating tasks...");
+
+  const taskData = [
+    { title: "Buy mulch bags for Harrington", startAt: daysFromNow(0, 9), userId: ADMIN_WORKER_ID, notes: "Need 10 bags of premium hardwood mulch from Home Depot" },
+    { title: "Call Lisa Chen about tree trimming schedule", startAt: daysFromNow(1, 10), userId: ADMIN_WORKER_ID },
+    { title: "Sharpen mower blades", startAt: daysAgo(1, 8), userId: EMPLOYEE_ID, notes: "Honda push mower in maintenance — blades need sharpening before next use", status: "CLOSED" as const },
+    { title: "Pick up new trimmer line", startAt: daysFromNow(2, 9), userId: CONTRACTOR_ID, notes: "Stihl .095 round, 3lb spool" },
+  ];
+
+  for (const t of taskData) {
+    const task = await prisma.jobOccurrence.create({
+      data: {
+        jobId: null,
+        kind: null,
+        title: t.title,
+        notes: t.notes ?? null,
+        startAt: t.startAt,
+        status: t.status ?? "SCHEDULED",
+        source: "MANUAL",
+        workflow: "TASK",
+      },
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: { occurrenceId: task.id, userId: t.userId, assignedById: t.userId },
+    });
+  }
+
   // ── Pinned occurrences ─────────────────────────────────────────────────────
   console.log("  Creating pinned occurrences...");
 

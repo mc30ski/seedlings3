@@ -489,7 +489,7 @@ export default function ServicesTab({
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={2}>
+      <HStack mb={2} gap={2}>
         <SearchWithClear
           ref={inputRef}
           value={q}
@@ -498,6 +498,8 @@ export default function ServicesTab({
           placeholder="Search…"
           showClear={!!highlightId || !!highlightOccId}
         />
+      </HStack>
+      <HStack mb={3} gap={2} wrap="wrap">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -594,12 +596,11 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly) && (
         <Button
-          size="sm"
-          variant="ghost"
-          px="2"
-          minW="0"
-          disabled={kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly}
+          size="xs"
+          variant="outline"
+          colorPalette="red"
           onClick={() => {
             setKind(["ALL"]);
             setJobStatusFilter(["ALL"]);
@@ -610,8 +611,9 @@ export default function ServicesTab({
             setDatePreset("nextMonth");
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"

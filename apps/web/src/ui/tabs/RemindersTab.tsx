@@ -16,6 +16,7 @@ import { apiGet, apiPost } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
+import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 
@@ -341,6 +342,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
             return <Badge colorPalette="red" variant="solid" fontSize="xs" borderRadius="full" px="2">{daysLate} day{daysLate !== 1 ? "s" : ""} overdue</Badge>;
           }}
           message={(occ) => {
+            if (occ.workflow === "TASK") return occ.notes ?? "Overdue task";
             const name = contactName(occ);
             const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
             return `Hi ${name}, this is Seedlings Lawn Care. We had a service scheduled at ${address} that we weren't able to complete. Would you like us to reschedule? Please let us know a good time. Thank you!`;
@@ -360,8 +362,9 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           subtitle="Jobs scheduled for today — confirm with client"
           color="blue.600"
           items={todayJobs}
-          badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2">Today</Badge>}
+          badge={(occ) => <Badge colorPalette={occ.workflow === "TASK" ? "blue" : "blue"} variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Today" : "Today"}</Badge>}
           message={(occ) => {
+            if (occ.workflow === "TASK") return occ.notes ?? "Task for today";
             const name = contactName(occ);
             const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
             return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service today at ${address}. Please let us know if anything has changed. Thank you!`;
@@ -381,8 +384,9 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           subtitle="Jobs scheduled for tomorrow — reach out to confirm"
           color="teal.600"
           items={tomorrowJobs}
-          badge={() => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Tomorrow</Badge>}
+          badge={(occ) => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Tomorrow" : "Tomorrow"}</Badge>}
           message={(occ) => {
+            if (occ.workflow === "TASK") return occ.notes ?? "Task for tomorrow";
             const name = contactName(occ);
             const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
             return `Hi ${name}, this is Seedlings Lawn Care. We have you scheduled for service tomorrow at ${address}. Please let us know if you need to make any changes. Thank you!`;
@@ -492,7 +496,7 @@ function Section({
                       e.stopPropagation();
                       openEventSearch(
                         "remindersToJobsTabSearch",
-                        occ.job?.property?.displayName ?? "",
+                        occ.workflow === "TASK" ? (occ.title ?? "") : (occ.job?.property?.displayName ?? ""),
                         !!forAdmin,
                         `${occ.id}|${occ.startAt ?? ""}`,
                       );
@@ -514,9 +518,13 @@ function Section({
                 <HStack justify="space-between" align="start" gap={3}>
                   <VStack align="start" gap={1} flex="1" minW={0}>
                     <Text fontSize={isExpanded ? "sm" : "sm"} fontWeight="medium">
-                      {occ.job?.property?.displayName}
-                      {occ.job?.property?.client?.displayName && (
-                        <> — {clientLabel(occ.job.property.client.displayName)}</>
+                      {occ.workflow === "TASK" ? (occ.title || "Task") : (
+                        <>
+                          {occ.job?.property?.displayName}
+                          {occ.job?.property?.client?.displayName && (
+                            <> — {clientLabel(occ.job.property.client.displayName)}</>
+                          )}
+                        </>
                       )}
                     </Text>
                     {isExpanded && (
@@ -548,6 +556,7 @@ function Section({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   navigator.clipboard.writeText(msg);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
                                 }}
                                 title="Copy to clipboard"
                               >

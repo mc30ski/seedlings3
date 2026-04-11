@@ -27,6 +27,7 @@ import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
+import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase } from "@/src/ui/tabs/AdminTasksTab";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
@@ -291,13 +292,7 @@ export default function HomePage() {
       colorPalette: "green",
       bgColor: "green.50",
       onClick: () => {
-        setConfirmAction({
-          title: "Coming Soon",
-          message: "The daily work checklist is coming soon. Check your Reminders tab for today's jobs.",
-          confirmLabel: "OK",
-          colorPalette: "green",
-          onConfirm: () => {},
-        });
+        setActiveWorkflow("begin-workday");
       },
     },
   ];
@@ -305,7 +300,7 @@ export default function HomePage() {
   const workerTabs: TabItem[] = [
     {
       value: "tasks",
-      label: "Tasks",
+      label: "Actions",
       icon: FiPlus,
       content: <AdminTasksTab tasks={workerTasks} />,
     },
@@ -377,7 +372,7 @@ export default function HomePage() {
   const adminTabs: TabItem[] = [
     {
       value: "tasks",
-      label: "Tasks",
+      label: "Actions",
       icon: FiPlus,
       content: <AdminTasksTab tasks={adminTasks} />,
     },
@@ -538,16 +533,23 @@ export default function HomePage() {
             myId={me?.id}
             trainee={activeWorkflow === "plan-workday-trainee"}
           />
+          <BeginWorkDayWorkflow
+            active={activeWorkflow === "begin-workday"}
+            onDone={() => setActiveWorkflow(null)}
+            myId={me?.id}
+          />
           <ScrollableUnderlineTabs
             tabs={workerTabs}
             value={workerInnerTab}
             onValueChange={(v) => {
               setWorkerInnerTab(v as WorkerTabs);
               // Clear workflow paused banner and reset workflow when navigating away from routes/equipment
-              if (v !== "routes" && v !== "equipment") {
+              if (v !== "routes" && v !== "equipment" && v !== "jobs") {
                 try {
                   localStorage.removeItem("seedlings_planWorkday_paused");
                   localStorage.removeItem("seedlings_planWorkday");
+                  localStorage.removeItem("seedlings_beginWorkday_paused");
+                  localStorage.removeItem("seedlings_beginWorkday");
                 } catch {}
                 setActiveWorkflow(null);
               }

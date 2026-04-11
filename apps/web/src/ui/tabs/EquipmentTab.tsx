@@ -541,7 +541,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   if (loading && items.length === 0) return <LoadingCenter />;
 
   const workflowPaused = (() => {
-    try { return typeof window !== "undefined" && localStorage.getItem("seedlings_planWorkday_paused") === "1"; } catch { return false; }
+    try {
+      if (typeof window === "undefined") return null;
+      if (localStorage.getItem("seedlings_beginWorkday_paused") === "1") return "begin-workday";
+      if (localStorage.getItem("seedlings_planWorkday_paused") === "1") return "plan-workday";
+      return null;
+    } catch { return null; }
   })();
 
   return (
@@ -551,27 +556,36 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           mb={3} p={4} rounded="lg"
           display="flex" justifyContent="space-between" alignItems="center" gap={3}
           style={{
-            background: "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
-            border: "2px solid #2c5282",
-            boxShadow: "0 2px 8px rgba(49, 130, 206, 0.3)",
+            background: workflowPaused === "begin-workday"
+              ? "linear-gradient(135deg, #38a169 0%, #2f855a 100%)"
+              : "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
+            border: workflowPaused === "begin-workday" ? "2px solid #276749" : "2px solid #2c5282",
+            boxShadow: workflowPaused === "begin-workday"
+              ? "0 2px 8px rgba(56, 161, 105, 0.3)"
+              : "0 2px 8px rgba(49, 130, 206, 0.3)",
           }}
         >
           <Text fontSize="sm" fontWeight="semibold" color="white">
-            You're in the Plan Workday workflow. Return when you're done here.
+            {workflowPaused === "begin-workday"
+              ? "You're in the Begin Work Day workflow. Return when you're done here."
+              : "You're in the Plan Workday workflow. Return when you're done here."}
           </Text>
           <Button
             size="sm"
             flexShrink={0}
             style={{
               background: "white",
-              color: "#2b6cb0",
+              color: workflowPaused === "begin-workday" ? "#2f855a" : "#2b6cb0",
               fontWeight: 700,
             }}
             onClick={() => {
-              try { localStorage.removeItem("seedlings_planWorkday_paused"); } catch {}
+              try {
+                localStorage.removeItem("seedlings_planWorkday_paused");
+                localStorage.removeItem("seedlings_beginWorkday_paused");
+              } catch {}
               window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
               setTimeout(() => {
-                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: "plan-workday" } }));
+                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: workflowPaused } }));
               }, 100);
             }}
           >
@@ -635,19 +649,19 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {!(kind[0] === "ALL" && statusFilter[0] === "ALL") && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant={compact ? "solid" : "ghost"}
           size="sm"
