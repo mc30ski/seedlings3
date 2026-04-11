@@ -37,6 +37,7 @@ type Props = {
   myId: string;
   currentAssignees: Assignee[];
   onChanged?: () => void;
+  isAdmin?: boolean;
 };
 
 export default function AddAssigneeDialog({
@@ -46,6 +47,7 @@ export default function AddAssigneeDialog({
   myId,
   currentAssignees,
   onChanged,
+  isAdmin,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
@@ -99,7 +101,10 @@ export default function AddAssigneeDialog({
     const role = addAsObserver ? "observer" : null;
     try {
       for (const userId of selected) {
-        await apiPost(`/api/occurrences/${occurrenceId}/add-assignee`, { userId, role });
+        const endpoint = isAdmin
+          ? `/api/admin/occurrences/${occurrenceId}/add-assignee`
+          : `/api/occurrences/${occurrenceId}/add-assignee`;
+        await apiPost(endpoint, { userId, role });
         const worker = workers.find((w) => w.id === userId);
         if (worker) {
           setAssignees((prev) => [
@@ -127,7 +132,10 @@ export default function AddAssigneeDialog({
   async function handleRemove(targetUserId: string) {
     setRemovingId(targetUserId);
     try {
-      await apiDelete(`/api/occurrences/${occurrenceId}/assignees/${targetUserId}`);
+      const endpoint = isAdmin
+        ? `/api/admin/occurrences/${occurrenceId}/assignees/${targetUserId}`
+        : `/api/occurrences/${occurrenceId}/assignees/${targetUserId}`;
+      await apiDelete(endpoint);
       setAssignees((prev) => prev.filter((a) => a.userId !== targetUserId));
       publishInlineMessage({ type: "SUCCESS", text: "Team member removed." });
       onChanged?.();
@@ -217,7 +225,34 @@ export default function AddAssigneeDialog({
 
                 {/* Add more */}
                 <div>
-                  <Text fontWeight="medium" mb="2">Add workers</Text>
+                  <Text fontWeight="medium" mb="2">Add to team</Text>
+
+                  {/* Role selection */}
+                  <HStack gap={2} mb={2}>
+                    <Button
+                      size="sm"
+                      variant={!addAsObserver ? "solid" : "outline"}
+                      colorPalette={!addAsObserver ? "teal" : "gray"}
+                      onClick={() => setAddAsObserver(false)}
+                    >
+                      Worker
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={addAsObserver ? "solid" : "outline"}
+                      colorPalette={addAsObserver ? "blue" : "gray"}
+                      onClick={() => setAddAsObserver(true)}
+                    >
+                      Observer
+                    </Button>
+                  </HStack>
+                  <Text fontSize="xs" color="fg.muted" mb={2}>
+                    {addAsObserver
+                      ? "Observers can see the job and set reminders, but cannot start, complete, or manage it."
+                      : "Workers can take actions on the job — start, complete, manage expenses, etc."}
+                  </Text>
+
+                  {/* Worker select + Add */}
                   <HStack gap={2} align="flex-end">
                     <Box flex="1">
                       <Select.Root
@@ -255,25 +290,13 @@ export default function AddAssigneeDialog({
                     </Box>
                     <Button
                       size="sm"
+                      colorPalette={addAsObserver ? "blue" : "teal"}
                       onClick={handleAdd}
                       loading={addBusy}
                       disabled={selected.length === 0 || removingId !== ""}
                     >
-                      Add
+                      {addAsObserver ? "Add as Observer" : "Add as Worker"}
                     </Button>
-                  </HStack>
-                  <HStack gap={2} mt={1}>
-                    <Button
-                      size="xs"
-                      variant={addAsObserver ? "solid" : "outline"}
-                      colorPalette={addAsObserver ? "blue" : "gray"}
-                      onClick={() => setAddAsObserver(!addAsObserver)}
-                    >
-                      {addAsObserver ? "Adding as Observer" : "Add as Observer"}
-                    </Button>
-                    {addAsObserver && (
-                      <Text fontSize="xs" color="fg.muted">Observers can see the job but cannot take actions</Text>
-                    )}
                   </HStack>
                 </div>
 

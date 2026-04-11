@@ -364,14 +364,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const assignees = occ.assignees ?? [];
             return assignees.some((a) => a.userId === myId);
           });
-        } else if (!isAdmin && !isSuper) {
-          // Regular worker view — show only my jobs + unassigned (claimable)
+        } else {
+          // Worker view — show only my jobs + unassigned (claimable)
           list = list.filter((occ) => {
             const assignees = occ.assignees ?? [];
             return assignees.length === 0 || assignees.some((a) => a.userId === myId);
           });
         }
-        // Admins/Supers on Worker tab see all jobs (no filter)
       }
       setItems(list);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
@@ -1552,7 +1551,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Body>
                 )}
 
-                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || isAdmin || isSuper) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap" mb="2">
                       {isUnassigned && !isAdminOnlyOcc && (() => {
@@ -1774,7 +1773,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {(isClaimer || isAdmin || isSuper) && occ.status !== "PENDING_PAYMENT" && (
+                      {(isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-manage-team"
                           itemId={occ.id}
@@ -1848,7 +1847,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                 {/* Reminder buttons when the regular footer doesn't show */}
                 {isWorkerView && !isCardCompact && !(
-                  !isTrainee && (isUnassigned || isActiveAssignee || isAdmin || isSuper) && !isTentative &&
+                  !isTrainee && (isUnassigned || isActiveAssignee) && !isTentative &&
                   (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
                   <Card.Footer py="3" px="4" pt="0">
@@ -1899,9 +1898,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           myId={myId}
           currentAssignees={(manageOccurrence.assignees ?? []).map((a) => ({
             userId: a.userId,
+            role: a.role,
             user: a.user,
           }))}
           onChanged={() => void load(false)}
+          isAdmin={forAdmin && (isAdmin || isSuper)}
         />
       )}
 
