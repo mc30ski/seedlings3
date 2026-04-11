@@ -364,13 +364,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const assignees = occ.assignees ?? [];
             return assignees.some((a) => a.userId === myId);
           });
-        } else {
-          // Worker view — show only my jobs + unassigned (claimable)
+        } else if (!isAdmin && !isSuper) {
+          // Regular worker view — show only my jobs + unassigned (claimable)
           list = list.filter((occ) => {
             const assignees = occ.assignees ?? [];
             return assignees.length === 0 || assignees.some((a) => a.userId === myId);
           });
         }
+        // Admins/Supers on Worker tab see all jobs (no filter)
       }
       setItems(list);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
