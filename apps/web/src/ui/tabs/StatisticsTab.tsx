@@ -229,8 +229,8 @@ export default function StatisticsTab({ myId }: Props = {}) {
           )}
         </Box>}
         {!myId && selectedWorkers.length > 0 && (
-          <Button variant="ghost" size="sm" px="2" minW="0" onClick={() => { setSelectedWorkers([]); setSearchText(""); }}>
-            <X size={14} />
+          <Button variant="outline" size="xs" colorPalette="red" onClick={() => { setSelectedWorkers([]); setSearchText(""); }}>
+            Clear
           </Button>
         )}
         <Button

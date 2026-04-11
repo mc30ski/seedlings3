@@ -100,8 +100,8 @@ export default function AdminRoutesTab() {
           )}
         </Box>
         {selectedWorker && (
-          <Button variant="ghost" size="sm" px="2" minW="0" onClick={() => { setSelectedWorker(null); setSearchText(""); }}>
-            <X size={14} />
+          <Button variant="outline" size="xs" colorPalette="red" onClick={() => { setSelectedWorker(null); setSearchText(""); }}>
+            Clear
           </Button>
         )}
         {selectedWorker && (

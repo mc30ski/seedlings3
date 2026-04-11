@@ -357,20 +357,22 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         >
           ⭐
         </Button>
+        {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly && !q && !highlightId) && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL" && !vipOnly}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
             setVipOnly(false);
+            setQ("");
+            setHighlightId(null);
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

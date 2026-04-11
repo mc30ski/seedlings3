@@ -154,6 +154,31 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.properties.get(id);
   });
 
+  // Jobs (lightweight list for task association — only jobs the worker is assigned to)
+  app.get("/jobs", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (isAdmin) {
+      // Admins see all jobs
+      return services.jobs.list({ limit: 200 });
+    }
+    // Workers see only jobs they are assigned to (via occurrence assignees)
+    const myOccurrences = await prisma.jobOccurrence.findMany({
+      where: { assignees: { some: { userId: uid } } },
+      select: { jobId: true },
+      distinct: ["jobId"],
+    });
+    const myJobIds = myOccurrences.map((o) => o.jobId).filter(Boolean) as string[];
+    if (myJobIds.length === 0) return [];
+    const jobs = await prisma.job.findMany({
+      where: { id: { in: myJobIds } },
+      include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } },
+      take: 200,
+    });
+    return jobs;
+  });
+
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
@@ -461,6 +486,76 @@ export default async function workerRoutes(app: FastifyInstance) {
       where: { userId: uid, occurrenceId },
     });
     return { ok: true };
+  });
+
+  // ── Tasks ──
+
+  app.post("/tasks", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createTask(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      jobId: body.jobId ? String(body.jobId) : undefined,
+    });
+  });
+
+  app.post("/tasks/:id/close", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.CLOSED,
+    );
+  });
+
+  app.post("/tasks/:id/reopen", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.SCHEDULED,
+    );
+  });
+
+  app.patch("/tasks/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Task not found");
+    if (occ.workflow !== "TASK") throw app.httpErrors.badRequest("Only tasks can be edited this way");
+    const isCreator = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isCreator) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the task creator or an admin can edit this task");
+    }
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.jobId !== undefined) data.jobId = body.jobId || null;
+    return prisma.jobOccurrence.update({ where: { id }, data });
+  });
+
+  app.delete("/tasks/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Task not found");
+    if (occ.workflow !== "TASK") throw app.httpErrors.badRequest("Only tasks can be deleted this way");
+    const isCreator = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isCreator) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the task creator or an admin can delete this task");
+    }
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
   });
 
   // ── Reminders ──

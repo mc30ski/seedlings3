@@ -154,13 +154,12 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       </Box>
       {selectedWorkers.length > 0 && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => { setSelectedWorkers([]); setSearchText(""); }}
         >
-          <X size={14} />
+          Clear
         </Button>
       )}
       {selectedWorkers.length > 0 && (

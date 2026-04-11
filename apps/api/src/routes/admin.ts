@@ -1411,6 +1411,21 @@ Respond ONLY with valid JSON in this exact format:
     return services.settings.set(uid, key, String(body.value));
   });
 
+  // ── Tasks ──
+
+  app.post("/admin/tasks", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createTask(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      jobId: body.jobId ? String(body.jobId) : undefined,
+    });
+  });
+
   // ── Pricing ──
 
   app.get("/admin/pricing", adminGuard, async () => {

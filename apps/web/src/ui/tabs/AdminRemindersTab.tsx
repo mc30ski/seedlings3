@@ -143,13 +143,12 @@ export default function AdminRemindersTab() {
         </Box>
         {selectedWorker && (
           <Button
-            variant="ghost"
-            size="sm"
-            px="2"
-            minW="0"
+            variant="outline"
+            size="xs"
+            colorPalette="red"
             onClick={() => { setSelectedWorker(null); setSearchText(""); }}
           >
-            <X size={14} />
+            Clear
           </Button>
         )}
         {selectedWorker && (

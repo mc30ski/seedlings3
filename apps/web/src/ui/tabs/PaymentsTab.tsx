@@ -169,16 +169,16 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {typeFilter[0] !== "ALL" && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={typeFilter[0] === "ALL"}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => setTypeFilter(["ALL"])}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -859,12 +859,11 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             );
           })()}
         </Box>
+        {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0) && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => {
             setTypeFilter(["ALL"]);
             setMethodFilter(["ALL"]);
@@ -872,8 +871,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             setPersonSearch("");
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

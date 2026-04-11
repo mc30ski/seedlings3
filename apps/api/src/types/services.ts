@@ -455,6 +455,7 @@ export type ServicesJobs = {
   }): Promise<JobListItem[]>;
 
   listAllOccurrences(params?: { from?: string; to?: string }): Promise<any[]>;
+  getOccurrencesByIds(ids: string[]): Promise<any[]>;
   listMyOccurrences(userId: string): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
   claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
@@ -516,7 +517,8 @@ export type ServicesJobs = {
   addOccurrenceAssignee(
     currentUserId: string,
     occurrenceId: string,
-    targetUserId: string
+    targetUserId: string,
+    role?: string | null
   ): Promise<{ added: true } | { added: false; reason: string }>;
 
   removeOccurrenceAssignee(
@@ -528,8 +530,14 @@ export type ServicesJobs = {
   adminAddOccurrenceAssignee(
     adminUserId: string,
     occurrenceId: string,
-    targetUserId: string
+    targetUserId: string,
+    role?: string | null
   ): Promise<{ added: true } | { added: false; reason: string }>;
+
+  createTask(
+    currentUserId: string,
+    input: { title: string; notes?: string; startAt: string; jobId?: string }
+  ): Promise<JobOccurrence>;
 
   adminRemoveOccurrenceAssignee(
     adminUserId: string,

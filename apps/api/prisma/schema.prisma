@@ -386,6 +386,7 @@ enum OccurrenceWorkflow {
   STANDARD
   ONE_OFF
   ESTIMATE
+  TASK
 }
 
 enum JobOccurrenceSource {
@@ -478,10 +479,12 @@ model JobSchedule {
 model JobOccurrence {
   id          String   @id @default(cuid())
 
-  jobId       String
-  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId       String?
+  job         Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  kind        JobKind  // REQUIRED (copied from Job.kind on creation, editable later)
+  kind        JobKind?  // Copied from Job.kind on creation; null for tasks
+
+  title       String?   // Short title for tasks; optional for job occurrences
 
   startAt     DateTime?
   endAt       DateTime?

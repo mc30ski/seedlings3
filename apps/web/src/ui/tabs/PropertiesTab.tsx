@@ -335,19 +335,21 @@ export default function PropertiesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && !q && !highlightId) && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={kind[0] === "ALL" && statusFilter[0] === "ALL"}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => {
             setKind(["ALL"]);
             setStatusFilter(["ALL"]);
+            setQ("");
+            setHighlightId(null);
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

@@ -68,6 +68,10 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
     REJECTED: ["CLOSED"],
     CLOSED: ["ARCHIVED"],
   },
+  TASK: {
+    SCHEDULED: ["CLOSED", "CANCELED"],
+    CLOSED: ["SCHEDULED", "ARCHIVED"],
+  },
 };
 
 function isValidTransition(workflow: string, from: string, to: string): boolean {
@@ -375,6 +379,40 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async createTask(currentUserId: string, input: { title: string; notes?: string; startAt: string; jobId?: string }) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          jobId: input.jobId ?? null,
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: OccurrenceWorkflow.TASK,
+        } as any,
+      });
+
+      // Auto-assign creator
+      await tx.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: currentUserId,
+          assignedById: currentUserId,
+        },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, currentUserId, {
+        occurrenceId: occ.id,
+        type: "TASK",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
   async updateOccurrence(
     currentUserId: string,
     occurrenceId: string,
@@ -611,6 +649,7 @@ export const jobs: ServicesJobs = {
       where: {
         status: JobOccurrenceStatus.SCHEDULED,
         assignees: { none: {} },
+        workflow: { not: OccurrenceWorkflow.TASK },
       },
       include: {
         job: {
@@ -778,6 +817,9 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         include: { job: { select: { defaultPrice: true } } },
       });
+      if (occ.workflow === OccurrenceWorkflow.TASK) {
+        throw new ServiceError("CANNOT_CLAIM_TASK", "Tasks cannot be claimed. The creator is auto-assigned.", 409);
+      }
       if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
         throw new ServiceError("INVALID_STATUS", "Only SCHEDULED occurrences can be claimed.", 409);
       }

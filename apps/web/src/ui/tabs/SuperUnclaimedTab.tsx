@@ -188,20 +188,20 @@ export default function SuperUnclaimedTab() {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {!(datePreset === "overdueAndNext3" && !q) && (
         <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          disabled={datePreset === "overdueAndNext3" && !q}
+          variant="outline"
+          size="xs"
+          colorPalette="red"
           onClick={() => {
             setOverdueActive(false);
             setDatePreset("overdueAndNext3");
             setQ("");
           }}
         >
-          <X size={14} />
+          Clear
         </Button>
+        )}
         <Button size="sm" variant="ghost" onClick={() => void load()}>
           <RefreshCw size={14} />
         </Button>

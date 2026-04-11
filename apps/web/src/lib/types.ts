@@ -256,7 +256,7 @@ export const JOB_OCCURRENCE_STATUS = [
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
 
-export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE"] as const;
+export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE", "TASK"] as const;
 export type OccurrenceWorkflow = (typeof OCCURRENCE_WORKFLOW)[number];
 
 export const JOB_TYPE_OPTIONS = [
@@ -326,8 +326,9 @@ export type JobOccurrenceAssigneeWithUser = {
 
 export type JobOccurrenceFull = {
   id: string;
-  jobId: string;
-  kind: JobKind;
+  jobId?: string | null;
+  kind?: JobKind | null;
+  title?: string | null;
   status: JobOccurrenceStatus;
   source: string;
   startAt?: string | null;
@@ -500,8 +501,9 @@ export type EquipmentCharge = {
 
 export type WorkerOccurrence = {
   id: string;
-  jobId: string;
-  kind: JobKind;
+  jobId?: string | null;
+  kind?: JobKind | null;
+  title?: string | null;
   status: JobOccurrenceStatus;
   startAt?: string | null;
   endAt?: string | null;
@@ -528,7 +530,7 @@ export type WorkerOccurrence = {
   expenses?: ExpenseItem[];
   _count?: { photos: number };
   photos?: { id: string; url: string; contentType?: string | null }[];
-  job: {
+  job?: {
     id: string;
     kind: JobKind;
     frequencyDays?: number | null;
@@ -540,7 +542,7 @@ export type WorkerOccurrence = {
       state: string;
       client?: { id: string; displayName: string; isVip?: boolean; vipReason?: string | null };
     };
-  };
+  } | null;
   assignees?: {
     userId: string;
     assignedById?: string | null;
