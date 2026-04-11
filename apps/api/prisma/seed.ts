@@ -929,10 +929,10 @@ async function seedDatabase() {
   // ── Tasks ──────────────────────────────────────────────────────────────────
   console.log("  Creating tasks...");
 
-  const taskData = [
-    { title: "Buy mulch bags for Harrington", startAt: daysFromNow(0, 9), userId: ADMIN_WORKER_ID, notes: "Need 10 bags of premium hardwood mulch from Home Depot" },
-    { title: "Call Lisa Chen about tree trimming schedule", startAt: daysFromNow(1, 10), userId: ADMIN_WORKER_ID },
-    { title: "Sharpen mower blades", startAt: daysAgo(1, 8), userId: EMPLOYEE_ID, notes: "Honda push mower in maintenance — blades need sharpening before next use", status: "CLOSED" as const },
+  const taskData: { title: string; startAt: Date; userId: string; notes?: string; status?: string; linkedOccurrenceId?: string }[] = [
+    { title: "Buy mulch bags for Harrington", startAt: daysFromNow(0, 9), userId: ADMIN_WORKER_ID, notes: "Need 10 bags of premium hardwood mulch from Home Depot", linkedOccurrenceId: todayHarrington.id },
+    { title: "Call Lisa Chen about tree trimming schedule", startAt: daysFromNow(1, 10), userId: ADMIN_WORKER_ID, linkedOccurrenceId: estChenTree.id },
+    { title: "Sharpen mower blades", startAt: daysAgo(1, 8), userId: EMPLOYEE_ID, notes: "Honda push mower in maintenance — blades need sharpening before next use", status: "CLOSED" },
     { title: "Pick up new trimmer line", startAt: daysFromNow(2, 9), userId: CONTRACTOR_ID, notes: "Stihl .095 round, 3lb spool" },
   ];
 
@@ -944,9 +944,10 @@ async function seedDatabase() {
         title: t.title,
         notes: t.notes ?? null,
         startAt: t.startAt,
-        status: t.status ?? "SCHEDULED",
+        status: (t.status ?? "SCHEDULED") as any,
         source: "MANUAL",
         workflow: "TASK",
+        linkedOccurrenceId: t.linkedOccurrenceId ?? null,
       },
     });
     await prisma.jobOccurrenceAssignee.create({

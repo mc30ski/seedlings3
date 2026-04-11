@@ -518,6 +518,10 @@ model JobOccurrence {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  linkedOccurrenceId  String?
+  linkedOccurrence    JobOccurrence?  @relation("TaskLink", fields: [linkedOccurrenceId], references: [id], onDelete: SetNull)
+  linkedFromTasks     JobOccurrence[] @relation("TaskLink")
+
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]

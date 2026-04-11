@@ -325,7 +325,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       });
       const byProperty = new Map<string, any[]>();
       for (const p of photos) {
-        const pid = p.occurrence.job.propertyId;
+        const pid = p.occurrence.job?.propertyId;
+        if (!pid) continue;
         if (!byProperty.has(pid)) byProperty.set(pid, []);
         const arr = byProperty.get(pid)!;
         if (arr.length < 3) arr.push(p);
@@ -1422,7 +1423,7 @@ Respond ONLY with valid JSON in this exact format:
       title: String(body.title).trim(),
       notes: body.notes ? String(body.notes) : undefined,
       startAt: String(body.startAt),
-      jobId: body.jobId ? String(body.jobId) : undefined,
+      linkedOccurrenceId: body.linkedOccurrenceId ? String(body.linkedOccurrenceId) : undefined,
     });
   });
 

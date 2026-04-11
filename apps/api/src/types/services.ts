@@ -536,7 +536,7 @@ export type ServicesJobs = {
 
   createTask(
     currentUserId: string,
-    input: { title: string; notes?: string; startAt: string; jobId?: string }
+    input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }
   ): Promise<JobOccurrence>;
 
   adminRemoveOccurrenceAssignee(
