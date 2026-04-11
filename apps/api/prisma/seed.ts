@@ -881,6 +881,22 @@ async function seedDatabase() {
     data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: ADMIN_WORKER_ID, metadata: { clientId: garciaFamily.id, displayName: "Garcia Family", status: "PAUSED", reason: "Winter pause" }, createdAt: daysAgo(10, 11) },
   });
 
+  // ── Pricing settings ───────────────────────────────────────────────────────
+  console.log("  Creating pricing entries...");
+
+  const pricingEntries = [
+    { key: "pricing_general_labor", label: "General Labor", description: "Hourly rate for general labor tasks like cleanup, hauling, debris removal, and other non-specialized work", unit: "per hour per person", amount: 60, sortOrder: 1 },
+    { key: "pricing_mowing_acre", label: "Mowing (per acre)", description: "Standard mowing rate for open acreage using a riding mower. Includes basic trimming along fence lines and obstacles", unit: "per acre", amount: 150, sortOrder: 2 },
+  ];
+  for (const p of pricingEntries) {
+    const value = JSON.stringify({ label: p.label, description: p.description, unit: p.unit, amount: p.amount, sortOrder: p.sortOrder });
+    await prisma.setting.upsert({
+      where: { key: p.key },
+      create: { key: p.key, value, updatedById: MICHAEL_ID },
+      update: { value, updatedById: MICHAEL_ID },
+    });
+  }
+
   // ── Reminders ──────────────────────────────────────────────────────────────
   console.log("  Creating reminders...");
 
