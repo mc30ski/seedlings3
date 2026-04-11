@@ -379,11 +379,10 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createTask(currentUserId: string, input: { title: string; notes?: string; startAt: string; jobId?: string }) {
+  async createTask(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.create({
         data: {
-          jobId: input.jobId ?? null,
           kind: null,
           title: input.title,
           notes: input.notes ?? null,
@@ -391,6 +390,7 @@ export const jobs: ServicesJobs = {
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
           workflow: OccurrenceWorkflow.TASK,
+          linkedOccurrenceId: input.linkedOccurrenceId ?? null,
         } as any,
       });
 
@@ -557,6 +557,12 @@ export const jobs: ServicesJobs = {
           include: { createdBy: { select: { id: true, displayName: true } } },
           orderBy: { createdAt: "asc" as const },
         },
+        linkedOccurrence: {
+          select: {
+            id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
+            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
+          },
+        },
         _count: { select: { photos: true } },
         photos: {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
@@ -596,6 +602,12 @@ export const jobs: ServicesJobs = {
         expenses: {
           include: { createdBy: { select: { id: true, displayName: true } } },
           orderBy: { createdAt: "asc" as const },
+        },
+        linkedOccurrence: {
+          select: {
+            id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
+            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
+          },
         },
         _count: { select: { photos: true } },
         photos: {

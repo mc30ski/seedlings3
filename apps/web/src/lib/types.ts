@@ -550,6 +550,16 @@ export type WorkerOccurrence = {
     user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
   }[];
   reminder?: { remindAt: string; note?: string | null } | null;
+  linkedOccurrenceId?: string | null;
+  linkedOccurrence?: {
+    id: string;
+    startAt?: string | null;
+    status: string;
+    workflow?: string;
+    jobType?: string | null;
+    price?: number | null;
+    job?: { id: string; property: { id: string; displayName: string; client?: { displayName?: string } } } | null;
+  } | null;
 };
 
 export type OccurrencePhoto = {

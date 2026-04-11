@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -14,25 +15,38 @@ import {
 import { X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
-import { bizDateKey, clientLabel } from "@/src/lib/lib";
+import { bizDateKey, clientLabel, fmtDate, jobTypeLabel } from "@/src/lib/lib";
+import { type WorkerOccurrence } from "@/src/lib/types";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-
-type JobItem = {
-  id: string;
-  status: string;
-  property: { id: string; displayName: string; client?: { displayName?: string } };
-};
 
 type EditTask = {
   id: string;
   title?: string | null;
   notes?: string | null;
   startAt?: string | null;
-  jobId?: string | null;
-  job?: { id: string; property: { id: string; displayName: string; client?: { displayName?: string } } } | null;
+  linkedOccurrenceId?: string | null;
+  linkedOccurrence?: {
+    id: string;
+    startAt?: string | null;
+    status: string;
+    workflow?: string;
+    jobType?: string | null;
+    job?: { id: string; property: { id: string; displayName: string; client?: { displayName?: string } } } | null;
+  } | null;
+};
+
+type OccItem = {
+  id: string;
+  propertyName: string;
+  clientName: string;
+  workflow: string;
+  jobType: string;
+  date: string;
+  status: string;
+  price: number | null;
 };
 
 type Props = {
@@ -50,58 +64,85 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
   const [saving, setSaving] = useState(false);
   const isEdit = !!editTask;
 
-  // Job association
-  const [jobSearch, setJobSearch] = useState("");
-  const [jobs, setJobs] = useState<JobItem[]>([]);
-  const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
-  const [showJobResults, setShowJobResults] = useState(false);
+  // Occurrence linking
+  const [occSearch, setOccSearch] = useState("");
+  const [occurrences, setOccurrences] = useState<OccItem[]>([]);
+  const [selectedOcc, setSelectedOcc] = useState<OccItem | null>(null);
+  const [showOccResults, setShowOccResults] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    apiGet<JobItem[]>("/api/jobs")
-      .then((list) => setJobs(Array.isArray(list) ? list : []))
-      .catch(() => setJobs([]));
+    apiGet<WorkerOccurrence[]>("/api/occurrences?from=&to=")
+      .then((list) => {
+        const items: OccItem[] = (Array.isArray(list) ? list : [])
+          .filter((o) => o.workflow !== "TASK" && o.job)
+          .map((o) => ({
+            id: o.id,
+            propertyName: o.job?.property?.displayName ?? "",
+            clientName: o.job?.property?.client?.displayName ?? "",
+            workflow: o.workflow ?? "STANDARD",
+            jobType: (o as any).jobType ?? "",
+            date: o.startAt ?? "",
+            status: o.status,
+            price: o.price ?? null,
+          }));
+        setOccurrences(items);
+      })
+      .catch(() => setOccurrences([]));
 
     if (editTask) {
       setTitle(editTask.title ?? "");
       setDate(editTask.startAt ? bizDateKey(editTask.startAt) : bizDateKey(new Date()));
       setNotes(editTask.notes ?? "");
-      if (editTask.job) {
-        setSelectedJob({
-          id: editTask.job.id,
-          status: "",
-          property: editTask.job.property,
+      if (editTask.linkedOccurrence) {
+        const lo = editTask.linkedOccurrence;
+        setSelectedOcc({
+          id: lo.id,
+          propertyName: lo.job?.property?.displayName ?? "",
+          clientName: lo.job?.property?.client?.displayName ?? "",
+          workflow: lo.workflow ?? "STANDARD",
+          jobType: lo.jobType ?? "",
+          date: lo.startAt ?? "",
+          status: lo.status,
+          price: null,
         });
       } else {
-        setSelectedJob(null);
+        setSelectedOcc(null);
       }
     } else {
       setTitle("");
       setDate(bizDateKey(new Date()));
       setNotes("");
-      setSelectedJob(null);
+      setSelectedOcc(null);
     }
-    setJobSearch("");
-    setShowJobResults(false);
+    setOccSearch("");
+    setShowOccResults(false);
   }, [open, editTask]);
 
-  const filteredJobs = jobSearch.trim()
-    ? jobs.filter((j) => {
-        const q = jobSearch.toLowerCase();
+  const filteredOccs = occSearch.trim()
+    ? occurrences.filter((o) => {
+        const q = occSearch.toLowerCase();
         return (
-          j.property.displayName.toLowerCase().includes(q) ||
-          (j.property.client?.displayName ?? "").toLowerCase().includes(q)
+          o.propertyName.toLowerCase().includes(q) ||
+          o.clientName.toLowerCase().includes(q) ||
+          o.jobType.toLowerCase().includes(q)
         );
-      }).slice(0, 8)
-    : jobs.slice(0, 8);
+      }).slice(0, 10)
+    : occurrences.slice(0, 10);
 
   function reset() {
     setTitle("");
     setDate(bizDateKey(new Date()));
     setNotes("");
-    setJobSearch("");
-    setSelectedJob(null);
-    setShowJobResults(false);
+    setOccSearch("");
+    setSelectedOcc(null);
+    setShowOccResults(false);
+  }
+
+  function workflowLabel(wf: string): string {
+    if (wf === "ONE_OFF") return "One-off";
+    if (wf === "ESTIMATE") return "Estimate";
+    return "Repeating";
   }
 
   async function handleSave() {
@@ -113,7 +154,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
           title: title.trim(),
           startAt: date + "T09:00:00",
           notes: notes.trim() || null,
-          jobId: selectedJob?.id || null,
+          linkedOccurrenceId: selectedOcc?.id || null,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Task updated." });
       } else {
@@ -121,7 +162,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
           title: title.trim(),
           startAt: date + "T09:00:00",
           notes: notes.trim() || undefined,
-          jobId: selectedJob?.id || undefined,
+          linkedOccurrenceId: selectedOcc?.id || undefined,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Task created." });
       }
@@ -178,16 +219,21 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                   />
                 </Box>
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Link to Job</Text>
-                  {selectedJob ? (
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Link to Job Occurrence</Text>
+                  {selectedOcc ? (
                     <HStack gap={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-                      <VStack align="start" gap={0} flex="1" minW={0}>
-                        <Text fontSize="sm" fontWeight="medium">{selectedJob.property.displayName}</Text>
-                        {selectedJob.property.client?.displayName && (
-                          <Text fontSize="xs" color="fg.muted">{clientLabel(selectedJob.property.client.displayName)}</Text>
-                        )}
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <Text fontSize="sm" fontWeight="medium">{selectedOcc.propertyName}</Text>
+                        <HStack gap={1} fontSize="xs" wrap="wrap">
+                          {selectedOcc.clientName && <Text color="fg.muted">{clientLabel(selectedOcc.clientName)}</Text>}
+                          <Badge colorPalette={selectedOcc.workflow === "ONE_OFF" ? "gray" : selectedOcc.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                            {workflowLabel(selectedOcc.workflow)}
+                          </Badge>
+                          {selectedOcc.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{jobTypeLabel(selectedOcc.jobType)}</Badge>}
+                          {selectedOcc.date && <Text color="fg.muted">{fmtDate(selectedOcc.date)}</Text>}
+                        </HStack>
                       </VStack>
-                      <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setSelectedJob(null)}>
+                      <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setSelectedOcc(null)}>
                         <X size={14} />
                       </Button>
                     </HStack>
@@ -195,13 +241,13 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                     <Box position="relative">
                       <input
                         type="text"
-                        placeholder="Search by property or client name..."
-                        value={jobSearch}
-                        onChange={(e) => { setJobSearch(e.target.value); setShowJobResults(true); }}
-                        onFocus={() => setShowJobResults(true)}
+                        placeholder="Search by property, client, or job type..."
+                        value={occSearch}
+                        onChange={(e) => { setOccSearch(e.target.value); setShowOccResults(true); }}
+                        onFocus={() => setShowOccResults(true)}
                         style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
                       />
-                      {showJobResults && filteredJobs.length > 0 && (
+                      {showOccResults && filteredOccs.length > 0 && (
                         <Box
                           position="absolute"
                           top="100%"
@@ -213,39 +259,49 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                           borderColor="gray.200"
                           rounded="md"
                           shadow="md"
-                          maxH="200px"
+                          maxH="250px"
                           overflowY="auto"
                           mt="1"
                         >
-                          {filteredJobs.map((j) => (
+                          {filteredOccs.map((o) => (
                             <Box
-                              key={j.id}
+                              key={o.id}
                               px={3}
                               py={2}
                               cursor="pointer"
                               _hover={{ bg: "blue.50" }}
+                              borderBottomWidth="1px"
+                              borderColor="gray.100"
                               onClick={() => {
-                                setSelectedJob(j);
-                                setJobSearch("");
-                                setShowJobResults(false);
+                                setSelectedOcc(o);
+                                setOccSearch("");
+                                setShowOccResults(false);
                               }}
                             >
-                              <Text fontSize="sm">{j.property.displayName}</Text>
-                              {j.property.client?.displayName && (
-                                <Text fontSize="xs" color="fg.muted">{clientLabel(j.property.client.displayName)}</Text>
-                              )}
+                              <Text fontSize="sm" fontWeight="medium">{o.propertyName}</Text>
+                              <HStack gap={1} fontSize="xs" wrap="wrap" mt={0.5}>
+                                {o.clientName && <Text color="fg.muted">{clientLabel(o.clientName)}</Text>}
+                                <Badge colorPalette={o.workflow === "ONE_OFF" ? "gray" : o.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                                  {workflowLabel(o.workflow)}
+                                </Badge>
+                                {o.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{jobTypeLabel(o.jobType)}</Badge>}
+                                {o.date && <Text color="fg.muted">{fmtDate(o.date)}</Text>}
+                                <Badge colorPalette={o.status === "SCHEDULED" ? "green" : o.status === "COMPLETED" ? "gray" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                                  {o.status}
+                                </Badge>
+                              </HStack>
                             </Box>
                           ))}
                         </Box>
                       )}
-                      {showJobResults && jobSearch.trim() && filteredJobs.length === 0 && (
+                      {showOccResults && occSearch.trim() && filteredOccs.length === 0 && (
                         <Box position="absolute" top="100%" left="0" right="0" zIndex={10} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="md" mt="1" p={3}>
-                          <Text fontSize="xs" color="fg.muted">No jobs found</Text>
+                          <Text fontSize="xs" color="fg.muted">No occurrences found</Text>
                         </Box>
                       )}
                     </Box>
                   )}
-                  <Text fontSize="xs" color="fg.muted" mt={1}>Optional — link this task to an existing job</Text>
+                  <Text fontSize="xs" color="fg.muted" mt={1}>Optional — link this task to a specific job occurrence</Text>
                 </Box>
               </VStack>
             </Dialog.Body>

@@ -167,6 +167,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
+  // Photo viewer (for compact card thumbnails)
+  const [viewerPhotos, setViewerPhotos] = useState<{ id: string; url: string }[]>([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+
   // Task dialog
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [filterJobId, setFilterJobId] = useState<string | null>(null);
@@ -1207,7 +1211,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             title={occ.reminder.note ? `${occ.reminder.note} (click to copy)` : undefined}
                           >
                             <Bell size={10} style={{ marginRight: 3 }} />
-                            {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note}` : ""}
+                            {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
                           </Badge>
                         )}
                       </Box>
@@ -1237,23 +1241,38 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 )}
                               </Text>
                             </HStack>
-                            {isTask && occ.job?.property?.displayName && (
-                              <Text fontSize="xs">
+                            {isTask && occ.linkedOccurrence && (
+                              <Box fontSize="xs">
+                                <Text color="fg.muted" mb={0.5}>Linked occurrence:</Text>
                                 <a
                                   href="#"
                                   style={{ color: "var(--chakra-colors-blue-600)", textDecoration: "underline" }}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    setFilterJobId(occ.jobId ?? null);
-                                    setHighlightOccId(null);
+                                    const lo = occ.linkedOccurrence!;
+                                    setHighlightOccId(lo.id);
+                                    setExpandedCards(new Set([lo.id]));
+                                    setFilterJobId(null);
                                     setQ("");
+                                    // Ensure date range includes the linked occurrence
+                                    if (lo.startAt) {
+                                      const d = new Date(lo.startAt);
+                                      const from = new Date(d); from.setDate(from.getDate() - 3);
+                                      const to = new Date(d); to.setDate(to.getDate() + 3);
+                                      setDatePreset(null);
+                                      setDateFrom(bizDateKey(from));
+                                      setDateTo(bizDateKey(to));
+                                      void load(true, { from: bizDateKey(from), to: bizDateKey(to) });
+                                    }
                                   }}
                                 >
-                                  Linked: {occ.job.property.displayName}
-                                  {occ.job.property.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
+                                  {occ.linkedOccurrence.job?.property?.displayName ?? "Job"}
+                                  {occ.linkedOccurrence.job?.property?.client?.displayName && ` — ${clientLabel(occ.linkedOccurrence.job.property.client.displayName)}`}
+                                  {occ.linkedOccurrence.jobType && ` · ${jobTypeLabel(occ.linkedOccurrence.jobType)}`}
+                                  {occ.linkedOccurrence.startAt && ` · ${fmtDate(occ.linkedOccurrence.startAt)}`}
                                 </a>
-                              </Text>
+                              </Box>
                             )}
                             {!isTask && (
                             <Box fontSize="sm">
@@ -1328,7 +1347,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 variant="subtle" fontSize="xs" borderRadius="full" px="2"
                               >
                                 <Bell size={10} style={{ marginRight: 3 }} />
-                                {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note}` : ""}
+                                {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
                               </Badge>
                               {occ.reminder.note && (
                                 <Button
@@ -1412,20 +1431,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {!isTask && (occ.photos ?? []).length > 0 && (
                       <Box display="flex" gap={1} mt={1} flexWrap="wrap">
-                        {(occ.photos ?? []).map((p) => (
-                          <a
+                        {(occ.photos ?? []).map((p, idx) => (
+                          <img
                             key={p.id}
-                            href={p.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <img
-                              src={p.url}
-                              alt=""
-                              style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
-                            />
-                          </a>
+                            src={p.url}
+                            alt=""
+                            style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewerPhotos(occ.photos ?? []);
+                              setViewerIndex(idx);
+                            }}
+                          />
                         ))}
                       </Box>
                     )}
@@ -2164,6 +2181,50 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         />
       )}
 
+
+      {/* Photo viewer for compact card thumbnails */}
+      {viewerPhotos.length > 0 && (
+        <Box
+          position="fixed"
+          inset="0"
+          zIndex={10000}
+          bg="blackAlpha.800"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          onClick={() => setViewerPhotos([])}
+        >
+          {viewerIndex > 0 && (
+            <Box
+              position="absolute" left="3" top="50%" transform="translateY(-50%)"
+              color="white" fontSize="2xl" cursor="pointer" p={2}
+              onClick={(e) => { e.stopPropagation(); setViewerIndex((i) => i - 1); }}
+              userSelect="none"
+            >
+              ◀
+            </Box>
+          )}
+          <img
+            src={viewerPhotos[viewerIndex]?.url}
+            alt="Photo"
+            style={{ maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: "8px" }}
+            onClick={(e) => e.stopPropagation()}
+          />
+          {viewerIndex < viewerPhotos.length - 1 && (
+            <Box
+              position="absolute" right="3" top="50%" transform="translateY(-50%)"
+              color="white" fontSize="2xl" cursor="pointer" p={2}
+              onClick={(e) => { e.stopPropagation(); setViewerIndex((i) => i + 1); }}
+              userSelect="none"
+            >
+              ▶
+            </Box>
+          )}
+          <Text position="absolute" bottom="4" color="whiteAlpha.700" fontSize="sm">
+            {viewerIndex + 1} / {viewerPhotos.length}
+          </Text>
+        </Box>
+      )}
 
       <TaskDialog
         open={taskDialogOpen}
