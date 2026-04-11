@@ -543,6 +543,7 @@ export type WorkerOccurrence = {
   assignees?: {
     userId: string;
     assignedById?: string | null;
+    role?: string | null;
     user: { id: string; displayName?: string | null; email?: string | null; workerType?: WorkerType | null };
   }[];
   reminder?: { remindAt: string; note?: string | null } | null;
