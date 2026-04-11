@@ -349,7 +349,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
-  async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }) {
+  async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }, keepOccId?: string) {
     setLoading(displayLoading);
     try {
       const qs = new URLSearchParams();
@@ -377,8 +377,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             return assignees.some((a) => a.userId === myId);
           });
         } else {
-          // Worker view — show only my jobs + unassigned (claimable)
+          // Worker view — show only my jobs + unassigned (claimable) + highlighted occurrence
           list = list.filter((occ) => {
+            if (keepOccId && occ.id === keepOccId) return true;
             const assignees = occ.assignees ?? [];
             return assignees.length === 0 || assignees.some((a) => a.userId === myId);
           });
@@ -577,10 +578,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (vipOnly) {
       rows = rows.filter((occ) => !!(occ.job?.property?.client as any)?.isVip);
     }
-    // If navigated from Reminders to a specific occurrence, show only that one (bypass all filters)
+    // If navigated to a specific occurrence, show only that one (bypass all filters)
     if (highlightOccId) {
+      // Search in items first, then in all loaded data (the highlight may have been filtered out by worker visibility)
       const exact = items.find((occ) => occ.id === highlightOccId);
       if (exact) return [exact];
+      // Not found — the occurrence might not be in the current date range or visibility filter
+      // Return empty to trigger a "no results" state rather than showing unrelated items
+      return [];
     }
     // If filtering by a linked job
     if (filterJobId) {
@@ -1263,7 +1268,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       setDatePreset(null);
                                       setDateFrom(bizDateKey(from));
                                       setDateTo(bizDateKey(to));
-                                      void load(true, { from: bizDateKey(from), to: bizDateKey(to) });
+                                      void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, lo.id);
+                                    } else {
+                                      void load(true, undefined, lo.id);
                                     }
                                   }}
                                 >
