@@ -616,8 +616,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         const bPin = pinnedIds.has(b.id) ? 0 : 1;
         if (aPin !== bPin) return aPin - bPin;
       }
-      const da = a.startAt ?? "";
-      const db = b.startAt ?? "";
+      const da = (a._isReminderGhost && a._ghostDate) ? a._ghostDate : (a.startAt ?? "");
+      const db = (b._isReminderGhost && b._ghostDate) ? b._ghostDate : (b.startAt ?? "");
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
@@ -672,7 +672,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
     let current: (typeof groups)[number] | null = null;
     for (const occ of rest) {
-      const dateKey = occ.startAt ? bizDateKey(occ.startAt) : "no-date";
+      // Ghost reminders use the reminder date, not the occurrence's startAt
+      const dateKey = occ._isReminderGhost && occ._ghostDate
+        ? bizDateKey(occ._ghostDate)
+        : occ.startAt ? bizDateKey(occ.startAt) : "no-date";
       if (!current || current.key !== dateKey) {
         current = {
           key: dateKey,
@@ -833,6 +836,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "ghost"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          ⭐
+        </Button>
         {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !highlightOccId && !filterJobId && !q) && (
         <Button
           size="xs"
@@ -997,20 +1014,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
         </Button>
-        <Button
-          size="sm"
-          variant={vipOnly ? "solid" : "ghost"}
-          px="2"
-          onClick={() => setVipOnly(!vipOnly)}
-          css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
-          } : undefined}
-        >
-          ⭐
-        </Button>
       </HStack>
 
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || datePreset) && (
@@ -1090,9 +1093,63 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
             const isAdminOnlyOcc = !!occ.isAdminOnly;
             const isTask = occ.workflow === "TASK";
+            const isGhost = !!occ._isReminderGhost;
             const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
             const vipReason = (occ.job?.property?.client as any)?.vipReason;
             const isPinned = isWorkerView && pinnedIds.has(occ.id);
+
+            // Ghost reminder cards — render a simplified card
+            if (isGhost) {
+              return (
+                <Card.Root
+                  key={`ghost-${occ.id}`}
+                  variant="outline"
+                  borderColor="orange.300"
+                  bg="orange.50"
+                  borderStyle="dashed"
+                >
+                  <Card.Body py="3" px="4">
+                    <VStack align="start" gap={1}>
+                      <HStack gap={2} align="center">
+                        <Bell size={14} style={{ color: "var(--chakra-colors-orange-600)" }} />
+                        <Text fontSize="sm" fontWeight="semibold" color="orange.700">Reminder</Text>
+                        {occ.reminder?.note && (
+                          <Text fontSize="xs" color="orange.600">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
+                        )}
+                      </HStack>
+                      <Text fontSize="xs" color="fg.muted">
+                        {occ.job?.property?.displayName ?? occ.title ?? "Job"}
+                        {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
+                        {(occ as any).jobType && ` · ${jobTypeLabel((occ as any).jobType)}`}
+                        {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="orange"
+                        onClick={() => {
+                          setHighlightOccId(occ.id);
+                          setExpandedCards(new Set([occ.id]));
+                          setFilterJobId(null);
+                          setQ("");
+                          if (occ.startAt) {
+                            const d = new Date(occ.startAt);
+                            const from = new Date(d); from.setDate(from.getDate() - 3);
+                            const to = new Date(d); to.setDate(to.getDate() + 3);
+                            setDatePreset(null);
+                            setDateFrom(bizDateKey(from));
+                            setDateTo(bizDateKey(to));
+                            void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occ.id);
+                          }
+                        }}
+                      >
+                        View Original
+                      </Button>
+                    </VStack>
+                  </Card.Body>
+                </Card.Root>
+              );
+            }
 
             const cardBorderColor = isPinned
               ? "blue.400"

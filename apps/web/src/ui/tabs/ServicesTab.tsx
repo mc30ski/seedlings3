@@ -596,6 +596,20 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "ghost"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          ⭐
+        </Button>
         {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly) && (
         <Button
           size="xs"
@@ -747,20 +761,6 @@ export default function ServicesTab({
               {overdueCount}
             </Badge>
           )}
-        </Button>
-        <Button
-          size="sm"
-          variant={vipOnly ? "solid" : "ghost"}
-          px="2"
-          onClick={() => setVipOnly(!vipOnly)}
-          css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
-          } : undefined}
-        >
-          ⭐
         </Button>
       </HStack>
 
