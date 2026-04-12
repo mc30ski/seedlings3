@@ -551,6 +551,7 @@ export type WorkerOccurrence = {
   }[];
   reminder?: { remindAt: string; note?: string | null } | null;
   _isReminderGhost?: boolean;
+  _isPinnedGhost?: boolean;
   _ghostDate?: string;
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {

@@ -154,15 +154,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   async function togglePin(occId: string) {
     const isPinned = pinnedIds.has(occId);
+    // Optimistic update
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (isPinned) next.delete(occId);
+      else next.add(occId);
+      return next;
+    });
     try {
       await apiPost(`/api/occurrences/${occId}/${isPinned ? "unpin" : "pin"}`);
+    } catch (err) {
+      // Revert on error
       setPinnedIds((prev) => {
         const next = new Set(prev);
-        if (isPinned) next.delete(occId);
-        else next.add(occId);
+        if (isPinned) next.add(occId);
+        else next.delete(occId);
         return next;
       });
-    } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Pin failed.", err) });
     }
   }
@@ -652,12 +660,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       for (const occ of filtered) {
         const isPinned = pinnedIds_.has(occ.id);
         const hasReminderDue = occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey;
-        if (isPinned) pinnedGroup.push(occ);
-        if (hasReminderDue && !isPinned) {
+        if (isPinned) {
+          pinnedGroup.push(occ);
+          // Add a ghost in the regular feed at its natural date
+          rest.push({ ...occ, _isPinnedGhost: true } as any);
+        } else if (hasReminderDue) {
           reminderDueGroup.push(occ);
           reminderDueIds.add(occ.id);
+        } else {
+          rest.push(occ);
         }
-        if (!isPinned && !hasReminderDue) rest.push(occ);
       }
     } else {
       rest.push(...filtered);
@@ -1066,7 +1078,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
 
           {dayGroups.map((group) => (
-            <Box key={group.key}>
+            <Box key={group.key} data-group={group.key}>
               <HStack gap={3} align="center" my={2}>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
                 <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
@@ -1104,17 +1116,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Card.Root
                   key={`ghost-${occ.id}`}
                   variant="outline"
-                  borderColor="orange.300"
-                  bg="orange.50"
-                  borderStyle="dashed"
+                  borderColor="pink.300"
+                  bg="pink.50"
+                  css={{
+                    borderLeft: "4px solid var(--chakra-colors-pink-400)",
+                  }}
                 >
                   <Card.Body py="3" px="4">
                     <VStack align="start" gap={1}>
                       <HStack gap={2} align="center">
-                        <Bell size={14} style={{ color: "var(--chakra-colors-orange-600)" }} />
-                        <Text fontSize="sm" fontWeight="semibold" color="orange.700">Reminder</Text>
+                        <Bell size={14} style={{ color: "var(--chakra-colors-pink-600)" }} />
+                        <Badge colorPalette="pink" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
                         {occ.reminder?.note && (
-                          <Text fontSize="xs" color="orange.600">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
+                          <Text fontSize="xs" color="pink.700">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
                         )}
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
@@ -1126,7 +1140,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Button
                         size="xs"
                         variant="outline"
-                        colorPalette="orange"
+                        colorPalette="pink"
                         onClick={() => {
                           setHighlightOccId(occ.id);
                           setExpandedCards(new Set([occ.id]));
@@ -1146,6 +1160,57 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         View Original
                       </Button>
                     </VStack>
+                  </Card.Body>
+                </Card.Root>
+              );
+            }
+
+            // Pinned ghost cards — a reference in the regular feed
+            if (occ._isPinnedGhost) {
+              const isTaskGhost = occ.workflow === "TASK";
+              return (
+                <Card.Root
+                  key={`pin-ghost-${occ.id}`}
+                  variant="outline"
+                  borderColor="blue.200"
+                  bg="blue.50"
+                  css={{
+                    borderLeft: "4px solid var(--chakra-colors-blue-400)",
+                    opacity: 0.8,
+                  }}
+                >
+                  <Card.Body py="2" px="4">
+                    <HStack justify="space-between" align="start" gap={2}>
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <HStack gap={2} align="center">
+                          <Pin size={12} fill="currentColor" style={{ color: "var(--chakra-colors-blue-500)" }} />
+                          <Text fontSize="sm" fontWeight="medium" color="blue.700">
+                            {isTaskGhost ? (occ.title || "Task") : (occ.job?.property?.displayName ?? "")}
+                            {!isTaskGhost && occ.job?.property?.client?.displayName && (
+                              <Text as="span" color="blue.500" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                            )}
+                          </Text>
+                        </HStack>
+                        <HStack gap={2} fontSize="xs" wrap="wrap">
+                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">Pinned</Badge>
+                          {(occ as any).jobType && <Text color="fg.muted">{jobTypeLabel((occ as any).jobType)}</Text>}
+                          {occ.price != null && <Text color="green.600">${occ.price.toFixed(2)}</Text>}
+                        </HStack>
+                      </VStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="blue"
+                        flexShrink={0}
+                        onClick={() => {
+                          // Scroll to the pinned section and highlight
+                          const pinnedSection = document.querySelector('[data-group="pinned"]');
+                          if (pinnedSection) pinnedSection.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }}
+                      >
+                        View Pinned
+                      </Button>
+                    </HStack>
                   </Card.Body>
                 </Card.Root>
               );

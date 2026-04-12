@@ -72,7 +72,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
 
   useEffect(() => {
     if (!open) return;
-    apiGet<WorkerOccurrence[]>("/api/occurrences?from=&to=")
+    apiGet<WorkerOccurrence[]>(`/api/occurrences?from=${bizDateKey(new Date())}`)
       .then((list) => {
         const items: OccItem[] = (Array.isArray(list) ? list : [])
           .filter((o) => o.workflow !== "TASK" && o.job)

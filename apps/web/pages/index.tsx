@@ -68,6 +68,7 @@ import { TfiMoney } from "react-icons/tfi";
 import ScrollableUnderlineTabs, {
   TabItem,
 } from "../src/ui/components/ScrollableUnderlineTabs";
+import BreadcrumbNav from "@/src/ui/components/BreadcrumbNav";
 
 const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
   !!roles?.includes(role);
@@ -88,6 +89,7 @@ export default function HomePage() {
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
+  const [navCategory, setNavCategory] = usePersistedState<string>("navCategory", "Work");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
@@ -471,30 +473,20 @@ export default function HomePage() {
     },
   ];
 
-  const outerTabs: TabItem[] = [
+  const navTabs: import("@/src/ui/components/BreadcrumbNav").OuterTab[] = [
     {
       value: "client",
       label: "Client",
       icon: FiHome,
       visible: true,
-      content: (
-        <ScrollableUnderlineTabs
-          tabs={clientTabs}
-          value={clientInnerTab}
-          onValueChange={(v) => setClientInnerTab(v as ClientTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
-        />
-      ),
+      innerTabs: clientTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content })),
     },
     {
       value: "worker",
       label: "Worker",
       icon: FiUser,
       visible: () => !!isSignedIn && !!me?.isApproved && isWorker,
-      content: (
+      headerSlot: (
         <>
           {me && !me.workerType && (
             <Box mb={2} p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
@@ -538,77 +530,54 @@ export default function HomePage() {
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
           />
-          <ScrollableUnderlineTabs
-            tabs={workerTabs}
-            value={workerInnerTab}
-            onValueChange={(v) => {
-              setWorkerInnerTab(v as WorkerTabs);
-              // Clear workflow paused banner and reset workflow when navigating away from routes/equipment
-              if (v !== "routes" && v !== "equipment" && v !== "jobs") {
-                try {
-                  localStorage.removeItem("seedlings_planWorkday_paused");
-                  localStorage.removeItem("seedlings_planWorkday");
-                  localStorage.removeItem("seedlings_beginWorkday_paused");
-                  localStorage.removeItem("seedlings_beginWorkday");
-                } catch {}
-                setActiveWorkflow(null);
-              }
-            }}
-            edgeMode="overlay"
-            edgeSize={16}
-            headerPaddingY={0}
-            unmountOnExit
-          />
         </>
       ),
+      innerTabs: (() => {
+        const catMap: Record<string, string> = {
+          tasks: "Work", reminders: "Work", jobs: "Work",
+          equipment: "Field", routes: "Field",
+          payments: "Money", statistics: "Money",
+          clients: "Info", properties: "Info", profile: "Info",
+        };
+        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value] }));
+      })(),
     },
     {
       value: "admin",
       label: "Admin",
       icon: GrUserAdmin,
       visible: () => !!isSignedIn && isAdmin,
-      content: (
-        <>
-          <NewJobSetupWorkflow
-            active={activeWorkflow === "new-job-setup"}
-            onDone={() => setActiveWorkflow(null)}
-            onComplete={() => window.location.reload()}
-          />
-          <ScrollableUnderlineTabs
-            tabs={adminTabs}
-            value={adminInnerTab}
-            onValueChange={(v) => setAdminInnerTab(v as AdminTabs)}
-            edgeMode="overlay"
-            edgeSize={16}
-            headerPaddingY={0}
-            unmountOnExit
-          />
-        </>
+      headerSlot: (
+        <NewJobSetupWorkflow
+          active={activeWorkflow === "new-job-setup"}
+          onDone={() => setActiveWorkflow(null)}
+          onComplete={() => window.location.reload()}
+        />
       ),
+      innerTabs: (() => {
+        const catMap: Record<string, string> = {
+          tasks: "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
+          equipment: "Field", routes: "Field",
+          payments: "Money", statistics: "Money",
+          clients: "Directory", properties: "Directory", users: "Directory",
+          profile: "System", activity: "System", audit: "System", settings: "System",
+        };
+        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value] }));
+      })(),
     },
     {
       value: "super",
       label: "Super",
       icon: FiShield,
       visible: () => !!isSignedIn && isSuper,
-      content: (
-        <ScrollableUnderlineTabs
-          tabs={[
-            {
-              value: "unclaimed",
-              label: "Unclaimed",
-              icon: FiAlertCircle,
-              content: <SuperUnclaimedTab />,
-            },
-          ]}
-          value={superInnerTab}
-          onValueChange={(v) => setSuperInnerTab(v as SuperTabs)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
-        />
-      ),
+      innerTabs: [
+        {
+          value: "unclaimed",
+          label: "Unclaimed",
+          icon: FiAlertCircle,
+          content: <SuperUnclaimedTab />,
+        },
+      ],
     },
   ];
 
@@ -1105,14 +1074,36 @@ export default function HomePage() {
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {authLoaded && (!isSignedIn || me) && (
-        <ScrollableUnderlineTabs
-          tabs={outerTabs}
-          value={topTab}
-          onValueChange={(v) => setTopTab(v as typeof topTab)}
-          edgeMode="overlay"
-          edgeSize={16}
-          headerPaddingY={0}
-          unmountOnExit
+        <BreadcrumbNav
+          outerTabs={navTabs}
+          outerValue={topTab}
+          onOuterChange={(v: string) => setTopTab(v as typeof topTab)}
+          innerValue={
+            topTab === "client" ? clientInnerTab
+            : topTab === "worker" ? workerInnerTab
+            : topTab === "admin" ? adminInnerTab
+            : superInnerTab
+          }
+          onInnerChange={(v: string, newOuter?: string) => {
+            const outer = newOuter ?? topTab;
+            if (outer === "client") setClientInnerTab(v as ClientTabs);
+            else if (outer === "worker") {
+              setWorkerInnerTab(v as WorkerTabs);
+              if (v !== "routes" && v !== "equipment" && v !== "jobs") {
+                try {
+                  localStorage.removeItem("seedlings_planWorkday_paused");
+                  localStorage.removeItem("seedlings_planWorkday");
+                  localStorage.removeItem("seedlings_beginWorkday_paused");
+                  localStorage.removeItem("seedlings_beginWorkday");
+                } catch {}
+                setActiveWorkflow(null);
+              }
+            }
+            else if (outer === "admin") setAdminInnerTab(v as AdminTabs);
+            else if (outer === "super") setSuperInnerTab(v as SuperTabs);
+          }}
+          categoryValue={navCategory}
+          onCategoryChange={setNavCategory}
         />
       )}
       <ConfirmDialog
