@@ -325,58 +325,8 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const days = data?.suggestions?.days ?? [];
   const dateChangeCount = data?.suggestions?.dateChangeCount ?? 0;
 
-  const [workflowPaused] = useState<string | null>(() => {
-    try {
-      if (localStorage.getItem("seedlings_beginWorkday_paused") === "1") return "begin-workday";
-      if (localStorage.getItem("seedlings_planWorkday_paused") === "1") return "plan-workday";
-      return null;
-    } catch { return null; }
-  });
-
   return (
     <Box w="full" pb={8}>
-      {workflowPaused && !userId && (
-        <Box
-          mb={3} p={4} rounded="lg"
-          display="flex" justifyContent="space-between" alignItems="center" gap={3}
-          style={{
-            background: workflowPaused === "begin-workday"
-              ? "linear-gradient(135deg, #38a169 0%, #2f855a 100%)"
-              : "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
-            border: workflowPaused === "begin-workday" ? "2px solid #276749" : "2px solid #2c5282",
-            boxShadow: workflowPaused === "begin-workday"
-              ? "0 2px 8px rgba(56, 161, 105, 0.3)"
-              : "0 2px 8px rgba(49, 130, 206, 0.3)",
-          }}
-        >
-          <Text fontSize="sm" fontWeight="semibold" color="white">
-            {workflowPaused === "begin-workday"
-              ? "You're in the Begin Work Day workflow. Return when you're done here."
-              : "You're in the Plan Workday workflow. Return when you're done here."}
-          </Text>
-          <Button
-            size="sm"
-            flexShrink={0}
-            style={{
-              background: "white",
-              color: workflowPaused === "begin-workday" ? "#2f855a" : "#2b6cb0",
-              fontWeight: 700,
-            }}
-            onClick={() => {
-              try {
-                localStorage.removeItem("seedlings_planWorkday_paused");
-                localStorage.removeItem("seedlings_beginWorkday_paused");
-              } catch {}
-              window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
-              setTimeout(() => {
-                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: workflowPaused } }));
-              }, 100);
-            }}
-          >
-            Return to Workflow
-          </Button>
-        </Box>
-      )}
       <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
         <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
         <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>

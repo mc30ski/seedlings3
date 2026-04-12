@@ -192,28 +192,28 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
     const action = row.action;
 
     // Equipment
-    if (action.startsWith("EQUIPMENT_")) {
+    if (action?.startsWith("EQUIPMENT_")) {
       const eq = md.equipmentRecord;
       if (!eq) return "";
       return `${eq.shortDesc ?? ""} (${eq.qrSlug ?? ""})`;
     }
 
     // User
-    if (action.startsWith("USER_")) {
+    if (action?.startsWith("USER_")) {
       const email = md.userRecord?.email ?? "";
       const role = md.roleRecord?.role;
       return role ? `${role} — ${email}` : email;
     }
 
     // Property
-    if (action.startsWith("PROPERTY_")) {
+    if (action?.startsWith("PROPERTY_")) {
       const name = md.displayName ?? "";
       if (name) return name;
       return md.propertyId ? `Property ${md.propertyId.slice(0, 8)}…` : "";
     }
 
     // Client
-    if (action.startsWith("CLIENT_")) {
+    if (action?.startsWith("CLIENT_")) {
       // contact actions have contactRecord
       if (md.contactRecord) {
         const name = [md.contactRecord.firstName, md.contactRecord.lastName]
@@ -228,7 +228,7 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
     }
 
     // Job
-    if (action.startsWith("JOB_")) {
+    if (action?.startsWith("JOB_")) {
       // Assignee actions have an action field
       if (md.action) {
         const verb: Record<string, string> = {

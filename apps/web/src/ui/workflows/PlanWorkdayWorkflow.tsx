@@ -139,6 +139,9 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       setReleasedIds(saved.releasedIds);
       setStep("summary");
       loadOccurrences(saved.targetDate); // reload for fresh summary
+    } else if (saved && saved.step === "no-jobs") {
+      setTargetDate(saved.targetDate);
+      setStep("no-jobs");
     } else if (saved && saved.step !== "idle" && saved.step !== "done") {
       setTargetDate(saved.targetDate);
       setConfirmedIds(saved.confirmedIds);
@@ -656,7 +659,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     variant="ghost"
                     colorPalette="gray"
                     onClick={() => {
-                      handleClose();
+                      persist({ step: "no-jobs", targetDate });
+                      try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
+                      setStep("idle");
+                      onDone();
                       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
                     }}
                   >
@@ -671,7 +677,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                         localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(targetDate));
                         localStorage.removeItem("preview_routeResults");
                       } catch {}
-                      handleClose();
+                      persist({ step: "no-jobs", targetDate });
+                      try { localStorage.setItem("seedlings_planWorkday_paused", "1"); } catch {}
+                      setStep("idle");
+                      onDone();
                       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
                     }}
                   >

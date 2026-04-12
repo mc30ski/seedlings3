@@ -11,6 +11,8 @@ export type InnerTab = {
   visible?: boolean | (() => boolean);
   content?: React.ReactNode;
   category?: string; // group tabs into categories
+  categoryIcon?: React.ElementType; // icon for the category
+  categoryHighlight?: boolean; // highlight this category in the dropdown
 };
 
 export type OuterTab = {
@@ -72,33 +74,45 @@ export default function BreadcrumbNav({
 
   // Derive categories from inner tabs
   const categories = (() => {
-    const cats: string[] = [];
+    const cats: { value: string; icon?: React.ElementType; highlight?: boolean }[] = [];
     const seen = new Set<string>();
     for (const t of visibleInner) {
       const cat = t.category ?? "";
-      if (cat && !seen.has(cat)) { seen.add(cat); cats.push(cat); }
+      if (cat && !seen.has(cat)) { seen.add(cat); cats.push({ value: cat, icon: t.categoryIcon, highlight: t.categoryHighlight }); }
     }
     return cats;
   })();
   const hasCategories = categories.length > 0;
+  const activeCatObj = categories.find((c) => c.value === ((() => {
+    const ai = visibleInner.find((t) => t.value === innerValue);
+    return ai?.category ?? categoryValue ?? categories[0]?.value;
+  })()));
 
-  // Determine active category
-  const activeInner = visibleInner.find((t) => t.value === innerValue) ?? visibleInner[0];
+  // Determine active category — always derive from the selected inner tab
+  const activeInner = visibleInner.find((t) => t.value === innerValue);
   const activeCat = hasCategories
-    ? (categoryValue && categories.includes(categoryValue) ? categoryValue : (activeInner?.category ?? categories[0]))
+    ? (activeInner?.category ?? categoryValue ?? categories[0]?.value)
     : undefined;
+
+  // Sync category state if it drifted (e.g., external navigation changed innerValue)
+  useEffect(() => {
+    if (hasCategories && activeCat && activeCat !== categoryValue) {
+      onCategoryChange?.(activeCat);
+    }
+  }, [activeCat]);
 
   // Tabs in active category
   const categoryTabs = hasCategories
     ? visibleInner.filter((t) => t.category === activeCat)
     : visibleInner;
+  const isSingleTabCategory = hasCategories && categoryTabs.length === 1;
 
-  // If inner value isn't in the active category, pick the first one from the category
-  const activeInnerResolved = categoryTabs.find((t) => t.value === innerValue) ?? categoryTabs[0];
+  // Resolve active inner tab within the category
+  const activeInnerResolved = categoryTabs.find((t) => t.value === innerValue) ?? categoryTabs[0] ?? activeInner ?? visibleInner[0];
 
   function renderDropdown(
     ref: React.RefObject<HTMLDivElement | null>,
-    items: { value: string; label: string; icon?: React.ElementType }[],
+    items: { value: string; label: string; icon?: React.ElementType; highlight?: boolean }[],
     activeValue: string,
     onSelect: (value: string) => void,
   ) {
@@ -118,7 +132,10 @@ export default function BreadcrumbNav({
         py={1}
         style={{
           top: (ref.current?.getBoundingClientRect().bottom ?? 0) + 4,
-          left: ref.current?.getBoundingClientRect().left ?? 0,
+          left: Math.min(
+            ref.current?.getBoundingClientRect().left ?? 0,
+            (typeof window !== "undefined" ? window.innerWidth : 400) - 200
+          ),
         }}
       >
         {items.map((t) => (
@@ -134,14 +151,35 @@ export default function BreadcrumbNav({
             _hover={{ bg: t.value === activeValue ? "blue.100" : "gray.50" }}
             onClick={() => onSelect(t.value)}
           >
-            {t.icon && <Icon as={t.icon} boxSize={4} color={t.value === activeValue ? "blue.600" : "fg.muted"} />}
-            <Text
-              fontSize="sm"
-              fontWeight={t.value === activeValue ? "semibold" : "normal"}
-              color={t.value === activeValue ? "blue.700" : undefined}
-            >
-              {t.label}
-            </Text>
+            {t.highlight ? (
+              <HStack
+                px={2}
+                py={0.5}
+                bg={t.value === activeValue ? "blue.100" : "green.100"}
+                color={t.value === activeValue ? "blue.700" : "green.700"}
+                borderWidth="1px"
+                borderColor={t.value === activeValue ? "blue.300" : "green.300"}
+                fontSize="sm"
+                fontWeight="bold"
+                borderRadius="full"
+                lineHeight="1.2"
+                gap={1}
+              >
+                {t.icon && <Icon as={t.icon} boxSize={3.5} />}
+                <Text>{t.label}</Text>
+              </HStack>
+            ) : (
+              <>
+                {t.icon && <Icon as={t.icon} boxSize={4} color={t.value === activeValue ? "blue.600" : "fg.muted"} />}
+                <Text
+                  fontSize="sm"
+                  fontWeight={t.value === activeValue ? "semibold" : "normal"}
+                  color={t.value === activeValue ? "blue.700" : undefined}
+                >
+                  {t.label}
+                </Text>
+              </>
+            )}
           </HStack>
         ))}
       </Box>
@@ -150,20 +188,21 @@ export default function BreadcrumbNav({
 
   return (
     <Box>
-      <HStack gap={1} py={2} px={1} align="center" flexWrap="wrap">
+      <HStack gap={1} py={2} px={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
         {/* Level 1: Outer (Client/Worker/Admin/Super) */}
         <Box position="relative" ref={outerRef}>
           <HStack
             as="button"
             gap={1}
-            px={3}
-            py={1.5}
+            px={2}
+            py={1}
             rounded="full"
             bg={outerOpen ? "gray.200" : "gray.100"}
             _hover={{ bg: "gray.200" }}
             cursor="pointer"
             onClick={() => { setOuterOpen(!outerOpen); setCatOpen(false); setInnerOpen(false); }}
             transition="all 0.1s"
+            flexShrink={0}
           >
             {activeOuter?.icon && <Icon as={activeOuter.icon} boxSize={3.5} />}
             <Text fontSize="sm" fontWeight="semibold" lineHeight="1">{activeOuter?.label ?? "—"}</Text>
@@ -179,9 +218,9 @@ export default function BreadcrumbNav({
 
         <Text color="fg.muted" fontSize="sm" userSelect="none">/</Text>
 
-        {/* Level 2: Category (Work/Field/Money/Info) — only if categories exist */}
         {hasCategories ? (
           <>
+            {/* Level 2: Category */}
             <Box position="relative" ref={catRef}>
               <HStack
                 as="button"
@@ -195,59 +234,90 @@ export default function BreadcrumbNav({
                 onClick={() => { setCatOpen(!catOpen); setOuterOpen(false); setInnerOpen(false); }}
                 transition="all 0.1s"
               >
+                {activeCatObj?.icon && <Icon as={activeCatObj.icon} boxSize={3.5} color="teal.600" />}
                 <Text fontSize="sm" fontWeight="semibold" color="teal.700" lineHeight="1">{activeCat ?? "—"}</Text>
                 <ChevronDown size={14} style={{ color: "var(--chakra-colors-teal-500)" }} />
               </HStack>
               {catOpen && renderDropdown(
                 catRef,
-                categories.map((c) => ({ value: c, label: c })),
+                categories.map((c) => ({ value: c.value, label: c.value, icon: c.icon, highlight: c.highlight })),
                 activeCat ?? "",
                 (v) => {
                   onCategoryChange?.(v);
                   setCatOpen(false);
-                  // Auto-select first tab in new category
                   const firstInCat = visibleInner.filter((t) => t.category === v)[0];
                   if (firstInCat) onInnerChange(firstInCat.value);
                 },
               )}
             </Box>
 
-            <Text color="fg.muted" fontSize="sm" userSelect="none">/</Text>
+            {/* Level 3: Inner tab — only if category has multiple tabs */}
+            {!isSingleTabCategory && (
+              <>
+                <Text color="fg.muted" fontSize="sm" userSelect="none">/</Text>
+                <Box position="relative" ref={innerRef}>
+                  <HStack
+                    as="button"
+                    gap={1}
+                    px={3}
+                    py={1.5}
+                    rounded="full"
+                    bg={innerOpen ? "blue.100" : "blue.50"}
+                    _hover={{ bg: "blue.100" }}
+                    cursor="pointer"
+                    onClick={() => { setInnerOpen(!innerOpen); setOuterOpen(false); setCatOpen(false); }}
+                    transition="all 0.1s"
+                  >
+                    {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.600" />}
+                    <Text fontSize="sm" fontWeight="semibold" color="blue.700" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
+                    <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-500)" }} />
+                  </HStack>
+                  {innerOpen && renderDropdown(
+                    innerRef,
+                    categoryTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
+                    innerValue,
+                    (v) => { onInnerChange(v); setInnerOpen(false); },
+                  )}
+                </Box>
+              </>
+            )}
           </>
-        ) : null}
-
-        {/* Level 3 (or 2 if no categories): Inner tab */}
-        <Box position="relative" ref={innerRef}>
-          <HStack
-            as="button"
-            gap={1}
-            px={3}
-            py={1.5}
-            rounded="full"
-            bg={innerOpen ? "blue.100" : "blue.50"}
-            _hover={{ bg: "blue.100" }}
-            cursor="pointer"
-            onClick={() => { setInnerOpen(!innerOpen); setOuterOpen(false); setCatOpen(false); }}
-            transition="all 0.1s"
-          >
-            {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.600" />}
-            <Text fontSize="sm" fontWeight="semibold" color="blue.700" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
-            <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-500)" }} />
-          </HStack>
-          {innerOpen && renderDropdown(
-            innerRef,
-            categoryTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
-            innerValue,
-            (v) => { onInnerChange(v); setInnerOpen(false); },
-          )}
-        </Box>
+        ) : (
+          /* No categories — show inner tabs directly as level 2 */
+          <Box position="relative" ref={innerRef}>
+            <HStack
+              as="button"
+              gap={1}
+              px={3}
+              py={1.5}
+              rounded="full"
+              bg={innerOpen ? "blue.100" : "blue.50"}
+              _hover={{ bg: "blue.100" }}
+              cursor="pointer"
+              onClick={() => { setInnerOpen(!innerOpen); setOuterOpen(false); }}
+              transition="all 0.1s"
+            >
+              {activeInnerResolved?.icon && <Icon as={activeInnerResolved.icon} boxSize={3.5} color="blue.600" />}
+              <Text fontSize="sm" fontWeight="semibold" color="blue.700" lineHeight="1">{activeInnerResolved?.label ?? "—"}</Text>
+              <ChevronDown size={14} style={{ color: "var(--chakra-colors-blue-500)" }} />
+            </HStack>
+            {innerOpen && renderDropdown(
+              innerRef,
+              visibleInner.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
+              innerValue,
+              (v) => { onInnerChange(v); setInnerOpen(false); },
+            )}
+          </Box>
+        )}
       </HStack>
 
       {/* Header slot (alerts, workflows) */}
       {activeOuter?.headerSlot}
 
-      {/* Active tab content */}
-      {activeInnerResolved?.content}
+      {/* Active tab content — key forces remount on tab switch */}
+      <Box key={`${activeOuter?.value}-${activeInnerResolved?.value}`}>
+        {activeInnerResolved?.content}
+      </Box>
     </Box>
   );
 }
