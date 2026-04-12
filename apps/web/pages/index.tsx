@@ -89,7 +89,8 @@ export default function HomePage() {
   const [clientInnerTab, setClientInnerTab] = usePersistedState<ClientTabs>("clientTab", "public");
   const [adminInnerTab, setAdminInnerTab] = usePersistedState<AdminTabs>("adminTab", "admin-jobs");
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
-  const [navCategory, setNavCategory] = usePersistedState<string>("navCategory", "Work");
+  const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
+  const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
@@ -1178,8 +1179,11 @@ export default function HomePage() {
             else if (outer === "admin") setAdminInnerTab(v as AdminTabs);
             else if (outer === "super") setSuperInnerTab(v as SuperTabs);
           }}
-          categoryValue={navCategory}
-          onCategoryChange={setNavCategory}
+          categoryValue={topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : undefined}
+          onCategoryChange={(v: string) => {
+            if (topTab === "worker") setWorkerCategory(v);
+            else if (topTab === "admin") setAdminCategory(v);
+          }}
         />
       )}
       <ConfirmDialog
