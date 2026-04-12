@@ -701,48 +701,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return groups;
   }, [filtered, pinnedIds, isWorkerView]);
 
-  const workflowPaused = (() => {
-    try {
-      if (typeof window === "undefined") return null;
-      if (localStorage.getItem("seedlings_beginWorkday_paused") === "1") return "begin-workday";
-      return null;
-    } catch { return null; }
-  })();
-
   if (!isAvail) return <UnavailableNotice />;
 
   return (
     <Box w="full">
       {headerSlot}
-      {workflowPaused && isWorkerView && (
-        <Box
-          mb={3} p={4} rounded="lg"
-          display="flex" justifyContent="space-between" alignItems="center" gap={3}
-          style={{
-            background: "linear-gradient(135deg, #38a169 0%, #2f855a 100%)",
-            border: "2px solid #276749",
-            boxShadow: "0 2px 8px rgba(56, 161, 105, 0.3)",
-          }}
-        >
-          <Text fontSize="sm" fontWeight="semibold" color="white">
-            You're in the Begin Work Day workflow. Return when you're done here.
-          </Text>
-          <Button
-            size="sm"
-            flexShrink={0}
-            style={{ background: "white", color: "#2f855a", fontWeight: 700 }}
-            onClick={() => {
-              try { localStorage.removeItem("seedlings_beginWorkday_paused"); } catch {}
-              window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
-              setTimeout(() => {
-                window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: "begin-workday" } }));
-              }, 100);
-            }}
-          >
-            Return to Workflow
-          </Button>
-        </Box>
-      )}
       <HStack mb={2} gap={2}>
         <SearchWithClear
           value={q}

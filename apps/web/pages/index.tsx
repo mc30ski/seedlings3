@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Container, HStack, Text } from "@chakra-ui/react";
+import { Badge, Box, Button, Container, HStack, Text } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { bizDateKey } from "@/src/lib/lib";
@@ -93,6 +93,23 @@ export default function HomePage() {
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
+
+  // Track paused workflow for banner display
+  const [pausedWorkflow, setPausedWorkflow] = useState<string | null>(null);
+  useEffect(() => {
+    const check = () => {
+      try {
+        if (localStorage.getItem("seedlings_beginWorkday_paused") === "1") return setPausedWorkflow("begin-workday");
+        if (localStorage.getItem("seedlings_planWorkday_paused") === "1") return setPausedWorkflow("plan-workday");
+      } catch {}
+      setPausedWorkflow(null);
+    };
+    check();
+    window.addEventListener("storage", check);
+    const onCheck = () => setTimeout(check, 50);
+    window.addEventListener("navigate:workerTab", onCheck);
+    return () => { window.removeEventListener("storage", check); window.removeEventListener("navigate:workerTab", onCheck); };
+  }, []);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -530,16 +547,65 @@ export default function HomePage() {
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
           />
+          {pausedWorkflow && workerInnerTab !== "tasks" && (
+            <Box
+              mb={3} p={4} rounded="lg"
+              display="flex" justifyContent="space-between" alignItems="center" gap={3}
+              flexWrap="wrap"
+              style={{
+                background: pausedWorkflow === "begin-workday"
+                  ? "linear-gradient(135deg, #38a169 0%, #2f855a 100%)"
+                  : "linear-gradient(135deg, #3182ce 0%, #2b6cb0 100%)",
+                border: pausedWorkflow === "begin-workday" ? "2px solid #276749" : "2px solid #2c5282",
+                boxShadow: pausedWorkflow === "begin-workday"
+                  ? "0 2px 8px rgba(56, 161, 105, 0.3)"
+                  : "0 2px 8px rgba(49, 130, 206, 0.3)",
+              }}
+            >
+              <Text fontSize="sm" fontWeight="semibold" color="white">
+                {pausedWorkflow === "begin-workday"
+                  ? "You're in the Begin Work Day workflow. Return when you're done here."
+                  : "You're in the Plan Workday workflow. Return when you're done here."}
+              </Text>
+              <Button
+                size="sm"
+                flexShrink={0}
+                style={{
+                  background: "white",
+                  color: pausedWorkflow === "begin-workday" ? "#2f855a" : "#2b6cb0",
+                  fontWeight: 700,
+                }}
+                onClick={() => {
+                  try {
+                    localStorage.removeItem("seedlings_planWorkday_paused");
+                    localStorage.removeItem("seedlings_beginWorkday_paused");
+                  } catch {}
+                  setPausedWorkflow(null);
+                  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "tasks" } }));
+                  setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent("trigger:workflow", { detail: { id: pausedWorkflow } }));
+                  }, 100);
+                }}
+              >
+                Return to Workflow
+              </Button>
+            </Box>
+          )}
         </>
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          tasks: "Work", reminders: "Work", jobs: "Work",
+          tasks: "Actions",
+          reminders: "Work", jobs: "Work",
           equipment: "Field", routes: "Field",
           payments: "Money", statistics: "Money",
           clients: "Info", properties: "Info", profile: "Info",
         };
-        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value] }));
+        const catIconMap: Record<string, React.ElementType> = {
+          Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Info: FiUsers,
+        };
+        const highlightCats = new Set(["Actions"]);
+        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
       })(),
     },
     {
@@ -556,13 +622,18 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          tasks: "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
+          tasks: "Actions",
+          reminders: "Work", "admin-jobs": "Work", jobs: "Work",
           equipment: "Field", routes: "Field",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",
           profile: "System", activity: "System", audit: "System", settings: "System",
         };
-        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value] }));
+        const catIconMap: Record<string, React.ElementType> = {
+          Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
+        };
+        const highlightCats = new Set(["Actions"]);
+        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
       })(),
     },
     {
@@ -847,10 +918,12 @@ export default function HomePage() {
   }, [isAdmin, me?.id]);
 
   // Listen for worker tab navigation (from Reminders → Routes, etc.)
+  const programmaticNavRef = useRef(false);
   useEffect(() => {
     const onNav = (e: Event) => {
       const { tab, autoAnalyze } = (e as CustomEvent).detail || {};
       if (tab) {
+        programmaticNavRef.current = true;
         setTopTab("worker");
         setWorkerInnerTab(tab);
         if (autoAnalyze && tab === "routes") {
@@ -858,6 +931,8 @@ export default function HomePage() {
             window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
           }, 300);
         }
+        // Reset flag after React processes the state update
+        setTimeout(() => { programmaticNavRef.current = false; }, 50);
       }
     };
     window.addEventListener("navigate:workerTab", onNav as EventListener);
@@ -1089,7 +1164,8 @@ export default function HomePage() {
             if (outer === "client") setClientInnerTab(v as ClientTabs);
             else if (outer === "worker") {
               setWorkerInnerTab(v as WorkerTabs);
-              if (v !== "routes" && v !== "equipment" && v !== "jobs") {
+              // Only clear workflow state on manual user navigation, not programmatic
+              if (!programmaticNavRef.current && v !== "routes" && v !== "equipment" && v !== "jobs") {
                 try {
                   localStorage.removeItem("seedlings_planWorkday_paused");
                   localStorage.removeItem("seedlings_planWorkday");

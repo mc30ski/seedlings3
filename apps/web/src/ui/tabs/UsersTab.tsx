@@ -856,6 +856,8 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                       }
                       variant="subtle"
                       colorPalette={equipmentStatusColor(h.state)}
+                      css={{ whiteSpace: "normal", wordBreak: "break-word", maxWidth: "100%" }}
+                      fontSize="xs"
                     >{`${h.shortDesc} (${h.qrSlug}) - ${prettyStatus(h.state)}`}</Badge>
                   ))}
                 </Stack>
