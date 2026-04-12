@@ -1862,7 +1862,7 @@ export default function ServicesTab({
           }}
           endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           defaultAmount={acceptPaymentOcc.price}
-          assignees={(acceptPaymentOcc.assignees ?? []).map((a) => ({
+          assignees={(acceptPaymentOcc.assignees ?? []).filter((a: any) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
           }))}

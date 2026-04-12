@@ -447,6 +447,15 @@ export const jobs: ServicesJobs = {
         await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       }
 
+      // If reverting from CLOSED to a pre-payment state, clean up the payment
+      if (data.status && data.status !== JobOccurrenceStatus.CLOSED && data.status !== JobOccurrenceStatus.ARCHIVED) {
+        const existingPayment = await tx.payment.findUnique({ where: { occurrenceId } });
+        if (existingPayment) {
+          await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
+          await tx.payment.delete({ where: { id: existingPayment.id } });
+        }
+      }
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
         occurrenceId,
         record: updated,

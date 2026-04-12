@@ -37,8 +37,9 @@ export const payments: ServicesPayments = {
       let platformFeePercent: number | null = null;
       let platformFeeAmount: number | null = null;
 
+      const activeAssignees = occ.assignees.filter((a) => a.role !== "observer");
       const assigneeUsers = await tx.user.findMany({
-        where: { id: { in: occ.assignees.map((a) => a.userId) } },
+        where: { id: { in: activeAssignees.map((a) => a.userId) } },
         select: { id: true, workerType: true },
       });
       const feeableUserIds = new Set(
@@ -459,7 +460,7 @@ export const payments: ServicesPayments = {
       });
       if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
 
-      const assigneeIds = occ.assignees.map((a) => a.userId);
+      const assigneeIds = occ.assignees.filter((a) => a.role !== "observer").map((a) => a.userId);
       if (assigneeIds.length === 0) {
         throw new ServiceError("NO_ASSIGNEES", "Cannot recalculate — no assignees on this occurrence.", 400);
       }
