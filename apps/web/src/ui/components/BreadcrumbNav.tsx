@@ -94,13 +94,6 @@ export default function BreadcrumbNav({
     ? (activeInner?.category ?? categoryValue ?? categories[0]?.value)
     : undefined;
 
-  // Sync category state if it drifted (e.g., external navigation changed innerValue)
-  useEffect(() => {
-    if (hasCategories && activeCat && activeCat !== categoryValue) {
-      onCategoryChange?.(activeCat);
-    }
-  }, [activeCat]);
-
   // Tabs in active category
   const categoryTabs = hasCategories
     ? visibleInner.filter((t) => t.category === activeCat)

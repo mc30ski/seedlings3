@@ -581,7 +581,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
     if (overdueActive) {
       const overdueExclude = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-      rows = rows.filter((occ) => !overdueExclude.has(occ.status));
+      const todayKey = bizDateKey(new Date());
+      rows = rows.filter((occ) =>
+        !overdueExclude.has(occ.status) &&
+        occ.startAt && bizDateKey(occ.startAt) < todayKey
+      );
     }
     if (vipOnly) {
       rows = rows.filter((occ) => !!(occ.job?.property?.client as any)?.isVip);
@@ -1529,10 +1533,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             src={p.url}
                             alt=""
                             style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
+                              // Show preview photos immediately, then load all
                               setViewerPhotos(occ.photos ?? []);
                               setViewerIndex(idx);
+                              try {
+                                const allPhotos = await apiGet<{ id: string; url: string; contentType?: string | null }[]>(
+                                  forAdmin ? `/api/admin/occurrences/${occ.id}/photos` : `/api/occurrences/${occ.id}/photos`
+                                );
+                                if (Array.isArray(allPhotos) && allPhotos.length > (occ.photos ?? []).length) {
+                                  setViewerPhotos(allPhotos);
+                                }
+                              } catch {}
                             }}
                           />
                         ))}
@@ -2433,7 +2446,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
           endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           defaultAmount={acceptPaymentOcc.price}
-          assignees={(acceptPaymentOcc.assignees ?? []).map((a) => ({
+          assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
           }))}
