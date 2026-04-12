@@ -16,6 +16,7 @@ import { apiGet, apiPost } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
+import TruncatedText from "@/src/ui/components/TruncatedText";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -914,7 +915,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-          <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+          <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg" maxH="90vh" overflow="auto">
             <Dialog.Header>
               <VStack align="start" gap={1} w="full">
                 <HStack justify="space-between" w="full">
@@ -948,7 +949,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                     <Text fontSize="xs" color="fg.muted" mt={1}>~{occ.estimatedMinutes} min</Text>
                   )}
                   {occ.notes && (
-                    <Text fontSize="xs" color="fg.muted" mt={1}>{occ.notes}</Text>
+                    <Box mt={1}><TruncatedText>{occ.notes}</TruncatedText></Box>
                   )}
                 </Box>
 
