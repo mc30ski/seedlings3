@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
+import { createClerkClient } from "@clerk/backend";
+import { prisma } from "../db/prisma";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -37,5 +39,36 @@ export default async function meRoutes(app: FastifyInstance) {
     } else {
       return services.users.me(token);
     }
+  });
+
+  app.post("/me/sync", async (req: any, reply: FastifyReply) => {
+    const clerkUserId = req.auth?.clerkUserId;
+    if (!clerkUserId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const user = await prisma.user.findUnique({ where: { clerkUserId } });
+    if (!user) return reply.code(404).send({ error: "User not found" });
+
+    const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY! });
+    const u = await clerk.users.getUser(clerkUserId);
+
+    const email = u?.primaryEmailAddress?.emailAddress ?? u?.emailAddresses?.[0]?.emailAddress ?? null;
+    const phone = u?.primaryPhoneNumber?.phoneNumber
+      ?? u?.phoneNumbers?.find((p: any) => p.verification?.status === "verified")?.phoneNumber
+      ?? null;
+    const firstName = u?.firstName ?? null;
+    const lastName = u?.lastName ?? null;
+    const name = [firstName, lastName].filter(Boolean).join(" ").trim();
+    const displayName = name || u?.username || null;
+
+    const updates: any = { updatedAt: new Date() };
+    if (email && user.email !== email) updates.email = email;
+    if (user.phone !== phone) updates.phone = phone;
+    if (firstName && user.firstName !== firstName) updates.firstName = firstName;
+    if (lastName && user.lastName !== lastName) updates.lastName = lastName;
+    if (displayName && user.displayName !== displayName) updates.displayName = displayName;
+
+    await prisma.user.update({ where: { id: user.id }, data: updates });
+
+    return { ok: true, synced: Object.keys(updates).filter(k => k !== "updatedAt") };
   });
 }

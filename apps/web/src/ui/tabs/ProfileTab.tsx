@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { X } from "lucide-react";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
-import { apiGet, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -184,7 +184,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   const hasMore = filtered.length > 10;
 
   const targetUser = isSelf
-    ? { displayName: me?.displayName, email: me?.email, workerType: me?.workerType }
+    ? { displayName: me?.displayName, email: me?.email, phone: me?.phone, workerType: me?.workerType }
     : workers.find((w) => w.id === targetUserId);
 
   const workerTypeLabel = (wt: string | null | undefined) =>
@@ -269,7 +269,30 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
           {/* Name & info card */}
           <Card.Root variant="outline">
             <Card.Header py="3" px="4" pb="0">
-              <Text fontWeight="semibold">Personal Information</Text>
+              <HStack justify="space-between" align="center">
+                <Text fontWeight="semibold">Personal Information</Text>
+                {isSelf && (
+                  <VStack align="end" gap={0.5}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      colorPalette="blue"
+                      onClick={async () => {
+                        try {
+                          await apiPost("/api/me/sync");
+                          onProfileUpdated?.();
+                          publishInlineMessage({ type: "SUCCESS", text: "Profile synced from Clerk." });
+                        } catch (e) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage(e) });
+                        }
+                      }}
+                    >
+                      Sync Authentication
+                    </Button>
+                    <Text fontSize="2xs" color="fg.muted">Pull latest email and phone from your Clerk account</Text>
+                  </VStack>
+                )}
+              </HStack>
             </Card.Header>
             <Card.Body py="3" px="4">
               <VStack align="stretch" gap={3}>

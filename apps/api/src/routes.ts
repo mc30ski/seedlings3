@@ -154,7 +154,6 @@ export async function registerRoutes(app: FastifyInstance) {
       await api.register(rbac);
       await api.register(publicRoutes);
       await api.register(clientRoutes);
-      await api.register(cronRoutes);
       await api.register(previewRoutes);
       await api.register(systemRoutes);
       await api.register(meRoutes);
