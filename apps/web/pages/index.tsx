@@ -5,6 +5,7 @@ import { Badge, Box, Button, Container, HStack, Text } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { bizDateKey } from "@/src/lib/lib";
+import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
 import { UserButton, SignInButton, useAuth } from "@clerk/clerk-react";
@@ -823,16 +824,12 @@ export default function HomePage() {
   const loadUnclaimed = useCallback(async () => {
     if (!isSuper) { setUnclaimedCount(0); return; }
     try {
-      const threeDaysOut = new Date();
-      threeDaysOut.setDate(threeDaysOut.getDate() + 3);
-      const toStr = bizDateKey(threeDaysOut);
-      const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
-      const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
-      const count = (Array.isArray(list) ? list : []).filter(
-        (o) => (o.assignees ?? []).length === 0 &&
-          !excludeStatuses.has(o.status)
-      ).length;
-      setUnclaimedCount(count);
+      const d = computeDatesFromPreset("overdueAndNext3");
+      const qs = new URLSearchParams();
+      if (d.from) qs.set("from", d.from);
+      if (d.to) qs.set("to", d.to);
+      const result = await apiGet<{ jobs: { unclaimed: number } }>(`/api/admin/operations?${qs}`);
+      setUnclaimedCount(result?.jobs?.unclaimed ?? 0);
     } catch {
       setUnclaimedCount(0);
     }
@@ -848,6 +845,8 @@ export default function HomePage() {
   const goToUnclaimed = useCallback(() => {
     setTopTab("super");
     setSuperInnerTab("operations");
+    // Signal the Operations tab to show the unclaimed date range
+    try { localStorage.setItem("seedlings_ops_preset", "overdueAndNext3"); } catch {}
   }, []);
 
   const goToOverdue = useCallback(() => {

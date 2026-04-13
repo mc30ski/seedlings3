@@ -48,6 +48,7 @@ type OpsData = {
 
 const presetItems = [
   { value: "today", label: "Today" },
+  { value: "overdueAndNext3", label: "Overdue + Next 3 days" },
   { value: "yesterday", label: "Yesterday" },
   { value: "lastWeek", label: "Last 7 days" },
   { value: "nextWeek", label: "Next week" },
@@ -90,7 +91,16 @@ export default function OperationsTab() {
   const [showAllWorkers, setShowAllWorkers] = useState(false);
   const [confirmAllTime, setConfirmAllTime] = useState(false);
 
-  const [datePreset, setDatePreset] = useState<DatePreset>("today");
+  const [datePreset, setDatePreset] = useState<DatePreset>(() => {
+    try {
+      const stored = localStorage.getItem("seedlings_ops_preset");
+      if (stored) {
+        localStorage.removeItem("seedlings_ops_preset");
+        return stored as DatePreset;
+      }
+    } catch {}
+    return "today";
+  });
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = useState(presetDates.from);
   const [dateTo, setDateTo] = useState(presetDates.to);
