@@ -63,7 +63,11 @@ export default fp(async function auth(app: FastifyInstance) {
 
       function extractClerkData(u: any) {
         const email = u?.primaryEmailAddress?.emailAddress ?? u?.emailAddresses?.[0]?.emailAddress ?? null;
-        const phone = u?.primaryPhoneNumber?.phoneNumber ?? u?.phoneNumbers?.[0]?.phoneNumber ?? null;
+        // Only use verified phone numbers — primaryPhoneNumber is always verified in Clerk;
+        // fall back to first verified number if no primary is set
+        const phone = u?.primaryPhoneNumber?.phoneNumber
+          ?? u?.phoneNumbers?.find((p: any) => p.verification?.status === "verified")?.phoneNumber
+          ?? null;
         const firstName = u?.firstName ?? null;
         const lastName = u?.lastName ?? null;
         const name = [firstName, lastName].filter(Boolean).join(" ").trim();
@@ -87,23 +91,24 @@ export default fp(async function auth(app: FastifyInstance) {
           },
         });
       } else {
-        // Existing user — sync fields from Clerk (missing fields, or phone/email changes)
-        if (!existing.phone || !existing.email || !existing.firstName || !existing.lastName) {
+        // Existing user — sync fields from Clerk periodically (every ~1 hour) or when fields are missing
+        const syncAge = Date.now() - (existing.updatedAt?.getTime() ?? 0);
+        const needsSync = !existing.phone || !existing.email || !existing.firstName || !existing.lastName || syncAge > 10800000;
+        if (needsSync) {
           const u = await fetchClerkUser();
           if (u) {
             const { email, phone, firstName, lastName, displayName } = extractClerkData(u);
             const updates: any = {};
             if (email && existing.email !== email) updates.email = email;
-            if (phone && existing.phone !== phone) updates.phone = phone;
-            if (!existing.firstName && firstName) updates.firstName = firstName;
-            if (!existing.lastName && lastName) updates.lastName = lastName;
-            if (!existing.displayName && displayName) updates.displayName = displayName;
-            if (Object.keys(updates).length > 0) {
-              await prisma.user.update({
-                where: { id: existing.id },
-                data: updates,
-              });
-            }
+            if (phone !== undefined && existing.phone !== phone) updates.phone = phone;
+            if (firstName && existing.firstName !== firstName) updates.firstName = firstName;
+            if (lastName && existing.lastName !== lastName) updates.lastName = lastName;
+            if (displayName && existing.displayName !== displayName) updates.displayName = displayName;
+            // Touch updatedAt even if no field changes, to reset the sync timer
+            await prisma.user.update({
+              where: { id: existing.id },
+              data: { ...updates, updatedAt: new Date() },
+            });
           }
         }
       }
