@@ -513,67 +513,67 @@ async function seedDatabase() {
 
   // ─── COMPLETED (past) ─────────────────────────────────────────────────────
   const cHarrington21 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 8), endAt: addMinutes(daysAgo(21, 8), 45), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(21, 8), completedAt: addMinutes(daysAgo(21, 8), 40) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 8), endAt: addMinutes(daysAgo(21, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(21, 8), completedAt: addMinutes(daysAgo(21, 8), 40) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington14 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 8), endAt: addMinutes(daysAgo(14, 8), 45), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(14, 8), completedAt: addMinutes(daysAgo(14, 8), 42) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 8), endAt: addMinutes(daysAgo(14, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(14, 8), completedAt: addMinutes(daysAgo(14, 8), 42) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington7 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 45), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 50) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 50) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cLake14 = await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 13), endAt: addMinutes(daysAgo(14, 13), 35), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(14, 13), completedAt: addMinutes(daysAgo(14, 13), 30) },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 13), endAt: addMinutes(daysAgo(14, 13), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(14, 13), completedAt: addMinutes(daysAgo(14, 13), 30) },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cLake7 = await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 13), endAt: addMinutes(daysAgo(7, 13), 35), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(7, 13), completedAt: addMinutes(daysAgo(7, 13), 32) },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 13), endAt: addMinutes(daysAgo(7, 13), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(7, 13), completedAt: addMinutes(daysAgo(7, 13), 32) },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cMartinez14 = await occ(
-    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 40), status: "COMPLETED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 38) },
+    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 40), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 38) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cWillowbrook14 = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cWillowbrook7 = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 120), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 115) },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 120), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 115) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cThompson14 = await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 60), status: "COMPLETED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 55) },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 60), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 55) },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cThompson7 = await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 60), status: "COMPLETED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(7, 9), completedAt: addMinutes(daysAgo(7, 9), 58) },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 60), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(7, 9), completedAt: addMinutes(daysAgo(7, 9), 58) },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cObrien7 = await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 35), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 33) },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 33) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cSunrise7 = await occ(
-    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 180), status: "COMPLETED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 170) },
+    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 180), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 170) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cPatel7 = await occ(
-    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
     [{ userId: TRAINEE_ID, role: "primary" }],
   );
   const cRiverBend7 = await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cChurch7 = await occ(
-    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 14), endAt: addMinutes(daysAgo(7, 14), 90), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(7, 14), completedAt: addMinutes(daysAgo(7, 14), 85) },
+    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 14), endAt: addMinutes(daysAgo(7, 14), 90), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(7, 14), completedAt: addMinutes(daysAgo(7, 14), 85) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cKim14 = await occ(
-    { jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 10), endAt: addMinutes(daysAgo(14, 10), 30), status: "COMPLETED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 50.0, estimatedMinutes: 30, startedAt: daysAgo(14, 10), completedAt: addMinutes(daysAgo(14, 10), 28) },
+    { jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 10), endAt: addMinutes(daysAgo(14, 10), 30), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 50.0, estimatedMinutes: 30, startedAt: daysAgo(14, 10), completedAt: addMinutes(daysAgo(14, 10), 28) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
@@ -586,10 +586,25 @@ async function seedDatabase() {
   await occ({ jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 6), endAt: addMinutes(daysAgo(1, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150 });
   await occ({ jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 15), endAt: addMinutes(daysAgo(3, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 });
   await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 14), endAt: addMinutes(daysAgo(1, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90 });
-  // One overdue but assigned (not unclaimed)
+  // Overdue assigned but not completed
   await occ(
     { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 9), endAt: addMinutes(daysAgo(1, 9), 60), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60 },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
+  );
+  // Overdue — started but never completed (IN_PROGRESS)
+  await occ(
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 8), endAt: addMinutes(daysAgo(2, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(2, 8) },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+  // Overdue — completed but payment not accepted (PENDING_PAYMENT)
+  await occ(
+    { jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 8), endAt: addMinutes(daysAgo(3, 8), 30), status: "PENDING_PAYMENT", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 75.0, estimatedMinutes: 30, startedAt: daysAgo(3, 8), completedAt: addMinutes(daysAgo(3, 8), 28) },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+  );
+  // Overdue — assigned to trainee, still scheduled
+  await occ(
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 15), endAt: addMinutes(daysAgo(2, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 },
+    [{ userId: TRAINEE_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
 
   // ─── TODAY / TOMORROW ─────────────────────────────────────────────────────
@@ -696,6 +711,12 @@ async function seedDatabase() {
   // ── Payments (for completed occurrences) ──────────────────────────────────
   console.log("  Creating payments...");
 
+  // Worker type lookup for fee calculation
+  const contractorIds = new Set([CONTRACTOR_ID]);
+  const employeeIds = new Set([ADMIN_WORKER_ID, EMPLOYEE_ID, TRAINEE_ID]);
+  const PLATFORM_FEE_PCT = 10;
+  const BUSINESS_MARGIN_PCT = 20;
+
   const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE" | "APPLE_PAY"; collector: string; splits: { userId: string; amount: number }[] }[] = [
     { occId: cHarrington21.id, amount: 85, method: "CASH", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }] },
     { occId: cHarrington14.id, amount: 85, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }] },
@@ -716,12 +737,22 @@ async function seedDatabase() {
   ];
 
   for (const p of paymentData) {
+    // Calculate platform fee (contractor splits) and business margin (employee/trainee splits)
+    const contractorSplitTotal = p.splits.filter((s) => contractorIds.has(s.userId)).reduce((sum, s) => sum + s.amount, 0);
+    const employeeSplitTotal = p.splits.filter((s) => employeeIds.has(s.userId)).reduce((sum, s) => sum + s.amount, 0);
+    const platformFeeAmount = contractorSplitTotal > 0 ? Math.round(contractorSplitTotal * PLATFORM_FEE_PCT) / 100 : null;
+    const businessMarginAmount = employeeSplitTotal > 0 ? Math.round(employeeSplitTotal * BUSINESS_MARGIN_PCT) / 100 : null;
+
     await prisma.payment.create({
       data: {
         occurrenceId: p.occId,
         amountPaid: p.amount,
         method: p.method,
         collectedById: p.collector,
+        platformFeePercent: platformFeeAmount != null ? PLATFORM_FEE_PCT : null,
+        platformFeeAmount,
+        businessMarginPercent: businessMarginAmount != null ? BUSINESS_MARGIN_PCT : null,
+        businessMarginAmount,
         splits: { create: p.splits },
       },
     });
@@ -867,7 +898,7 @@ async function seedDatabase() {
   ];
   for (const c of completedOccs) {
     await prisma.auditEvent.create({
-      data: { scope: "JOB", verb: "UPDATED", action: "occurrence_completed", actorUserId: c.actor, metadata: { occurrenceId: c.id, status: "COMPLETED" }, createdAt: c.at },
+      data: { scope: "JOB", verb: "UPDATED", action: "occurrence_completed", actorUserId: c.actor, metadata: { occurrenceId: c.id, status: "CLOSED" }, createdAt: c.at },
     });
   }
 
@@ -893,6 +924,22 @@ async function seedDatabase() {
   await prisma.auditEvent.create({
     data: { scope: "CLIENT", verb: "UPDATED", action: "status_changed", actorUserId: MICHAEL_ID, metadata: { clientId: oldClient.id, displayName: "Dawson Residence", status: "ARCHIVED", reason: "Moved out of area" }, createdAt: daysAgo(60, 11) },
   });
+
+  // ── Fee/margin settings ────────────────────────────────────────────────────
+  console.log("  Creating fee/margin settings...");
+
+  const feeSettings = [
+    { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "10", description: "Platform fee percentage charged on contractor (1099) payment splits" },
+    { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "20", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
+    { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
+  ];
+  for (const s of feeSettings) {
+    await prisma.setting.upsert({
+      where: { key: s.key },
+      create: { key: s.key, value: s.value, description: s.description, updatedById: MICHAEL_ID },
+      update: { value: s.value, description: s.description, updatedById: MICHAEL_ID },
+    });
+  }
 
   // ── Pricing settings ───────────────────────────────────────────────────────
   console.log("  Creating pricing entries...");

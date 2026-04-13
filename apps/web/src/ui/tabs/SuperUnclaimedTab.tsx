@@ -84,14 +84,14 @@ export default function SuperUnclaimedTab() {
 
   // Refresh overdue count
   const filtered = useMemo(() => {
-    const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
+    const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "CANCELED", "REJECTED", "ACCEPTED"]);
     let rows = items.filter((occ) =>
       (occ.assignees ?? []).length === 0 &&
       !excludeStatuses.has(occ.status)
     );
 
     if (overdueActive) {
-      const overdueExclude = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       rows = rows.filter((occ) => !overdueExclude.has(occ.status));
     }
 

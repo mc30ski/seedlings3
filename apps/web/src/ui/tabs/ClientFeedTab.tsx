@@ -98,6 +98,8 @@ export default function ClientFeedTab() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
   const [viewerPhotos, setViewerPhotos] = useState<FeedPhoto[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
@@ -105,7 +107,7 @@ export default function ClientFeedTab() {
   useEffect(() => {
     async function load() {
       try {
-        const feed = await apiGet<{ items: FeedItem[] }>("/api/public/feed?limit=30");
+        const feed = await apiGet<{ items: FeedItem[] }>("/api/public/feed?limit=30&days=7");
         setItems(feed.items);
       } catch (err: any) {
         console.error("Feed load failed:", err);
@@ -115,6 +117,16 @@ export default function ClientFeedTab() {
     }
     void load();
   }, []);
+
+  async function loadMore() {
+    setLoadingMore(true);
+    try {
+      const feed = await apiGet<{ items: FeedItem[] }>("/api/public/feed?limit=50&days=30");
+      setItems(feed.items);
+      setExpanded(true);
+    } catch {}
+    setLoadingMore(false);
+  }
 
   function openViewer(photos: FeedPhoto[], idx: number) {
     setViewerPhotos(photos);
@@ -166,7 +178,7 @@ export default function ClientFeedTab() {
       {completed.length > 0 && (
         <Box mb={5}>
           <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Recent Activity
+            Recent Activity — {expanded ? "Last 30 days" : "Last 7 days"}
           </Text>
           <VStack align="stretch" gap={2}>
             {completed.map((item) => (
@@ -176,6 +188,22 @@ export default function ClientFeedTab() {
         </Box>
       )}
 
+      {/* Show more */}
+      {!expanded && !error && (
+        <Box textAlign="center" py={3}>
+          <Text
+            as="button"
+            fontSize="sm"
+            color="blue.600"
+            fontWeight="medium"
+            cursor="pointer"
+            onClick={() => void loadMore()}
+            _hover={{ textDecoration: "underline" }}
+          >
+            {loadingMore ? "Loading..." : "Show more — last 30 days"}
+          </Text>
+        </Box>
+      )}
 
       {!error && items.length === 0 && (
         <Box textAlign="center" py={10}>

@@ -389,9 +389,16 @@ export default function OccurrenceDialog({
                     value={startAt}
                     onChange={(e) => {
                       const val = e.target.value;
+                      const oldStart = startAt;
                       setStartAt(val);
-                      if (!endAt) setEndAt(val);
-                      else if (endAt && val && val > endAt) setEndAt(val);
+                      if (!endAt || !oldStart) {
+                        setEndAt(val);
+                      } else {
+                        // Preserve the duration between start and end
+                        const diffMs = new Date(endAt + "T12:00:00Z").getTime() - new Date(oldStart + "T12:00:00Z").getTime();
+                        const newEnd = new Date(new Date(val + "T12:00:00Z").getTime() + diffMs);
+                        setEndAt(newEnd.toISOString().slice(0, 10));
+                      }
                     }}
                   />
                 </div>

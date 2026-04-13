@@ -6,18 +6,17 @@ export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
   app.get("/public/feed", async (req: any) => {
     const limit = Math.min(Math.max(Number(req.query?.limit) || 30, 1), 50);
+    const days = Math.min(Math.max(Number(req.query?.days) || 7, 1), 30);
 
     const now = new Date();
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const sevenDaysAhead = new Date(now);
-    sevenDaysAhead.setDate(sevenDaysAhead.getDate() + 7);
+    const lookback = new Date(now);
+    lookback.setDate(lookback.getDate() - days);
 
     // Fetch completed jobs (with photos, assignees, property) — exclude estimates
     const completed = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["CLOSED", "PENDING_PAYMENT"] },
-        completedAt: { not: null, gte: thirtyDaysAgo },
+        completedAt: { not: null, gte: lookback },
         workflow: { notIn: ["ESTIMATE", "TASK"] },
         isEstimate: false,
       },
@@ -50,37 +49,6 @@ export default async function publicRoutes(app: FastifyInstance) {
             createdAt: true,
           },
           orderBy: { createdAt: "asc" },
-        },
-      },
-    });
-
-    // Fetch upcoming scheduled jobs (next 7 days) — exclude estimates
-    const upcoming = await prisma.jobOccurrence.findMany({
-      where: {
-        status: "SCHEDULED",
-        startAt: { gte: now, lte: sevenDaysAhead },
-        workflow: { notIn: ["ESTIMATE", "TASK"] },
-        isEstimate: false,
-      },
-      orderBy: { startAt: "asc" },
-      take: 10,
-      select: {
-        id: true,
-        kind: true,
-        startAt: true,
-        estimatedMinutes: true,
-        job: {
-          select: {
-            kind: true,
-            property: {
-              select: { city: true, state: true },
-            },
-          },
-        },
-        assignees: {
-          select: {
-            user: { select: { displayName: true } },
-          },
         },
       },
     });
@@ -125,7 +93,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Build feed items
     type FeedItemOut = {
       id: string;
-      type: "completed" | "in_progress" | "upcoming";
+      type: "completed" | "in_progress";
       timestamp: string;
       jobKind: string;
       kind: string;
@@ -191,21 +159,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       });
     }
 
-    // Upcoming items
-    for (const occ of upcoming) {
-      items.push({
-        id: occ.id,
-        type: "upcoming",
-        timestamp: occ.startAt?.toISOString() ?? now.toISOString(),
-        jobKind: occ.job?.kind ?? "",
-        kind: occ.kind ?? "",
-        area: area(occ.job?.property ?? null),
-        workers: firstNames(occ.assignees),
-        durationMinutes: null,
-        estimatedMinutes: occ.estimatedMinutes,
-        photos: [],
-      });
-    }
+
 
     return { items };
   });
