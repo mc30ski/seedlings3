@@ -502,7 +502,7 @@ export default function ServicesTab({
           showClear={!!highlightId || !!highlightOccId}
         />
       </HStack>
-      <HStack mb={3} gap={2} wrap="wrap">
+      <HStack mb={3} gap={2} wrap="nowrap">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -631,6 +631,7 @@ export default function ServicesTab({
           Clear
         </Button>
         )}
+        <Box flex="1" />
         <Button
           size="sm"
           variant="ghost"
@@ -1161,7 +1162,7 @@ export default function ServicesTab({
                             )}
                             {occ.price != null && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (() => {
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
-                              const assignees = occ.assignees ?? [];
+                              const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
                               const net = occ.price! - expTotal;
 
                               // If we have assignees with worker types, show per-person breakdown
@@ -1418,7 +1419,7 @@ export default function ServicesTab({
                               <StatusBadge status="Estimate" palette="pink" variant="solid" />
                             )}
                             {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
-                              <StatusBadge status="One-off" palette="gray" variant="solid" />
+                              <StatusBadge status="One-off" palette="cyan" variant="solid" />
                             )}
                             {(occ as any).isAdminOnly && (
                               <StatusBadge status="Administered" palette="red" variant="outline" />

@@ -66,7 +66,7 @@ export function errorMessage(err: any): string {
 // Pretty-print status like other tabs: "Available", "Checked out", etc.
 export function prettyStatus(s: string): string {
   if (!s) return "—";
-  if (s === "CLOSED") return "Completed";
+  if (s.toUpperCase() === "CLOSED") return "Completed";
   return s
     .replace(/_/g, " ")
     .toLowerCase()

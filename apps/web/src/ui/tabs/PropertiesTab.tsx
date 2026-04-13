@@ -377,12 +377,12 @@ export default function PropertiesTab({
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="blue" variant="solid">
+            <Badge size="sm" colorPalette="blue" variant="subtle">
               {kindItems.find((i) => i.value === kind[0])?.label}
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="purple" variant="solid">
+            <Badge size="sm" colorPalette="purple" variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
