@@ -14,6 +14,7 @@ import ActivityTab from "@/src/ui/tabs/ActivityTab";
 import AuditLogTab from "@/src/ui/tabs/AuditLogTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
+import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -91,7 +92,7 @@ export default function HomePage() {
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
-  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "unclaimed");
+  const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
 
@@ -644,10 +645,10 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
-          value: "unclaimed",
-          label: "Unclaimed",
-          icon: FiAlertCircle,
-          content: <SuperUnclaimedTab />,
+          value: "operations",
+          label: "Operations",
+          icon: FiBarChart2,
+          content: <OperationsTab />,
         },
       ],
     },

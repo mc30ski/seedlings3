@@ -1398,6 +1398,272 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  // ── Operations Dashboard ──
+
+  app.get("/admin/operations", adminGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    const today = new Date();
+    const todayKey = today.toISOString().slice(0, 10);
+    const dateFrom = from ? etMidnight(from) : etMidnight(todayKey);
+    const dateTo = to ? etEndOfDay(to) : etEndOfDay(todayKey);
+
+    // Jobs summary
+    const occurrences = await prisma.jobOccurrence.findMany({
+      where: {
+        workflow: { notIn: ["TASK"] },
+        OR: [
+          { startAt: { gte: dateFrom, lte: dateTo } },
+          { completedAt: { gte: dateFrom, lte: dateTo } },
+        ],
+      },
+      include: {
+        assignees: { select: { userId: true, role: true } },
+        payment: { include: { splits: true } },
+        expenses: true,
+      },
+    });
+
+    const jobsScheduled = occurrences.filter((o) => o.status === "SCHEDULED").length;
+    const jobsInProgress = occurrences.filter((o) => o.status === "IN_PROGRESS").length;
+    const jobsCompleted = occurrences.filter((o) => o.status === "CLOSED" || o.status === "PENDING_PAYMENT").length;
+    const jobsCanceled = occurrences.filter((o) => o.status === "CANCELED").length;
+
+    const todayMidnight = etMidnight(todayKey);
+    const jobsOverdue = occurrences.filter((o) =>
+      o.status === "SCHEDULED" && o.startAt && o.startAt < todayMidnight
+    ).length;
+
+    const jobsUnclaimed = occurrences.filter((o) =>
+      o.status === "SCHEDULED" &&
+      o.workflow !== "ESTIMATE" &&
+      !o.isEstimate &&
+      o.assignees.filter((a) => a.role !== "observer").length === 0
+    ).length;
+
+    // Financial summary
+    const paidOccs = occurrences.filter((o) => o.payment);
+    const totalRevenue = paidOccs.reduce((s, o) => s + (o.payment?.amountPaid ?? 0), 0);
+    const totalExpenses = occurrences.reduce((s, o) => s + o.expenses.reduce((es, e) => es + e.cost, 0), 0);
+    const netRevenue = totalRevenue - totalExpenses;
+    const totalPlatformFees = paidOccs.reduce((s, o) => s + (o.payment?.platformFeeAmount ?? 0), 0);
+    const totalBusinessMargin = paidOccs.reduce((s, o) => s + (o.payment?.businessMarginAmount ?? 0), 0);
+    const avgJobPrice = jobsCompleted > 0 ? totalRevenue / jobsCompleted : 0;
+
+    const paymentsByMethod: Record<string, number> = {};
+    for (const o of paidOccs) {
+      const m = o.payment?.method ?? "OTHER";
+      paymentsByMethod[m] = (paymentsByMethod[m] ?? 0) + (o.payment?.amountPaid ?? 0);
+    }
+
+    // Team summary
+    const workers = await prisma.user.findMany({
+      where: { isApproved: true, roles: { some: { role: "WORKER" } } },
+      select: { id: true, displayName: true, workerType: true },
+    });
+
+    const workersByType: Record<string, number> = {};
+    for (const w of workers) {
+      const t = w.workerType ?? "UNASSIGNED";
+      workersByType[t] = (workersByType[t] ?? 0) + 1;
+    }
+
+    // Top workers by jobs completed in range
+    const workerJobCounts = new Map<string, { name: string; jobs: number; earnings: number }>();
+    for (const o of occurrences.filter((oc) => oc.status === "CLOSED" || oc.status === "PENDING_PAYMENT")) {
+      for (const a of o.assignees.filter((as_) => as_.role !== "observer")) {
+        const existing = workerJobCounts.get(a.userId) ?? { name: "", jobs: 0, earnings: 0 };
+        existing.jobs++;
+        const split = o.payment?.splits?.find((sp) => sp.userId === a.userId);
+        if (split) existing.earnings += split.amount;
+        workerJobCounts.set(a.userId, existing);
+      }
+    }
+    // Fill in names
+    for (const w of workers) {
+      const wc = workerJobCounts.get(w.id);
+      if (wc) wc.name = w.displayName ?? "Unknown";
+    }
+    const topWorkers = [...workerJobCounts.values()]
+      .sort((a, b) => b.jobs - a.jobs)
+      .slice(0, 5);
+
+    const workersWithJobs = new Set(occurrences.flatMap((o) => o.assignees.filter((a) => a.role !== "observer").map((a) => a.userId)));
+    const workersIdle = workers.filter((w) => !workersWithJobs.has(w.id)).length;
+
+    // Equipment summary
+    const equipmentCounts = await prisma.equipment.groupBy({
+      by: ["status"],
+      where: { retiredAt: null },
+      _count: true,
+    });
+    const eqMap: Record<string, number> = {};
+    let totalEquipment = 0;
+    for (const ec of equipmentCounts) {
+      eqMap[ec.status] = ec._count;
+      totalEquipment += ec._count;
+    }
+
+    // Estimates summary
+    const estimates = await prisma.jobOccurrence.groupBy({
+      by: ["status"],
+      where: {
+        workflow: "ESTIMATE",
+        startAt: { gte: dateFrom, lte: dateTo },
+      },
+      _count: true,
+    });
+    const estMap: Record<string, number> = {};
+    for (const e of estimates) estMap[e.status] = e._count;
+
+    // Client summary
+    const clientCounts = await prisma.client.groupBy({
+      by: ["status"],
+      _count: true,
+    });
+    const clientMap: Record<string, number> = {};
+    for (const cc of clientCounts) clientMap[cc.status] = cc._count;
+    const vipClients = await prisma.client.count({ where: { isVip: true, status: "ACTIVE" } });
+
+    // Recent audit events
+    const recentAudit = await prisma.auditEvent.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      include: { actor: { select: { displayName: true } } },
+    });
+
+    // Unclaimed jobs list (for inline display)
+    const unclaimedList = occurrences
+      .filter((o) =>
+        o.status === "SCHEDULED" &&
+        o.workflow !== "ESTIMATE" &&
+        !o.isEstimate &&
+        o.assignees.filter((a) => a.role !== "observer").length === 0
+      )
+      .sort((a, b) => (a.startAt?.getTime() ?? 0) - (b.startAt?.getTime() ?? 0));
+
+    // Fetch property/client data for unclaimed jobs
+    const unclaimedJobIds = [...new Set(unclaimedList.map((o) => o.jobId).filter(Boolean))] as string[];
+    const unclaimedJobs = unclaimedJobIds.length > 0
+      ? await prisma.job.findMany({
+          where: { id: { in: unclaimedJobIds } },
+          include: { property: { select: { displayName: true, street1: true, city: true, state: true, client: { select: { displayName: true } } } } },
+        })
+      : [];
+    const jobMap = new Map(unclaimedJobs.map((j) => [j.id, j]));
+
+    const unclaimedItems = unclaimedList.map((o) => {
+      const job = o.jobId ? jobMap.get(o.jobId) : null;
+      return {
+        id: o.id,
+        jobId: o.jobId,
+        startAt: o.startAt?.toISOString() ?? null,
+        jobType: o.jobType,
+        price: o.price,
+        property: job?.property?.displayName ?? null,
+        client: job?.property?.client?.displayName ?? null,
+        address: [job?.property?.street1, job?.property?.city, job?.property?.state].filter(Boolean).join(", "),
+      };
+    });
+
+    // Per-worker stats for comparison
+    const allWorkerStats = workers.map((w) => {
+      const wJobs = occurrences.filter((o) =>
+        (o.status === "CLOSED" || o.status === "PENDING_PAYMENT") &&
+        o.assignees.some((a) => a.userId === w.id && a.role !== "observer")
+      );
+      const totalEarnings = wJobs.reduce((s, o) => {
+        const split = o.payment?.splits?.find((sp) => sp.userId === w.id);
+        return s + (split?.amount ?? 0);
+      }, 0);
+      const totalExpensesW = wJobs.reduce((s, o) => {
+        const occExpenses = o.expenses.reduce((es, e) => es + e.cost, 0);
+        const assigneeCount = o.assignees.filter((a) => a.role !== "observer").length;
+        return s + (assigneeCount > 0 ? occExpenses / assigneeCount : 0);
+      }, 0);
+      const totalActualMin = wJobs.reduce((s, o) => {
+        if (o.startedAt && o.completedAt) {
+          return s + (o.completedAt.getTime() - o.startedAt.getTime()) / 60000;
+        }
+        return s;
+      }, 0);
+      const totalEstMin = wJobs.reduce((s, o) => s + (o.estimatedMinutes ?? 0), 0);
+      const scheduledJobs = occurrences.filter((o) =>
+        o.status === "SCHEDULED" &&
+        o.assignees.some((a) => a.userId === w.id && a.role !== "observer")
+      ).length;
+
+      return {
+        id: w.id,
+        name: w.displayName ?? "Unknown",
+        workerType: w.workerType,
+        jobsCompleted: wJobs.length,
+        scheduledJobs,
+        totalEarnings: Math.round(totalEarnings * 100) / 100,
+        totalExpenses: Math.round(totalExpensesW * 100) / 100,
+        netEarnings: Math.round((totalEarnings - totalExpensesW) * 100) / 100,
+        totalActualMinutes: Math.round(totalActualMin),
+        totalEstimatedMinutes: Math.round(totalEstMin),
+        efficiency: totalActualMin > 0 ? Math.round((totalEstMin / totalActualMin) * 100) : 0,
+      };
+    }).sort((a, b) => b.jobsCompleted - a.jobsCompleted);
+
+    return {
+      jobs: {
+        scheduled: jobsScheduled,
+        inProgress: jobsInProgress,
+        completed: jobsCompleted,
+        canceled: jobsCanceled,
+        overdue: jobsOverdue,
+        unclaimed: jobsUnclaimed,
+      },
+      financial: {
+        totalRevenue,
+        totalExpenses,
+        netRevenue,
+        totalPlatformFees,
+        totalBusinessMargin,
+        avgJobPrice,
+        paymentsByMethod,
+      },
+      team: {
+        activeWorkers: workers.length,
+        workersByType,
+        topWorkers,
+        workersWithJobs: workersWithJobs.size,
+        workersIdle,
+      },
+      equipment: {
+        total: totalEquipment,
+        available: eqMap["AVAILABLE"] ?? 0,
+        checkedOut: eqMap["CHECKED_OUT"] ?? 0,
+        reserved: eqMap["RESERVED"] ?? 0,
+        inMaintenance: eqMap["MAINTENANCE"] ?? 0,
+      },
+      estimates: {
+        pending: estMap["PROPOSAL_SUBMITTED"] ?? 0,
+        accepted: estMap["ACCEPTED"] ?? 0,
+        rejected: estMap["REJECTED"] ?? 0,
+      },
+      clients: {
+        active: clientMap["ACTIVE"] ?? 0,
+        paused: clientMap["PAUSED"] ?? 0,
+        archived: clientMap["ARCHIVED"] ?? 0,
+        vip: vipClients,
+      },
+      unclaimedItems,
+      workerStats: allWorkerStats,
+      recentAudit: recentAudit.map((a) => ({
+        id: a.id,
+        scope: a.scope,
+        verb: a.verb,
+        action: a.action,
+        actorName: a.actor?.displayName ?? "System",
+        createdAt: a.createdAt,
+        metadata: a.metadata,
+      })),
+    };
+  });
+
   // ── Settings ──
 
   app.get("/admin/settings", adminGuard, async () => {
