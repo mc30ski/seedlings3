@@ -14,6 +14,7 @@ export type DatePreset =
   | "nextMonth"
   | "future"
   | "recent"
+  | "rolling"
   | "yesterday"
   | "lastWeek"
   | "all"
@@ -37,7 +38,9 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
     case "overdueAndNext3": {
       const d = new Date(today);
       d.setDate(d.getDate() + 3);
-      return { from: "", to: localDate(d) };
+      const from = new Date(today);
+      from.setDate(from.getDate() - 60);
+      return { from: localDate(from), to: localDate(d) };
     }
     case "overdueOnly": {
       const d = new Date(today);
@@ -66,6 +69,13 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
       d.setDate(d.getDate() - 30);
       return { from: localDate(d), to: "" };
     }
+    case "rolling": {
+      const from = new Date(today);
+      from.setMonth(from.getMonth() - 1);
+      const to = new Date(today);
+      to.setDate(to.getDate() + 7);
+      return { from: localDate(from), to: localDate(to) };
+    }
     case "lastWeek": {
       const d = new Date(today);
       d.setDate(d.getDate() - 7);
@@ -85,12 +95,13 @@ export const PRESET_LABELS: Record<string, string> = {
   today: "Today",
   next3: "Next 3 days",
   overdueOnly: "Overdue only",
-  overdueAndNext3: "Overdue + Next 3 days",
+  overdueAndNext3: "Last 60 days + Next 3 days",
   overdueAndNextWeek: "Overdue + Next week",
   nextWeek: "Next week",
   nextMonth: "Next month",
   future: "Future",
   recent: "Recent & Future",
+  rolling: "Rolling",
   yesterday: "Yesterday",
   lastWeek: "Last week",
   all: "All time",

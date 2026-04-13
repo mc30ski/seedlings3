@@ -800,10 +800,15 @@ export default function HomePage() {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const toStr = bizDateKey(yesterday);
-      const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
+      const monthAgo = new Date();
+      monthAgo.setDate(monthAgo.getDate() - 60);
+      const fromStr = bizDateKey(monthAgo);
+      const list = await apiGet<any[]>(`/api/occurrences?from=${fromStr}&to=${toStr}`);
       const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.startAt && !excludeStatuses.has(o.status) && bizDateKey(o.startAt) < today
+        (o) => o.startAt && !excludeStatuses.has(o.status) &&
+          bizDateKey(o.startAt) < today &&
+          bizDateKey(o.startAt) >= fromStr
       ).length;
       setOverdueCount(count);
     } catch {
@@ -845,10 +850,12 @@ export default function HomePage() {
   const goToUnclaimed = useCallback(() => {
     setTopTab("admin");
     setAdminInnerTab("admin-jobs");
-    // Signal the Jobs tab to apply unclaimed filter with overdueAndNext3 date range
-    try {
-      localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1");
-    } catch {}
+    // Signal the Jobs tab to apply unclaimed filter
+    try { localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1"); } catch {}
+    // Also dispatch event in case the tab is already mounted
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showUnclaimed"));
+    }, 50);
   }, []);
 
   const goToOverdue = useCallback(() => {
@@ -1037,7 +1044,7 @@ export default function HomePage() {
               <Box
                 as="button"
                 aria-label="Unclaimed jobs"
-                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} (overdue + next 3 days)`}
+                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} (last 60 days + next 3 days)`}
                 onClick={goToUnclaimed}
                 width="22px"
                 height="22px"
@@ -1060,7 +1067,7 @@ export default function HomePage() {
               <Box
                 as="button"
                 aria-label="Overdue jobs"
-                title={`${overdueCount} overdue job${overdueCount !== 1 ? "s" : ""}`}
+                title={`${overdueCount} overdue job${overdueCount !== 1 ? "s" : ""} (last 60 days)`}
                 onClick={goToOverdue}
                 width="22px"
                 height="22px"

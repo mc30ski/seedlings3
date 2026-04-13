@@ -68,8 +68,6 @@ const quickDateItemsBase = [
   { label: "Next 3 days", value: "next3" },
   { label: "Next week", value: "nextWeek" },
   { label: "Next month", value: "nextMonth" },
-  { label: "Future", value: "future" },
-  { label: "Recent & Future", value: "recent" },
   { label: "Yesterday", value: "yesterday" },
   { label: "Last week", value: "lastWeek" },
 ];
@@ -253,16 +251,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const applyOverdue = useCallback(() => {
     setQ("");
     setHighlightOccId(null);
+    setFilterJobId(null);
     setStatusFilter(["ALL"]);
     setDatePreset(null);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const overdueTo = localDate(yesterday);
-    setDateFrom("");
+    const monthAgo = new Date();
+    monthAgo.setDate(monthAgo.getDate() - 60);
+    const overdueFrom = localDate(monthAgo);
+    setDateFrom(overdueFrom);
     setDateTo(overdueTo);
     setOverdueActive(true);
-    // Load immediately with correct dates (don't wait for state to cascade)
-    void load(true, { from: "", to: overdueTo });
+    void load(true, { from: overdueFrom, to: overdueTo });
   }, []);
 
   useEffect(() => {
@@ -291,10 +292,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
   useEffect(() => {
     if (overdueActive) {
-      // When overdue is persisted, apply the overdue date range
+      // When overdue is active, apply the overdue date range (last 30 days to yesterday)
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      setDateFrom("");
+      const monthAgo = new Date();
+      monthAgo.setDate(monthAgo.getDate() - 60);
+      setDateFrom(localDate(monthAgo));
       setDateTo(localDate(yesterday));
     } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
@@ -438,20 +441,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, []);
 
   // Check for unclaimed badge navigation
+  const applyUnclaimed = useCallback(() => {
+    const d = computeDatesFromPreset("overdueAndNext3");
+    setDatePreset(null);
+    setDateFrom(d.from);
+    setDateTo(d.to);
+    setStatusFilter(["UNCLAIMED"]);
+    setOverdueActive(false);
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setQ("");
+    void load(true, { from: d.from, to: d.to });
+  }, []);
+
   useEffect(() => {
     try {
       const flag = localStorage.getItem("seedlings_adminJobs_showUnclaimed");
       if (flag) {
         localStorage.removeItem("seedlings_adminJobs_showUnclaimed");
-        const d = computeDatesFromPreset("overdueAndNext3");
-        setDatePreset(null);
-        setDateFrom(d.from);
-        setDateTo(d.to);
-        setStatusFilter(["UNCLAIMED"]);
-        setOverdueActive(false);
+        applyUnclaimed();
       }
     } catch {}
-  }, []);
+    const onShowUnclaimed = () => applyUnclaimed();
+    window.addEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
+    return () => window.removeEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
+  }, [applyUnclaimed]);
 
   async function refreshOverdueCount() {
     try {
@@ -1020,7 +1034,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               {PRESET_LABELS[datePreset] ?? datePreset}
             </Badge>
           )}
-          {!datePreset && !overdueActive && (dateFrom || dateTo) && (
+          {!datePreset && (dateFrom || dateTo) && (
             <Badge size="sm" colorPalette="gray" variant="subtle">
               Custom dates
             </Badge>
@@ -1036,7 +1050,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="purple" variant="solid">
+            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="solid">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
