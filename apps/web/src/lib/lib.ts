@@ -66,6 +66,7 @@ export function errorMessage(err: any): string {
 // Pretty-print status like other tabs: "Available", "Checked out", etc.
 export function prettyStatus(s: string): string {
   if (!s) return "—";
+  if (s === "CLOSED") return "Completed";
   return s
     .replace(/_/g, " ")
     .toLowerCase()
@@ -168,6 +169,7 @@ export function badgeColors(
       borderColor: `${palette}.300`,
     };
   }
+  if (palette === "gray") return { bg: "gray.500", color: "white" };
   return { bg: `${palette}.600`, color: "white" };
 }
 
@@ -182,12 +184,14 @@ export function jobStatusColor(value: string): string {
 export function occurrenceStatusColor(value: string): string {
   const t = (value || "").toUpperCase();
   if (t === "PENDING_PAYMENT") return "orange";
-  if (t === "CLOSED") return "purple";
+  if (t === "CLOSED") return "gray";
   if (t === "IN_PROGRESS") return "cyan";
   if (t === "SCHEDULED") return "blue";
-  if (t === "PROPOSAL_SUBMITTED") return "yellow";
+  if (t === "PROPOSAL_SUBMITTED") return "teal";
   if (t === "ACCEPTED") return "green";
   if (t === "REJECTED") return "red";
+  if (t === "CANCELED") return "red";
+  if (t === "ARCHIVED") return "gray";
   return "gray";
 }
 

@@ -219,6 +219,8 @@ export default function ServicesTab({
     inputLabel?: string;
     inputOptional?: boolean;
     inputDefaultValue?: string;
+    cancelLabel?: string;
+    onCancelAction?: () => void;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -264,7 +266,7 @@ export default function ServicesTab({
         `/api/occurrences?to=${localDate(yesterday)}`
       );
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.status !== "CLOSED" && o.status !== "ARCHIVED" && o.status !== "CANCELED" && o.status !== "REJECTED" && o.status !== "ACCEPTED"
+        (o) => o.status !== "COMPLETED" && o.status !== "CLOSED" && o.status !== "ARCHIVED" && o.status !== "CANCELED" && o.status !== "REJECTED" && o.status !== "ACCEPTED"
       ).length;
       setOverdueCount(count);
     } catch {
@@ -335,7 +337,7 @@ export default function ServicesTab({
     }
   }
 
-  async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string, notes?: string) {
+  async function patchOccurrenceStatus(occurrenceId: string, jobId: string, newStatus: string, notes?: string, recordLocation = true) {
     // Capture occurrence data before the API call for schedule-next prompt
     const detail = jobDetails[jobId];
     const occ = detail?.occurrences.find((o) => o.id === occurrenceId);
@@ -343,7 +345,7 @@ export default function ServicesTab({
     try {
       const payload: Record<string, unknown> = { status: newStatus };
       if (notes) payload.notes = notes;
-      if (newStatus === "IN_PROGRESS" || newStatus === "PENDING_PAYMENT" || newStatus === "CLOSED") {
+      if (recordLocation && (newStatus === "IN_PROGRESS" || newStatus === "PENDING_PAYMENT" || newStatus === "CLOSED")) {
         const loc = await getLocation();
         if (loc) {
           if (newStatus === "IN_PROGRESS") { payload.startLat = loc.lat; payload.startLng = loc.lng; }
@@ -352,6 +354,7 @@ export default function ServicesTab({
       }
       await apiPatch(`/api/admin/occurrences/${occurrenceId}`, payload);
       void loadDetail(jobId, true);
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
 
     } catch (err) {
@@ -437,6 +440,7 @@ export default function ServicesTab({
     try {
       await apiDelete(`/api/admin/occurrences/${occurrenceId}`);
       void loadDetail(jobId, true);
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence deleted." });
     } catch (err) {
       publishInlineMessage({
@@ -450,6 +454,7 @@ export default function ServicesTab({
     try {
       await apiPost(`/api/admin/occurrences/${occurrenceId}/archive`);
       void loadDetail(jobId, true);
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
       publishInlineMessage({ type: "SUCCESS", text: "Occurrence archived." });
     } catch (err) {
       publishInlineMessage({
@@ -834,7 +839,7 @@ export default function ServicesTab({
                 if (tf === "ONE_OFF" && !o.isOneOff) return false;
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
-                if (overdueActive && (new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
+                if (overdueActive && (new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
                 if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
                 if (osf === "UNCLAIMED") return isUnclaimed;
@@ -1412,7 +1417,7 @@ export default function ServicesTab({
                               <StatusBadge status="Repeating" palette="blue" variant="outline" />
                             )}
                             {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                              <StatusBadge status="Estimate" palette="purple" variant="solid" />
+                              <StatusBadge status="Estimate" palette="pink" variant="solid" />
                             )}
                             {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
                               <StatusBadge status="One-off" palette="gray" variant="solid" />
@@ -1541,10 +1546,12 @@ export default function ServicesTab({
                                 label="Start"
                                 onClick={async () => setConfirmAction({
                                   title: "Start Occurrence?",
-                                  message: "Are you sure you want to start this occurrence?",
-                                  confirmLabel: "Start",
+                                  message: "Are you currently on-site at the job location?",
+                                  confirmLabel: "Yes — record location & start",
                                   colorPalette: "blue",
-                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS"),
+                                  onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS", undefined, true),
+                                  cancelLabel: "No — start without location",
+                                  onCancelAction: () => void patchOccurrenceStatus(occ.id, job.id, "IN_PROGRESS", undefined, false),
                                 })}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
@@ -1556,21 +1563,29 @@ export default function ServicesTab({
                                 id="occ-complete"
                                 itemId={occ.id}
                                 label="Complete"
-                                onClick={async () => setConfirmAction({
-                                  title: occ.isEstimate ? "Complete Estimate?" : "Complete Occurrence?",
-                                  message: occ.isEstimate
-                                    ? "This estimate will be closed (no payment step)."
-                                    : "Are you sure you want to mark this occurrence as complete?",
-                                  confirmLabel: "Complete",
-                                  colorPalette: "green",
-                                  ...(occ.isEstimate
-                                    ? {
-                                        inputLabel: "Comment (required)",
-                                        inputPlaceholder: "What happened and why is this estimate being completed?",
-                                        onConfirm: (comment: string) => void patchOccurrenceStatus(occ.id, job.id, "CLOSED", comment),
-                                      }
-                                    : { onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT") }),
-                                })}
+                                onClick={async () => {
+                                  if (occ.isEstimate) {
+                                    setConfirmAction({
+                                      title: "Complete Estimate?",
+                                      message: "This estimate will be closed (no payment step).",
+                                      confirmLabel: "Complete",
+                                      colorPalette: "green",
+                                      inputLabel: "Comment (required)",
+                                      inputPlaceholder: "What happened and why is this estimate being completed?",
+                                      onConfirm: (comment: string) => void patchOccurrenceStatus(occ.id, job.id, "CLOSED", comment),
+                                    });
+                                  } else {
+                                    setConfirmAction({
+                                      title: "Complete Occurrence?",
+                                      message: "Are you currently on-site at the job location?",
+                                      confirmLabel: "Yes — record location & complete",
+                                      colorPalette: "green",
+                                      onConfirm: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT", undefined, true),
+                                      cancelLabel: "No — complete without location",
+                                      onCancelAction: () => void patchOccurrenceStatus(occ.id, job.id, "PENDING_PAYMENT", undefined, false),
+                                    });
+                                  }
+                                }}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
                                 setBusyId={setStatusButtonBusyId}
@@ -1842,6 +1857,8 @@ export default function ServicesTab({
         inputLabel={confirmAction?.inputLabel}
         inputOptional={confirmAction?.inputOptional}
         inputDefaultValue={confirmAction?.inputDefaultValue}
+        cancelLabel={confirmAction?.cancelLabel}
+        onCancelAction={confirmAction?.onCancelAction}
         onConfirm={(inputValue: string) => {
           if (confirmAction?.inputPlaceholder) {
             (confirmAction.onConfirm as (v: string) => void)(inputValue);
@@ -1869,6 +1886,7 @@ export default function ServicesTab({
           onAccepted={(result) => {
             const jobId = acceptPaymentJobId;
             if (jobId) void loadDetail(jobId, true);
+            window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
             if (result?.nextOccurrence) {
               publishInlineMessage({ type: "SUCCESS", text: `Next occurrence auto-scheduled for ${fmtDate(result.nextOccurrence.startAt)}.` });
             }

@@ -47,13 +47,12 @@ type OpsData = {
 };
 
 const presetItems = [
+  { value: "recent", label: "Recent & Future" },
   { value: "today", label: "Today" },
-  { value: "overdueAndNext3", label: "Overdue + Next 3 days" },
   { value: "yesterday", label: "Yesterday" },
   { value: "lastWeek", label: "Last 7 days" },
   { value: "nextWeek", label: "Next week" },
   { value: "nextMonth", label: "Next month" },
-  { value: "recent", label: "Recent & Future" },
   { value: "all", label: "All time" },
 ];
 const presetCollection = createListCollection({ items: presetItems });
@@ -99,7 +98,7 @@ export default function OperationsTab() {
         return stored as DatePreset;
       }
     } catch {}
-    return "today";
+    return "recent";
   });
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = useState(presetDates.from);

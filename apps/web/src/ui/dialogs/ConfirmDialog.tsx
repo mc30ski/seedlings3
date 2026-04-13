@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
-import { Button, Dialog, HStack, Portal, Text, Box } from "@chakra-ui/react";
+import { Button, Dialog, HStack, VStack, Portal, Text, Box } from "@chakra-ui/react";
 
 type Props = {
   open: boolean;
@@ -19,6 +19,10 @@ type Props = {
   inputOptional?: boolean;
   /** Default value for the input */
   inputDefaultValue?: string;
+  /** Custom label for the cancel button */
+  cancelLabel?: string;
+  /** Action to perform on cancel (instead of just closing) */
+  onCancelAction?: () => void;
 };
 
 export default function ConfirmDialog({
@@ -33,6 +37,8 @@ export default function ConfirmDialog({
   inputLabel,
   inputOptional,
   inputDefaultValue,
+  cancelLabel,
+  onCancelAction,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -102,18 +108,49 @@ export default function ConfirmDialog({
               )}
             </Dialog.Body>
             <Dialog.Footer>
-              <HStack justify="flex-end" w="full" gap={2}>
-                <Button ref={cancelRef} variant="ghost" colorPalette="red" onClick={onCancel}>
-                  Cancel
-                </Button>
-                <Button
-                  colorPalette={confirmColorPalette}
-                  onClick={handleConfirm}
-                  disabled={!canConfirm}
-                >
-                  {confirmLabel}
-                </Button>
-              </HStack>
+              {onCancelAction ? (
+                <VStack w="full" gap={2}>
+                  <Button
+                    w="full"
+                    colorPalette={confirmColorPalette}
+                    onClick={handleConfirm}
+                    disabled={!canConfirm}
+                  >
+                    {confirmLabel}
+                  </Button>
+                  <Button
+                    w="full"
+                    variant="outline"
+                    colorPalette="gray"
+                    onClick={() => { onCancelAction(); onCancel(); }}
+                  >
+                    {cancelLabel}
+                  </Button>
+                  <Button
+                    ref={cancelRef}
+                    w="full"
+                    variant="ghost"
+                    colorPalette="red"
+                    size="sm"
+                    onClick={onCancel}
+                  >
+                    Cancel
+                  </Button>
+                </VStack>
+              ) : (
+                <HStack justify="flex-end" w="full" gap={2} wrap="wrap">
+                  <Button ref={cancelRef} variant="ghost" colorPalette="red" onClick={onCancel}>
+                    {cancelLabel ?? "Cancel"}
+                  </Button>
+                  <Button
+                    colorPalette={confirmColorPalette}
+                    onClick={handleConfirm}
+                    disabled={!canConfirm}
+                  >
+                    {confirmLabel}
+                  </Button>
+                </HStack>
+              )}
             </Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>

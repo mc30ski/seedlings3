@@ -333,6 +333,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     inputLabel?: string;
     inputOptional?: boolean;
     inputDefaultValue?: string;
+    cancelLabel?: string;
+    onCancelAction?: () => void;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -435,6 +437,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     } catch {}
   }, []);
 
+  // Check for unclaimed badge navigation
+  useEffect(() => {
+    try {
+      const flag = localStorage.getItem("seedlings_adminJobs_showUnclaimed");
+      if (flag) {
+        localStorage.removeItem("seedlings_adminJobs_showUnclaimed");
+        const d = computeDatesFromPreset("overdueAndNext3");
+        setDatePreset(null);
+        setDateFrom(d.from);
+        setDateTo(d.to);
+        setStatusFilter(["UNCLAIMED"]);
+        setOverdueActive(false);
+      }
+    } catch {}
+  }, []);
+
   async function refreshOverdueCount() {
     try {
       const yesterday = new Date();
@@ -463,7 +481,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         }
       }
 
-      const overdueExcludeCount = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      const overdueExcludeCount = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const todayKey = bizDateKey(new Date());
       const count = list.filter((o) => {
         return o.startAt && !overdueExcludeCount.has(o.status as string) && bizDateKey(o.startAt) < todayKey;
@@ -540,9 +558,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
-  async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string) {
+  async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string, recordLocation = true) {
     try {
-      const loc = await getLocation();
+      const loc = recordLocation ? await getLocation() : null;
       const body: Record<string, unknown> = {};
       if (notes) body.notes = notes;
       if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
@@ -580,7 +598,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     }
     if (overdueActive) {
-      const overdueExclude = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const todayKey = bizDateKey(new Date());
       rows = rows.filter((occ) =>
         !overdueExclude.has(occ.status) &&
@@ -1192,7 +1210,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isTentative
               ? "orange.300"
               : isEstimateOcc
-              ? "purple.300"
+              ? "pink.300"
               : isAssignedToMe ? "teal.400" : "gray.200";
             const cardBg = (isClosed || isAcceptedEstimate)
               ? undefined
@@ -1201,7 +1219,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isTentative
               ? "orange.50"
               : isEstimateOcc
-              ? "purple.50"
+              ? "pink.50"
               : isAssignedToMe
               ? "teal.50"
               : isAssignedToOthers
@@ -1225,7 +1243,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 borderColor={cardBorderColor}
                 bg={cardBg}
                 overflow="hidden"
-                css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
+                css={{
+                  ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
+                  ...(isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
                   const el = e.target as HTMLElement;
@@ -1288,7 +1309,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         ) : null}
                         {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
                         {!isTask && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
-                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="purple" variant="solid" />}
+                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                         {!isTask && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
@@ -1423,7 +1444,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <StatusBadge status="Repeating" palette="blue" variant="outline" />
                           )}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                            <StatusBadge status="Estimate" palette="purple" variant="solid" />
+                            <StatusBadge status="Estimate" palette="pink" variant="solid" />
                           )}
                           {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
                             <StatusBadge status="One-off" palette="gray" variant="solid" />
@@ -1968,8 +1989,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             if (isEarly) {
                               setConfirmAction({
                                 title: "Start Job Early?",
-                                message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Do you want to update the date to today?`,
-                                confirmLabel: "Yes, update date & start",
+                                message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Update date to today? Are you currently on-site?`,
+                                confirmLabel: "Yes — on-site, record location",
                                 colorPalette: "blue",
                                 onConfirm: async () => {
                                   try {
@@ -1983,14 +2004,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
                                   }
                                 },
+                                cancelLabel: "Start without location",
+                                onCancelAction: async () => {
+                                  try {
+                                    await apiPost(`/api/occurrences/${occ.id}/start`, { updateStartAt: true });
+                                    publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
+                                    await load(false);
+                                  } catch (err) {
+                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+                                  }
+                                },
                               });
                             } else {
                               setConfirmAction({
                                 title: "Start Job?",
-                                message: "Are you sure you want to start this job?",
-                                confirmLabel: "Start",
+                                message: "Are you currently on-site at the job location?",
+                                confirmLabel: "Yes — record location & start",
                                 colorPalette: "blue",
-                                onConfirm: () => void updateStatus(occ, "start"),
+                                onConfirm: () => void updateStatus(occ, "start", undefined, true),
+                                cancelLabel: "No — start without location",
+                                onCancelAction: () => void updateStatus(occ, "start", undefined, false),
                               });
                             }
                           }}
@@ -2348,6 +2381,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         inputLabel={confirmAction?.inputLabel}
         inputOptional={confirmAction?.inputOptional}
         inputDefaultValue={confirmAction?.inputDefaultValue}
+        cancelLabel={confirmAction?.cancelLabel}
+        onCancelAction={confirmAction?.onCancelAction}
         onConfirm={(inputValue: string) => {
           if (confirmAction?.inputPlaceholder) {
             (confirmAction.onConfirm as (v: string) => void)(inputValue);
@@ -2494,8 +2529,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           occurrenceId={completeDialogOcc.id}
           occurrencePrice={completeDialogOcc.price}
           onCompleted={() => {
-            void updateStatus(completeDialogOcc, "complete");
             setCompleteDialogOcc(null);
+            const occToComplete = completeDialogOcc;
+            setConfirmAction({
+              title: "Record Location?",
+              message: "Are you currently on-site at the job location?",
+              confirmLabel: "Yes — record location & complete",
+              colorPalette: "green",
+              onConfirm: () => void updateStatus(occToComplete, "complete", undefined, true),
+              cancelLabel: "No — complete without location",
+              onCancelAction: () => void updateStatus(occToComplete, "complete", undefined, false),
+            });
           }}
         />
       )}

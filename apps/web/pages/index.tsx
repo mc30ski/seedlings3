@@ -801,7 +801,7 @@ export default function HomePage() {
       yesterday.setDate(yesterday.getDate() - 1);
       const toStr = bizDateKey(yesterday);
       const list = await apiGet<any[]>(`/api/occurrences?to=${toStr}`);
-      const excludeStatuses = new Set(["CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => o.startAt && !excludeStatuses.has(o.status) && bizDateKey(o.startAt) < today
       ).length;
@@ -819,10 +819,10 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadOverdue]);
 
-  // Unclaimed count for super admin header badge
+  // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
-    if (!isSuper) { setUnclaimedCount(0); return; }
+    if (!isAdmin) { setUnclaimedCount(0); return; }
     try {
       const d = computeDatesFromPreset("overdueAndNext3");
       const qs = new URLSearchParams();
@@ -833,7 +833,7 @@ export default function HomePage() {
     } catch {
       setUnclaimedCount(0);
     }
-  }, [isSuper]);
+  }, [isAdmin]);
 
   useEffect(() => {
     void loadUnclaimed();
@@ -843,10 +843,12 @@ export default function HomePage() {
   }, [loadUnclaimed]);
 
   const goToUnclaimed = useCallback(() => {
-    setTopTab("super");
-    setSuperInnerTab("operations");
-    // Signal the Operations tab to show the unclaimed date range
-    try { localStorage.setItem("seedlings_ops_preset", "overdueAndNext3"); } catch {}
+    setTopTab("admin");
+    setAdminInnerTab("admin-jobs");
+    // Signal the Jobs tab to apply unclaimed filter with overdueAndNext3 date range
+    try {
+      localStorage.setItem("seedlings_adminJobs_showUnclaimed", "1");
+    } catch {}
   }, []);
 
   const goToOverdue = useCallback(() => {
@@ -1031,7 +1033,7 @@ export default function HomePage() {
                 {pending}
               </Box>
             )}
-            {isSuper && unclaimedCount > 0 && (
+            {isAdmin && unclaimedCount > 0 && (
               <Box
                 as="button"
                 aria-label="Unclaimed jobs"
