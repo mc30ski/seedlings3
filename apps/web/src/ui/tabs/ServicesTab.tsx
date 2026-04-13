@@ -75,8 +75,6 @@ const quickDateItemsBase = [
   { label: "Next 3 days", value: "next3" },
   { label: "Next week", value: "nextWeek" },
   { label: "Next month", value: "nextMonth" },
-  { label: "Future", value: "future" },
-  { label: "Recent & Future", value: "recent" },
   { label: "Yesterday", value: "yesterday" },
   { label: "Last week", value: "lastWeek" },
 ];

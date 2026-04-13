@@ -27,6 +27,7 @@ const CLIENT_USER_ID    = "cmnrzcwxc00495abyodg1qnuy";
 const MICHAEL_ID        = "cmexiwrfs003kvdysrjteo2hy";
 
 const CLIENT_CLERK_ID   = "user_3C8aJI7a58wmVbrK4Ao3pZRp3RF";
+const PENDING_CLIENT_CLERK_ID = "user_3CJXY4nnIzxamLgzfpLwQLS0dyR";
 
 // Workers available for assignment (not Michael — overseer)
 const WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
@@ -95,6 +96,21 @@ async function clearDatabase() {
 
 // ── Seed database ───────────────────────────────────────────────────────────
 async function seedDatabase() {
+  // ── Pending client user (upsert so re-seed resets approval state) ────────
+  console.log("  Ensuring pending client user...");
+  await prisma.user.upsert({
+    where: { clerkUserId: PENDING_CLIENT_CLERK_ID },
+    create: {
+      clerkUserId: PENDING_CLIENT_CLERK_ID,
+      email: "admin+pendingclient@seedlingslawncare.com",
+      firstName: "Client",
+      lastName: "Pending User",
+      displayName: "Client Pending User",
+      isApproved: false,
+    },
+    update: { isApproved: false },
+  });
+
   // ── Clients (12) ──────────────────────────────────────────────────────────
   console.log("  Creating clients...");
 

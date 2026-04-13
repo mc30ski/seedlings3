@@ -47,7 +47,7 @@ type OpsData = {
 };
 
 const presetItems = [
-  { value: "recent", label: "Recent & Future" },
+  { value: "rolling", label: "Rolling" },
   { value: "today", label: "Today" },
   { value: "yesterday", label: "Yesterday" },
   { value: "lastWeek", label: "Last 7 days" },
@@ -98,7 +98,7 @@ export default function OperationsTab() {
         return stored as DatePreset;
       }
     } catch {}
-    return "recent";
+    return "rolling";
   });
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = useState(presetDates.from);
