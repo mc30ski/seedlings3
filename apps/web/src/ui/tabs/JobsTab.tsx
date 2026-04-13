@@ -774,7 +774,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Button>
         )}
       </HStack>
-      <HStack mb={3} gap={2} wrap="wrap">
+      <HStack mb={3} gap={2} wrap="nowrap">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -885,6 +885,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           Clear
         </Button>
         )}
+        <Box flex="1" />
         <Button
           size="sm"
           variant={!compact ? "solid" : "ghost"}
@@ -1040,23 +1041,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {overdueActive && (
-            <Badge size="sm" colorPalette="red" variant="solid">
+            <Badge size="sm" colorPalette="red" variant="subtle">
               Overdue
             </Badge>
           )}
           {kind[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="blue" variant="solid">
+            <Badge size="sm" colorPalette="blue" variant="subtle">
               {kindItems.find((i) => i.value === kind[0])?.label}
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="solid">
+            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
           {typeFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="orange" variant="solid">
+            <Badge size="sm" colorPalette="orange" variant="subtle">
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {vipOnly && (
+            <Badge size="sm" colorPalette="yellow" variant="subtle">
+              VIP
             </Badge>
           )}
         </HStack>
@@ -1324,7 +1330,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
                         {!isTask && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                         {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
-                        {!isTask && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="gray" variant="solid" />}
+                        {!isTask && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                         {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                         {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
                         {isWorkerView && occ.reminder && (
@@ -1461,7 +1467,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <StatusBadge status="Estimate" palette="pink" variant="solid" />
                           )}
                           {(occ.workflow === "ONE_OFF" || occ.isOneOff) && (
-                            <StatusBadge status="One-off" palette="gray" variant="solid" />
+                            <StatusBadge status="One-off" palette="cyan" variant="solid" />
                           )}
                           {isAdminOnlyOcc && (
                             <StatusBadge status="Administered" palette="red" variant="outline" />
@@ -2581,7 +2587,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
-                    <Badge colorPalette="gray" variant="solid" mb={1}>One-Off</Badge>
+                    <Badge colorPalette="cyan" variant="solid" mb={1}>One-Off</Badge>
                     <Text fontSize="sm">A single job that does not repeat. Workers can claim it, or an admin can assign a team. No next occurrence is created after payment.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim or Assign → Start → Complete → Accept Payment → Done</Text>
                   </Box>

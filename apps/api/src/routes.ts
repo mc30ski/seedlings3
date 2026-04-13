@@ -145,6 +145,9 @@ export async function registerRoutes(app: FastifyInstance) {
     done();
   });
 
+  // ---------- Cron routes (registered at both /api/cron/* and /cron/* for Vercel compatibility)
+  await app.register(cronRoutes);
+
   // ---------- Register all API endpoints
   await app.register(
     async (api) => {

@@ -210,7 +210,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, highlightId, isTrainee, traineeClientIds]);
+  }, [items, q, kind, statusFilter, vipOnly, highlightId, isTrainee, traineeClientIds]);
 
   function openCreate() {
     setEditing(null);
@@ -411,16 +411,21 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           );
         })()}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || vipOnly) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {kind[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="blue" variant="solid">
+            <Badge size="sm" colorPalette="blue" variant="subtle">
               {kindItems.find((i) => i.value === kind[0])?.label}
             </Badge>
           )}
           {statusFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="purple" variant="solid">
+            <Badge size="sm" colorPalette="purple" variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+          {vipOnly && (
+            <Badge size="sm" colorPalette="yellow" variant="subtle">
+              VIP
             </Badge>
           )}
         </HStack>

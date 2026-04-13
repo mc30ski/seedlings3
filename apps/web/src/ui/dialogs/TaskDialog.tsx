@@ -226,7 +226,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                         <Text fontSize="sm" fontWeight="medium">{selectedOcc.propertyName}</Text>
                         <HStack gap={1} fontSize="xs" wrap="wrap">
                           {selectedOcc.clientName && <Text color="fg.muted">{clientLabel(selectedOcc.clientName)}</Text>}
-                          <Badge colorPalette={selectedOcc.workflow === "ONE_OFF" ? "gray" : selectedOcc.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                          <Badge colorPalette={selectedOcc.workflow === "ONE_OFF" ? "cyan" : selectedOcc.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
                             {workflowLabel(selectedOcc.workflow)}
                           </Badge>
                           {selectedOcc.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{jobTypeLabel(selectedOcc.jobType)}</Badge>}
@@ -281,7 +281,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                               <Text fontSize="sm" fontWeight="medium">{o.propertyName}</Text>
                               <HStack gap={1} fontSize="xs" wrap="wrap" mt={0.5}>
                                 {o.clientName && <Text color="fg.muted">{clientLabel(o.clientName)}</Text>}
-                                <Badge colorPalette={o.workflow === "ONE_OFF" ? "gray" : o.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                                <Badge colorPalette={o.workflow === "ONE_OFF" ? "cyan" : o.workflow === "ESTIMATE" ? "purple" : "blue"} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
                                   {workflowLabel(o.workflow)}
                                 </Badge>
                                 {o.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{jobTypeLabel(o.jobType)}</Badge>}

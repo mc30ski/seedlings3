@@ -87,13 +87,14 @@ export default fp(async function auth(app: FastifyInstance) {
           },
         });
       } else {
-        // Existing user — sync missing fields from Clerk
-        if (!existing.phone || !existing.firstName || !existing.lastName) {
+        // Existing user — sync fields from Clerk (missing fields, or phone/email changes)
+        if (!existing.phone || !existing.email || !existing.firstName || !existing.lastName) {
           const u = await fetchClerkUser();
           if (u) {
-            const { phone, firstName, lastName, displayName } = extractClerkData(u);
+            const { email, phone, firstName, lastName, displayName } = extractClerkData(u);
             const updates: any = {};
-            if (!existing.phone && phone) updates.phone = phone;
+            if (email && existing.email !== email) updates.email = email;
+            if (phone && existing.phone !== phone) updates.phone = phone;
             if (!existing.firstName && firstName) updates.firstName = firstName;
             if (!existing.lastName && lastName) updates.lastName = lastName;
             if (!existing.displayName && displayName) updates.displayName = displayName;

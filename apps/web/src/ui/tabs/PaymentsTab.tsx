@@ -206,7 +206,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       </HStack>
       {typeFilter[0] !== "ALL" && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          <Badge size="sm" colorPalette="purple" variant="solid">
+          <Badge size="sm" colorPalette="purple" variant="subtle">
             {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
           </Badge>
         </HStack>
@@ -944,7 +944,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter.length > 0) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {typeFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="purple" variant="solid">
+            <Badge size="sm" colorPalette="purple" variant="subtle">
               {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
