@@ -270,7 +270,7 @@ export default function HomePage() {
       value: "my-jobs",
       label: "My Properties",
       icon: FiBriefcase,
-      visible: () => !!isSignedIn && !!me?.isApproved,
+      visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
       content: <ClientMyJobsTab />,
     },
     {
@@ -847,7 +847,7 @@ export default function HomePage() {
 
   const goToUnclaimed = useCallback(() => {
     setTopTab("super");
-    setSuperInnerTab("unclaimed");
+    setSuperInnerTab("operations");
   }, []);
 
   const goToOverdue = useCallback(() => {
