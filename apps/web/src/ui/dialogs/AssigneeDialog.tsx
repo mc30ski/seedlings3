@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -12,7 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -148,11 +149,58 @@ export default function AssigneeDialog({
       setAssigneesChanged(true);
       publishInlineMessage({ type: "SUCCESS", text: "Worker removed." });
       onChanged?.();
+    } catch (err: any) {
+      const code = err?.code ?? "";
+      if (code === "CLAIMER_CANNOT_BE_REMOVED") {
+        publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role to someone else before removing this person." });
+      } else {
+        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove worker.", err) });
+      }
+    } finally {
+      setRemovingId("");
+    }
+  }
+
+  async function handleMakeClaimer(targetUserId: string) {
+    setRemovingId(targetUserId); // reuse as busy indicator
+    try {
+      await apiPost(`/api/admin/occurrences/${occurrenceId}/reassign-claimer`, { userId: targetUserId });
+      setAssignees((prev) => prev.map((a) => ({
+        ...a,
+        assignedById: a.userId === targetUserId ? targetUserId : (a.role === "observer" ? a.assignedById : targetUserId),
+        role: a.userId === targetUserId && a.role === "observer" ? null : a.role,
+      })));
+      setAssigneesChanged(true);
+      publishInlineMessage({ type: "SUCCESS", text: "Claimer reassigned." });
+      onChanged?.();
     } catch (err) {
-      publishInlineMessage({
-        type: "ERROR",
-        text: getErrorMessage("Failed to remove worker.", err),
-      });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to reassign claimer.", err) });
+    } finally {
+      setRemovingId("");
+    }
+  }
+
+  async function handleToggleRole(targetUserId: string, currentRole: string | null) {
+    const newRole = currentRole === "observer" ? null : "observer";
+    setRemovingId(targetUserId);
+    try {
+      await apiPatch(`/api/admin/occurrences/${occurrenceId}/assignees/${targetUserId}/role`, { role: newRole ?? undefined });
+      setAssignees((prev) => prev.map((a) => {
+        if (a.userId !== targetUserId) return a;
+        if (newRole === "observer") return { ...a, role: "observer", assignedById: null };
+        const claimer = prev.find((x) => x.assignedById === x.userId && x.role !== "observer");
+        return { ...a, role: null, assignedById: claimer?.userId ?? targetUserId };
+      }));
+      setAssigneesChanged(true);
+      publishInlineMessage({ type: "SUCCESS", text: newRole === "observer" ? "Changed to observer." : "Changed to worker." });
+      onChanged?.();
+    } catch (err: any) {
+      const code = err?.code ?? "";
+      if (code === "CLAIMER_CANNOT_BE_OBSERVER") {
+        publishInlineMessage({ type: "WARNING", text: "Reassign the claimer role before changing this person to observer." });
+      } else {
+        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to change role.", err) });
+      }
     } finally {
       setRemovingId("");
     }
@@ -181,42 +229,77 @@ export default function AssigneeDialog({
                     <Text fontSize="sm" color="fg.muted">No one assigned yet.</Text>
                   )}
                   <VStack align="stretch" gap={1}>
-                    {assignees.map((a) => {
-                      const isClaimer = a.assignedById === a.userId;
+                    {assignees.map((a, _idx) => {
+                      // Claimer = assignedById matches own userId. Fallback: first non-observer if no assignedById data.
+                      const hasAnyAssignedById = assignees.some((x) => x.assignedById);
+                      const isClaimer = hasAnyAssignedById
+                        ? (a.assignedById === a.userId && a.role !== "observer")
+                        : (a.role !== "observer" && assignees.filter((x) => x.role !== "observer").indexOf(a) === 0);
                       const isObs = a.role === "observer";
+                      const otherWorkers = assignees.filter((x) => x.userId !== a.userId && x.role !== "observer");
+                      const canRemoveClaimer = isClaimer && otherWorkers.length === 0;
                       return (
-                        <HStack
+                        <Box
                           key={a.userId}
                           px={2}
-                          py={1}
+                          py={1.5}
                           rounded="md"
                           borderWidth="1px"
                           borderColor={isObs ? "blue.200" : isClaimer ? "teal.200" : "gray.200"}
                           bg={isObs ? "blue.50" : isClaimer ? "teal.50" : undefined}
-                          justify="space-between"
                         >
-                          <VStack align="start" gap={0}>
-                            <Text fontSize="sm" fontWeight={isClaimer ? "medium" : "normal"} color={isObs ? "blue.700" : isClaimer ? "teal.700" : undefined}>
-                              {a.user.displayName ?? a.user.email ?? a.userId}
-                            </Text>
-                            {isClaimer && (
-                              <Text fontSize="xs" color="teal.500">Claimer</Text>
+                          <HStack justify="space-between" align="center">
+                            <VStack align="start" gap={0.5}>
+                              <Text fontSize="sm" fontWeight={isClaimer ? "medium" : "normal"} color={isObs ? "blue.700" : isClaimer ? "teal.700" : undefined}>
+                                {a.user.displayName ?? a.user.email ?? a.userId}
+                              </Text>
+                              <HStack gap={1}>
+                                {isClaimer && (
+                                  <Badge size="sm" colorPalette="teal" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Claimer</Badge>
+                                )}
+                                {isObs && (
+                                  <Badge size="sm" colorPalette="blue" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Observer</Badge>
+                                )}
+                                {!isClaimer && !isObs && (
+                                  <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>
+                                )}
+                              </HStack>
+                            </VStack>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="red"
+                              loading={removingId === a.userId}
+                              disabled={removingId !== "" || (isClaimer && !canRemoveClaimer)}
+                              title={isClaimer && !canRemoveClaimer ? "Reassign claimer first" : undefined}
+                              onClick={() => handleRemove(a.userId)}
+                            >
+                              Remove
+                            </Button>
+                          </HStack>
+                          <HStack gap={1} mt={1}>
+                            {!isClaimer && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorPalette="teal"
+                                disabled={removingId !== ""}
+                                onClick={() => handleMakeClaimer(a.userId)}
+                              >
+                                Make Claimer
+                              </Button>
                             )}
-                            {isObs && (
-                              <Text fontSize="xs" color="blue.500">Observer</Text>
-                            )}
-                          </VStack>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorPalette="red"
-                            loading={removingId === a.userId}
-                            disabled={removingId !== ""}
-                            onClick={() => handleRemove(a.userId)}
-                          >
-                            Remove
-                          </Button>
-                        </HStack>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette={isObs ? "teal" : "blue"}
+                              disabled={removingId !== ""}
+                              onClick={() => handleToggleRole(a.userId, a.role ?? null)}
+                            >
+                              {isObs ? "→ Worker" : "→ Observer"}
+                            </Button>
+                          </HStack>
+                        </Box>
                       );
                     })}
                   </VStack>

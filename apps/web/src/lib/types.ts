@@ -256,7 +256,7 @@ export const JOB_OCCURRENCE_STATUS = [
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
 
-export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE", "TASK"] as const;
+export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE", "TASK", "REMINDER"] as const;
 export type OccurrenceWorkflow = (typeof OCCURRENCE_WORKFLOW)[number];
 
 export const JOB_TYPE_OPTIONS = [
@@ -520,6 +520,10 @@ export type WorkerOccurrence = {
   rejectionReason?: string | null;
   generatedEstimate?: string | null;
   generatedEstimateBreakdown?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  estimateAddress?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;

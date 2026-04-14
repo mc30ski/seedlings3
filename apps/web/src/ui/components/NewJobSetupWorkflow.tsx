@@ -14,7 +14,7 @@ type Step = "idle" | "contact" | "client" | "property" | "job" | "occurrence" | 
 type Props = {
   active: boolean;
   onDone: () => void;
-  onComplete?: () => void;
+  onComplete?: (jobId?: string) => void;
 };
 
 export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Props) {
@@ -94,7 +94,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
       publishInlineMessage({ type: "SUCCESS", text: "New job setup complete!" });
       reset();
       onDone();
-      onComplete?.();
+      onComplete?.(job.id);
     } catch (err: any) {
       console.error("NewJobSetupWorkflow batch save failed:", err);
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Setup failed. Some items may have been partially created.", err) });

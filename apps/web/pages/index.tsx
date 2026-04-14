@@ -620,7 +620,18 @@ export default function HomePage() {
         <NewJobSetupWorkflow
           active={activeWorkflow === "new-job-setup"}
           onDone={() => setActiveWorkflow(null)}
-          onComplete={() => window.location.reload()}
+          onComplete={(jobId) => {
+            if (jobId) {
+              // Navigate to Admin Services tab and highlight the new job
+              setTopTab("admin");
+              setAdminInnerTab("jobs" as any);
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
+              }, 200);
+            } else {
+              window.location.reload();
+            }
+          }}
         />
       ),
       innerTabs: (() => {

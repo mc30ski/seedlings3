@@ -72,6 +72,10 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
     SCHEDULED: ["CLOSED", "CANCELED"],
     CLOSED: ["SCHEDULED", "ARCHIVED"],
   },
+  REMINDER: {
+    SCHEDULED: ["CLOSED"],
+    CLOSED: ["SCHEDULED"],
+  },
 };
 
 function isValidTransition(workflow: string, from: string, to: string): boolean {
@@ -406,6 +410,95 @@ export const jobs: ServicesJobs = {
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, currentUserId, {
         occurrenceId: occ.id,
         type: "TASK",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
+  async createStandaloneReminder(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: OccurrenceWorkflow.REMINDER,
+          linkedOccurrenceId: input.linkedOccurrenceId ?? null,
+        } as any,
+      });
+
+      await tx.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: currentUserId,
+          assignedById: currentUserId,
+        },
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, currentUserId, {
+        occurrenceId: occ.id,
+        type: "REMINDER",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
+  async createLightEstimate(adminUserId: string, input: {
+    title: string;
+    notes?: string;
+    startAt: string;
+    contactName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    estimateAddress?: string;
+    proposalAmount?: number;
+    proposalNotes?: string;
+    assigneeUserIds?: string[];
+  }) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: OccurrenceWorkflow.ESTIMATE,
+          isEstimate: true,
+          isAdminOnly: true,
+          contactName: input.contactName ?? null,
+          contactPhone: input.contactPhone ?? null,
+          contactEmail: input.contactEmail ?? null,
+          estimateAddress: input.estimateAddress ?? null,
+          proposalAmount: input.proposalAmount ?? null,
+          proposalNotes: input.proposalNotes ?? null,
+        } as any,
+      });
+
+      // Assign team if provided
+      const assigneeIds = input.assigneeUserIds ?? [];
+      if (assigneeIds.length > 0) {
+        const claimerId = assigneeIds[0];
+        await tx.jobOccurrenceAssignee.createMany({
+          data: assigneeIds.map((uid, i) => ({
+            occurrenceId: occ.id,
+            userId: uid,
+            assignedById: i === 0 ? uid : claimerId,
+          })),
+        });
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+        occurrenceId: occ.id,
+        type: "LIGHT_ESTIMATE",
         title: input.title,
       });
 
@@ -784,6 +877,18 @@ export const jobs: ServicesJobs = {
 
   async adminRemoveOccurrenceAssignee(adminUserId, occurrenceId, targetUserId) {
     return prisma.$transaction(async (tx) => {
+      const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const target = assignees.find((a) => a.userId === targetUserId);
+      if (!target) throw new ServiceError("NOT_FOUND", "Assignee not found.", 404);
+
+      const isClaimer = target.assignedById === targetUserId && target.role !== "observer";
+      const otherWorkers = assignees.filter((a) => a.userId !== targetUserId && a.role !== "observer");
+
+      // Prevent removing the claimer if other workers exist — must reassign first
+      if (isClaimer && otherWorkers.length > 0) {
+        throw new ServiceError("CLAIMER_CANNOT_BE_REMOVED", "Reassign the claimer role to someone else before removing this person.", 400);
+      }
+
       await tx.jobOccurrenceAssignee.deleteMany({
         where: { occurrenceId, userId: targetUserId },
       });
@@ -798,6 +903,87 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async reassignClaimer(adminUserId: string, occurrenceId: string, newClaimerUserId: string) {
+    return prisma.$transaction(async (tx) => {
+      const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const target = assignees.find((a) => a.userId === newClaimerUserId);
+      if (!target) throw new ServiceError("NOT_FOUND", "User is not on this job.", 404);
+
+      // If target is an observer, promote them to worker
+      if (target.role === "observer") {
+        await tx.jobOccurrenceAssignee.update({
+          where: { id: target.id },
+          data: { role: null },
+        });
+      }
+
+      // Set new claimer: assignedById = themselves
+      await tx.jobOccurrenceAssignee.update({
+        where: { id: target.id },
+        data: { assignedById: newClaimerUserId },
+      });
+
+      // Update all other non-observer assignees to point to the new claimer
+      for (const a of assignees) {
+        if (a.userId === newClaimerUserId) continue;
+        if (a.role === "observer") continue;
+        await tx.jobOccurrenceAssignee.update({
+          where: { id: a.id },
+          data: { assignedById: newClaimerUserId },
+        });
+      }
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+        occurrenceId,
+        newClaimerUserId,
+        action: "reassign_claimer",
+      });
+
+      return { reassigned: true as const };
+    });
+  },
+
+  async changeAssigneeRole(adminUserId: string, occurrenceId: string, targetUserId: string, newRole: string | null) {
+    return prisma.$transaction(async (tx) => {
+      const assignees = await tx.jobOccurrenceAssignee.findMany({ where: { occurrenceId } });
+      const target = assignees.find((a) => a.userId === targetUserId);
+      if (!target) throw new ServiceError("NOT_FOUND", "Assignee not found.", 404);
+
+      // Prevent demoting the claimer to observer
+      const isClaimer = target.assignedById === targetUserId && target.role !== "observer";
+      if (isClaimer && newRole === "observer") {
+        throw new ServiceError("CLAIMER_CANNOT_BE_OBSERVER", "Reassign the claimer role before changing this person to observer.", 400);
+      }
+
+      const updates: any = { role: newRole };
+
+      // If promoting from observer to worker, set assignedById to current claimer
+      if (target.role === "observer" && newRole !== "observer") {
+        const claimer = assignees.find((a) => a.assignedById === a.userId && a.role !== "observer");
+        updates.assignedById = claimer?.userId ?? targetUserId;
+      }
+
+      // If demoting to observer, clear assignedById
+      if (newRole === "observer") {
+        updates.assignedById = null;
+      }
+
+      await tx.jobOccurrenceAssignee.update({
+        where: { id: target.id },
+        data: updates,
+      });
+
+      await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, adminUserId, {
+        occurrenceId,
+        targetUserId,
+        newRole,
+        action: "role_changed",
+      });
+
+      return { updated: true as const };
+    });
+  },
+
   async unclaimOccurrence(currentUserId, occurrenceId) {
     return prisma.$transaction(async (tx) => {
       // Only the claimer can unclaim
@@ -807,10 +993,10 @@ export const jobs: ServicesJobs = {
       if (!callerAssignee || callerAssignee.assignedById !== currentUserId) {
         throw new ServiceError("FORBIDDEN", "Only the person who claimed this job can unclaim it.", 403);
       }
-      // Must be SCHEDULED or IN_PROGRESS to unclaim
+      // Can only unclaim if not yet started
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
-      if (occ.status === JobOccurrenceStatus.COMPLETED || occ.status === JobOccurrenceStatus.CANCELED) {
-        throw new ServiceError("INVALID_STATUS", "Cannot unclaim a completed or canceled occurrence.", 409);
+      if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
+        throw new ServiceError("INVALID_STATUS", "Cannot unclaim a job that has already been started.", 409);
       }
 
       await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });

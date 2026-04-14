@@ -611,6 +611,47 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  // ── Standalone Reminders (workflow: REMINDER) ──
+
+  app.post("/standalone-reminders", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createStandaloneReminder(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      linkedOccurrenceId: body.linkedOccurrenceId ? String(body.linkedOccurrenceId) : undefined,
+    });
+  });
+
+  app.post("/standalone-reminders/:id/dismiss", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(uid, String(req.params.id), JobOccurrenceStatus.CLOSED);
+  });
+
+  app.post("/standalone-reminders/:id/reopen", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.updateOccurrenceStatus(uid, String(req.params.id), JobOccurrenceStatus.SCHEDULED);
+  });
+
+  app.delete("/standalone-reminders/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Reminder not found");
+    if (occ.workflow !== "REMINDER") throw app.httpErrors.badRequest("Not a standalone reminder");
+    const isCreator = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isCreator) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the creator or an admin can delete this reminder");
+    }
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
   // ── Reminders ──
 
   app.get("/reminders", workerGuard, async (req: any) => {
