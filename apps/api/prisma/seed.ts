@@ -56,6 +56,7 @@ async function clearDatabase() {
   await prisma.reminder.deleteMany();
   await prisma.pinnedOccurrence.deleteMany();
   await prisma.likedOccurrence.deleteMany();
+  await prisma.occurrenceComment.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
@@ -1033,6 +1034,12 @@ async function seedDatabase() {
   await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: cThompson7.id } });
   await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
   await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
+
+  console.log("  Creating comments...");
+  await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: ADMIN_WORKER_ID, body: "Gate code changed to 5912 — confirmed with James this morning." } });
+  await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: EMPLOYEE_ID, body: "Got it, thanks. Also the sprinkler heads near the driveway are sticking up — watch the mower." } });
+  await prisma.occurrenceComment.create({ data: { occurrenceId: todayWillowbrook.id, authorId: ADMIN_WORKER_ID, body: "HOA board meeting next week — Susan wants the entrance looking sharp. Extra attention on edging please." } });
+  await prisma.occurrenceComment.create({ data: { occurrenceId: cThompson7.id, authorId: CONTRACTOR_ID, body: "Dog was loose in the backyard last time. Call ahead to make sure it's inside." } });
 
   console.log("  Seed complete!");
 }

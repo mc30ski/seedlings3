@@ -16,9 +16,9 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
-import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
@@ -73,6 +73,14 @@ const quickDateItemsBase = [
 ];
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
+
+type OccComment = {
+  id: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  author: { id: string; displayName?: string | null; email?: string | null };
+};
 
 type JobsTabProps = TabPropsType & {
   /** When set, filter occurrences to only those assigned to these users */
@@ -384,6 +392,78 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
 
+  // Comments
+  const [commentsOpenFor, setCommentsOpenFor] = useState<Set<string>>(new Set());
+  const [commentsCache, setCommentsCache] = useState<Record<string, OccComment[]>>({});
+  const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
+  const [commentEditing, setCommentEditing] = useState<{ id: string; body: string } | null>(null);
+  const [commentBusy, setCommentBusy] = useState(false);
+
+  async function loadComments(occId: string) {
+    try {
+      const list = await apiGet<OccComment[]>(`/api/occurrences/${occId}/comments`);
+      setCommentsCache((prev) => ({ ...prev, [occId]: Array.isArray(list) ? list : [] }));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load comments.", err) });
+    }
+  }
+
+  function toggleComments(occId: string) {
+    setCommentsOpenFor((prev) => {
+      const next = new Set(prev);
+      if (next.has(occId)) {
+        next.delete(occId);
+      } else {
+        next.add(occId);
+        if (!commentsCache[occId]) void loadComments(occId);
+      }
+      return next;
+    });
+  }
+
+  async function postComment(occId: string) {
+    const body = (commentDraft[occId] ?? "").trim();
+    if (!body) return;
+    setCommentBusy(true);
+    try {
+      await apiPost(`/api/occurrences/${occId}/comments`, { body });
+      setCommentDraft((prev) => ({ ...prev, [occId]: "" }));
+      await loadComments(occId);
+      // Update the count in items
+      setItems((prev) => prev.map((o) => o.id === occId ? { ...o, _count: { ...o._count, photos: o._count?.photos ?? 0, comments: (o._count?.comments ?? 0) + 1 } } : o));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to post comment.", err) });
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  async function editComment(commentId: string, occId: string, body: string) {
+    setCommentBusy(true);
+    try {
+      await apiPatch(`/api/occurrences/comments/${commentId}`, { body });
+      setCommentEditing(null);
+      await loadComments(occId);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to edit comment.", err) });
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  async function deleteComment(commentId: string, occId: string) {
+    setCommentBusy(true);
+    try {
+      await apiDelete(`/api/occurrences/comments/${commentId}`);
+      await loadComments(occId);
+      setItems((prev) => prev.map((o) => o.id === occId ? { ...o, _count: { ...o._count, photos: o._count?.photos ?? 0, comments: Math.max(0, (o._count?.comments ?? 1) - 1) } } : o));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete comment.", err) });
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
   // Prompt to create occurrence after accepting estimate
   const [promptOccJobId, setPromptOccJobId] = useState<string | null>(null);
   const [promptOccDefaults, setPromptOccDefaults] = useState<{ notes?: string | null; price?: number | null; estimatedMinutes?: number | null }>({});
@@ -525,6 +605,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     window.addEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
     return () => window.removeEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
   }, [applyUnclaimed]);
+
+  // Deep-link: highlight a specific occurrence (from calendar feed URL)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const occId = (e as CustomEvent<{ occId: string }>).detail?.occId;
+      if (!occId) return;
+      setHighlightOccId(occId);
+      setExpandedCards(new Set([occId]));
+      setFilterJobId(null);
+      setQ("");
+      // Widen date range to ensure the occurrence is loaded
+      const d = computeDatesFromPreset("nextMonth");
+      setDatePreset(null);
+      const from = new Date(); from.setDate(from.getDate() - 14);
+      const to = new Date(); to.setMonth(to.getMonth() + 2);
+      setDateFrom(bizDateKey(from));
+      setDateTo(bizDateKey(to));
+      void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occId);
+    };
+    window.addEventListener("jobsTab:highlightOcc", handler);
+    return () => window.removeEventListener("jobsTab:highlightOcc", handler);
+  }, []);
 
   async function refreshOverdueCount() {
     try {
@@ -1196,7 +1298,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         <VStack align="stretch" gap={3}>
           {dayGroups.length === 0 && (
             <Box p="8" color="fg.muted">
-              No job occurrences match current filters.
+              {highlightOccId
+                ? "This occurrence is no longer available or assigned to you."
+                : "No job occurrences match current filters."}
             </Box>
           )}
 
@@ -1373,6 +1477,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers
               ? "gray.100"
               : undefined;
+
+            // Comment badge color: darker shade of card bg
+            const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"
+              : isTask ? "blue.200"
+              : isTentative ? "orange.200"
+              : isEstimateOcc ? "pink.200"
+              : isAssignedToMe ? "teal.200"
+              : isAssignedToOthers ? "gray.300"
+              : "gray.200";
+            const commentBadgeColor = (isClosed || isAcceptedEstimate) ? "gray.700"
+              : isTask ? "blue.700"
+              : isTentative ? "orange.700"
+              : isEstimateOcc ? "pink.700"
+              : isAssignedToMe ? "teal.700"
+              : isAssignedToOthers ? "gray.700"
+              : "gray.700";
 
             const isCardCompact = compact && !expandedCards.has(occ.id);
             const toggleCard = compact
@@ -1694,16 +1814,41 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         })()}
                       </Box>
                     </VStack>
-                    {!isUnassigned && (
-                      <Text fontSize="xs" fontWeight="semibold" color="teal.700" mt={1}>
-                        {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                      </Text>
-                    )}
-                    {isUnassigned && occ.status !== "ARCHIVED" && (
-                      <Text fontSize="xs" fontWeight="semibold" color="orange.500" mt={1}>
-                        {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
-                      </Text>
-                    )}
+                    <HStack mt={1} justify="space-between" align="center">
+                      {!isUnassigned ? (
+                        <Text fontSize="xs" fontWeight="semibold" color="teal.700">
+                          {assignees.map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
+                        </Text>
+                      ) : occ.status !== "ARCHIVED" ? (
+                        <Text fontSize="xs" fontWeight="semibold" color="orange.500">
+                          {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                        </Text>
+                      ) : <Box />}
+                      {(occ._count?.comments ?? 0) > 0 && (
+                        <Badge
+                          variant="solid"
+                          fontSize="xs"
+                          px="2"
+                          borderRadius="full"
+                          cursor="pointer"
+                          flexShrink={0}
+                          bg={commentBadgeBg}
+                          color={commentBadgeColor}
+                          onClick={(e: any) => {
+                            e.stopPropagation();
+                            if (isCardCompact) setExpandedCards((prev) => { const next = new Set(prev); next.add(occ.id); return next; });
+                            setCommentsOpenFor((prev) => { const next = new Set(prev); next.add(occ.id); if (!commentsCache[occ.id]) void loadComments(occ.id); return next; });
+                            setTimeout(() => {
+                              const el = document.querySelector(`[data-comments="${occ.id}"]`);
+                              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }, 150);
+                          }}
+                        >
+                          <MessageCircle size={11} style={{ marginRight: 3 }} />
+                          {occ._count?.comments}
+                        </Badge>
+                      )}
+                    </HStack>
                     {!isTask && (occ.photos ?? []).length > 0 && (
                       <Box display="flex" gap={1} mt={1} flexWrap="wrap">
                         {(occ.photos ?? []).map((p, idx) => (
@@ -2034,6 +2179,90 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         photoCount={occ._count?.photos ?? 0}
                       />
                     )}
+
+                    {/* Comments section */}
+                    <Box w="full" mt={2} data-comments={occ.id}>
+                      <Badge
+                        variant="solid"
+                        fontSize="xs"
+                        px="2"
+                        borderRadius="full"
+                        cursor="pointer"
+                        bg={commentBadgeBg}
+                        color={commentBadgeColor}
+                        onClick={(e: any) => { e.stopPropagation(); toggleComments(occ.id); }}
+                      >
+                        <MessageCircle size={11} style={{ marginRight: 3 }} />
+                        Comments ({occ._count?.comments ?? 0}) {commentsOpenFor.has(occ.id) ? "▼" : "▶"}
+                      </Badge>
+                      {commentsOpenFor.has(occ.id) && (
+                        <VStack align="stretch" gap={2} mt={2}>
+                          {(commentsCache[occ.id] ?? []).length === 0 && !commentBusy && (
+                            <Text fontSize="xs" color="fg.muted">No comments yet.</Text>
+                          )}
+                          {(commentsCache[occ.id] ?? []).map((c) => (
+                            <Box key={c.id} p={2} bg="gray.50" rounded="md" fontSize="xs">
+                              <HStack justifyContent="space-between" alignItems="center">
+                                <Text fontWeight="semibold">
+                                  {c.author.displayName ?? c.author.email ?? "Unknown"}
+                                </Text>
+                                <Text color="fg.muted" fontSize="xs">{fmtDateTime(c.createdAt)}</Text>
+                              </HStack>
+                              {commentEditing?.id === c.id ? (
+                                <VStack align="stretch" gap={1} mt={1}>
+                                  <input
+                                    type="text"
+                                    value={commentEditing.body}
+                                    onChange={(e) => setCommentEditing({ id: c.id, body: e.target.value })}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, width: "100%" }}
+                                  />
+                                  <HStack gap={1}>
+                                    <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !commentEditing.body.trim()} onClick={(e: any) => { e.stopPropagation(); void editComment(c.id, occ.id, commentEditing.body); }}>
+                                      Save
+                                    </Button>
+                                    <Button size="xs" variant="ghost" onClick={(e: any) => { e.stopPropagation(); setCommentEditing(null); }}>
+                                      Cancel
+                                    </Button>
+                                  </HStack>
+                                </VStack>
+                              ) : (
+                                <>
+                                  <Text mt={1}>{c.body}</Text>
+                                  <HStack gap={1} mt={1}>
+                                    {c.author.id === myId && (
+                                      <Button size="xs" variant="ghost" onClick={(e: any) => { e.stopPropagation(); setCommentEditing({ id: c.id, body: c.body }); }}>
+                                        Edit
+                                      </Button>
+                                    )}
+                                    {(c.author.id === myId || isClaimer || (forAdmin && (isAdmin || isSuper))) && (
+                                      <Button size="xs" variant="ghost" colorPalette="red" disabled={commentBusy} onClick={(e: any) => { e.stopPropagation(); void deleteComment(c.id, occ.id); }}>
+                                        Delete
+                                      </Button>
+                                    )}
+                                  </HStack>
+                                </>
+                              )}
+                            </Box>
+                          ))}
+                          {/* New comment input */}
+                          <HStack gap={1} mt={1}>
+                            <input
+                              type="text"
+                              placeholder="Write a comment…"
+                              value={commentDraft[occ.id] ?? ""}
+                              onChange={(e) => setCommentDraft((prev) => ({ ...prev, [occ.id]: e.target.value }))}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void postComment(occ.id); } }}
+                              style={{ flex: 1, fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4 }}
+                            />
+                            <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={(e: any) => { e.stopPropagation(); void postComment(occ.id); }}>
+                              Post
+                            </Button>
+                          </HStack>
+                        </VStack>
+                      )}
+                    </Box>
                   </VStack>
                 </Card.Body>
                 )}
@@ -2821,7 +3050,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               <Dialog.Body>
                 {calFeedStep === "confirm" && (
                   <VStack align="stretch" gap={3}>
-                    <Text fontSize="sm">This will create a calendar subscription URL with these filters locked in:</Text>
+                    <Text fontSize="sm">This will create a calendar subscription URL with the filters below locked in. To tailor what appears in your calendar, adjust the filters on the Jobs tab before creating a feed.</Text>
                     <HStack gap={1} wrap="wrap">
                       {kind[0] !== "ALL" ? (
                         <Badge size="sm" colorPalette="blue" variant="subtle">{kindItems.find((i) => i.value === kind[0])?.label}</Badge>
@@ -2841,7 +3070,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
                       {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
                     </HStack>
-                    <Text fontSize="sm">The feed will show a rolling window: 2 weeks past and 2 months ahead.</Text>
+                    <Text fontSize="sm">The feed will show a rolling window of your assigned and claimable jobs: 2 weeks past and 2 months ahead.</Text>
                     <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
                       <Text fontSize="xs" fontWeight="medium" color="yellow.800">Staleness warning</Text>
                       <Text fontSize="xs" color="yellow.700" mt={1}>
@@ -2849,7 +3078,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Text>
                     </Box>
                     <Text fontSize="xs" color="fg.muted">
-                      You can manage and revoke feeds anytime from your Profile.
+                      You can manage and revoke feeds anytime from your{" "}
+                      <Text as="span" color="blue.600" cursor="pointer" textDecoration="underline" onClick={() => {
+                        setCalFeedStep("closed");
+                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
+                      }}>Profile</Text>.
                     </Text>
                   </VStack>
                 )}
@@ -2873,7 +3106,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       Copy URL
                     </Button>
                     <Text fontSize="xs" color="fg.muted">
-                      Paste this URL into your calendar app under "Subscribe" or "Add by URL". You can manage and revoke feeds from your Profile.
+                      Paste this URL into your calendar app under "Subscribe" or "Add by URL". You can manage and revoke feeds from your{" "}
+                      <Text as="span" color="blue.600" cursor="pointer" textDecoration="underline" onClick={() => {
+                        setCalFeedStep("closed");
+                        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "profile" } }));
+                      }}>Profile</Text>.
                     </Text>
                   </VStack>
                 )}
