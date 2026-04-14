@@ -89,7 +89,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   // Used to create the dropdown menus.
   const kindItems = useMemo(
-    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    () => kindStates.map((s) => ({ label: s === "ALL" ? "All Kinds" : prettyStatus(s), value: s })),
     []
   );
   const kindCollection = useMemo(
@@ -100,7 +100,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const statusItems = useMemo(
     () =>
       (forAdmin ? adminStatusStates : workerStatusStates).map((s) => ({
-        label: prettyStatus(s),
+        label: s === "ALL" ? "All Statuses" : prettyStatus(s),
         value: s,
       })),
     [forAdmin]
@@ -562,7 +562,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -586,7 +586,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -601,19 +601,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {!(kind[0] === "ALL" && statusFilter[0] === "ALL") && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          onClick={() => {
-            setKind(["ALL"]);
-            setStatusFilter(["ALL"]);
-          }}
-        >
-          Clear
-        </Button>
-        )}
         <Button
           variant={compact ? "solid" : "ghost"}
           size="sm"
@@ -651,6 +638,20 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           {statusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL") && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setKind(["ALL"]);
+                setStatusFilter(["ALL"]);
+              }}
+            >
+              ✕ Clear
             </Badge>
           )}
         </HStack>

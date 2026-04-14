@@ -72,7 +72,7 @@ type ConfirmState = { userId: string; kind: ConfirmKind } | null;
 type Status = "all" | "pending" | "approved";
 
 const statusFilterItems = [
-  { label: "All", value: "all" },
+  { label: "All Statuses", value: "all" },
   { label: "Pending", value: "pending" },
   { label: "Approved", value: "approved" },
 ];
@@ -406,7 +406,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: status !== "all" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: status !== "all" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -430,7 +430,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: accessRole !== "all" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: accessRole !== "all" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Shield size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -454,7 +454,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: workerTypeFilter !== "all" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: workerTypeFilter !== "all" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -469,16 +469,6 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {!(status === "all" && accessRole === "all" && workerTypeFilter === "all") && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          onClick={() => { setStatus("all"); setAccessRole("all"); setWorkerTypeFilter("all"); }}
-        >
-          Clear
-        </Button>
-        )}
         <Button
           variant="ghost"
           size="sm"
@@ -505,6 +495,17 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           {workerTypeFilter !== "all" && (
             <Badge size="sm" colorPalette="orange" variant="solid">
               {workerTypeFilterItems.find((i) => i.value === workerTypeFilter)?.label}
+            </Badge>
+          )}
+          {!(status === "all" && accessRole === "all" && workerTypeFilter === "all") && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => { setStatus("all"); setAccessRole("all"); setWorkerTypeFilter("all"); }}
+            >
+              ✕ Clear
             </Badge>
           )}
         </HStack>

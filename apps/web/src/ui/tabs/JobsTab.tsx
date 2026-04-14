@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -95,7 +95,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const kindItems = useMemo(
-    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    () => kindStates.map((s) => ({ label: s === "ALL" ? "All Kinds" : prettyStatus(s), value: s })),
     []
   );
   const kindCollection = useMemo(
@@ -120,7 +120,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const statusItems = useMemo(
-    () => statusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
+    () => statusStates.map((s) => ({ label: s === "ALL" ? "All Statuses" : s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
     []
   );
   const statusCollection = useMemo(
@@ -135,6 +135,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return !localStorage.getItem("seedlings_jobs_infoDismissed");
     } catch { return false; }
   });
+  const [calFeedStep, setCalFeedStep] = useState<"closed" | "confirm" | "result">("closed");
+  const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null);
+  const [calFeedLoading, setCalFeedLoading] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
@@ -325,17 +328,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
   useEffect(() => {
     if (overdueActive) {
-      // When overdue is active, apply the overdue date range (last 30 days to yesterday)
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const monthAgo = new Date();
       monthAgo.setDate(monthAgo.getDate() - 60);
-      setDateFrom(localDate(monthAgo));
-      setDateTo(localDate(yesterday));
+      const { from, to, clamped } = clampWorkerDates(localDate(monthAgo), localDate(yesterday));
+      setDateFrom(from);
+      setDateTo(to);
+      if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
     } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
-      setDateFrom(d.from);
-      setDateTo(d.to);
+      const { from, to, clamped } = clampWorkerDates(d.from, d.to);
+      setDateFrom(from);
+      setDateTo(to);
+      if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
     }
   }, [datePreset, overdueActive]);
 
@@ -395,38 +401,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
+  // Workers limited to 2-month date range — clamp and return adjusted dates
+  function clampWorkerDates(from: string, to: string): { from: string; to: string; clamped: boolean } {
+    if (forAdmin) return { from, to, clamped: false };
+    const maxMs = 62 * 86400000; // ~2 months
+    if (from && to) {
+      const fromDate = new Date(from + "T00:00:00");
+      const toDate = new Date(to + "T00:00:00");
+      if (toDate.getTime() - fromDate.getTime() > maxMs) {
+        return { from: bizDateKey(new Date(toDate.getTime() - maxMs)), to, clamped: true };
+      }
+    } else if (!from && to) {
+      return { from: bizDateKey(new Date(new Date(to + "T00:00:00").getTime() - maxMs)), to, clamped: true };
+    } else if (from && !to) {
+      return { from, to: bizDateKey(new Date(new Date(from + "T00:00:00").getTime() + maxMs)), clamped: true };
+    }
+    return { from, to, clamped: false };
+  }
+
   async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }, keepOccId?: string) {
     setLoading(displayLoading);
     try {
       const qs = new URLSearchParams();
-      let qFrom = overrideDates?.from ?? dateFrom;
-      let qTo = overrideDates?.to ?? dateTo;
-
-      // Workers limited to 2-month date range
-      let wasClamped = false;
-      if (!forAdmin && qFrom && qTo) {
-        const fromDate = new Date(qFrom + "T00:00:00");
-        const toDate = new Date(qTo + "T00:00:00");
-        const maxMs = 62 * 86400000; // ~2 months
-        if (toDate.getTime() - fromDate.getTime() > maxMs) {
-          const clampedFrom = new Date(toDate.getTime() - maxMs);
-          qFrom = bizDateKey(clampedFrom);
-          setDateFrom(qFrom);
-          wasClamped = true;
-        }
-      } else if (!forAdmin && !qFrom && qTo) {
-        // Open-ended "from" — clamp to 2 months before "to"
-        const toDate = new Date(qTo + "T00:00:00");
-        qFrom = bizDateKey(new Date(toDate.getTime() - 62 * 86400000));
-        setDateFrom(qFrom);
-        wasClamped = true;
-      } else if (!forAdmin && qFrom && !qTo) {
-        // Open-ended "to" — clamp to 2 months after "from"
-        const fromDate = new Date(qFrom + "T00:00:00");
-        qTo = bizDateKey(new Date(fromDate.getTime() + 62 * 86400000));
-        setDateTo(qTo);
-        wasClamped = true;
-      }
+      const rawFrom = overrideDates?.from ?? dateFrom;
+      const rawTo = overrideDates?.to ?? dateTo;
+      const { from: qFrom, to: qTo } = clampWorkerDates(rawFrom, rawTo);
 
       if (qFrom) qs.set("from", qFrom);
       if (qTo) qs.set("to", qTo);
@@ -460,9 +459,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       }
       setItems(list);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
-      if (wasClamped) {
-        setTimeout(() => publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." }), 300);
-      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -762,6 +758,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       for (const occ of filtered) {
         const isPinned = pinnedIds_.has(occ.id);
         const hasReminderDue = occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey;
+        const hasReminder = !!occ.reminder;
         if (isPinned) {
           pinnedGroup.push(occ);
           // Add a ghost in the regular feed at its natural date
@@ -769,8 +766,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         } else if (hasReminderDue) {
           reminderDueGroup.push(occ);
           reminderDueIds.add(occ.id);
+          // Add a ghost in the regular feed at the reminder date
+          rest.push({ ...occ, _isReminderGhost: true, _ghostDate: bizDateKey(occ.reminder!.remindAt) } as any);
         } else {
           rest.push(occ);
+          // Future reminders — add a ghost at the reminder date if it differs from the occurrence date
+          if (hasReminder) {
+            const reminderDateKey = bizDateKey(occ.reminder!.remindAt);
+            const occDateKey = occ.startAt ? bizDateKey(occ.startAt) : "";
+            if (reminderDateKey !== occDateKey) {
+              rest.push({ ...occ, _isReminderGhost: true, _ghostDate: reminderDateKey } as any);
+            }
+          }
         }
       }
     } else {
@@ -848,7 +855,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -872,7 +879,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -896,7 +903,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -913,7 +920,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Select.Root>
         <Button
           size="sm"
-          variant={vipOnly ? "solid" : "ghost"}
+          variant={vipOnly ? "solid" : "outline"}
           px="2"
           onClick={() => setVipOnly(!vipOnly)}
           css={vipOnly ? {
@@ -923,12 +930,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             "&:hover": { background: "var(--chakra-colors-yellow-200)" },
           } : undefined}
         >
-          ⭐
+          <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
         </Button>
         {isWorkerView && (
           <Button
             size="sm"
-            variant={likedOnly ? "solid" : "ghost"}
+            variant={likedOnly ? "solid" : "outline"}
             px="2"
             onClick={() => setLikedOnly(!likedOnly)}
             css={likedOnly ? {
@@ -941,31 +948,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           >
             <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
           </Button>
-        )}
-        {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !highlightOccId && !filterJobId && !q) && (
-        <Button
-          size="xs"
-          variant="outline"
-          colorPalette="red"
-          onClick={() => {
-            setKind(["ALL"]);
-            setStatusFilter(["ALL"]);
-            setTypeFilter(["ALL"]);
-            setOverdueActive(false);
-            setVipOnly(false);
-            setLikedOnly(false);
-            setQ("");
-            setHighlightOccId(null);
-            setFilterJobId(null);
-            const d = computeDatesFromPreset("nextMonth");
-            setDatePreset("nextMonth");
-            setDateFrom(d.from);
-            setDateTo(d.to);
-            void load(true, { from: d.from, to: d.to });
-          }}
-        >
-          Clear
-        </Button>
         )}
         <Box flex="1" />
         <Button
@@ -981,6 +963,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         >
           {compact ? <Maximize2 size={14} /> : <Maximize2 size={14} />}
         </Button>
+        {isWorkerView && (
+          <Button
+            size="sm"
+            variant="ghost"
+            px="2"
+            title="Subscribe to calendar feed"
+            onClick={() => {
+              setCalFeedStep("confirm");
+              setCalFeedUrl(null);
+            }}
+          >
+            <Calendar size={14} />
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -996,20 +992,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         <DateInput
           value={dateFrom}
           onChange={(val) => {
-            setDateFrom(val);
+            let newTo = dateTo;
+            if (newTo && val && val > newTo) newTo = val;
+            const { from, to, clamped } = clampWorkerDates(val, newTo);
+            setDateFrom(from);
+            setDateTo(to);
             setDatePreset(null);
             setOverdueActive(false);
-            if (dateTo && val && val > dateTo) setDateTo(val);
+            if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
           }}
         />
         <Text fontSize="sm">–</Text>
         <DateInput
           value={dateTo}
           onChange={(val) => {
-            setDateTo(val);
+            let newFrom = dateFrom;
+            if (newFrom && val && val < newFrom) newFrom = val;
+            const { from, to, clamped } = clampWorkerDates(newFrom, val);
+            setDateFrom(from);
+            setDateTo(to);
             setDatePreset(null);
             setOverdueActive(false);
-            if (dateFrom && val && val < dateFrom) setDateFrom(val);
+            if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
           }}
         />
         <Select.Root
@@ -1153,6 +1157,32 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Filtered to job
             </Badge>
           )}
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !highlightOccId && !filterJobId && !q) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setKind(["ALL"]);
+                setStatusFilter(["ALL"]);
+                setTypeFilter(["ALL"]);
+                setOverdueActive(false);
+                setVipOnly(false);
+                setLikedOnly(false);
+                setQ("");
+                setHighlightOccId(null);
+                setFilterJobId(null);
+                const d = computeDatesFromPreset("nextMonth");
+                setDatePreset("nextMonth");
+                setDateFrom(d.from);
+                setDateTo(d.to);
+                void load(true, { from: d.from, to: d.to });
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
         </HStack>
       )}
 
@@ -1186,9 +1216,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 _hover={{ opacity: 0.7 }}
               >
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
-                <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
-                  {group.label} {collapsedGroups.has(group.key) ? "▶" : "▼"}
-                </Text>
+                <HStack gap={1.5} align="center">
+                  <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
+                    {group.label}
+                  </Text>
+                  <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
+                    {group.items.length}
+                  </Badge>
+                  <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
+                </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
@@ -1272,50 +1308,42 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             // Pinned ghost cards — a reference in the regular feed
             if (occ._isPinnedGhost) {
-              const isTaskGhost = occ.workflow === "TASK";
               return (
                 <Card.Root
                   key={`pin-ghost-${occ.id}`}
                   variant="outline"
-                  borderColor="blue.200"
+                  borderColor="blue.300"
                   bg="blue.50"
                   css={{
                     borderLeft: "4px solid var(--chakra-colors-blue-400)",
-                    opacity: 0.8,
                   }}
                 >
-                  <Card.Body py="2" px="4">
-                    <HStack justify="space-between" align="start" gap={2}>
-                      <VStack align="start" gap={0.5} flex="1" minW={0}>
-                        <HStack gap={2} align="center">
-                          <Pin size={12} fill="currentColor" style={{ color: "var(--chakra-colors-blue-500)" }} />
-                          <Text fontSize="sm" fontWeight="medium" color="blue.700">
-                            {isTaskGhost ? (occ.title || "Task") : (occ.job?.property?.displayName ?? "")}
-                            {!isTaskGhost && occ.job?.property?.client?.displayName && (
-                              <Text as="span" color="blue.500" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
-                            )}
-                          </Text>
-                        </HStack>
-                        <HStack gap={2} fontSize="xs" wrap="wrap">
-                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">Pinned</Badge>
-                          {(occ as any).jobType && <Text color="fg.muted">{jobTypeLabel((occ as any).jobType)}</Text>}
-                          {occ.price != null && <Text color="green.600">${occ.price.toFixed(2)}</Text>}
-                        </HStack>
-                      </VStack>
+                  <Card.Body py="3" px="4">
+                    <VStack align="start" gap={1}>
+                      <HStack gap={2} align="center">
+                        <Pin size={14} fill="currentColor" style={{ color: "var(--chakra-colors-blue-600)" }} />
+                        <Badge colorPalette="blue" variant="solid" fontSize="xs" px="2" borderRadius="full">Pinned</Badge>
+                      </HStack>
+                      <Text fontSize="xs" color="fg.muted">
+                        {occ.workflow === "TASK" ? (occ.title || "Task") : (occ.job?.property?.displayName ?? "Job")}
+                        {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
+                        {(occ as any).jobType && ` · ${jobTypeLabel((occ as any).jobType)}`}
+                        {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
+                      </Text>
                       <Button
                         size="xs"
-                        variant="ghost"
+                        variant="outline"
                         colorPalette="blue"
-                        flexShrink={0}
                         onClick={() => {
-                          // Scroll to the pinned section and highlight
-                          const pinnedSection = document.querySelector('[data-group="pinned"]');
-                          if (pinnedSection) pinnedSection.scrollIntoView({ behavior: "smooth", block: "start" });
+                          setHighlightOccId(occ.id);
+                          setExpandedCards(new Set([occ.id]));
+                          setFilterJobId(null);
+                          setQ("");
                         }}
                       >
                         View Pinned
                       </Button>
-                    </HStack>
+                    </VStack>
                   </Card.Body>
                 </Card.Root>
               );
@@ -2780,6 +2808,127 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
         />
       )}
+
+      {/* Calendar Feed Dialog */}
+      <Dialog.Root open={calFeedStep !== "closed"} onOpenChange={(e) => { if (!e.open) setCalFeedStep("closed"); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="md" mx={4}>
+              <Dialog.Header>
+                <Dialog.Title>{calFeedStep === "confirm" ? "Create Calendar Feed" : "Calendar Feed URL"}</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {calFeedStep === "confirm" && (
+                  <VStack align="stretch" gap={3}>
+                    <Text fontSize="sm">This will create a calendar subscription URL with these filters locked in:</Text>
+                    <HStack gap={1} wrap="wrap">
+                      {kind[0] !== "ALL" ? (
+                        <Badge size="sm" colorPalette="blue" variant="subtle">{kindItems.find((i) => i.value === kind[0])?.label}</Badge>
+                      ) : (
+                        <Badge size="sm" colorPalette="gray" variant="subtle">All Kinds</Badge>
+                      )}
+                      {statusFilter[0] !== "ALL" ? (
+                        <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">{statusItems.find((i) => i.value === statusFilter[0])?.label}</Badge>
+                      ) : (
+                        <Badge size="sm" colorPalette="gray" variant="subtle">All Statuses</Badge>
+                      )}
+                      {typeFilter[0] !== "ALL" ? (
+                        <Badge size="sm" colorPalette="orange" variant="subtle">{typeItems.find((i) => i.value === typeFilter[0])?.label}</Badge>
+                      ) : (
+                        <Badge size="sm" colorPalette="gray" variant="subtle">All Types</Badge>
+                      )}
+                      {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
+                      {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
+                    </HStack>
+                    <Text fontSize="sm">The feed will show a rolling window: 2 weeks past and 2 months ahead.</Text>
+                    <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+                      <Text fontSize="xs" fontWeight="medium" color="yellow.800">Staleness warning</Text>
+                      <Text fontSize="xs" color="yellow.700" mt={1}>
+                        Calendar apps refresh feeds on their own schedule. Google Calendar updates roughly every 12 hours. Apple Calendar is faster (~15 minutes). Changes to your jobs may not appear immediately in your calendar.
+                      </Text>
+                    </Box>
+                    <Text fontSize="xs" color="fg.muted">
+                      You can manage and revoke feeds anytime from your Profile.
+                    </Text>
+                  </VStack>
+                )}
+                {calFeedStep === "result" && calFeedLoading && (
+                  <VStack py={4}><Spinner /></VStack>
+                )}
+                {calFeedStep === "result" && !calFeedLoading && calFeedUrl && (
+                  <VStack align="stretch" gap={3}>
+                    <Text fontSize="sm">Copy this URL and add it to your calendar app (Google Calendar, Apple Calendar, Outlook, etc.):</Text>
+                    <Box p={3} bg="gray.50" borderWidth="1px" borderRadius="md" fontSize="xs" wordBreak="break-all" fontFamily="mono">
+                      {calFeedUrl}
+                    </Box>
+                    <Button
+                      size="sm"
+                      colorPalette="blue"
+                      onClick={() => {
+                        navigator.clipboard.writeText(calFeedUrl);
+                        publishInlineMessage({ type: "SUCCESS", text: "URL copied to clipboard!" });
+                      }}
+                    >
+                      Copy URL
+                    </Button>
+                    <Text fontSize="xs" color="fg.muted">
+                      Paste this URL into your calendar app under "Subscribe" or "Add by URL". You can manage and revoke feeds from your Profile.
+                    </Text>
+                  </VStack>
+                )}
+              </Dialog.Body>
+              <Dialog.Footer gap={2}>
+                {calFeedStep === "confirm" && (
+                  <>
+                    <Button size="sm" variant="ghost" onClick={() => setCalFeedStep("closed")}>Cancel</Button>
+                    <Button
+                      size="sm"
+                      colorPalette="blue"
+                      loading={calFeedLoading}
+                      onClick={async () => {
+                        setCalFeedLoading(true);
+                        setCalFeedStep("result");
+                        try {
+                          const filters = {
+                            kind: kind[0],
+                            statusFilter: statusFilter[0],
+                            typeFilter: typeFilter[0],
+                            vipOnly,
+                            likedOnly,
+                          };
+                          const label = [
+                            "Seedlings Jobs",
+                            kind[0] !== "ALL" ? kindItems.find((i) => i.value === kind[0])?.label : null,
+                            statusFilter[0] !== "ALL" ? statusItems.find((i) => i.value === statusFilter[0])?.label : null,
+                            typeFilter[0] !== "ALL" ? typeItems.find((i) => i.value === typeFilter[0])?.label : null,
+                            vipOnly ? "VIP" : null,
+                            likedOnly ? "Liked" : null,
+                          ].filter(Boolean).join(" — ");
+                          const res = await apiPost<{ token: string }>("/api/calendar-feeds", { filters, label });
+                          const base = window.location.origin;
+                          setCalFeedUrl(`${base}/api/_proxy/api/public/calendar/${res.token}.ics`);
+                        } catch (err) {
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to create feed.", err) });
+                          setCalFeedStep("closed");
+                        } finally {
+                          setCalFeedLoading(false);
+                        }
+                      }}
+                    >
+                      Create Feed
+                    </Button>
+                  </>
+                )}
+                {calFeedStep === "result" && !calFeedLoading && (
+                  <Button size="sm" variant="ghost" onClick={() => setCalFeedStep("closed")}>Done</Button>
+                )}
+              </Dialog.Footer>
+              <Dialog.CloseTrigger />
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }

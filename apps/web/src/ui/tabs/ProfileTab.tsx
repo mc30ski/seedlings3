@@ -15,7 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { X } from "lucide-react";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
-import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -485,8 +485,105 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
               {saving ? "Saving..." : "Save Profile"}
             </Button>
           </Box>
+
+          {/* Calendar Feeds management — self only */}
+          {isSelf && <CalendarFeedsSection />}
         </VStack>
       )}
     </Box>
+  );
+}
+
+function CalendarFeedsSection() {
+  type FeedToken = { id: string; label?: string | null; token: string; filters: any; createdAt: string; lastAccessedAt?: string | null };
+  const [feeds, setFeeds] = useState<FeedToken[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    try {
+      const list = await apiGet<FeedToken[]>("/api/calendar-feeds");
+      setFeeds(Array.isArray(list) ? list : []);
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  async function revoke(id: string) {
+    try {
+      await apiDelete(`/api/calendar-feeds/${id}`);
+      setFeeds((prev) => prev.filter((f) => f.id !== id));
+      publishInlineMessage({ type: "SUCCESS", text: "Feed revoked." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Revoke failed.", err) });
+    }
+  }
+
+  async function revokeAll() {
+    for (const f of feeds) {
+      await apiDelete(`/api/calendar-feeds/${f.id}`).catch(() => {});
+    }
+    setFeeds([]);
+    publishInlineMessage({ type: "SUCCESS", text: "All feeds revoked." });
+  }
+
+  const fmtDate = (s: string) => {
+    try { return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
+    catch { return s; }
+  };
+
+  const filterSummary = (f: any) => {
+    const parts: string[] = [];
+    if (f?.kind && f.kind !== "ALL") parts.push(f.kind);
+    if (f?.statusFilter && f.statusFilter !== "ALL") parts.push(f.statusFilter);
+    if (f?.typeFilter && f.typeFilter !== "ALL") parts.push(f.typeFilter);
+    if (f?.vipOnly) parts.push("VIP");
+    if (f?.likedOnly) parts.push("Liked");
+    return parts.length > 0 ? parts.join(", ") : "All jobs";
+  };
+
+  return (
+    <Card.Root variant="outline" mt={4}>
+      <Card.Header py="3" px="4" pb="0">
+        <HStack justify="space-between" align="center">
+          <Text fontWeight="semibold">Calendar Feeds</Text>
+          {feeds.length > 1 && (
+            <Button size="xs" variant="ghost" colorPalette="red" onClick={revokeAll}>
+              Revoke All
+            </Button>
+          )}
+        </HStack>
+      </Card.Header>
+      <Card.Body py="3" px="4">
+        {loading ? (
+          <Spinner size="sm" />
+        ) : feeds.length === 0 ? (
+          <Text fontSize="xs" color="fg.muted">No active calendar feeds. Create one from the Jobs tab using the calendar icon.</Text>
+        ) : (
+          <VStack align="stretch" gap={2}>
+            {feeds.map((f) => (
+              <Box key={f.id} p={2} borderWidth="1px" borderRadius="md" fontSize="xs">
+                <HStack justify="space-between" align="start">
+                  <VStack align="start" gap={0.5} flex="1" minW={0}>
+                    <Text fontWeight="medium">{f.label || "Calendar Feed"}</Text>
+                    <Text color="fg.muted">Filters: {filterSummary(f.filters)}</Text>
+                    <Text color="fg.muted">Created: {fmtDate(f.createdAt)}</Text>
+                    {f.lastAccessedAt && (
+                      <Text color="fg.muted">Last polled: {fmtDate(f.lastAccessedAt)}</Text>
+                    )}
+                    {!f.lastAccessedAt && (
+                      <Text color="orange.500">Never accessed</Text>
+                    )}
+                  </VStack>
+                  <Button size="xs" variant="outline" colorPalette="red" onClick={() => revoke(f.id)}>
+                    Revoke
+                  </Button>
+                </HStack>
+              </Box>
+            ))}
+          </VStack>
+        )}
+      </Card.Body>
+    </Card.Root>
   );
 }
