@@ -107,6 +107,7 @@ model User {
   pinnedOccurrences         PinnedOccurrence[]
   likedOccurrences          LikedOccurrence[]
   reminders                 Reminder[]
+  calendarFeedTokens        CalendarFeedToken[]
 }
 
 model UserRole {
@@ -704,6 +705,22 @@ model LikedOccurrence {
 
   @@unique([userId, occurrenceId])
   @@index([userId])
+}
+
+model CalendarFeedToken {
+  id              String    @id @default(cuid())
+
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token           String    @unique
+  label           String?
+  filters         Json
+  createdAt       DateTime  @default(now())
+  lastAccessedAt  DateTime?
+
+  @@index([userId])
+  @@index([token])
 }
 
 model Reminder {

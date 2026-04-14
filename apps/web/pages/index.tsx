@@ -1111,6 +1111,11 @@ export default function HomePage() {
                   : "gray"
                 }
                 lineHeight="normal"
+                cursor="pointer"
+                onClick={() => {
+                  setTopTab("worker");
+                  setWorkerInnerTab("profile" as any);
+                }}
               >
                 {me.workerType === "EMPLOYEE" ? "W-2"
                   : me.workerType === "CONTRACTOR" ? "1099"

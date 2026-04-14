@@ -956,4 +956,70 @@ export default async function workerRoutes(app: FastifyInstance) {
     const list = await services.users.list({ approved: true, role: "WORKER" });
     return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, workerType: u.workerType }));
   });
+
+  // ── Calendar Feed Tokens ──
+
+  const MAX_FEED_TOKENS = 5;
+  const STALE_TOKEN_DAYS = 90;
+
+  app.get("/calendar-feeds", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const tokens = await prisma.calendarFeedToken.findMany({
+      where: { userId: uid },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, label: true, token: true, filters: true, createdAt: true, lastAccessedAt: true },
+    });
+    return tokens;
+  });
+
+  app.post("/calendar-feeds", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const filters = body.filters || {};
+    const label = body.label?.trim() || null;
+
+    // Auto-cleanup: remove tokens not accessed in 90 days
+    const staleDate = new Date(Date.now() - STALE_TOKEN_DAYS * 86400000);
+    await prisma.calendarFeedToken.deleteMany({
+      where: {
+        userId: uid,
+        OR: [
+          { lastAccessedAt: { lt: staleDate } },
+          { lastAccessedAt: null, createdAt: { lt: staleDate } },
+        ],
+      },
+    });
+
+    // Enforce max tokens — remove oldest if at limit
+    const existing = await prisma.calendarFeedToken.findMany({
+      where: { userId: uid },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (existing.length >= MAX_FEED_TOKENS) {
+      const toDelete = existing.slice(0, existing.length - MAX_FEED_TOKENS + 1);
+      await prisma.calendarFeedToken.deleteMany({
+        where: { id: { in: toDelete.map((t) => t.id) } },
+      });
+    }
+
+    // Generate secure random token
+    const crypto = require("crypto");
+    const token = crypto.randomBytes(32).toString("hex");
+
+    const record = await prisma.calendarFeedToken.create({
+      data: { userId: uid, token, label, filters },
+    });
+
+    return { id: record.id, token: record.token, label: record.label, filters: record.filters, createdAt: record.createdAt };
+  });
+
+  app.delete("/calendar-feeds/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    await prisma.calendarFeedToken.deleteMany({
+      where: { id, userId: uid },
+    });
+    return { ok: true };
+  });
 }

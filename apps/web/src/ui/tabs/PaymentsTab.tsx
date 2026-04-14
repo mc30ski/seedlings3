@@ -57,7 +57,7 @@ function todayStr() {
 }
 
 const typeFilterItems = [
-  { label: "All", value: "ALL" },
+  { label: "All Types", value: "ALL" },
   { label: "Jobs", value: "JOBS" },
   { label: "Equipment", value: "EQUIPMENT" },
 ];
@@ -157,7 +157,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -172,16 +172,6 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {typeFilter[0] !== "ALL" && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          onClick={() => setTypeFilter(["ALL"])}
-        >
-          Clear
-        </Button>
-        )}
         <Button
           variant="ghost"
           size="sm"
@@ -202,6 +192,17 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
           <Badge size="sm" colorPalette="purple" variant="subtle">
             {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
           </Badge>
+          {typeFilter[0] !== "ALL" && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => setTypeFilter(["ALL"])}
+            >
+              ✕ Clear
+            </Badge>
+          )}
         </HStack>
       )}
 
@@ -735,7 +736,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -759,7 +760,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: methodFilter[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: methodFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <CreditCard size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -855,21 +856,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             );
           })()}
         </Box>
-        {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0) && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          onClick={() => {
-            setTypeFilter(["ALL"]);
-            setMethodFilter(["ALL"]);
-            setPersonFilter([]);
-            setPersonSearch("");
-          }}
-        >
-          Clear
-        </Button>
-        )}
         <Button
           variant="ghost"
           size="sm"
@@ -944,6 +930,22 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
               {personNameMap[id] || "Loading…"}
             </Badge>
           ))}
+          {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setTypeFilter(["ALL"]);
+                setMethodFilter(["ALL"]);
+                setPersonFilter([]);
+                setPersonSearch("");
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
         </HStack>
       )}
 

@@ -191,27 +191,30 @@ export default function SuperUnclaimedTab() {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        {!(datePreset === "overdueAndNext3" && !q) && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          onClick={() => {
-            setOverdueActive(false);
-            setDatePreset("overdueAndNext3");
-            setQ("");
-          }}
-        >
-          Clear
-        </Button>
-        )}
       </HStack>
 
-      {datePreset && (
+      {(datePreset || !(datePreset === "overdueAndNext3" && !q)) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle">
-            {PRESET_LABELS[datePreset] ?? datePreset}
-          </Badge>
+          {datePreset && (
+            <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!(datePreset === "overdueAndNext3" && !q) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setOverdueActive(false);
+                setDatePreset("overdueAndNext3");
+                setQ("");
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
         </HStack>
       )}
 

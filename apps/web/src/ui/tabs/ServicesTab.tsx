@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -131,7 +131,7 @@ export default function ServicesTab({
   );
 
   const kindItems = useMemo(
-    () => kindStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    () => kindStates.map((s) => ({ label: s === "ALL" ? "All Kinds" : prettyStatus(s), value: s })),
     []
   );
   const kindCollection = useMemo(
@@ -139,7 +139,7 @@ export default function ServicesTab({
     [kindItems]
   );
   const jobStatusItems = useMemo(
-    () => jobStatusStates.map((s) => ({ label: prettyStatus(s), value: s })),
+    () => jobStatusStates.map((s) => ({ label: s === "ALL" ? "All Job Statuses" : prettyStatus(s), value: s })),
     []
   );
   const jobStatusCollection = useMemo(
@@ -161,7 +161,7 @@ export default function ServicesTab({
   );
 
   const occStatusItems = useMemo(
-    () => occStatusStates.map((s) => ({ label: s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
+    () => occStatusStates.map((s) => ({ label: s === "ALL" ? "All Occ. Statuses" : s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
     []
   );
   const occStatusCollection = useMemo(
@@ -514,7 +514,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-blue-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -538,7 +538,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-purple-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -562,7 +562,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-teal-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Layers size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -586,7 +586,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: "var(--chakra-colors-orange-100)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid transparent", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -603,7 +603,7 @@ export default function ServicesTab({
         </Select.Root>
         <Button
           size="sm"
-          variant={vipOnly ? "solid" : "ghost"}
+          variant={vipOnly ? "solid" : "outline"}
           px="2"
           onClick={() => setVipOnly(!vipOnly)}
           css={vipOnly ? {
@@ -613,26 +613,8 @@ export default function ServicesTab({
             "&:hover": { background: "var(--chakra-colors-yellow-200)" },
           } : undefined}
         >
-          ⭐
+          <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
         </Button>
-        {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly) && (
-        <Button
-          size="xs"
-          variant="outline"
-          colorPalette="red"
-          onClick={() => {
-            setKind(["ALL"]);
-            setJobStatusFilter(["ALL"]);
-            setOccStatusFilter(["ALL"]);
-            setTypeFilter(["ALL"]);
-            setOverdueActive(false);
-            setVipOnly(false);
-            setDatePreset("nextMonth");
-          }}
-        >
-          Clear
-        </Button>
-        )}
         <Box flex="1" />
         {forAdmin && (
           <Button
@@ -796,6 +778,25 @@ export default function ServicesTab({
           {typeFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="orange" variant="solid">
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setKind(["ALL"]);
+                setJobStatusFilter(["ALL"]);
+                setOccStatusFilter(["ALL"]);
+                setTypeFilter(["ALL"]);
+                setOverdueActive(false);
+                setVipOnly(false);
+                setDatePreset("nextMonth");
+              }}
+            >
+              ✕ Clear
             </Badge>
           )}
         </HStack>
