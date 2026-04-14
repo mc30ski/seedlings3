@@ -88,6 +88,7 @@ export default function OperationsTab() {
   const [data, setData] = useState<OpsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAllWorkers, setShowAllWorkers] = useState(false);
+  const [showAllUnclaimed, setShowAllUnclaimed] = useState(false);
   const [confirmAllTime, setConfirmAllTime] = useState(false);
 
   const [datePreset, setDatePreset] = useState<DatePreset>(() => {
@@ -197,55 +198,74 @@ export default function OperationsTab() {
           </Box>
 
           {/* Unclaimed Jobs */}
-          {data.unclaimedItems.length > 0 && (
-            <>
-              <SectionHeader>{`Unclaimed Jobs (${data.unclaimedItems.length})`}</SectionHeader>
-              <VStack align="stretch" gap={1}>
-                {data.unclaimedItems.map((item) => {
-                  const isOverdue = item.startAt && bizDateKey(item.startAt) < today;
-                  return (
-                    <Card.Root key={item.id} variant="outline" borderColor={isOverdue ? "red.200" : "orange.200"} bg={isOverdue ? "red.50" : "orange.50"}>
-                      <Card.Body py="2" px="3">
-                        <HStack justify="space-between" align="start" gap={2}>
-                          <VStack align="start" gap={0.5} flex="1" minW={0}>
-                            <Text fontSize="sm" fontWeight="medium">
-                              {item.property ?? "Unknown property"}
-                              {item.client && <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(item.client)}</Text>}
+          {data.unclaimedItems.length > 0 && (() => {
+            const overdue = data.unclaimedItems.filter((item: UnclaimedItem) => item.startAt && bizDateKey(item.startAt) < today);
+            const upcoming = data.unclaimedItems.filter((item: UnclaimedItem) => !item.startAt || bizDateKey(item.startAt) >= today);
+            const visibleItems = showAllUnclaimed ? [...overdue, ...upcoming] : overdue;
+            const headerCount = overdue.length + (showAllUnclaimed ? upcoming.length : 0);
+            return (
+              <>
+                <SectionHeader>{`Unclaimed Jobs (${headerCount})`}</SectionHeader>
+                {visibleItems.length === 0 && !showAllUnclaimed && upcoming.length > 0 && (
+                  <Text fontSize="xs" color="fg.muted" px={1} mb={1}>No overdue unclaimed jobs.</Text>
+                )}
+                <VStack align="stretch" gap={1}>
+                  {visibleItems.map((item: UnclaimedItem) => {
+                    const isOverdue = item.startAt && bizDateKey(item.startAt) < today;
+                    return (
+                      <Card.Root key={item.id} variant="outline" borderColor={isOverdue ? "red.200" : "orange.200"} bg={isOverdue ? "red.50" : "orange.50"}>
+                        <Card.Body py="2" px="3">
+                          <HStack justify="space-between" align="start" gap={2}>
+                            <VStack align="start" gap={0.5} flex="1" minW={0}>
+                              <Text fontSize="sm" fontWeight="medium">
+                                {item.property ?? "Unknown property"}
+                                {item.client && <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(item.client)}</Text>}
+                              </Text>
+                              <HStack gap={2} fontSize="xs" wrap="wrap">
+                                {isOverdue && <StatusBadge status="Overdue" palette="red" variant="solid" />}
+                                {item.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{prettyStatus(item.jobType)}</Badge>}
+                                {item.price != null && <Text color="green.600">${item.price.toFixed(2)}</Text>}
+                              </HStack>
+                              {item.address && <Box fontSize="xs"><MapLink address={item.address} /></Box>}
+                              <Button
+                                size="xs"
+                                variant="solid"
+                                colorPalette="blue"
+                                mt={1}
+                                onClick={() =>
+                                  openEventSearch(
+                                    "jobsTabToServicesTabSearch",
+                                    item.property ?? "",
+                                    true,
+                                    `${item.jobId}:${item.id}`,
+                                  )
+                                }
+                              >
+                                Manage in Services
+                              </Button>
+                            </VStack>
+                            <Text fontSize="xs" color="fg.muted" flexShrink={0}>
+                              {item.startAt ? fmtDate(item.startAt) : ""}
                             </Text>
-                            <HStack gap={2} fontSize="xs" wrap="wrap">
-                              {isOverdue && <StatusBadge status="Overdue" palette="red" variant="solid" />}
-                              {item.jobType && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">{prettyStatus(item.jobType)}</Badge>}
-                              {item.price != null && <Text color="green.600">${item.price.toFixed(2)}</Text>}
-                            </HStack>
-                            {item.address && <Box fontSize="xs"><MapLink address={item.address} /></Box>}
-                            <Button
-                              size="xs"
-                              variant="solid"
-                              colorPalette="blue"
-                              mt={1}
-                              onClick={() =>
-                                openEventSearch(
-                                  "jobsTabToServicesTabSearch",
-                                  item.property ?? "",
-                                  true,
-                                  `${item.jobId}:${item.id}`,
-                                )
-                              }
-                            >
-                              Manage in Services
-                            </Button>
-                          </VStack>
-                          <Text fontSize="xs" color="fg.muted" flexShrink={0}>
-                            {item.startAt ? fmtDate(item.startAt) : ""}
-                          </Text>
-                        </HStack>
-                      </Card.Body>
-                    </Card.Root>
-                  );
-                })}
-              </VStack>
-            </>
-          )}
+                          </HStack>
+                        </Card.Body>
+                      </Card.Root>
+                    );
+                  })}
+                  {upcoming.length > 0 && !showAllUnclaimed && (
+                    <Button size="xs" variant="ghost" colorPalette="orange" onClick={() => setShowAllUnclaimed(true)}>
+                      Show {upcoming.length} upcoming unclaimed
+                    </Button>
+                  )}
+                  {showAllUnclaimed && upcoming.length > 0 && (
+                    <Button size="xs" variant="ghost" onClick={() => setShowAllUnclaimed(false)}>
+                      Hide upcoming
+                    </Button>
+                  )}
+                </VStack>
+              </>
+            );
+          })()}
 
           {/* Financial */}
           <SectionHeader>Financial</SectionHeader>

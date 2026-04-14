@@ -560,7 +560,7 @@ function Section({
                                 }}
                                 title="Copy to clipboard"
                               >
-                                <Copy size={12} />
+                                <Copy size={12} style={{ display: "block" }} />
                               </Button>
                             </HStack>
                           );

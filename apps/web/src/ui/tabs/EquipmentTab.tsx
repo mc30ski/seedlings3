@@ -543,6 +543,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
         <SearchWithClear
           ref={inputRef}
           value={q}
@@ -623,16 +626,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           } : undefined}
         >
           {compact ? <Maximize2 size={14} /> : <List size={14} />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          onClick={() => void load()}
-          loading={loading}
-        >
-          <RefreshCw size={14} />
         </Button>
         {forAdmin && (
           <Button

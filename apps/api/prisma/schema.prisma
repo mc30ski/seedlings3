@@ -105,6 +105,7 @@ model User {
   photos                    JobOccurrencePhoto[]
   settingsUpdated           Setting[]
   pinnedOccurrences         PinnedOccurrence[]
+  likedOccurrences          LikedOccurrence[]
   reminders                 Reminder[]
 }
 
@@ -527,6 +528,7 @@ model JobOccurrence {
   expenses    Expense[]
   photos      JobOccurrencePhoto[]
   pins        PinnedOccurrence[]
+  likes       LikedOccurrence[]
   reminders   Reminder[]
 
   @@index([jobId, status])
@@ -684,6 +686,21 @@ model PinnedOccurrence {
   occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
 
   pinnedAt      DateTime      @default(now())
+
+  @@unique([userId, occurrenceId])
+  @@index([userId])
+}
+
+model LikedOccurrence {
+  id            String        @id @default(cuid())
+
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  occurrenceId  String
+  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+
+  likedAt       DateTime      @default(now())
 
   @@unique([userId, occurrenceId])
   @@index([userId])

@@ -763,7 +763,7 @@ export default function HomePage() {
     });
   }, [topTab, adminInnerTab]);
 
-  const BRAND_ICON_H = 26; // px
+  const BRAND_ICON_H = 34; // px
 
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);

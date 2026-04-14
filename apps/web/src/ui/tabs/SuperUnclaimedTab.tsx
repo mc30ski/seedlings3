@@ -130,6 +130,9 @@ export default function SuperUnclaimedTab() {
       </Box>
 
       <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
         <SearchWithClear
           value={q}
           onChange={setQ}
@@ -202,9 +205,6 @@ export default function SuperUnclaimedTab() {
           Clear
         </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void load()}>
-          <RefreshCw size={14} />
-        </Button>
       </HStack>
 
       {datePreset && (

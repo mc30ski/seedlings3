@@ -283,7 +283,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                           onProfileUpdated?.();
                           publishInlineMessage({ type: "SUCCESS", text: "Profile synced from Clerk." });
                         } catch (e) {
-                          publishInlineMessage({ type: "ERROR", text: getErrorMessage(e) });
+                          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Sync failed", e) });
                         }
                       }}
                     >
