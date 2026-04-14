@@ -55,6 +55,7 @@ async function clearDatabase() {
   console.log("  Clearing leaf tables...");
   await prisma.reminder.deleteMany();
   await prisma.pinnedOccurrence.deleteMany();
+  await prisma.likedOccurrence.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
@@ -1026,6 +1027,12 @@ async function seedDatabase() {
   await prisma.pinnedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayWillowbrook.id } });
   // Employee pins tomorrow's leaf cleanup
   await prisma.pinnedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: tomorrowChenLeaf.id } });
+
+  console.log("  Creating liked occurrences...");
+  await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: todayHarrington.id } });
+  await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: cThompson7.id } });
+  await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
+  await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
 
   console.log("  Seed complete!");
 }

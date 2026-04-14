@@ -493,16 +493,18 @@ export default function ServicesTab({
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
         <SearchWithClear
           ref={inputRef}
           value={q}
-          onChange={(v) => { setQ(v); setHighlightId(null); setHighlightOccId(null); setFlashOccId(null); }}
+          onChange={(v) => setQ(v)}
           inputId="services-search"
           placeholder="Search…"
-          showClear={!!highlightId || !!highlightOccId}
         />
       </HStack>
-      <HStack mb={3} gap={2} wrap="nowrap">
+      <HStack mb={3} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -632,15 +634,6 @@ export default function ServicesTab({
         </Button>
         )}
         <Box flex="1" />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => void load()}
-          loading={loading}
-          px="2"
-        >
-          <RefreshCw size={14} />
-        </Button>
         {forAdmin && (
           <Button
             size="sm"

@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, CalendarRange, Copy, Filter, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, Pin, PinOff, RefreshCw, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -91,6 +91,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [q, setQ] = useState("");
   const [compact, setCompact] = usePersistedState(`${pfx}_compact`, true);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const kindItems = useMemo(
@@ -151,25 +152,56 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [isWorkerView]);
 
   async function togglePin(occId: string) {
-    const isPinned = pinnedIds.has(occId);
-    // Optimistic update
+    let wasPinned = false;
     setPinnedIds((prev) => {
+      wasPinned = prev.has(occId);
       const next = new Set(prev);
-      if (isPinned) next.delete(occId);
+      if (wasPinned) next.delete(occId);
       else next.add(occId);
       return next;
     });
     try {
-      await apiPost(`/api/occurrences/${occId}/${isPinned ? "unpin" : "pin"}`);
+      await apiPost(`/api/occurrences/${occId}/${wasPinned ? "unpin" : "pin"}`);
     } catch (err) {
-      // Revert on error
       setPinnedIds((prev) => {
         const next = new Set(prev);
-        if (isPinned) next.add(occId);
+        if (wasPinned) next.add(occId);
         else next.delete(occId);
         return next;
       });
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Pin failed.", err) });
+    }
+  }
+
+  // Liked occurrences (worker only)
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isWorkerView) return;
+    apiGet<string[]>("/api/occurrences/liked")
+      .then((ids) => setLikedIds(new Set(Array.isArray(ids) ? ids : [])))
+      .catch(() => {});
+  }, [isWorkerView]);
+
+  async function toggleLike(occId: string) {
+    let wasLiked = false;
+    setLikedIds((prev) => {
+      wasLiked = prev.has(occId);
+      const next = new Set(prev);
+      if (wasLiked) next.delete(occId);
+      else next.add(occId);
+      return next;
+    });
+    try {
+      await apiPost(`/api/occurrences/${occId}/${wasLiked ? "unlike" : "like"}`);
+    } catch (err) {
+      setLikedIds((prev) => {
+        const next = new Set(prev);
+        if (wasLiked) next.add(occId);
+        else next.delete(occId);
+        return next;
+      });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Like failed.", err) });
     }
   }
 
@@ -287,6 +319,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
   const [vipOnly, setVipOnly] = useState(false);
+  const [likedOnly, setLikedOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
 
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
@@ -366,8 +399,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setLoading(displayLoading);
     try {
       const qs = new URLSearchParams();
-      const qFrom = overrideDates?.from ?? dateFrom;
-      const qTo = overrideDates?.to ?? dateTo;
+      let qFrom = overrideDates?.from ?? dateFrom;
+      let qTo = overrideDates?.to ?? dateTo;
+
+      // Workers limited to 2-month date range
+      let wasClamped = false;
+      if (!forAdmin && qFrom && qTo) {
+        const fromDate = new Date(qFrom + "T00:00:00");
+        const toDate = new Date(qTo + "T00:00:00");
+        const maxMs = 62 * 86400000; // ~2 months
+        if (toDate.getTime() - fromDate.getTime() > maxMs) {
+          const clampedFrom = new Date(toDate.getTime() - maxMs);
+          qFrom = bizDateKey(clampedFrom);
+          setDateFrom(qFrom);
+          wasClamped = true;
+        }
+      } else if (!forAdmin && !qFrom && qTo) {
+        // Open-ended "from" — clamp to 2 months before "to"
+        const toDate = new Date(qTo + "T00:00:00");
+        qFrom = bizDateKey(new Date(toDate.getTime() - 62 * 86400000));
+        setDateFrom(qFrom);
+        wasClamped = true;
+      } else if (!forAdmin && qFrom && !qTo) {
+        // Open-ended "to" — clamp to 2 months after "from"
+        const fromDate = new Date(qFrom + "T00:00:00");
+        qTo = bizDateKey(new Date(fromDate.getTime() + 62 * 86400000));
+        setDateTo(qTo);
+        wasClamped = true;
+      }
+
       if (qFrom) qs.set("from", qFrom);
       if (qTo) qs.set("to", qTo);
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
@@ -400,6 +460,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       }
       setItems(list);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
+      if (wasClamped) {
+        setTimeout(() => publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." }), 300);
+      }
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
@@ -622,6 +685,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (vipOnly) {
       rows = rows.filter((occ) => !!(occ.job?.property?.client as any)?.isVip);
     }
+    if (likedOnly) {
+      rows = rows.filter((occ) => likedIds.has(occ.id));
+    }
     // If navigated to a specific occurrence, show only that one (bypass all filters)
     if (highlightOccId) {
       // Search in items first, then in all loaded data (the highlight may have been filtered out by worker visibility)
@@ -665,7 +731,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -718,6 +784,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       groups.push({ key: "reminders-due", label: `Reminders Due (${reminderDueGroup.length})`, items: reminderDueGroup });
     }
 
+    // Sort rest by date to ensure day groups aren't duplicated
+    rest.sort((a, b) => {
+      const da = (a._isReminderGhost && a._ghostDate) ? a._ghostDate : (a.startAt ?? "");
+      const db = (b._isReminderGhost && b._ghostDate) ? b._ghostDate : (b.startAt ?? "");
+      return da < db ? -1 : da > db ? 1 : 0;
+    });
+
     let current: (typeof groups)[number] | null = null;
     for (const occ of rest) {
       // Ghost reminders use the reminder date, not the occurrence's startAt
@@ -743,21 +816,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     <Box w="full">
       {headerSlot}
       <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
         <SearchWithClear
           value={q}
-          onChange={(v) => {
-            setQ(v);
-            if (highlightOccId || filterJobId) {
-              setHighlightOccId(null);
-              setFilterJobId(null);
-              const d = computeDatesFromPreset("nextMonth");
-              setDatePreset("nextMonth");
-              setDateFrom(d.from);
-              setDateTo(d.to);
-              void load(true, { from: d.from, to: d.to });
-            }
-          }}
-          showClear={!!highlightOccId || !!filterJobId}
+          onChange={(v) => setQ(v)}
           inputId="jobs-search"
           placeholder="Search…"
         />
@@ -774,7 +838,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Button>
         )}
       </HStack>
-      <HStack mb={3} gap={2} wrap="nowrap">
+      <HStack mb={3} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -861,7 +925,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         >
           ⭐
         </Button>
-        {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !highlightOccId && !filterJobId && !q) && (
+        {isWorkerView && (
+          <Button
+            size="sm"
+            variant={likedOnly ? "solid" : "ghost"}
+            px="2"
+            onClick={() => setLikedOnly(!likedOnly)}
+            css={likedOnly ? {
+              background: "var(--chakra-colors-red-100)",
+              color: "var(--chakra-colors-red-600)",
+              border: "1px solid var(--chakra-colors-red-400)",
+              "&:hover": { background: "var(--chakra-colors-red-200)" },
+            } : undefined}
+            title="Show liked only"
+          >
+            <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
+          </Button>
+        )}
+        {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !highlightOccId && !filterJobId && !q) && (
         <Button
           size="xs"
           variant="outline"
@@ -872,6 +953,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             setTypeFilter(["ALL"]);
             setOverdueActive(false);
             setVipOnly(false);
+            setLikedOnly(false);
             setQ("");
             setHighlightOccId(null);
             setFilterJobId(null);
@@ -907,15 +989,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           title="How jobs work"
         >
           <Info size={14} />
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => void load()}
-          loading={loading}
-          px="2"
-        >
-          <RefreshCw size={14} />
         </Button>
       </HStack>
 
@@ -1028,7 +1101,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || datePreset) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || highlightOccId || filterJobId || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -1065,6 +1138,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               VIP
             </Badge>
           )}
+          {likedOnly && (
+            <Badge size="sm" colorPalette="red" variant="subtle">
+              Liked
+            </Badge>
+          )}
+          {highlightOccId && (
+            <Badge size="sm" colorPalette="teal" variant="subtle">
+              Filtered to 1 occurrence
+            </Badge>
+          )}
+          {!highlightOccId && filterJobId && (
+            <Badge size="sm" colorPalette="teal" variant="subtle">
+              Filtered to job
+            </Badge>
+          )}
         </HStack>
       )}
 
@@ -1084,14 +1172,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
           {dayGroups.map((group) => (
             <Box key={group.key} data-group={group.key}>
-              <HStack gap={3} align="center" my={2}>
+              <HStack
+                gap={3}
+                align="center"
+                my={2}
+                cursor="pointer"
+                onClick={() => setCollapsedGroups((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group.key)) next.delete(group.key);
+                  else next.add(group.key);
+                  return next;
+                })}
+                _hover={{ opacity: 0.7 }}
+              >
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
                 <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
-                  {group.label}
+                  {group.label} {collapsedGroups.has(group.key) ? "▶" : "▼"}
                 </Text>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
-              <VStack align="stretch" gap={3}>
+              {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {group.items.map((occ) => {
             const assignees = occ.assignees ?? [];
             const myAssignee = assignees.find((a) => a.userId === myId);
@@ -1296,14 +1396,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Card.Header py="3" px="4" pb="0">
                   {isCardCompact ? (
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
-                    <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
-                      <HStack gap={1} minW={0} flex="1">
-                        {isWorkerView && (
-                          <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                            {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-                          </Button>
-                        )}
-                        <Text fontSize="sm" fontWeight="semibold">
+                    <Box display="flex" flexDirection="column" gap={1}>
+                      <HStack gap={1} justifyContent="space-between" alignItems="center">
+                        <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isTask ? (
                             <>{occ.title || "Task"}</>
                           ) : (
@@ -1316,66 +1411,82 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </>
                           )}
                         </Text>
-                      </HStack>
-                      <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
-                        {isTentative ? (
-                          <StatusBadge status="Tentative" palette="orange" variant="solid" />
-                        ) : occ.status !== "SCHEDULED" ? (
-                          <StatusBadge
-                            status={occ.status}
-                            palette={occurrenceStatusColor(occ.status)}
-                            variant="solid"
-                          />
-                        ) : null}
-                        {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
-                        {!isTask && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
-                        {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
-                        {!isTask && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
-                        {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
-                        {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
-                        {isWorkerView && occ.reminder && (
-                          <Badge
-                            colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
-                            variant="subtle" fontSize="xs" borderRadius="full" px="2"
-                            cursor={occ.reminder.note ? "pointer" : undefined}
-                            onClick={occ.reminder.note ? (e: any) => {
-                              e.stopPropagation();
-                              navigator.clipboard.writeText(occ.reminder!.note!);
-                              publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
-                            } : undefined}
-                            title={occ.reminder.note ? `${occ.reminder.note} (click to copy)` : undefined}
-                          >
-                            <Bell size={10} style={{ marginRight: 3 }} />
-                            {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
-                          </Badge>
+                        {isWorkerView && (
+                          <HStack gap={1} flexShrink={0}>
+                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                              <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                            </Button>
+                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                              {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                            </Button>
+                          </HStack>
                         )}
-                      </Box>
+                      </HStack>
+                      <HStack gap={1} flexShrink={0} alignItems="center" wrap="wrap">
+                        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
+                          {isTentative ? (
+                            <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                          ) : occ.status !== "SCHEDULED" ? (
+                            <StatusBadge
+                              status={occ.status}
+                              palette={occurrenceStatusColor(occ.status)}
+                              variant="solid"
+                            />
+                          ) : null}
+                          {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
+                          {!isTask && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
+                          {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
+                          {!isTask && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
+                          {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                          {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
+                          {isWorkerView && occ.reminder && (
+                            <Badge
+                              colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
+                              variant="subtle" fontSize="xs" borderRadius="full" px="2"
+                              cursor={occ.reminder.note ? "pointer" : undefined}
+                              onClick={occ.reminder.note ? (e: any) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(occ.reminder!.note!);
+                                publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
+                              } : undefined}
+                              title={occ.reminder.note ? `${occ.reminder.note} (click to copy)` : undefined}
+                            >
+                              <Bell size={10} style={{ marginRight: 3 }} />
+                              {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
+                            </Badge>
+                          )}
+                        </Box>
+                      </HStack>
                     </Box>
                     ) : (
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                       <VStack align="stretch" gap={1}>
-                        <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "flex-start" }}>
-                          <VStack align="start" gap={0} flex="1" minW={0}>
-                            <HStack gap={1}>
-                              {isWorkerView && (
-                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={() => void togglePin(occ.id)} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                                  {pinnedIds.has(occ.id) ? <Pin size={16} fill="currentColor" /> : <Pin size={16} />}
-                                </Button>
-                              )}
-                              <Text fontSize="md" fontWeight="semibold">
-                                {isTask ? (
-                                  <>{occ.title || "Task"}</>
-                                ) : (
-                                  <>
-                                    {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                                    {occ.job?.property?.displayName}
-                                    {occ.job?.property?.client?.displayName && (
-                                      <> — {clientLabel(occ.job.property.client.displayName)}</>
-                                    )}
-                                  </>
+                        <HStack justifyContent="space-between" alignItems="center">
+                          <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">
+                            {isTask ? (
+                              <>{occ.title || "Task"}</>
+                            ) : (
+                              <>
+                                {isVipClient && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
+                                {occ.job?.property?.displayName}
+                                {occ.job?.property?.client?.displayName && (
+                                  <> — {clientLabel(occ.job.property.client.displayName)}</>
                                 )}
-                              </Text>
+                              </>
+                            )}
+                          </Text>
+                          {isWorkerView && (
+                            <HStack gap={1} flexShrink={0}>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                                <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                              </Button>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                                {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                              </Button>
                             </HStack>
+                          )}
+                        </HStack>
+                        <VStack align="start" gap={0} flex="1" minW={0}>
                             {isTask && occ.linkedOccurrence && (
                               <Box fontSize="xs">
                                 <Text color="fg.muted" mb={0.5}>Linked occurrence:</Text>
@@ -1499,13 +1610,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   }}
                                   title="Copy reminder note"
                                 >
-                                  <Copy size={12} />
+                                  <Copy size={12} style={{ display: "block" }} />
                                 </Button>
                               )}
                             </HStack>
                           )}
                           </Box>
-                        </Box>
                       </VStack>
                     )}
                 </Card.Header>
@@ -1693,7 +1803,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   }}
                                   title="Copy notes"
                                 >
-                                  <Copy size={12} />
+                                  <Copy size={12} style={{ display: "block" }} />
                                 </Button>
                               )}
                             </HStack>
@@ -2314,7 +2424,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </Card.Root>
             );
           })}
-              </VStack>
+              </VStack>}
             </Box>
           ))}
         </VStack>

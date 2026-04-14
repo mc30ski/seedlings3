@@ -186,17 +186,19 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
     const uid = await currentUserId(req);
-    const [pins, reminders, observedAssignments] = await Promise.all([
+    const [pins, likes, reminders, observedAssignments] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
+      prisma.likedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
       prisma.reminder.findMany({ where: { userId: uid, dismissedAt: null }, select: { occurrenceId: true, remindAt: true, note: true } }),
       prisma.jobOccurrenceAssignee.findMany({ where: { userId: uid, role: "observer" }, select: { occurrenceId: true } }),
     ]);
 
     const loadedIds = new Set(occs.map((o: any) => o.id));
 
-    // Merge pinned + observed occurrences that fall outside the date range
+    // Merge pinned + liked + observed occurrences that fall outside the date range
     const extraIds = new Set<string>();
     for (const p of pins) if (!loadedIds.has(p.occurrenceId)) extraIds.add(p.occurrenceId);
+    for (const l of likes) if (!loadedIds.has(l.occurrenceId)) extraIds.add(l.occurrenceId);
     for (const o of observedAssignments) if (!loadedIds.has(o.occurrenceId)) extraIds.add(o.occurrenceId);
 
     if (extraIds.size > 0) {
@@ -503,6 +505,37 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
     await prisma.pinnedOccurrence.deleteMany({
+      where: { userId: uid, occurrenceId },
+    });
+    return { ok: true };
+  });
+
+  // ── Likes ──
+
+  app.get("/occurrences/liked", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const likes = await prisma.likedOccurrence.findMany({
+      where: { userId: uid },
+      select: { occurrenceId: true },
+    });
+    return likes.map((l: any) => l.occurrenceId);
+  });
+
+  app.post("/occurrences/:id/like", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    await prisma.likedOccurrence.upsert({
+      where: { userId_occurrenceId: { userId: uid, occurrenceId } },
+      create: { userId: uid, occurrenceId },
+      update: {},
+    });
+    return { ok: true };
+  });
+
+  app.post("/occurrences/:id/unlike", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    await prisma.likedOccurrence.deleteMany({
       where: { userId: uid, occurrenceId },
     });
     return { ok: true };

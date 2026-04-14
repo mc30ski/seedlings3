@@ -388,6 +388,9 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     <Box w="full">
       {/* Filters */}
       <HStack mb={2} gap={2}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+          <RefreshCw size={14} />
+        </Button>
         <SearchWithClear
           value={q}
           onChange={setQ}
@@ -485,16 +488,6 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           title="Role & type information"
         >
           <Info size={14} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          onClick={() => void load()}
-          loading={loading}
-        >
-          <RefreshCw size={14} />
         </Button>
       </HStack>
       {(status !== "all" || accessRole !== "all" || workerTypeFilter !== "all") && (

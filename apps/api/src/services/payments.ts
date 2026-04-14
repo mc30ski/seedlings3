@@ -197,6 +197,20 @@ export const payments: ServicesPayments = {
         }
       }
 
+      // Carry over likes to the new occurrence
+      if (nextOccurrence) {
+        const existingLikes = await tx.likedOccurrence.findMany({
+          where: { occurrenceId },
+          select: { userId: true },
+        });
+        if (existingLikes.length > 0) {
+          await tx.likedOccurrence.createMany({
+            data: existingLikes.map((l) => ({ userId: l.userId, occurrenceId: nextOccurrence.id })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
       return { ...payment, nextOccurrence };
     });
   },
