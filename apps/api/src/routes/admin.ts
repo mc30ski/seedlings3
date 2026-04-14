@@ -698,6 +698,26 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  app.post("/admin/occurrences/:id/reassign-claimer", adminGuard, async (req: any) => {
+    const userId = (req.body?.userId ?? "").trim();
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+    return services.jobs.reassignClaimer(
+      await currentUserId(req),
+      String(req.params.id),
+      userId
+    );
+  });
+
+  app.patch("/admin/occurrences/:id/assignees/:userId/role", adminGuard, async (req: any) => {
+    const newRole = req.body?.role === "observer" ? "observer" : null;
+    return services.jobs.changeAssigneeRole(
+      await currentUserId(req),
+      String(req.params.id),
+      String(req.params.userId),
+      newRole
+    );
+  });
+
   // Patch an occurrence (optional but very useful for admin UI)
   app.patch(
     "/admin/occurrences/:occurrenceId",
@@ -1690,6 +1710,127 @@ Respond ONLY with valid JSON in this exact format:
       notes: body.notes ? String(body.notes) : undefined,
       startAt: String(body.startAt),
       linkedOccurrenceId: body.linkedOccurrenceId ? String(body.linkedOccurrenceId) : undefined,
+    });
+  });
+
+  // ── Light Estimates ──
+
+  app.post("/admin/light-estimates", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createLightEstimate(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      contactName: body.contactName ? String(body.contactName).trim() : undefined,
+      contactPhone: body.contactPhone ? String(body.contactPhone).trim() : undefined,
+      contactEmail: body.contactEmail ? String(body.contactEmail).trim() : undefined,
+      estimateAddress: body.estimateAddress ? String(body.estimateAddress).trim() : undefined,
+      proposalAmount: body.proposalAmount != null ? Number(body.proposalAmount) : undefined,
+      proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
+      assigneeUserIds: Array.isArray(body.assigneeUserIds) ? body.assigneeUserIds.map(String) : undefined,
+    });
+  });
+
+  app.post("/admin/convert-light-estimate", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const occurrenceId = String(body.occurrenceId ?? "");
+    if (!occurrenceId) throw app.httpErrors.badRequest("occurrenceId is required");
+
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.jobId) throw app.httpErrors.badRequest("This estimate is already linked to a job");
+
+    return prisma.$transaction(async (tx) => {
+      // Create client
+      const client = await tx.client.create({
+        data: {
+          type: body.clientType ?? "PERSON",
+          displayName: String(body.clientName ?? occ.contactName ?? "New Client").trim(),
+          notesInternal: body.clientNotes ? String(body.clientNotes) : null,
+        },
+      });
+
+      // Create primary contact
+      const nameParts = (occ.contactName ?? "").trim().split(/\s+/);
+      const firstName = body.contactFirstName ?? nameParts[0] ?? "";
+      const lastName = body.contactLastName ?? nameParts.slice(1).join(" ") ?? "";
+      const contact = await tx.clientContact.create({
+        data: {
+          clientId: client.id,
+          firstName: String(firstName).trim(),
+          lastName: String(lastName).trim(),
+          email: body.contactEmail ?? occ.contactEmail ?? null,
+          phone: body.contactPhone ?? occ.contactPhone ?? null,
+          role: "OWNER",
+          isPrimary: true,
+        },
+      });
+
+      // Create property
+      const property = await tx.property.create({
+        data: {
+          clientId: client.id,
+          displayName: body.propertyName ?? "Property",
+          street1: body.street1 ?? null,
+          city: body.city ?? null,
+          state: body.state ?? null,
+          postalCode: body.postalCode ?? null,
+          country: body.country ?? "US",
+          kind: body.propertyKind ?? "SINGLE",
+          pointOfContactId: contact.id,
+        },
+      });
+
+      // Create job
+      const job = await tx.job.create({
+        data: {
+          propertyId: property.id,
+          kind: body.jobKind ?? "SINGLE_ADDRESS",
+          status: "ACCEPTED",
+          defaultPrice: occ.proposalAmount ?? body.defaultPrice ?? null,
+          estimatedMinutes: occ.estimatedMinutes ?? body.estimatedMinutes ?? null,
+          notes: occ.proposalNotes ?? body.jobNotes ?? null,
+          frequencyDays: body.frequencyDays ?? null,
+        },
+      });
+
+      // Link the job to client
+      await tx.jobClient.create({ data: { jobId: job.id, clientId: client.id, role: "owner" } });
+      await tx.jobContact.create({ data: { jobId: job.id, clientContactId: contact.id, role: "decision_maker" } });
+
+      // Link the occurrence to the new job
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { jobId: job.id, kind: body.jobKind ?? "SINGLE_ADDRESS" },
+      });
+
+      // Audit
+      await tx.auditEvent.create({
+        data: {
+          scope: "JOB",
+          verb: "CREATED",
+          actorUserId: uid,
+          metadata: {
+            jobId: job.id,
+            clientId: client.id,
+            propertyId: property.id,
+            convertedFrom: occurrenceId,
+            note: "Converted from light estimate",
+          },
+        },
+      });
+
+      return {
+        ok: true,
+        clientId: client.id,
+        propertyId: property.id,
+        jobId: job.id,
+        contactId: contact.id,
+      };
     });
   });
 

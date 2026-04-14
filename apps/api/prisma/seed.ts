@@ -1035,6 +1035,81 @@ async function seedDatabase() {
   await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
   await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
 
+  console.log("  Creating standalone reminders...");
+  const reminder1 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Renew business insurance policy",
+      startAt: daysFromNow(5, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "REMINDER",
+      notes: "Policy expires end of month. Call State Farm agent at (512) 555-0199.",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder1.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+
+  const reminder2 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Order new trimmer line bulk pack",
+      startAt: daysFromNow(1, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "REMINDER",
+      notes: "Running low. Stihl .095 round — check Amazon for bulk pricing.",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder2.id, userId: EMPLOYEE_ID, assignedById: EMPLOYEE_ID } });
+
+  const reminder3 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Schedule truck oil change",
+      startAt: daysAgo(2, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "REMINDER",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: reminder3.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+
+  console.log("  Creating light estimates...");
+  const lightEst1 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Johnson backyard cleanup & mulch",
+      startAt: daysFromNow(3, 10),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ESTIMATE",
+      isEstimate: true,
+      isAdminOnly: true,
+      contactName: "Mark Johnson",
+      contactPhone: "(555) 888-1234",
+      contactEmail: "mark.johnson@example.com",
+      estimateAddress: "4521 Ridgewood Dr, Austin, TX 78731",
+      notes: "Neighbor referral from Thompson. Large backyard, needs full cleanup and mulch install. Has 3 flower beds and a hedge row.",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst1.id, userId: CONTRACTOR_ID, assignedById: ADMIN_WORKER_ID } });
+
+  const lightEst2 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Nguyen front yard renovation estimate",
+      startAt: daysFromNow(5, 14),
+      status: "PROPOSAL_SUBMITTED",
+      source: "MANUAL",
+      workflow: "ESTIMATE",
+      isEstimate: true,
+      isAdminOnly: true,
+      contactName: "Tina Nguyen",
+      contactPhone: "(555) 777-5678",
+      estimateAddress: "892 Barton Springs Rd, Austin, TX 78704",
+      proposalAmount: 1200,
+      proposalNotes: "Front yard renovation: remove existing sod, install new St. Augustine, edge all beds, add 15 bags of mulch. Includes labor and materials. Two-day job — day 1 demo, day 2 install.",
+      notes: "Called in from website. Wants to improve curb appeal before listing house.",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: lightEst2.id, userId: ADMIN_WORKER_ID, assignedById: ADMIN_WORKER_ID } });
+
   console.log("  Creating comments...");
   await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: ADMIN_WORKER_ID, body: "Gate code changed to 5912 — confirmed with James this morning." } });
   await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: EMPLOYEE_ID, body: "Got it, thanks. Also the sprinkler heads near the driveway are sticking up — watch the mower." } });

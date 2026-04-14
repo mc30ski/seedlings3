@@ -54,9 +54,10 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
   editTask?: EditTask | null;
+  mode?: "task" | "reminder";
 };
 
-export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: Props) {
+export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mode = "task" }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => bizDateKey(new Date()));
@@ -75,7 +76,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
     apiGet<WorkerOccurrence[]>(`/api/occurrences?from=${bizDateKey(new Date())}`)
       .then((list) => {
         const items: OccItem[] = (Array.isArray(list) ? list : [])
-          .filter((o) => o.workflow !== "TASK" && o.job)
+          .filter((o) => o.workflow !== "TASK" && o.workflow !== "REMINDER" && o.job)
           .map((o) => ({
             id: o.id,
             propertyName: o.job?.property?.displayName ?? "",
@@ -145,32 +146,36 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
     return "Repeating";
   }
 
+  const isReminder = mode === "reminder";
+  const entityLabel = isReminder ? "Reminder" : "Task";
+  const apiBase = isReminder ? "/api/standalone-reminders" : "/api/tasks";
+
   async function handleSave() {
     if (!title.trim() || !date) return;
     setSaving(true);
     try {
       if (isEdit) {
-        await apiPatch(`/api/tasks/${editTask!.id}`, {
+        await apiPatch(`${apiBase}/${editTask!.id}`, {
           title: title.trim(),
           startAt: date + "T09:00:00",
           notes: notes.trim() || null,
           linkedOccurrenceId: selectedOcc?.id || null,
         });
-        publishInlineMessage({ type: "SUCCESS", text: "Task updated." });
+        publishInlineMessage({ type: "SUCCESS", text: `${entityLabel} updated.` });
       } else {
-        await apiPost("/api/tasks", {
+        await apiPost(apiBase, {
           title: title.trim(),
           startAt: date + "T09:00:00",
           notes: notes.trim() || undefined,
           linkedOccurrenceId: selectedOcc?.id || undefined,
         });
-        publishInlineMessage({ type: "SUCCESS", text: "Task created." });
+        publishInlineMessage({ type: "SUCCESS", text: `${entityLabel} created.` });
       }
       reset();
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage(isEdit ? "Failed to update task." : "Failed to create task.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage(isEdit ? `Failed to update ${entityLabel.toLowerCase()}.` : `Failed to create ${entityLabel.toLowerCase()}.`, err) });
     }
     setSaving(false);
   }
@@ -187,9 +192,9 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content maxW="sm">
+          <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>{isEdit ? "Edit Task" : "New Task"}</Dialog.Title>
+              <Dialog.Title>{isEdit ? `Edit ${entityLabel}` : `New ${entityLabel}`}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
@@ -219,7 +224,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                   />
                 </Box>
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Link to Job Occurrence</Text>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Link to Job Occurrence <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional)</Text></Text>
                   {selectedOcc ? (
                     <HStack gap={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
                       <VStack align="start" gap={0.5} flex="1" minW={0}>
@@ -301,7 +306,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
                       )}
                     </Box>
                   )}
-                  <Text fontSize="xs" color="fg.muted" mt={1}>Optional — link this task to a specific job occurrence</Text>
+                  <Text fontSize="xs" color="fg.muted" mt={1}>Optional — link this {entityLabel.toLowerCase()} to a specific job occurrence</Text>
                 </Box>
               </VStack>
             </Dialog.Body>
@@ -309,11 +314,11 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask }: 
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button
-                  colorPalette="blue"
+                  colorPalette={isReminder ? "pink" : "blue"}
                   disabled={!title.trim() || !date || saving}
                   onClick={() => void handleSave()}
                 >
-                  {saving ? <Spinner size="sm" /> : isEdit ? "Save Changes" : "Create Task"}
+                  {saving ? <Spinner size="sm" /> : isEdit ? `Save ${entityLabel}` : `Create ${entityLabel}`}
                 </Button>
               </HStack>
             </Dialog.Footer>
