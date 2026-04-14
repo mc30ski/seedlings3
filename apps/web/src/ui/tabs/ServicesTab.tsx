@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -1394,6 +1394,12 @@ export default function ServicesTab({
                                 isAdmin={forAdmin}
                                 photoCount={(occ as any)._count?.photos ?? 0}
                               />
+                            )}
+                            {(occ as any)._count?.comments > 0 && (
+                              <HStack gap={1} fontSize="xs" color="fg.muted">
+                                <MessageCircle size={12} />
+                                <Text>{(occ as any)._count.comments} comment{(occ as any)._count.comments !== 1 ? "s" : ""}</Text>
+                              </HStack>
                             )}
                           </VStack>
                           <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems={{ base: "flex-end", md: "flex-start" }} flexWrap="wrap">

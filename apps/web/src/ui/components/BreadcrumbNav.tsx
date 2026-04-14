@@ -54,6 +54,8 @@ export default function BreadcrumbNav({
   const outerRef = useRef<HTMLDivElement>(null);
   const catRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
+  // Track last selected tab per category so switching back restores it
+  const lastTabPerCategory = useRef<Record<string, string>>({});
 
   function closeAll() { setOuterOpen(false); setCatOpen(false); setInnerOpen(false); }
 
@@ -93,6 +95,11 @@ export default function BreadcrumbNav({
   const activeCat = hasCategories
     ? (activeInner?.category ?? categoryValue ?? categories[0]?.value)
     : undefined;
+
+  // Track last selected tab per category
+  if (activeInner?.category && innerValue) {
+    lastTabPerCategory.current[activeInner.category] = innerValue;
+  }
 
   // Tabs in active category
   const categoryTabs = hasCategories
@@ -238,8 +245,13 @@ export default function BreadcrumbNav({
                 (v) => {
                   onCategoryChange?.(v);
                   setCatOpen(false);
-                  const firstInCat = visibleInner.filter((t) => t.category === v)[0];
-                  if (firstInCat) onInnerChange(firstInCat.value);
+                  const tabsInCat = visibleInner.filter((t) => t.category === v);
+                  // Restore last selected tab in this category if available
+                  const lastTab = lastTabPerCategory.current[v];
+                  const remembered = lastTab ? tabsInCat.find((t) => t.value === lastTab) : null;
+                  if (remembered) { onInnerChange(remembered.value); return; }
+                  // Otherwise select the first tab in the category
+                  if (tabsInCat[0]) onInnerChange(tabsInCat[0].value);
                 },
               )}
             </Box>

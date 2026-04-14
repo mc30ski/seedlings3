@@ -201,7 +201,7 @@ export const jobs: ServicesJobs = {
               include: { createdBy: { select: { id: true, displayName: true } } },
               orderBy: { createdAt: "asc" as const },
             },
-            _count: { select: { photos: true } },
+            _count: { select: { photos: true, comments: true } },
           },
         },
         clients: { include: { client: true } },
@@ -572,7 +572,7 @@ export const jobs: ServicesJobs = {
             job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
           },
         },
-        _count: { select: { photos: true } },
+        _count: { select: { photos: true, comments: true } },
         photos: {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
           orderBy: { createdAt: "desc" as const },
@@ -618,7 +618,7 @@ export const jobs: ServicesJobs = {
             job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
           },
         },
-        _count: { select: { photos: true } },
+        _count: { select: { photos: true, comments: true } },
         photos: {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
           orderBy: { createdAt: "desc" as const },
@@ -659,7 +659,7 @@ export const jobs: ServicesJobs = {
           include: { createdBy: { select: { id: true, displayName: true } } },
           orderBy: { createdAt: "asc" as const },
         },
-        _count: { select: { photos: true } },
+        _count: { select: { photos: true, comments: true } },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });

@@ -957,6 +957,74 @@ export default async function workerRoutes(app: FastifyInstance) {
     return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, workerType: u.workerType }));
   });
 
+  // ── Occurrence Comments ──
+
+  app.get("/occurrences/:id/comments", workerGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const comments = await prisma.occurrenceComment.findMany({
+      where: { occurrenceId },
+      include: { author: { select: { id: true, displayName: true, email: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    return comments;
+  });
+
+  app.post("/occurrences/:id/comments", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = (req.body?.body ?? "").trim();
+    if (!body) throw app.httpErrors.badRequest("Comment body is required");
+
+    const comment = await prisma.occurrenceComment.create({
+      data: { occurrenceId, authorId: uid, body },
+      include: { author: { select: { id: true, displayName: true, email: true } } },
+    });
+    return comment;
+  });
+
+  app.patch("/occurrences/comments/:commentId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const commentId = String(req.params.commentId);
+    const body = (req.body?.body ?? "").trim();
+    if (!body) throw app.httpErrors.badRequest("Comment body is required");
+
+    const comment = await prisma.occurrenceComment.findUnique({ where: { id: commentId } });
+    if (!comment) throw app.httpErrors.notFound("Comment not found");
+    if (comment.authorId !== uid) throw app.httpErrors.forbidden("Only the author can edit a comment");
+
+    const updated = await prisma.occurrenceComment.update({
+      where: { id: commentId },
+      data: { body },
+      include: { author: { select: { id: true, displayName: true, email: true } } },
+    });
+    return updated;
+  });
+
+  app.delete("/occurrences/comments/:commentId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const commentId = String(req.params.commentId);
+
+    const comment = await prisma.occurrenceComment.findUnique({
+      where: { id: commentId },
+      include: { occurrence: { include: { assignees: { select: { userId: true, role: true, assignedById: true } } } } },
+    });
+    if (!comment) throw app.httpErrors.notFound("Comment not found");
+
+    // Can delete if: author, claimer of the job, or admin
+    const isAuthor = comment.authorId === uid;
+    const assignees = comment.occurrence.assignees ?? [];
+    const isClaimer = assignees.some((a) => a.userId === uid && a.role !== "observer" && a.assignedById === uid);
+    const userRoles = await prisma.userRole.findMany({ where: { userId: uid }, select: { role: true } });
+    const isAdmin = userRoles.some((r) => r.role === "ADMIN");
+
+    if (!isAuthor && !isClaimer && !isAdmin) {
+      throw app.httpErrors.forbidden("You cannot delete this comment");
+    }
+
+    await prisma.occurrenceComment.delete({ where: { id: commentId } });
+    return { ok: true };
+  });
+
   // ── Calendar Feed Tokens ──
 
   const MAX_FEED_TOKENS = 5;

@@ -218,6 +218,7 @@ export default async function publicRoutes(app: FastifyInstance) {
 
     const filters = (feedToken.filters ?? {}) as Record<string, any>;
     const uid = feedToken.userId;
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.seedlings.team";
 
     // Rolling window: 2 weeks back, 2 months forward
     const now = new Date();
@@ -226,10 +227,9 @@ export default async function publicRoutes(app: FastifyInstance) {
     const to = new Date(now);
     to.setMonth(to.getMonth() + 2);
 
-    // Fetch occurrences in range
+    // Fetch occurrences in range (include tasks)
     const where: any = {
       startAt: { gte: from, lte: to },
-      workflow: { not: "TASK" },
     };
 
     // Apply status filter
@@ -254,6 +254,7 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (tf === "ONE_OFF") where.workflow = "ONE_OFF";
     else if (tf === "ESTIMATE") where.workflow = "ESTIMATE";
     else if (tf === "TENTATIVE") where.isTentative = true;
+    else if (tf === "TASK") where.workflow = "TASK";
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where,
@@ -265,10 +266,22 @@ export default async function publicRoutes(app: FastifyInstance) {
             },
           },
         },
-        assignees: { select: { userId: true, role: true } },
+        assignees: {
+          select: { userId: true, role: true, user: { select: { displayName: true } } },
+        },
+        linkedOccurrence: {
+          select: { id: true, job: { select: { property: { select: { displayName: true } } } } },
+        },
       },
       orderBy: { startAt: "asc" },
     });
+
+    // Also fetch reminders for this user (for ghost cards)
+    const reminders = await prisma.reminder.findMany({
+      where: { userId: uid, dismissedAt: null },
+      select: { occurrenceId: true, remindAt: true, note: true },
+    });
+    const reminderMap = new Map(reminders.map((r) => [r.occurrenceId, r]));
 
     // Filter to only this worker's jobs + unassigned (same logic as worker view)
     let filtered = occurrences.filter((occ) => {
@@ -283,41 +296,125 @@ export default async function publicRoutes(app: FastifyInstance) {
       filtered = filtered.filter((o) => !!(o.job?.property?.client as any)?.isVip);
     }
 
-    // Build iCalendar
+    // Helper functions
     const esc = (s: string) => s.replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, "\\n");
+    const fmtDateOnly = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}${m}${day}`;
+    };
     const fmtDt = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const prettyEnum = (s: string) => s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
+    const prettyStatus = (s: string) => s === "CLOSED" ? "Completed" : prettyEnum(s);
 
-    const events = filtered.map((occ) => {
+    // Determine workflow type label
+    const workflowLabel = (occ: any) => {
+      if (occ.workflow === "TASK") return "Task";
+      if (occ.workflow === "ESTIMATE" || occ.isEstimate) return "Estimate";
+      if (occ.workflow === "ONE_OFF" || occ.isOneOff) return "One-Off";
+      if (occ.workflow === "STANDARD") return "Repeating";
+      return "Job";
+    };
+
+    // Build events
+    const events: string[] = [];
+
+    for (const occ of filtered) {
       const prop = occ.job?.property;
       const client = prop?.client?.displayName ?? "";
       const propName = prop?.displayName ?? "";
       const address = [prop?.street1, prop?.city, prop?.state, prop?.postalCode].filter(Boolean).join(", ");
-      const jobType = occ.jobType ? occ.jobType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()) : "";
-      const summary = [propName, client ? `(${client})` : "", jobType].filter(Boolean).join(" ");
+      const jobType = occ.jobType ? prettyEnum(occ.jobType) : "";
+      const isTask = occ.workflow === "TASK";
+      const type = workflowLabel(occ);
+
+      // Summary: [Type] Property (Client) — Job Type
+      const summaryParts = [`[${type}]`];
+      if (isTask) {
+        summaryParts.push(occ.title || "Task");
+      } else {
+        summaryParts.push(propName);
+        if (client) summaryParts.push(`(${client})`);
+      }
+      if (jobType && !isTask) summaryParts.push(`— ${jobType}`);
+      const summary = summaryParts.join(" ");
 
       const start = occ.startAt ?? new Date();
-      const end = occ.endAt ?? new Date(start.getTime() + (occ.estimatedMinutes ?? 60) * 60000);
 
-      const descParts = [];
-      if (jobType) descParts.push(`Type: ${jobType}`);
-      if (client) descParts.push(`Client: ${client}`);
-      if (occ.price != null) descParts.push(`Price: $${occ.price.toFixed(2)}`);
-      if (occ.notes) descParts.push(`Notes: ${occ.notes}`);
-      const status = occ.status.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
-      descParts.push(`Status: ${status}`);
+      // Description with full details
+      const desc: string[] = [];
+      desc.push(`Type: ${type}`);
+      desc.push(`Status: ${prettyStatus(occ.status)}`);
+      if (!isTask && client) desc.push(`Client: ${client}`);
+      if (!isTask && propName) desc.push(`Property: ${propName}`);
+      if (jobType && !isTask) desc.push(`Job Type: ${jobType}`);
+      if (occ.price != null) desc.push(`Price: $${occ.price.toFixed(2)}`);
+      if (occ.estimatedMinutes) desc.push(`Estimated Duration: ${occ.estimatedMinutes} min`);
+      if (address && !isTask) desc.push(`Address: ${address}`);
 
-      return [
+      // Assignees
+      const activeAssignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
+      if (activeAssignees.length > 0) {
+        desc.push(`Team: ${activeAssignees.map((a: any) => a.user?.displayName ?? "Unknown").join(", ")}`);
+      }
+      const observers = (occ.assignees ?? []).filter((a: any) => a.role === "observer");
+      if (observers.length > 0) {
+        desc.push(`Observers: ${observers.map((a: any) => a.user?.displayName ?? "Unknown").join(", ")}`);
+      }
+
+      if (occ.notes) desc.push(`Notes: ${occ.notes}`);
+      if (occ.proposalAmount != null) desc.push(`Proposal: $${occ.proposalAmount.toFixed(2)}`);
+      if (occ.proposalNotes) desc.push(`Proposal Notes: ${occ.proposalNotes}`);
+      if (occ.isTentative) desc.push("⚠ Tentative — awaiting confirmation");
+      if (occ.isAdminOnly) desc.push("⚠ Administered — assigned by admin");
+
+      // Linked occurrence (for tasks)
+      if (isTask && occ.linkedOccurrence) {
+        const lp = (occ.linkedOccurrence as any).job?.property?.displayName;
+        if (lp) desc.push(`Linked to: ${lp}`);
+      }
+
+      // Reminder
+      const reminder = reminderMap.get(occ.id);
+      if (reminder) {
+        desc.push(`Reminder: ${reminder.note || "Set"} (${reminder.remindAt.toISOString().slice(0, 10)})`);
+      }
+
+      // All-day event using VALUE=DATE format
+      events.push([
         "BEGIN:VEVENT",
         `UID:${occ.id}@seedlings`,
-        `DTSTART:${fmtDt(start)}`,
-        `DTEND:${fmtDt(end)}`,
+        `DTSTART;VALUE=DATE:${fmtDateOnly(start)}`,
+        `DTEND;VALUE=DATE:${fmtDateOnly(new Date(start.getTime() + 86400000))}`,
         `SUMMARY:${esc(summary)}`,
-        address ? `LOCATION:${esc(address)}` : null,
-        `DESCRIPTION:${esc(descParts.join("\\n"))}`,
+        address && !isTask ? `LOCATION:${esc(address)}` : null,
+        `DESCRIPTION:${esc(desc.join("\\n"))}`,
+        `URL:${appUrl}?occ=${occ.id}`,
         `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
         "END:VEVENT",
-      ].filter(Boolean).join("\r\n");
-    });
+      ].filter(Boolean).join("\r\n"));
+
+      // Ghost reminder event (if reminder date differs from occurrence date)
+      if (reminder) {
+        const remDateStr = fmtDateOnly(reminder.remindAt);
+        const occDateStr = fmtDateOnly(start);
+        if (remDateStr !== occDateStr) {
+          const ghostSummary = `[Reminder] ${isTask ? (occ.title || "Task") : propName}${reminder.note ? ` — ${reminder.note}` : ""}`;
+          events.push([
+            "BEGIN:VEVENT",
+            `UID:reminder-${occ.id}@seedlings`,
+            `DTSTART;VALUE=DATE:${remDateStr}`,
+            `DTEND;VALUE=DATE:${fmtDateOnly(new Date(reminder.remindAt.getTime() + 86400000))}`,
+            `SUMMARY:${esc(ghostSummary)}`,
+            `DESCRIPTION:${esc(`Reminder for: ${summary}\\nScheduled: ${start.toISOString().slice(0, 10)}\\n${reminder.note ? `Note: ${reminder.note}` : ""}`)}`,
+            `URL:${appUrl}?occ=${occ.id}`,
+            `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+            "END:VEVENT",
+          ].filter(Boolean).join("\r\n"));
+        }
+      }
+    }
 
     const cal = [
       "BEGIN:VCALENDAR",
