@@ -42,7 +42,7 @@ self.addEventListener("fetch", (event) => {
   // API requests: network-first, fall back to cache
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: "no-store" })
         .then((response) => {
           // Cache successful API responses
           if (response.ok) {

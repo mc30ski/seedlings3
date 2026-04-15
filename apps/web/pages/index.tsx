@@ -4,6 +4,7 @@ import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Text, VStack } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
+import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
 import { bizDateKey } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
@@ -79,7 +80,8 @@ const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 export default function HomePage() {
   const router = useRouter();
   const { isSignedIn, isLoaded: authLoaded } = useAuth();
-  const { isOffline, isForceOffline, setForceOffline } = useOffline();
+  const { isOffline, isForceOffline, setForceOffline, queueCount } = useOffline();
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
@@ -332,7 +334,7 @@ export default function HomePage() {
     },
     {
       value: "reminders",
-      label: "Reminders",
+      label: "Planning",
       icon: FiBell,
       content: wrapWithInlineMessage(<RemindersTab myId={me?.id} />),
     },
@@ -404,7 +406,7 @@ export default function HomePage() {
     },
     {
       value: "reminders",
-      label: "Reminders",
+      label: "Planning",
       icon: FiBell,
       content: wrapWithInlineMessage(<AdminRemindersTab />),
     },
@@ -1075,15 +1077,45 @@ export default function HomePage() {
               onClick={() => setNetworkInfoOpen(true)}
               _hover={{ opacity: 0.8 }}
             >
+              <style>{`
+                @keyframes pulse-dot {
+                  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(234,179,8,0.4); }
+                  50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
+                }
+              `}</style>
               <Box
                 w="10px"
                 h="10px"
                 borderRadius="full"
-                bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+                bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
                 flexShrink={0}
                 _hover={{ transform: "scale(1.3)" }}
                 transition="transform 0.1s"
+                style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
               />
+              {queueCount > 0 && (
+                <Box
+                  as="button"
+                  aria-label={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
+                  title={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
+                  onClick={(e: any) => { e.stopPropagation(); setQueueDialogOpen(true); }}
+                  width="18px"
+                  height="18px"
+                  minW="18px"
+                  borderRadius="9999px"
+                  bg="purple.500"
+                  color="white"
+                  fontSize="10px"
+                  fontWeight="bold"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  _hover={{ bg: "purple.600" }}
+                  _active={{ transform: "translateY(1px)" }}
+                >
+                  {queueCount}
+                </Box>
+              )}
               <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
             </HStack>
           </Box>
@@ -1269,6 +1301,9 @@ export default function HomePage() {
           }}
         />
       )}
+      {/* Offline Queue Dialog */}
+      <OfflineQueueDialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen} />
+
       {/* Network Info Dialog */}
       <Dialog.Root open={networkInfoOpen} onOpenChange={(e) => setNetworkInfoOpen(e.open)}>
         <Portal>
@@ -1282,9 +1317,9 @@ export default function HomePage() {
                       w="12px"
                       h="12px"
                       borderRadius="full"
-                      bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+                      bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
                     />
-                    <Text>{isOffline ? (isForceOffline ? "Force Offline Mode" : "No Connection") : "Online"}</Text>
+                    <Text>{isOffline ? (isForceOffline ? "Force Offline Mode" : "No Connection") : queueCount > 0 ? "Syncing..." : "Online"}</Text>
                   </HStack>
                 </Dialog.Title>
               </Dialog.Header>
@@ -1302,6 +1337,10 @@ export default function HomePage() {
                       <HStack gap={2} align="start">
                         <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="green.400" flexShrink={0} mt="4px" />
                         <Text color="fg.muted"><strong>Green</strong> — Online. Everything works normally.</Text>
+                      </HStack>
+                      <HStack gap={2} align="start">
+                        <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="yellow.400" flexShrink={0} mt="4px" />
+                        <Text color="fg.muted"><strong>Yellow</strong> — Syncing queued actions. The app is sending offline actions to the server.</Text>
                       </HStack>
                       <HStack gap={2} align="start">
                         <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="orange.400" flexShrink={0} mt="4px" />

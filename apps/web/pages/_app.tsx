@@ -12,6 +12,7 @@ import { setAuthTokenFetcher } from "../src/lib/api";
 import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
 import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/offline";
 import { publishInlineMessage } from "../src/ui/components/InlineMessage";
+import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
@@ -27,9 +28,25 @@ function AppInner({ Component, pageProps }: AppProps) {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
 
-  // Register service worker for offline support
+  // Register service worker for offline support & init offline executor
   useEffect(() => {
     registerServiceWorker();
+    initOfflineExecutor();
+  }, []);
+
+  // Show toast when offline queue processes after coming back online
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { synced, failed } = (e as CustomEvent<{ synced: number; failed: number }>).detail;
+      if (synced > 0) {
+        publishInlineMessage({ type: "SUCCESS", text: `Synced ${synced} queued action${synced === 1 ? "" : "s"}.` });
+      }
+      if (failed > 0) {
+        publishInlineMessage({ type: "ERROR", text: `${failed} queued action${failed === 1 ? "" : "s"} failed to sync.` });
+      }
+    };
+    window.addEventListener("offlineQueue:processed", handler);
+    return () => window.removeEventListener("offlineQueue:processed", handler);
   }, []);
 
   // Disable browser pull-to-refresh when any dialog is open

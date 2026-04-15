@@ -97,6 +97,7 @@ export default function ServicesTab({
   const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("services_type", ["ALL"]);
 
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
@@ -477,6 +478,7 @@ export default function ServicesTab({
     }
 
     let rows = items;
+    if (!includeArchived) rows = rows.filter((i) => i.status !== "ARCHIVED");
     const jsf = jobStatusFilter[0];
     if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
@@ -492,7 +494,7 @@ export default function ServicesTab({
       rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
     }
     return rows;
-  }, [items, q, kind, jobStatusFilter]);
+  }, [items, q, kind, jobStatusFilter, includeArchived]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
@@ -622,6 +624,21 @@ export default function ServicesTab({
         >
           <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
         </Button>
+        <Button
+          size="sm"
+          variant={includeArchived ? "solid" : "outline"}
+          px="2"
+          onClick={() => setIncludeArchived(!includeArchived)}
+          title={includeArchived ? "Hiding archived" : "Show archived"}
+          css={includeArchived ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+            border: "1px solid var(--chakra-colors-gray-400)",
+            "&:hover": { background: "var(--chakra-colors-gray-300)" },
+          } : undefined}
+        >
+          <Text fontSize="xs" fontWeight="medium">Archived</Text>
+        </Button>
         <Box flex="1" />
         {forAdmin && (
           <Button
@@ -750,7 +767,7 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || datePreset) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || includeArchived || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -787,7 +804,12 @@ export default function ServicesTab({
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly) && (
+          {includeArchived && (
+            <Badge size="sm" colorPalette="gray" variant="solid">
+              + Archived
+            </Badge>
+          )}
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !includeArchived) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -800,6 +822,7 @@ export default function ServicesTab({
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
                 setVipOnly(false);
+                setIncludeArchived(false);
                 setDatePreset("nextMonth");
               }}
             >
@@ -831,6 +854,7 @@ export default function ServicesTab({
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
                 // Always show the highlighted occurrence
                 if (highlightOccId && o.id === highlightOccId) return true;
+                if (!includeArchived && o.status === "ARCHIVED") return false;
                 if (o.startAt) {
                   const d = bizDateKey(o.startAt);
                   if (dateFrom && d < dateFrom) return false;
