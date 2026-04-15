@@ -47,6 +47,7 @@ type Props = {
   preventOutsideClose?: boolean;
   deferSave?: boolean;
   deferredProperty?: { id: string; displayName: string };
+  onBack?: () => void;
 };
 
 export default function JobDialog({
@@ -59,6 +60,7 @@ export default function JobDialog({
   preventOutsideClose,
   deferSave,
   deferredProperty,
+  onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -105,12 +107,12 @@ export default function JobDialog({
       setEstimatedMinutes((initial as any).estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
     } else {
       setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
-      setKindValue([JOB_KIND[0]]);
-      setStatusValue([JOB_STATUS[0]]);
-      setFrequencyDays("");
-      setNotes("");
-      setDefaultPrice("");
-      setEstimatedMinutes("");
+      setKindValue([initial?.kind ?? JOB_KIND[0]]);
+      setStatusValue([initial?.status ?? JOB_STATUS[0]]);
+      setFrequencyDays(initial?.frequencyDays != null ? String(initial.frequencyDays) : "");
+      setNotes(initial?.notes ?? "");
+      setDefaultPrice(initial?.defaultPrice != null ? String(initial.defaultPrice) : "");
+      setEstimatedMinutes((initial as any)?.estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
     }
   }, [open, mode, initial, defaultPropertyId]);
 
@@ -352,6 +354,7 @@ export default function JobDialog({
 
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
+                {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}
                 <Button
                   variant="ghost"
                   ref={cancelRef}

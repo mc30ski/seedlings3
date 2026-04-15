@@ -636,6 +636,27 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.jobs.updateOccurrenceStatus(uid, String(req.params.id), JobOccurrenceStatus.SCHEDULED);
   });
 
+  app.patch("/standalone-reminders/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Reminder not found");
+    if (occ.workflow !== "REMINDER") throw app.httpErrors.badRequest("Not a standalone reminder");
+    const isCreator = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isCreator) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the creator or an admin can edit this reminder");
+    }
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
+    return prisma.jobOccurrence.update({ where: { id }, data });
+  });
+
   app.delete("/standalone-reminders/:id", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const id = String(req.params.id);
@@ -647,6 +668,24 @@ export default async function workerRoutes(app: FastifyInstance) {
       const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
       const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       if (!isAdmin) throw app.httpErrors.forbidden("Only the creator or an admin can delete this reminder");
+    }
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
+  // ── Light Estimate delete (claimer or admin) ──
+
+  app.delete("/light-estimates/:id", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Estimate not found");
+    if (occ.workflow !== "ESTIMATE" || occ.jobId) throw app.httpErrors.badRequest("Not a stand-alone estimate");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isClaimer) {
+      const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can delete this estimate");
     }
     await prisma.jobOccurrence.delete({ where: { id } });
     return { deleted: true };

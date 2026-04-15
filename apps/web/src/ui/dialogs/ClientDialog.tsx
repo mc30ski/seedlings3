@@ -41,6 +41,7 @@ type Props = {
   preventOutsideClose?: boolean;
   defaultDisplayName?: string;
   deferSave?: boolean;
+  onBack?: () => void;
 };
 
 export default function ClientDialog({
@@ -53,6 +54,7 @@ export default function ClientDialog({
   preventOutsideClose,
   defaultDisplayName,
   deferSave,
+  onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -108,12 +110,12 @@ export default function ClientDialog({
       setIsVip(initial.isVip ?? false);
       setVipReason(initial.vipReason ?? "");
     } else {
-      setKindValue([CLIENT_KIND[0]]);
-      setStatusValue([CLIENT_STATUS[0]]);
-      setDisplayName(defaultDisplayName ?? "");
-      setNotesInternal("");
-      setIsVip(false);
-      setVipReason("");
+      setKindValue([initial?.type ?? CLIENT_KIND[0]]);
+      setStatusValue([initial?.status ?? CLIENT_STATUS[0]]);
+      setDisplayName(initial?.displayName ?? defaultDisplayName ?? "");
+      setNotesInternal(initial?.notesInternal ?? "");
+      setIsVip(initial?.isVip ?? false);
+      setVipReason(initial?.vipReason ?? "");
     }
   }, [open, mode, initial, defaultDisplayName]);
 
@@ -309,6 +311,7 @@ export default function ClientDialog({
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
+                {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}
                 <Button
                   variant="ghost"
                   ref={cancelRef}

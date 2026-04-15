@@ -46,7 +46,6 @@ import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import LightEstimateDialog from "@/src/ui/dialogs/LightEstimateDialog";
-import ConvertEstimateDialog from "@/src/ui/dialogs/ConvertEstimateDialog";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -168,9 +167,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [isWorkerView]);
 
   async function togglePin(occId: string) {
-    let wasPinned = false;
+    const wasPinned = pinnedIds.has(occId);
     setPinnedIds((prev) => {
-      wasPinned = prev.has(occId);
       const next = new Set(prev);
       if (wasPinned) next.delete(occId);
       else next.add(occId);
@@ -200,9 +198,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [isWorkerView]);
 
   async function toggleLike(occId: string) {
-    let wasLiked = false;
+    const wasLiked = likedIds.has(occId);
     setLikedIds((prev) => {
-      wasLiked = prev.has(occId);
       const next = new Set(prev);
       if (wasLiked) next.delete(occId);
       else next.add(occId);
@@ -236,6 +233,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Light estimate & convert dialogs
   const [lightEstDialogOpen, setLightEstDialogOpen] = useState(false);
+  const [editingLightEstimate, setEditingLightEstimate] = useState<WorkerOccurrence | null>(null);
+  const [pendingEstimateConvert, setPendingEstimateConvert] = useState<any>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const createMenuRef = useRef<HTMLDivElement>(null);
 
@@ -247,11 +246,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [createMenuOpen]);
-  const [convertEstDialog, setConvertEstDialog] = useState<{
-    open: boolean;
-    occurrenceId: string;
-    defaults: any;
-  }>({ open: false, occurrenceId: "", defaults: {} });
 
   // Reminder dialog state
   const [reminderDialogOccId, setReminderDialogOccId] = useState<string | null>(null);
@@ -902,6 +896,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           reminderDueIds.add(occ.id);
         } else {
           rest.push(occ);
+          // Future reminders — add a ghost at the reminder date if it's a different ET day than the occurrence
+          if (hasReminder) {
+            const remKey = bizDateKey(occ.reminder!.remindAt);
+            const occKey = occ.startAt ? bizDateKey(occ.startAt) : "";
+            if (remKey !== occKey) {
+              rest.push({ ...occ, _isReminderGhost: true, _ghostDate: remKey } as any);
+            }
+          }
         }
       }
     } else {
@@ -915,28 +917,62 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       groups.push({ key: "reminders-due", label: `Reminders Due (${reminderDueGroup.length})`, items: reminderDueGroup });
     }
 
-    // Sort rest by date to ensure day groups aren't duplicated
+    // Compute date key for each item, then sort by it to prevent duplicate day groups
+    function occDateKey(occ: any): string {
+      if ((occ._isReminderGhost || occ._isPinnedGhost) && occ._ghostDate) {
+        return typeof occ._ghostDate === "string" && occ._ghostDate.length === 10
+          ? occ._ghostDate
+          : bizDateKey(occ._ghostDate);
+      }
+      return occ.startAt ? bizDateKey(occ.startAt) : "no-date";
+    }
+
     rest.sort((a, b) => {
-      const da = (a._isReminderGhost && a._ghostDate) ? a._ghostDate : (a.startAt ?? "");
-      const db = (b._isReminderGhost && b._ghostDate) ? b._ghostDate : (b.startAt ?? "");
+      const da = occDateKey(a);
+      const db = occDateKey(b);
       return da < db ? -1 : da > db ? 1 : 0;
     });
 
-    let current: (typeof groups)[number] | null = null;
+    // Group into day sections using a Map to guarantee no duplicates
+    const dayMap = new Map<string, WorkerOccurrence[]>();
+    const dayOrder: string[] = [];
     for (const occ of rest) {
-      // Ghost reminders use the reminder date, not the occurrence's startAt
-      const dateKey = occ._isReminderGhost && occ._ghostDate
-        ? bizDateKey(occ._ghostDate)
-        : occ.startAt ? bizDateKey(occ.startAt) : "no-date";
-      if (!current || current.key !== dateKey) {
-        current = {
-          key: dateKey,
-          label: dateKey === "no-date" ? "Unscheduled" : dayLabel(dateKey),
-          items: [],
-        };
-        groups.push(current);
+      const key = occDateKey(occ);
+      if (!dayMap.has(key)) {
+        dayMap.set(key, []);
+        dayOrder.push(key);
       }
-      current.items.push(occ);
+      dayMap.get(key)!.push(occ);
+    }
+    for (const key of dayOrder) {
+      groups.push({
+        key,
+        label: key === "no-date" ? "Unscheduled" : dayLabel(key),
+        items: dayMap.get(key)!,
+      });
+    }
+
+    // Sort within each day group: ghosts first, then reminders, then regular
+    const cardSortOrder = (occ: any): number => {
+      if (occ._isPinnedGhost) return 0;
+      if (occ._isReminderGhost) return 1;
+      if (occ.reminder) return 2;
+      if (occ.workflow === "REMINDER") return 3;
+      if (occ.workflow === "TASK") return 4;
+      if (occ.workflow === "ESTIMATE") return 5;
+      return 6;
+    };
+    for (const group of groups) {
+      if (group.key === "pinned" || group.key === "reminders-due") continue;
+      group.items.sort((a, b) => {
+        const oa = cardSortOrder(a);
+        const ob = cardSortOrder(b);
+        if (oa !== ob) return oa - ob;
+        // Within same type, sort by startAt
+        const da = a.startAt ?? "";
+        const db = b.startAt ?? "";
+        return da < db ? -1 : da > db ? 1 : 0;
+      });
     }
     return groups;
   }, [filtered, pinnedIds, isWorkerView]);
@@ -1018,7 +1054,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   variant="ghost"
                   w="full"
                   justifyContent="start"
-                  onClick={() => { setCreateMenuOpen(false); setLightEstDialogOpen(true); }}
+                  onClick={() => { setCreateMenuOpen(false); setEditingLightEstimate(null); setLightEstDialogOpen(true); }}
                 >
                   Estimate
                 </Button>
@@ -1445,19 +1481,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Card.Root
                   key={`ghost-${occ.id}`}
                   variant="outline"
-                  borderColor="pink.300"
-                  bg="pink.50"
+                  borderColor="purple.300"
+                  bg="purple.50"
                   css={{
-                    borderLeft: "4px solid var(--chakra-colors-pink-400)",
+                    borderLeft: "4px dashed var(--chakra-colors-purple-400)",
+                    borderStyle: "dashed",
+                    opacity: 0.7,
                   }}
                 >
                   <Card.Body py="3" px="4">
                     <VStack align="start" gap={1}>
                       <HStack gap={2} align="center">
-                        <Bell size={14} style={{ color: "var(--chakra-colors-pink-600)" }} />
-                        <Badge colorPalette="pink" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
+                        <Bell size={14} style={{ color: "var(--chakra-colors-purple-600)" }} />
+                        <Badge colorPalette="purple" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
                         {occ.reminder?.note && (
-                          <Text fontSize="xs" color="pink.700">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
+                          <Text fontSize="xs" color="purple.700">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
                         )}
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
@@ -1469,7 +1507,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Button
                         size="xs"
                         variant="outline"
-                        colorPalette="pink"
+                        colorPalette="purple"
                         onClick={() => {
                           setHighlightOccId(occ.id);
                           setExpandedCards(new Set([occ.id]));
@@ -1494,26 +1532,39 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               );
             }
 
-            // Pinned ghost cards — a reference in the regular feed
+            // Pinned ghost cards — a reference in the regular feed, same color as original card type
             if (occ._isPinnedGhost) {
+              const ghostIsTask = occ.workflow === "TASK";
+              const ghostIsReminder = occ.workflow === "REMINDER";
+              const ghostIsEstimate = occ.workflow === "ESTIMATE" || occ.isEstimate;
+              const ghostIsTentative = !!occ.isTentative;
+              const ghostIsAssigned = !!myId && (occ.assignees ?? []).some((a: any) => a.userId === myId);
+              const ghostColor = ghostIsReminder ? "purple"
+                : ghostIsTask ? "blue"
+                : ghostIsEstimate ? "pink"
+                : ghostIsTentative ? "orange"
+                : ghostIsAssigned ? "teal"
+                : "gray";
               return (
                 <Card.Root
                   key={`pin-ghost-${occ.id}`}
                   variant="outline"
-                  borderColor="blue.300"
-                  bg="blue.50"
+                  borderColor={`${ghostColor}.300`}
+                  bg={`${ghostColor}.50`}
                   css={{
-                    borderLeft: "4px solid var(--chakra-colors-blue-400)",
+                    borderLeft: `4px dashed var(--chakra-colors-${ghostColor}-400)`,
+                    borderStyle: "dashed",
+                    opacity: 0.7,
                   }}
                 >
                   <Card.Body py="3" px="4">
                     <VStack align="start" gap={1}>
                       <HStack gap={2} align="center">
-                        <Pin size={14} fill="currentColor" style={{ color: "var(--chakra-colors-blue-600)" }} />
-                        <Badge colorPalette="blue" variant="solid" fontSize="xs" px="2" borderRadius="full">Pinned</Badge>
+                        <Pin size={14} fill="currentColor" style={{ color: `var(--chakra-colors-${ghostColor}-600)` }} />
+                        <Badge colorPalette={ghostColor} variant="solid" fontSize="xs" px="2" borderRadius="full">Pinned</Badge>
                       </HStack>
                       <Text fontSize="xs" color="fg.muted">
-                        {occ.workflow === "TASK" ? (occ.title || "Task") : occ.workflow === "REMINDER" ? (occ.title || "Reminder") : (occ.job?.property?.displayName ?? "Job")}
+                        {ghostIsTask ? (occ.title || "Task") : ghostIsReminder ? (occ.title || "Reminder") : (occ.job?.property?.displayName ?? "Job")}
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
                         {(occ as any).jobType && ` · ${jobTypeLabel((occ as any).jobType)}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
@@ -1521,7 +1572,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Button
                         size="xs"
                         variant="outline"
-                        colorPalette="blue"
+                        colorPalette={ghostColor}
                         onClick={() => {
                           setHighlightOccId(occ.id);
                           setExpandedCards(new Set([occ.id]));
@@ -1540,7 +1591,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const cardBorderColor = isPinned
               ? "blue.400"
               : isReminder
-              ? (isClosed ? "gray.200" : "pink.300")
+              ? (isClosed ? "gray.200" : "purple.300")
               : isTask
               ? (isClosed ? "gray.200" : "blue.300")
               : (isClosed || isAcceptedEstimate)
@@ -1553,7 +1604,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const cardBg = (isClosed || isAcceptedEstimate)
               ? undefined
               : isReminder
-              ? "pink.50"
+              ? "purple.50"
               : isTask
               ? "blue.50"
               : isTentative
@@ -1568,7 +1619,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"
-              : isReminder ? "pink.200"
+              : isReminder ? "purple.200"
               : isTask ? "blue.200"
               : isTentative ? "orange.200"
               : isEstimateOcc ? "pink.200"
@@ -1576,7 +1627,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers ? "gray.300"
               : "gray.200";
             const commentBadgeColor = (isClosed || isAcceptedEstimate) ? "gray.700"
-              : isReminder ? "pink.700"
+              : isReminder ? "purple.700"
               : isTask ? "blue.700"
               : isTentative ? "orange.700"
               : isEstimateOcc ? "pink.700"
@@ -1603,7 +1654,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
-                  ...(isReminder ? { borderLeft: "4px solid var(--chakra-colors-pink-400)" } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
@@ -1612,7 +1663,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
-                {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && (
+                {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && occ.jobId && (
                   <Box px="4" pt="3" pb="0">
                     <Button
                       size="xs"
@@ -1629,6 +1680,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     >
                       Manage in Services
                     </Button>
+                  </Box>
+                )}
+                {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
+                  <Box px="4" pt="3" pb="0">
+                    <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
                   </Box>
                 )}
                 <Card.Header py="3" px="4" pb="0">
@@ -1670,7 +1726,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         )}
                       </HStack>
                       {isLightEstimate && occ.estimateAddress && (
-                        <Text fontSize="xs" color="fg.muted" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">{occ.estimateAddress}</Text>
+                        <Box fontSize="xs" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap"><MapLink address={occ.estimateAddress} /></Box>
                       )}
                       <HStack gap={1} flexShrink={0} alignItems="center" wrap="wrap">
                         <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
@@ -1683,7 +1739,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               variant="solid"
                             />
                           ) : null}
-                          {isReminder && <StatusBadge status="Reminder" palette="pink" variant="solid" />}
+                          {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
@@ -1751,9 +1807,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </HStack>
                           )}
                         </HStack>
-                        {isLightEstimate && occ.estimateAddress && (
-                          <Text fontSize="xs" color="fg.muted">{occ.estimateAddress}</Text>
-                        )}
+                        {((!isLightEstimate && !isTaskOrReminder) || (isTaskOrReminder && occ.linkedOccurrence) || (isVipClient && vipReason)) && (
                         <VStack align="start" gap={0} flex="1" minW={0}>
                             {isTaskOrReminder && occ.linkedOccurrence && (
                               <Box fontSize="xs">
@@ -1833,13 +1887,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {vipReason}</Text>
                             )}
                           </VStack>
-                          <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
+                        )}
+                          <HStack gap={1} flexWrap="wrap" alignItems="center">
+                          {isLightEstimate && occ.estimateAddress && (
+                            <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
+                          )}
                           {isTentative ? (
                             <StatusBadge status="Tentative" palette="orange" variant="solid" />
                           ) : occ.status !== "SCHEDULED" ? (
                             <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
                           ) : null}
-                          {isReminder && <StatusBadge status="Reminder" palette="pink" variant="solid" />}
+                          {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
                             <StatusBadge status="Repeating" palette="blue" variant="outline" />
@@ -1890,7 +1948,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               )}
                             </HStack>
                           )}
-                          </Box>
+                          </HStack>
                       </VStack>
                     )}
                 </Card.Header>
@@ -1905,10 +1963,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Badge>
                       )}
                       {/* Price / payout / time */}
+                      {(() => { const displayPrice = (occ.price || null) ?? (occ.proposalAmount || null); return (
                       <Box display="flex" gap={2} flexWrap="wrap" alignItems="center">
-                        {occ.price != null && (
+                        {displayPrice != null && (
                           <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                            ${occ.price.toFixed(2)}
+                            ${displayPrice.toFixed(2)}{isEstimateOcc ? " (proposal)" : ""}
                           </Badge>
                         )}
                         {occ.payment && (
@@ -1916,9 +1975,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                           </Badge>
                         )}
-                        {occ.price != null && !occ.payment && (() => {
+                        {displayPrice != null && !occ.payment && (() => {
                           const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                          const net = occ.price! - expTotal;
+                          const net = displayPrice - expTotal;
                           const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
                           const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
                           const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
@@ -1940,6 +1999,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           return null;
                         })()}
                       </Box>
+                      ); })()}
                     </VStack>
                     <HStack mt={1} justify="space-between" align="center">
                       {!isUnassigned ? (
@@ -2011,14 +2071,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 ) : (
                 <Card.Body pt="0">
                   <VStack align="start" gap={1}>
-                    {isLightEstimate && (
-                      <Box p={2} bg="pink.50" rounded="md" mb={2} fontSize="xs">
-                        {occ.contactName && <Text><strong>Contact:</strong> {occ.contactName}</Text>}
-                        {occ.contactPhone && <Text><strong>Phone:</strong> {occ.contactPhone}</Text>}
-                        {occ.contactEmail && <Text><strong>Email:</strong> {occ.contactEmail}</Text>}
-                        {occ.estimateAddress && <Text><strong>Address:</strong> {occ.estimateAddress}</Text>}
-                      </Box>
-                    )}
                     {occ.startAt && (
                       <Text fontSize="xs">
                         {fmtDate(occ.startAt)}
@@ -2027,14 +2079,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           : ""}
                       </Text>
                     )}
+                    {isLightEstimate && (occ.contactName || occ.contactPhone || occ.contactEmail) && (
+                      <Box p={2} bg="pink.50" rounded="md" fontSize="xs">
+                        {occ.contactName && <Text><strong>Contact:</strong> {occ.contactName}</Text>}
+                        {occ.contactPhone && <Text><strong>Phone:</strong> {occ.contactPhone}</Text>}
+                        {occ.contactEmail && <Text><strong>Email:</strong> {occ.contactEmail}</Text>}
+                      </Box>
+                    )}
                     {(occ as any).jobType && (
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         {jobTypeLabel((occ as any).jobType)}
                       </Badge>
                     )}
-                    {occ.price != null && (
+                    {((occ.price || null) ?? (occ.proposalAmount || null)) != null && (
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                        ${occ.price.toFixed(2)}
+                        ${((occ.price || null) ?? (occ.proposalAmount || null))!.toFixed(2)}{isEstimateOcc ? " (proposal)" : ""}
                       </Badge>
                     )}
                     {occ.payment && (
@@ -2042,9 +2101,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                       </Badge>
                     )}
-                    {occ.price != null && !occ.payment && (() => {
+                    {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
+                      const displayPrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
                       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                      const net = occ.price! - expTotal;
+                      const net = displayPrice - expTotal;
                       const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
                       const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
                       const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
@@ -2060,7 +2120,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </Badge>
                           </HStack>
                           <Text fontSize="xs" color="fg.muted">
-                            ${occ.price!.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
+                            ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
                           </Text>
                         </Box>
                       ) : null;
@@ -2100,7 +2160,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       return (
                         <>
                           {otherLines && (
-                            <HStack gap={1} align="start">
+                            <HStack gap={1} align="center">
                               <TruncatedText color="fg.muted">{otherLines}</TruncatedText>
                               {isTaskOrReminder && (
                                 <Button
@@ -2125,7 +2185,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <Box p={2} bg="purple.50" rounded="sm" mt={1}>
                               <Text fontSize="xs" fontWeight="medium" color="purple.700">Completed:</Text>
                               <TruncatedText color="purple.600">{occ.proposalNotes}</TruncatedText>
-                              {occ.proposalAmount != null && (
+                              {occ.proposalAmount != null && occ.proposalAmount > 0 && (
                                 <Text fontSize="xs" color="purple.600" mt={0.5}>Amount: ${occ.proposalAmount.toFixed(2)}</Text>
                               )}
                             </Box>
@@ -2509,7 +2569,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="sm"
                           variant="solid"
-                          colorPalette="pink"
+                          colorPalette="purple"
                           onClick={async () => {
                             try {
                               await apiPost(`/api/standalone-reminders/${occ.id}/dismiss`);
@@ -2557,6 +2617,45 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       </>)}
+                      {/* Light estimate edit/delete */}
+                      {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEditingLightEstimate(occ);
+                            setLightEstDialogOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="red"
+                          onClick={() => {
+                            setConfirmAction({
+                              title: "Delete Estimate?",
+                              message: `Are you sure you want to delete "${occ.title}"?`,
+                              confirmLabel: "Delete",
+                              colorPalette: "red",
+                              onConfirm: async () => {
+                                try {
+                                  await apiDelete(`/api/light-estimates/${occ.id}`);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Estimate deleted." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete estimate.", err) });
+                                }
+                              },
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      )}
                       {isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder && (() => {
                         const isContractor = me?.workerType === "CONTRACTOR";
                         const jobDate = occ.startAt ? new Date(occ.startAt) : null;
@@ -2705,20 +2804,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
                                 await load(false);
                                 if (!result.jobId) {
-                                  // Light estimate — open convert dialog
-                                  setConvertEstDialog({
-                                    open: true,
+                                  // Light estimate — show pre-dialog then launch New Job Setup workflow
+                                  setPendingEstimateConvert({
                                     occurrenceId: occ.id,
-                                    defaults: {
-                                      contactName: occ.contactName,
-                                      contactPhone: occ.contactPhone,
-                                      contactEmail: occ.contactEmail,
-                                      estimateAddress: occ.estimateAddress,
-                                      proposalAmount: occ.proposalAmount,
-                                      proposalNotes: occ.proposalNotes,
-                                      title: occ.title,
-                                      estimatedMinutes: occ.estimatedMinutes,
-                                    },
+                                    contactName: occ.contactName,
+                                    contactPhone: occ.contactPhone,
+                                    contactEmail: occ.contactEmail,
+                                    estimateAddress: occ.estimateAddress,
+                                    proposalAmount: occ.proposalAmount,
+                                    proposalNotes: occ.proposalNotes,
+                                    title: occ.title,
+                                    estimatedMinutes: occ.estimatedMinutes,
                                   });
                                 } else if (result.jobId) {
                                   setPromptOccDefaults({
@@ -2907,7 +3003,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="xs"
                           variant="outline"
-                          colorPalette="pink"
+                          colorPalette="purple"
                           onClick={async () => {
                             try {
                               await apiPost(`/api/standalone-reminders/${occ.id}/reopen`);
@@ -3035,20 +3131,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         mode="reminder"
       />
 
-      <LightEstimateDialog
-        open={lightEstDialogOpen}
-        onOpenChange={setLightEstDialogOpen}
-        onCreated={() => void load(false)}
-        myId={me?.id}
-      />
-      <ConvertEstimateDialog
-        open={convertEstDialog.open}
-        onOpenChange={(open) => setConvertEstDialog((prev) => ({ ...prev, open }))}
-        occurrenceId={convertEstDialog.occurrenceId}
-        defaults={convertEstDialog.defaults}
-        onConverted={() => void load(false)}
+      {/* Pre-dialog before launching New Job Setup from accepted light estimate */}
+      <ConfirmDialog
+        open={!!pendingEstimateConvert}
+        title="Create Job Service"
+        message="This estimate has been accepted. The New Job Service workflow will now guide you through creating a Client, Property, and Job — pre-filled with details from this estimate."
+        confirmLabel="Continue"
+        confirmColorPalette="green"
+        onConfirm={() => {
+          const data = pendingEstimateConvert;
+          setPendingEstimateConvert(null);
+          window.dispatchEvent(new CustomEvent("trigger:newJobSetupFromEstimate", { detail: data }));
+        }}
+        onCancel={() => setPendingEstimateConvert(null)}
       />
 
+      <LightEstimateDialog
+        open={lightEstDialogOpen}
+        onOpenChange={(open) => { setLightEstDialogOpen(open); if (!open) setEditingLightEstimate(null); }}
+        onCreated={() => void load(false)}
+        myId={me?.id}
+        editEstimate={editingLightEstimate}
+      />
       <ConfirmDialog
         open={!!confirmAction}
         title={confirmAction?.title ?? ""}

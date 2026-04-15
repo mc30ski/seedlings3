@@ -15,6 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
+import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import {
   Role,
   DialogMode,
@@ -55,6 +56,7 @@ type Props = {
   deferredClient?: { id: string; displayName: string };
   /** When in deferred mode, provide the contact directly */
   deferredContact?: { firstName: string; lastName: string; email?: string | null; phone?: string | null };
+  onBack?: () => void;
 };
 
 export default function PropertyDialog({
@@ -69,6 +71,7 @@ export default function PropertyDialog({
   deferSave,
   deferredClient,
   deferredContact,
+  onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const isAdmin = role === "ADMIN";
@@ -85,7 +88,27 @@ export default function PropertyDialog({
 
   const [clientValue, setClientValue] = useState<string[]>([]);
   const [displayName, setDisplayName] = useState("");
+  const [addressSearch, setAddressSearch] = useState("");
   const [street1, setStreet1] = useState("");
+
+  function parseAddressIntoFields(placeName: string) {
+    // Mapbox format: "123 Main St, Austin, Texas 78701, United States"
+    const parts = placeName.split(",").map((s) => s.trim());
+    if (parts.length >= 3) {
+      setStreet1(parts[0] ?? "");
+      setCity(parts[1] ?? "");
+      const stateZip = (parts[2] ?? "").split(/\s+/);
+      setStateValue(stateZip[0] ?? "");
+      const zip = stateZip[stateZip.length - 1] ?? "";
+      if (/^\d{4,}/.test(zip)) setPostalCode(zip);
+      if (parts[3]) setCountry(parts[3]);
+    } else if (parts.length === 2) {
+      setStreet1(parts[0] ?? "");
+      setCity(parts[1] ?? "");
+    } else {
+      setStreet1(placeName);
+    }
+  }
   const [street2, setStreet2] = useState("");
   const [city, setCity] = useState("");
   const [stateValue, setStateValue] = useState("");
@@ -218,6 +241,7 @@ export default function PropertyDialog({
   useEffect(() => {
     if (!open) return;
     if (mode === "UPDATE" && initial) {
+      setAddressSearch("");
       setKindValue([initial.kind ?? PROPERTY_KIND[0]]);
       setStatusValue([initial.status ?? PROPERTY_STATUS[0]]);
       setClientValue([initial.clientId ?? ""]);
@@ -233,15 +257,16 @@ export default function PropertyDialog({
       setLotSizeUnit((initial as any).lotSizeUnit ?? "sqft");
       setPocValue([initial.pointOfContactId ?? "NONE"]);
     } else {
-      setKindValue([PROPERTY_KIND[0]]);
-      setStatusValue([PROPERTY_STATUS[0]]);
+      setAddressSearch((initial as any)?.estimateAddress ?? "");
+      setKindValue([initial?.kind ?? PROPERTY_KIND[0]]);
+      setStatusValue([initial?.status ?? PROPERTY_STATUS[0]]);
       setClientValue(defaultClientId ? [defaultClientId] : []);
-      setDisplayName("");
-      setStreet1("");
-      setStreet2("");
-      setCity("");
-      setStateValue("");
-      setPostalCode("");
+      setDisplayName(initial?.displayName ?? "");
+      setStreet1(initial?.street1 ?? "");
+      setStreet2(initial?.street2 ?? "");
+      setCity(initial?.city ?? "");
+      setStateValue(initial?.state ?? "");
+      setPostalCode(initial?.postalCode ?? "");
       setCountry("USA");
       setAccessNotes("");
       setLotSize("");
@@ -562,6 +587,14 @@ export default function PropertyDialog({
                 </HStack>
                 <div>
                   <Text mb="1">Address *</Text>
+                  <AddressAutocomplete
+                    value={addressSearch}
+                    onChange={setAddressSearch}
+                    onSelect={parseAddressIntoFields}
+                    placeholder="Search for an address..."
+                    size="sm"
+                  />
+                  <Text fontSize="xs" color="fg.muted" mb="2" mt="1">Select a suggestion to auto-fill, or enter details manually below.</Text>
                   <Input
                     value={street1}
                     onChange={(e) => setStreet1(e.target.value)}
@@ -669,6 +702,7 @@ export default function PropertyDialog({
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
+                {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}
                 <Button
                   variant="ghost"
                   ref={cancelRef}

@@ -70,10 +70,14 @@ type Props = {
   createBody?: Record<string, unknown>;
   title?: string;
   submitLabel?: string;
+  defaultWorkflow?: string;
+  /** Job's frequencyDays — used to warn if "Repeating" is selected without frequency */
+  jobFrequencyDays?: number | null;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   preventOutsideClose?: boolean;
   deferSave?: boolean;
   onSaved?: (data?: any) => void;
+  onBack?: () => void;
 };
 
 export default function OccurrenceDialog({
@@ -95,6 +99,8 @@ export default function OccurrenceDialog({
   defaultJobType,
   isAdmin,
   defaultAssignees,
+  defaultWorkflow,
+  jobFrequencyDays,
   createEndpoint,
   createBody,
   title,
@@ -102,6 +108,7 @@ export default function OccurrenceDialog({
   preventOutsideClose,
   deferSave,
   onSaved,
+  onBack,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,7 +121,7 @@ export default function OccurrenceDialog({
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
-  const [workflow, setWorkflow] = useState("ESTIMATE");
+  const [workflow, setWorkflow] = useState(defaultWorkflow ?? "ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
   const [jobType, setJobType] = useState("");
@@ -153,7 +160,7 @@ export default function OccurrenceDialog({
     setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
     setStartedAt(toDateTimeLocal(defaultStartedAt));
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
-    setWorkflow("ESTIMATE");
+    setWorkflow(defaultWorkflow ?? "ESTIMATE");
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
@@ -184,6 +191,10 @@ export default function OccurrenceDialog({
   async function handleSave() {
     if (!startAt) {
       publishInlineMessage({ type: "WARNING", text: "Please select a start date." });
+      return;
+    }
+    if (workflow === "STANDARD" && !jobFrequencyDays) {
+      publishInlineMessage({ type: "WARNING", text: "Repeating job requires a frequency (days) to be set on the Job. Go back and set it, or select One-Off or Estimate instead." });
       return;
     }
     setBusy(true);
@@ -639,6 +650,7 @@ export default function OccurrenceDialog({
 
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
+                {onBack && <Button variant="outline" onClick={onBack}>Back</Button>}
                 <Button
                   variant="ghost"
                   ref={cancelRef}
