@@ -10,6 +10,7 @@ export default function StatusButton({
   variant = "solid",
   colorPalette = undefined,
   disabled = false,
+  title,
   busyId,
   setBusyId,
 }: {
@@ -20,6 +21,7 @@ export default function StatusButton({
   variant?: string;
   colorPalette?: string | undefined;
   disabled?: boolean;
+  title?: string;
   busyId: string;
   setBusyId: (id: string) => void;
 }) {
@@ -28,6 +30,7 @@ export default function StatusButton({
       key={id + itemId}
       variant={variant as any}
       colorPalette={colorPalette}
+      title={title}
       onClick={async () => {
         setBusyId(id + itemId);
         await onClick();

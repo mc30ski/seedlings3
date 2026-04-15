@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, Container, HStack, Text } from "@chakra-ui/react";
+import { Badge, Box, Button, Container, Dialog, HStack, Portal, Text, VStack } from "@chakra-ui/react";
 import { AlertTriangle } from "lucide-react";
+import { useOffline } from "@/src/lib/offline";
 import { apiGet } from "@/src/lib/api";
 import { bizDateKey } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
@@ -78,6 +79,7 @@ const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 export default function HomePage() {
   const router = useRouter();
   const { isSignedIn, isLoaded: authLoaded } = useAuth();
+  const { isOffline, isForceOffline, setForceOffline } = useOffline();
 
   const [me, setMe] = useState<Me | null>(null);
   const [meLoading, setMeLoading] = useState(true);
@@ -96,6 +98,7 @@ export default function HomePage() {
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
+  const [networkInfoOpen, setNetworkInfoOpen] = useState(false);
   const [workflowEstimateDefaults, setWorkflowEstimateDefaults] = useState<any>(null);
 
   // Track paused workflow for banner display
@@ -1065,7 +1068,38 @@ export default function HomePage() {
             lineHeight="0"
             style={{ transform: "translateY(1px)" }}
           >
-            <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
+            <HStack
+              gap="2"
+              align="center"
+              cursor="pointer"
+              onClick={() => setNetworkInfoOpen(true)}
+              _hover={{ opacity: 0.8 }}
+            >
+              <Box
+                w="10px"
+                h="10px"
+                borderRadius="full"
+                bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+                flexShrink={0}
+                _hover={{ transform: "scale(1.3)" }}
+                transition="transform 0.1s"
+              />
+              <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
+            </HStack>
+          </Box>
+
+          {/* Right: badges + worker type + Clerk */}
+          <div
+            ref={headerBtnRef as any}
+            style={{
+              justifySelf: "end",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              lineHeight: 0,
+              minHeight: `${BRAND_ICON_H}px`,
+            }}
+          >
             {isAdmin && pending > 0 && (
               <Box
                 as="button"
@@ -1135,20 +1169,6 @@ export default function HomePage() {
                 {overdueCount}
               </Box>
             )}
-          </Box>
-
-          {/* Right: worker type + Clerk */}
-          <div
-            ref={headerBtnRef as any}
-            style={{
-              justifySelf: "end",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              lineHeight: 0,
-              minHeight: `${BRAND_ICON_H}px`,
-            }}
-          >
             {me && hasAnyRole && (
               <Badge
                 size="sm"
@@ -1249,6 +1269,92 @@ export default function HomePage() {
           }}
         />
       )}
+      {/* Network Info Dialog */}
+      <Dialog.Root open={networkInfoOpen} onOpenChange={(e) => setNetworkInfoOpen(e.open)}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>
+                  <HStack gap={2}>
+                    <Box
+                      w="12px"
+                      h="12px"
+                      borderRadius="full"
+                      bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+                    />
+                    <Text>{isOffline ? (isForceOffline ? "Force Offline Mode" : "No Connection") : "Online"}</Text>
+                  </HStack>
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>How offline mode works</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      When you have no internet (or force offline mode is on), the app serves data from its local cache. You can view your job schedule, property details, notes, and team info — but you cannot perform actions like starting jobs, accepting payments, or editing records.
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Connection status</Text>
+                    <VStack align="start" gap={1} fontSize="xs">
+                      <HStack gap={2} align="start">
+                        <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="green.400" flexShrink={0} mt="4px" />
+                        <Text color="fg.muted"><strong>Green</strong> — Online. Everything works normally.</Text>
+                      </HStack>
+                      <HStack gap={2} align="start">
+                        <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="orange.400" flexShrink={0} mt="4px" />
+                        <Text color="fg.muted"><strong>Orange</strong> — Force offline mode. You chose to go offline. Toggle it off in your Profile to reconnect.</Text>
+                      </HStack>
+                      <HStack gap={2} align="start">
+                        <Box w="8px" h="8px" minW="8px" minH="8px" borderRadius="full" bg="red.400" flexShrink={0} mt="4px" />
+                        <Text color="fg.muted"><strong>Red</strong> — No internet connection. The app will automatically reconnect when signal returns.</Text>
+                      </HStack>
+                    </VStack>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Cached data</Text>
+                    <Text fontSize="xs" color="fg.muted">
+                      The app automatically caches data as you browse. Your most recently viewed jobs, properties, and schedules are available offline. For the best offline experience, browse your upcoming jobs while you have signal — that data will then be available in the field.
+                    </Text>
+                  </Box>
+                  {isForceOffline && (
+                    <Button
+                      size="sm"
+                      colorPalette="green"
+                      onClick={() => {
+                        setForceOffline(false);
+                        setNetworkInfoOpen(false);
+                      }}
+                    >
+                      Go back online
+                    </Button>
+                  )}
+                  {!isOffline && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      colorPalette="orange"
+                      onClick={() => {
+                        setForceOffline(true);
+                        setNetworkInfoOpen(false);
+                      }}
+                    >
+                      Force offline mode
+                    </Button>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button size="sm" variant="ghost" onClick={() => setNetworkInfoOpen(false)}>Close</Button>
+              </Dialog.Footer>
+              <Dialog.CloseTrigger />
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
       <ConfirmDialog
         open={!!confirmAction}
         title={confirmAction?.title ?? ""}

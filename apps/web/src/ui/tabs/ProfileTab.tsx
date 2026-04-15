@@ -21,6 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { type Me } from "@/src/lib/types";
+import { useOffline } from "@/src/lib/offline";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -488,6 +489,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
           {/* Calendar Feeds management — self only */}
           {isSelf && <CalendarFeedsSection />}
+          {isSelf && <OfflineSection />}
         </VStack>
       )}
     </Box>
@@ -583,6 +585,54 @@ function CalendarFeedsSection() {
             ))}
           </VStack>
         )}
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+function OfflineSection() {
+  const { isOffline, isForceOffline, setForceOffline, lastSyncedAt } = useOffline();
+
+  return (
+    <Card.Root variant="outline" mt={4}>
+      <Card.Header py="3" px="4" pb="0">
+        <HStack justify="space-between" align="center">
+          <Text fontWeight="semibold">Connection</Text>
+          <HStack gap={2} align="center">
+            <Box
+              w="10px"
+              h="10px"
+              borderRadius="full"
+              bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : "green.400"}
+            />
+            <Text fontSize="xs" color="fg.muted">
+              {isOffline ? (isForceOffline ? "Force offline" : "Offline") : "Online"}
+            </Text>
+          </HStack>
+        </HStack>
+      </Card.Header>
+      <Card.Body py="3" px="4">
+        <VStack align="stretch" gap={3}>
+          <HStack justify="space-between" align="center">
+            <VStack align="start" gap={0}>
+              <Text fontSize="sm" fontWeight="medium">Force Offline Mode</Text>
+              <Text fontSize="xs" color="fg.muted">When enabled, all data is served from cache. Actions are disabled until you go back online.</Text>
+            </VStack>
+            <Button
+              size="sm"
+              variant={isForceOffline ? "solid" : "outline"}
+              colorPalette={isForceOffline ? "orange" : "gray"}
+              onClick={() => setForceOffline(!isForceOffline)}
+            >
+              {isForceOffline ? "On" : "Off"}
+            </Button>
+          </HStack>
+          {lastSyncedAt && (
+            <Text fontSize="xs" color="fg.muted">
+              Last synced: {lastSyncedAt.toLocaleTimeString()}
+            </Text>
+          )}
+        </VStack>
       </Card.Body>
     </Card.Root>
   );

@@ -40,6 +40,7 @@ import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
+import { useOffline } from "@/src/lib/offline";
 import TaskDialog from "@/src/ui/dialogs/TaskDialog";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
@@ -96,6 +97,7 @@ type JobsTabProps = TabPropsType & {
 
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot }: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
+  const { isOffline } = useOffline();
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
@@ -1008,6 +1010,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             bg="black"
             color="white"
             px="3"
+            disabled={isOffline}
+            title={isOffline ? "Requires internet" : undefined}
             onClick={() => {
               setCreateMenuOpen((v) => !v);
             }}
@@ -1415,9 +1419,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         <VStack align="stretch" gap={3}>
           {dayGroups.length === 0 && (
             <Box p="8" color="fg.muted">
-              {highlightOccId
+              {isOffline
+                ? "You're offline. No cached data available for this date range. Adjust your dates or reconnect to load more."
+                : highlightOccId
                 ? "This occurrence is no longer available or assigned to you."
                 : "No job occurrences match current filters."}
+            </Box>
+          )}
+          {isOffline && dayGroups.length > 0 && (
+            <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" mt={2}>
+              <Text fontSize="xs" color="orange.800">
+                You're viewing cached data. Some occurrences from your selected date range may not be available offline. Actions are disabled until you reconnect.
+              </Text>
             </Box>
           )}
 
@@ -1486,7 +1499,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   css={{
                     borderLeft: "4px dashed var(--chakra-colors-purple-400)",
                     borderStyle: "dashed",
-                    opacity: 0.7,
+                    opacity: 0.8,
                   }}
                 >
                   <Card.Body py="3" px="4">
@@ -1554,7 +1567,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   css={{
                     borderLeft: `4px dashed var(--chakra-colors-${ghostColor}-400)`,
                     borderStyle: "dashed",
-                    opacity: 0.7,
+                    opacity: 0.8,
                   }}
                 >
                   <Card.Body py="3" px="4">
@@ -1716,10 +1729,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Text>
                         {isWorkerView && (
                           <HStack gap={1} flexShrink={0}>
-                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                            <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
                               <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
                             </Button>
-                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                            <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
                               {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
                             </Button>
                           </HStack>
@@ -1801,10 +1814,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Text>
                           {isWorkerView && (
                             <HStack gap={1} flexShrink={0}>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                              <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
                                 <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
                               </Button>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                              <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
                                 {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
                               </Button>
                             </HStack>
@@ -2364,6 +2377,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   size="xs"
                                   variant="ghost"
                                   colorPalette="red"
+                                  disabled={isOffline}
                                   onClick={() => deleteExpense(exp.id)}
                                 >
                                   ✕
@@ -2463,7 +2477,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     style={{ fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, width: "100%" }}
                                   />
                                   <HStack gap={1}>
-                                    <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !commentEditing.body.trim()} onClick={(e: any) => { e.stopPropagation(); void editComment(c.id, occ.id, commentEditing.body); }}>
+                                    <Button size="xs" variant="solid" colorPalette="blue" disabled={isOffline || commentBusy || !commentEditing.body.trim()} onClick={(e: any) => { e.stopPropagation(); void editComment(c.id, occ.id, commentEditing.body); }}>
                                       Save
                                     </Button>
                                     <Button size="xs" variant="ghost" onClick={(e: any) => { e.stopPropagation(); setCommentEditing(null); }}>
@@ -2476,12 +2490,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   <Text mt={1}>{c.body}</Text>
                                   <HStack gap={1} mt={1}>
                                     {c.author.id === myId && (
-                                      <Button size="xs" variant="ghost" onClick={(e: any) => { e.stopPropagation(); setCommentEditing({ id: c.id, body: c.body }); }}>
+                                      <Button size="xs" variant="ghost" disabled={isOffline} onClick={(e: any) => { e.stopPropagation(); setCommentEditing({ id: c.id, body: c.body }); }}>
                                         Edit
                                       </Button>
                                     )}
                                     {(c.author.id === myId || isClaimer || (forAdmin && (isAdmin || isSuper))) && (
-                                      <Button size="xs" variant="ghost" colorPalette="red" disabled={commentBusy} onClick={(e: any) => { e.stopPropagation(); void deleteComment(c.id, occ.id); }}>
+                                      <Button size="xs" variant="ghost" colorPalette="red" disabled={isOffline || commentBusy} onClick={(e: any) => { e.stopPropagation(); void deleteComment(c.id, occ.id); }}>
                                         Delete
                                       </Button>
                                     )}
@@ -2501,7 +2515,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void postComment(occ.id); } }}
                               style={{ flex: 1, fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4 }}
                             />
-                            <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={(e: any) => { e.stopPropagation(); void postComment(occ.id); }}>
+                            <Button size="xs" variant="solid" colorPalette="blue" disabled={isOffline || commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={(e: any) => { e.stopPropagation(); void postComment(occ.id); }}>
                               Post
                             </Button>
                           </HStack>
@@ -2521,6 +2535,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="solid"
                           colorPalette="blue"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             try {
                               await apiPost(`/api/tasks/${occ.id}/close`);
@@ -2536,6 +2552,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="sm"
                           variant="outline"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setEditingTask(occ);
                             setTaskDialogOpen(true);
@@ -2547,6 +2565,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="outline"
                           colorPalette="red"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             setConfirmAction({
                               title: "Delete Task?",
@@ -2574,6 +2594,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="solid"
                           colorPalette="purple"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             try {
                               await apiPost(`/api/standalone-reminders/${occ.id}/dismiss`);
@@ -2589,6 +2611,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="sm"
                           variant="outline"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setEditingReminder(occ);
                             setStandaloneReminderDialogOpen(true);
@@ -2600,6 +2624,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="outline"
                           colorPalette="red"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             setConfirmAction({
                               title: "Delete Reminder?",
@@ -2626,6 +2652,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="sm"
                           variant="outline"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setEditingLightEstimate(occ);
                             setLightEstDialogOpen(true);
@@ -2639,6 +2667,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="outline"
                           colorPalette="red"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setConfirmAction({
                               title: "Delete Estimate?",
@@ -2676,6 +2706,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               onClick={async () => void claim(occ.id)}
                               variant="outline"
                               colorPalette="green"
+                              disabled={isOffline}
+                              title={isOffline ? "Requires internet" : undefined}
                               busyId={statusButtonBusyId}
                               setBusyId={setStatusButtonBusyId}
                             />
@@ -2696,6 +2728,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             onClick={async () => void claim(occ.id)}
                             variant="outline"
                             colorPalette="green"
+                            disabled={isOffline}
+                            title={isOffline ? "Requires internet" : undefined}
                             busyId={statusButtonBusyId}
                             setBusyId={setStatusButtonBusyId}
                           />
@@ -2706,6 +2740,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-start"
                           itemId={occ.id}
                           label="Start"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
                             const todayDate = bizDateKey(new Date());
@@ -2764,6 +2800,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           onClick={async () => setCompleteDialogOcc(occ)}
                           variant="outline"
                           colorPalette="green"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -2773,6 +2811,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-submit-proposal"
                           itemId={occ.id}
                           label="Complete Estimate"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => setConfirmAction({
                             title: "Complete Estimate?",
                             message: "Add any comments about this estimate (optional):",
@@ -2795,6 +2835,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-accept-estimate"
                           itemId={occ.id}
                           label="Accept Estimate"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => setConfirmAction({
                             title: "Accept Estimate?",
                             message: "Add a comment:",
@@ -2844,6 +2886,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-reject-estimate"
                           itemId={occ.id}
                           label="Reject Estimate"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => setConfirmAction({
                             title: "Reject Estimate?",
                             message: "Add a reason:",
@@ -2872,6 +2916,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-generate-estimate"
                           itemId={occ.id}
                           label={occ.generatedEstimate ? "Regenerate Estimate" : "Generate Estimate"}
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             try {
                               publishInlineMessage({ type: "WARNING", text: "Generating AI estimate — please review before sending to the client." });
@@ -2907,6 +2953,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           }}
                           variant="outline"
                           colorPalette="green"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -2921,6 +2969,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             setManageOpen(true);
                           }}
                           variant="outline"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -2933,6 +2983,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           onClick={async () => setExpenseDialogOccId(occ.id)}
                           variant="outline"
                           colorPalette="orange"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -2942,6 +2994,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-unclaim"
                           itemId={occ.id}
                           label="Unclaim"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => setConfirmAction({
                             title: "Unclaim Job?",
                             message: "Are you sure you want to unclaim this job?",
@@ -2960,6 +3014,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="orange"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setReminderDialogOccId(occ.id);
                             setReminderDate("");
@@ -2974,6 +3030,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="gray"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => void clearReminder(occ.id)}
                         >
                           <BellOff size={12} /> Clear Reminder
@@ -2996,6 +3054,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="blue"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             try {
                               await apiPost(`/api/tasks/${occ.id}/reopen`);
@@ -3015,6 +3075,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="purple"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
                             try {
                               await apiPost(`/api/standalone-reminders/${occ.id}/reopen`);
@@ -3033,6 +3095,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="orange"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setReminderDialogOccId(occ.id);
                             setReminderDate("");
@@ -3046,6 +3110,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="gray"
+                          disabled={isOffline}
+                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => void clearReminder(occ.id)}
                         >
                           <BellOff size={12} /> Clear Reminder
@@ -3242,7 +3308,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Button variant="ghost" onClick={() => setReminderDialogOccId(null)}>Cancel</Button>
                 <Button
                   colorPalette="orange"
-                  disabled={!reminderDate}
+                  disabled={isOffline || !reminderDate}
+                  title={isOffline ? "Requires internet" : undefined}
                   onClick={() => {
                     if (reminderDialogOccId && reminderDate) {
                       void setReminder(reminderDialogOccId, reminderDate + "T13:00:00Z", reminderNote);
@@ -3538,6 +3605,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       size="sm"
                       colorPalette="blue"
                       loading={calFeedLoading}
+                      disabled={isOffline}
+                      title={isOffline ? "Requires internet" : undefined}
                       onClick={async () => {
                         setCalFeedLoading(true);
                         setCalFeedStep("result");
