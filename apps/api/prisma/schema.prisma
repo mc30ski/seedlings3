@@ -532,6 +532,10 @@ model JobOccurrence {
   linkedOccurrence    JobOccurrence?  @relation("TaskLink", fields: [linkedOccurrenceId], references: [id], onDelete: SetNull)
   linkedFromTasks     JobOccurrence[] @relation("TaskLink")
 
+  linkGroupId         String?
+
+  @@index([linkGroupId])
+
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]

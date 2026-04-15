@@ -352,6 +352,7 @@ export type JobOccurrenceFull = {
   startLng?: number | null;
   completeLat?: number | null;
   completeLng?: number | null;
+  linkGroupId?: string | null;
   assignees: JobOccurrenceAssigneeWithUser[];
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
@@ -524,6 +525,7 @@ export type WorkerOccurrence = {
   contactPhone?: string | null;
   contactEmail?: string | null;
   estimateAddress?: string | null;
+  linkGroupId?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   startLat?: number | null;

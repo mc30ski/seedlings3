@@ -512,6 +512,9 @@ export const jobs: ServicesJobs = {
     patch: any
   ) {
     return prisma.$transaction(async (tx) => {
+      // Fetch original before update (for link cascade delta)
+      const original = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+
       const data: any = {};
 
       if (patch.kind != null) data.kind = patch.kind;
@@ -554,7 +557,27 @@ export const jobs: ServicesJobs = {
         record: updated,
       });
 
-      return updated;
+      // Cascade startAt change to linked occurrences — sync to same date
+      let linkedUpdated: string[] = [];
+      if (data.startAt && original?.linkGroupId) {
+        const newStart = data.startAt as Date;
+        const linked = await tx.jobOccurrence.findMany({
+          where: { linkGroupId: original.linkGroupId, id: { not: occurrenceId } },
+        });
+        for (const l of linked) {
+          if (l.startAt && l.startAt.getTime() === newStart.getTime()) continue; // already synced
+          const updates: any = { startAt: newStart };
+          // Preserve each occurrence's duration
+          if (l.startAt && l.endAt) {
+            const duration = l.endAt.getTime() - l.startAt.getTime();
+            updates.endAt = new Date(newStart.getTime() + duration);
+          }
+          await tx.jobOccurrence.update({ where: { id: l.id }, data: updates });
+          linkedUpdated.push(l.id);
+        }
+      }
+
+      return { ...updated, _linkedUpdated: linkedUpdated };
     });
   },
 

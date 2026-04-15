@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, List, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -1697,6 +1697,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                          {occ.linkGroupId && (
+                            <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
+                              <Link2 size={10} style={{ marginRight: 3 }} /> Linked
+                            </Badge>
+                          )}
                           {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
                           {isWorkerView && occ.reminder && (
                             <Badge
@@ -1855,6 +1860,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           )}
                           {isAdminOnlyOcc && (
                             <StatusBadge status="Administered" palette="red" variant="outline" />
+                          )}
+                          {occ.linkGroupId && (
+                            <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
+                              <Link2 size={10} style={{ marginRight: 3 }} /> Linked
+                            </Badge>
                           )}
                           {(occ.price ?? 0) >= highValueThreshold && (
                             <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
@@ -2316,6 +2326,48 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         photoCount={occ._count?.photos ?? 0}
                       />
                     )}
+
+                    {occ.linkGroupId && (() => {
+                      // Find other occurrences in the same link group from the loaded items
+                      const linked = items.filter((o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id);
+                      if (linked.length === 0) return null;
+                      return (
+                        <Box mt={1} p={2} bg="purple.50" rounded="md">
+                          <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                            <Link2 size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />
+                            Linked occurrences:
+                          </Text>
+                          <HStack gap={1} mt={1} wrap="wrap">
+                            {linked.map((lo) => (
+                              <Badge
+                                key={lo.id}
+                                colorPalette="purple"
+                                variant="subtle"
+                                fontSize="xs"
+                                px="2"
+                                borderRadius="full"
+                                cursor="pointer"
+                                onClick={(e: any) => {
+                                  e.stopPropagation();
+                                  // Clear first to force re-render even if clicking back to a previous highlight
+                                  setHighlightOccId(null);
+                                  requestAnimationFrame(() => {
+                                    setHighlightOccId(lo.id);
+                                    setExpandedCards(new Set([lo.id]));
+                                    setFilterJobId(null);
+                                    setQ("");
+                                  });
+                                }}
+                              >
+                                {lo.startAt ? fmtDate(lo.startAt) : "No date"}
+                                {lo.job?.property?.displayName ? ` · ${lo.job.property.displayName}` : ""}
+                                {(lo as any).jobType ? ` · ${jobTypeLabel((lo as any).jobType)}` : ""}
+                              </Badge>
+                            ))}
+                          </HStack>
+                        </Box>
+                      );
+                    })()}
 
                     {/* Comments section */}
                     <Box w="full" mt={2} data-comments={occ.id}>

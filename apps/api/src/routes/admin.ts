@@ -718,6 +718,95 @@ export default async function adminRoutes(app: FastifyInstance) {
     );
   });
 
+  // ── Occurrence Linking ──
+
+  // Link two occurrences (must share the same jobId)
+  app.post("/admin/occurrences/:id/link", adminGuard, async (req: any) => {
+    const occId = String(req.params.id);
+    const targetId = String(req.body?.targetOccurrenceId ?? "");
+    if (!targetId) throw app.httpErrors.badRequest("targetOccurrenceId is required");
+
+    const [occ, target] = await Promise.all([
+      prisma.jobOccurrence.findUnique({ where: { id: occId } }),
+      prisma.jobOccurrence.findUnique({ where: { id: targetId } }),
+    ]);
+    if (!occ || !target) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.jobId !== target.jobId) throw app.httpErrors.badRequest("Occurrences must belong to the same job");
+    if (occId === targetId) throw app.httpErrors.badRequest("Cannot link an occurrence to itself");
+
+    // Determine group ID: merge existing groups or create new
+    const crypto = require("crypto");
+    let groupId = occ.linkGroupId ?? target.linkGroupId ?? crypto.randomUUID();
+
+    // If both have different groups, merge them (move target's group to occ's group)
+    if (occ.linkGroupId && target.linkGroupId && occ.linkGroupId !== target.linkGroupId) {
+      await prisma.jobOccurrence.updateMany({
+        where: { linkGroupId: target.linkGroupId },
+        data: { linkGroupId: occ.linkGroupId },
+      });
+      groupId = occ.linkGroupId;
+    }
+
+    // Set groupId on both
+    await prisma.jobOccurrence.updateMany({
+      where: { id: { in: [occId, targetId] } },
+      data: { linkGroupId: groupId },
+    });
+
+    // Sync dates — the source occurrence's startAt becomes the group date
+    if (occ.startAt) {
+      const syncUpdates: any = { startAt: occ.startAt };
+      // Sync all other occurrences in the group to the source date
+      const allInGroup = await prisma.jobOccurrence.findMany({
+        where: { linkGroupId: groupId, id: { not: occId } },
+      });
+      for (const l of allInGroup) {
+        const updates: any = { startAt: occ.startAt };
+        if (l.startAt && l.endAt) {
+          const duration = l.endAt.getTime() - l.startAt.getTime();
+          updates.endAt = new Date(occ.startAt.getTime() + duration);
+        }
+        await prisma.jobOccurrence.update({ where: { id: l.id }, data: updates });
+      }
+    }
+
+    return { ok: true, linkGroupId: groupId };
+  });
+
+  // Unlink an occurrence from its group
+  app.post("/admin/occurrences/:id/unlink", adminGuard, async (req: any) => {
+    const occId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occId } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (!occ.linkGroupId) return { ok: true };
+
+    const groupId = occ.linkGroupId;
+    await prisma.jobOccurrence.update({ where: { id: occId }, data: { linkGroupId: null } });
+
+    // If only 1 occurrence left in the group, remove the group from it too
+    const remaining = await prisma.jobOccurrence.count({ where: { linkGroupId: groupId } });
+    if (remaining === 1) {
+      await prisma.jobOccurrence.updateMany({ where: { linkGroupId: groupId }, data: { linkGroupId: null } });
+    }
+
+    return { ok: true };
+  });
+
+  // Get linked occurrences for an occurrence
+  app.get("/admin/occurrences/:id/linked", adminGuard, async (req: any) => {
+    const occId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occId } });
+    if (!occ?.linkGroupId) return [];
+    return prisma.jobOccurrence.findMany({
+      where: { linkGroupId: occ.linkGroupId, id: { not: occId } },
+      select: {
+        id: true, title: true, startAt: true, endAt: true, status: true, workflow: true, jobType: true, price: true,
+        job: { select: { property: { select: { displayName: true, client: { select: { displayName: true } } } } } },
+      },
+      orderBy: { startAt: "asc" },
+    });
+  });
+
   // Patch an occurrence (optional but very useful for admin UI)
   app.patch(
     "/admin/occurrences/:occurrenceId",
