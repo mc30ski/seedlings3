@@ -41,6 +41,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
+import { enqueueAction } from "@/src/lib/offlineQueue";
 import TaskDialog from "@/src/ui/dialogs/TaskDialog";
 import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
@@ -157,6 +158,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
 
+  // Build a rich label for offline queue entries
+  function queueLabel(occ: WorkerOccurrence | undefined, action: string, detail?: string): string {
+    const property = occ?.job?.property?.displayName;
+    const jobType = (occ?.job as any)?.jobType ?? occ?.kind;
+    const date = occ?.startAt ? bizDateKey(occ.startAt) : null;
+    const parts = [action];
+    if (property) parts.push(property);
+    else if (occ?.title) parts.push(occ.title);
+    else parts.push("Job");
+    if (jobType) parts.push(`(${jobType})`);
+    if (date) parts.push(`· ${date}`);
+    if (detail) parts.push(`· ${detail}`);
+    return parts.join(" ");
+  }
+
   // Pinned occurrences (worker only)
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const isWorkerView = purpose === "WORKER";
@@ -176,6 +192,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       else next.add(occId);
       return next;
     });
+    if (isOffline) {
+      const occ = items.find((o) => o.id === occId);
+      await enqueueAction(wasPinned ? "UNPIN" : "PIN", occId, queueLabel(occ, wasPinned ? "Unpin" : "Pin"), {});
+      publishInlineMessage({ type: "INFO", text: `${wasPinned ? "Unpin" : "Pin"} queued for sync.` });
+      return;
+    }
     try {
       await apiPost(`/api/occurrences/${occId}/${wasPinned ? "unpin" : "pin"}`);
     } catch (err) {
@@ -207,6 +229,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       else next.add(occId);
       return next;
     });
+    if (isOffline) {
+      const occ = items.find((o) => o.id === occId);
+      await enqueueAction(wasLiked ? "UNLIKE" : "LIKE", occId, queueLabel(occ, wasLiked ? "Unlike" : "Like"), {});
+      publishInlineMessage({ type: "INFO", text: `${wasLiked ? "Unlike" : "Like"} queued for sync.` });
+      return;
+    }
     try {
       await apiPost(`/api/occurrences/${occId}/${wasLiked ? "unlike" : "like"}`);
     } catch (err) {
@@ -255,6 +283,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [reminderNote, setReminderNote] = useState("");
 
   async function setReminder(occId: string, remindAt: string, note: string) {
+    if (isOffline) {
+      const occ = items.find((o) => o.id === occId);
+      await enqueueAction("SET_REMINDER", occId, queueLabel(occ, "Set reminder", note ? `"${note.slice(0, 40)}"` : undefined), { remindAt, note: note || undefined });
+      publishInlineMessage({ type: "INFO", text: "Reminder queued for sync." });
+      return;
+    }
     try {
       await apiPost(`/api/occurrences/${occId}/reminder`, { remindAt, note: note || undefined });
       publishInlineMessage({ type: "SUCCESS", text: "Reminder set." });
@@ -448,6 +482,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   async function postComment(occId: string) {
     const body = (commentDraft[occId] ?? "").trim();
     if (!body) return;
+    if (isOffline) {
+      const occ = items.find((o) => o.id === occId);
+      await enqueueAction("POST_COMMENT", occId, queueLabel(occ, "Comment", `"${body.slice(0, 50)}${body.length > 50 ? "…" : ""}"`), { body });
+      setCommentDraft((prev) => ({ ...prev, [occId]: "" }));
+      setItems((prev) => prev.map((o) => o.id === occId ? { ...o, _count: { ...o._count, photos: o._count?.photos ?? 0, comments: (o._count?.comments ?? 0) + 1 } } : o));
+      publishInlineMessage({ type: "INFO", text: "Comment queued for sync." });
+      return;
+    }
     setCommentBusy(true);
     try {
       await apiPost(`/api/occurrences/${occId}/comments`, { body });
@@ -589,6 +631,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       })
       .catch(() => {});
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
+
+  // Re-fetch data after offline queue syncs
+  const loadRef = useRef(load);
+  const loadCommentsRef = useRef(loadComments);
+  const commentsOpenForRef = useRef(commentsOpenFor);
+  loadRef.current = load;
+  loadCommentsRef.current = loadComments;
+  commentsOpenForRef.current = commentsOpenFor;
+
+  useEffect(() => {
+    const handler = () => {
+      void loadRef.current(false);
+      for (const occId of commentsOpenForRef.current) {
+        void loadCommentsRef.current(occId);
+      }
+    };
+    window.addEventListener("offlineQueue:processed", handler);
+    return () => window.removeEventListener("offlineQueue:processed", handler);
+  }, []);
 
   // Check for Begin Work Day workflow date override
   useEffect(() => {
@@ -758,6 +819,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }
 
   async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string, recordLocation = true) {
+    if (isOffline) {
+      const label = queueLabel(occ, action === "start" ? "Start job" : "Complete job");
+      const body: Record<string, unknown> = {};
+      if (notes) body.notes = notes;
+      body.lat = null;
+      body.lng = null;
+      const actionType = action === "start" ? "START_JOB" : "COMPLETE_JOB";
+      await enqueueAction(actionType as any, occ.id, label, body);
+      if (action === "start") {
+        setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+        publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+      } else {
+        setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "COMPLETED" as any, completedAt: new Date().toISOString() } : o));
+        publishInlineMessage({ type: "INFO", text: "Job completed (queued for sync)." });
+      }
+      return;
+    }
     try {
       const loc = recordLocation ? await getLocation() : null;
       const body: Record<string, unknown> = {};
@@ -1729,10 +1807,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Text>
                         {isWorkerView && (
                           <HStack gap={1} flexShrink={0}>
-                            <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
                               <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
                             </Button>
-                            <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
                               {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
                             </Button>
                           </HStack>
@@ -1814,10 +1892,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Text>
                           {isWorkerView && (
                             <HStack gap={1} flexShrink={0}>
-                              <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
                                 <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
                               </Button>
-                              <Button variant="ghost" size="xs" px="0" minW="0" disabled={isOffline} onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
                                 {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
                               </Button>
                             </HStack>
@@ -2515,7 +2593,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void postComment(occ.id); } }}
                               style={{ flex: 1, fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4 }}
                             />
-                            <Button size="xs" variant="solid" colorPalette="blue" disabled={isOffline || commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={(e: any) => { e.stopPropagation(); void postComment(occ.id); }}>
+                            <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={(e: any) => { e.stopPropagation(); void postComment(occ.id); }}>
                               Post
                             </Button>
                           </HStack>
@@ -2594,9 +2672,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="sm"
                           variant="solid"
                           colorPalette="purple"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
+                            if (isOffline) {
+                              await enqueueAction("DISMISS_REMINDER", occ.id, queueLabel(occ, "Dismiss reminder"), {});
+                              setItems((prev) => prev.filter((o) => o.id !== occ.id));
+                              publishInlineMessage({ type: "INFO", text: "Dismiss queued for sync." });
+                              return;
+                            }
                             try {
                               await apiPost(`/api/standalone-reminders/${occ.id}/dismiss`);
                               publishInlineMessage({ type: "SUCCESS", text: "Reminder dismissed." });
@@ -2740,9 +2822,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           id="occ-start"
                           itemId={occ.id}
                           label="Start"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
+                            if (isOffline) {
+                              await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+                              publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                              return;
+                            }
                             const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
                             const todayDate = bizDateKey(new Date());
                             const isEarly = occDate && occDate !== todayDate;
@@ -2800,8 +2886,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           onClick={async () => setCompleteDialogOcc(occ)}
                           variant="outline"
                           colorPalette="green"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -3014,8 +3098,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="orange"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setReminderDialogOccId(occ.id);
                             setReminderDate("");
@@ -3095,8 +3177,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           size="xs"
                           variant="outline"
                           colorPalette="orange"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           onClick={() => {
                             setReminderDialogOccId(occ.id);
                             setReminderDate("");
@@ -3308,8 +3388,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Button variant="ghost" onClick={() => setReminderDialogOccId(null)}>Cancel</Button>
                 <Button
                   colorPalette="orange"
-                  disabled={isOffline || !reminderDate}
-                  title={isOffline ? "Requires internet" : undefined}
+                  disabled={!reminderDate}
                   onClick={() => {
                     if (reminderDialogOccId && reminderDate) {
                       void setReminder(reminderDialogOccId, reminderDate + "T13:00:00Z", reminderNote);

@@ -22,6 +22,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import { type Me } from "@/src/lib/types";
 import { useOffline } from "@/src/lib/offline";
+import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -592,6 +593,12 @@ function CalendarFeedsSection() {
 
 function OfflineSection() {
   const { isOffline, isForceOffline, setForceOffline, lastSyncedAt } = useOffline();
+  const [queuedActions, setQueuedActions] = useState<QueuedAction[]>([]);
+
+  useEffect(() => {
+    void getAllActions().then(setQueuedActions);
+    return subscribeQueue(() => void getAllActions().then(setQueuedActions));
+  }, []);
 
   return (
     <Card.Root variant="outline" mt={4}>
@@ -632,6 +639,84 @@ function OfflineSection() {
               Last synced: {lastSyncedAt.toLocaleTimeString()}
             </Text>
           )}
+          {queuedActions.length > 0 && (
+            <Box>
+              <HStack justify="space-between" align="center" mb={2}>
+                <Text fontSize="sm" fontWeight="medium">
+                  Pending Actions ({queuedActions.filter((a) => a.status === "pending" || a.status === "failed").length})
+                </Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorPalette="red"
+                  onClick={async () => { await clearAllActions(); void getAllActions().then(setQueuedActions); }}
+                >
+                  Clear All
+                </Button>
+              </HStack>
+              <VStack align="stretch" gap={1}>
+                {queuedActions.filter((a) => a.status !== "synced").map((a) => (
+                  <HStack
+                    key={a.id}
+                    px={2}
+                    py={1}
+                    borderWidth="1px"
+                    borderColor={a.status === "failed" ? "red.200" : "gray.200"}
+                    bg={a.status === "failed" ? "red.50" : undefined}
+                    rounded="md"
+                    justify="space-between"
+                    fontSize="xs"
+                  >
+                    <VStack align="start" gap={0}>
+                      <Text fontWeight="medium">
+                        {a.status === "pending" ? "⏳" : a.status === "failed" ? "❌" : "🔄"} {a.label}
+                      </Text>
+                      {a.error && <Text color="red.600">{a.error}</Text>}
+                    </VStack>
+                    <HStack gap={1}>
+                      {a.status === "failed" && (
+                        <Button size="xs" variant="ghost" px="1" minW="0" onClick={async () => { await retryAction(a.id); void getAllActions().then(setQueuedActions); }}>
+                          ↻
+                        </Button>
+                      )}
+                      {(a.status === "pending" || a.status === "failed") && (
+                        <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={async () => { await deleteAction(a.id); void getAllActions().then(setQueuedActions); }}>
+                          ✕
+                        </Button>
+                      )}
+                    </HStack>
+                  </HStack>
+                ))}
+              </VStack>
+            </Box>
+          )}
+          <HStack justify="space-between" align="center">
+            <VStack align="start" gap={0}>
+              <Text fontSize="sm" fontWeight="medium">Clear Cache</Text>
+              <Text fontSize="xs" color="fg.muted">Remove all locally cached data and reload. Use if data seems stale or incorrect.</Text>
+            </VStack>
+            <Button
+              size="sm"
+              variant="outline"
+              colorPalette="red"
+              onClick={async () => {
+                try {
+                  // Clear service worker caches
+                  const keys = await caches.keys();
+                  await Promise.all(keys.map((k) => caches.delete(k)));
+                  // Unregister service worker
+                  const regs = await navigator.serviceWorker?.getRegistrations();
+                  if (regs) await Promise.all(regs.map((r) => r.unregister()));
+                  publishInlineMessage({ type: "SUCCESS", text: "Cache cleared. Reloading..." });
+                  setTimeout(() => window.location.reload(), 500);
+                } catch {
+                  publishInlineMessage({ type: "ERROR", text: "Failed to clear cache." });
+                }
+              }}
+            >
+              Clear
+            </Button>
+          </HStack>
         </VStack>
       </Card.Body>
     </Card.Root>

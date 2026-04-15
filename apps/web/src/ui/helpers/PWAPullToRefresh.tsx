@@ -154,18 +154,18 @@ export default function PWAPullToRefresh({
       >
         <HStack
           gap="3"
-          px="16px"
-          py="10px"
+          px="20px"
+          py="12px"
           borderRadius="full"
           bg="white"
-          boxShadow="lg"
-          borderWidth="1px"
-          borderColor="gray.200"
+          boxShadow="xl"
+          borderWidth="2px"
+          borderColor="gray.300"
         >
           {refreshing ? (
             <>
               <Spinner size="sm" color="blue.500" />
-              <Text fontSize="sm" fontWeight="medium" color="blue.600">Refreshing…</Text>
+              <Text fontSize="sm" fontWeight="bold" color="blue.600">Refreshing…</Text>
             </>
           ) : (
             <>
@@ -181,7 +181,7 @@ export default function PWAPullToRefresh({
                 mask="radial-gradient(circle 7px, transparent 7px, black 8px)"
                 transition="border-color 0.2s"
               />
-              <Text fontSize="sm" fontWeight="medium" color={progress >= 1 ? "blue.600" : "gray.600"}>
+              <Text fontSize="sm" fontWeight="bold" color={progress >= 1 ? "blue.600" : "gray.600"}>
                 {progress >= 1 ? "Release to refresh" : "Pull to refresh"}
               </Text>
             </>

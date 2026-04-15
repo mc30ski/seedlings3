@@ -208,8 +208,8 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
         <SearchWithClear
           value={q}
           onChange={setQ}
-          placeholder="Search reminders…"
-          inputId="reminders-search"
+          placeholder="Search planning…"
+          inputId="planning-search"
         />
         <Button
           size="sm"
@@ -229,7 +229,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
         <Box textAlign="center" py={10}>
           <Text fontSize="lg" fontWeight="semibold" color="green.600">All caught up!</Text>
           <Text fontSize="sm" color="fg.muted" mt={1}>
-            {hasDismissed ? `No reminders — ${dismissed.size} dismissed today.` : "No reminders right now."}
+            {hasDismissed ? `Nothing to plan — ${dismissed.size} dismissed today.` : "Nothing to plan right now."}
           </Text>
           {hasDismissed && (
             <Button size="sm" variant="ghost" mt={2} onClick={undismissAll}>

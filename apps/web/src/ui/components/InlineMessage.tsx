@@ -94,8 +94,8 @@ export default function InlineMessage({
       // show (fade-in)
       setIsVisible(true);
 
-      if (det.autoHideMs === undefined && det.type === "SUCCESS") {
-        det.autoHideMs = 5000; // Default
+      if (det.autoHideMs === undefined && (det.type === "SUCCESS" || det.type === "INFO")) {
+        det.autoHideMs = 4000;
       }
 
       // arm auto-hide (starts fade, then clears after fadeOutMs)
