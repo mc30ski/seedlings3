@@ -71,6 +71,8 @@ type Props = {
   title?: string;
   submitLabel?: string;
   defaultWorkflow?: string;
+  /** Occurrence-level frequency override (for pre-populating in edit mode) */
+  defaultFrequencyDays?: number | null;
   /** Job's frequencyDays — used to warn if "Repeating" is selected without frequency */
   jobFrequencyDays?: number | null;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
@@ -100,6 +102,7 @@ export default function OccurrenceDialog({
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
+  defaultFrequencyDays,
   jobFrequencyDays,
   createEndpoint,
   createBody,
@@ -166,7 +169,7 @@ export default function OccurrenceDialog({
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
-    setOccFrequencyDays("");
+    setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");

@@ -1871,6 +1871,8 @@ export default function ServicesTab({
           defaultCompletedAt={editingOccurrence.completedAt}
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
+          defaultWorkflow={editingOccurrence.workflow}
+          defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
           isAdmin={forAdmin}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           onSaved={() => {

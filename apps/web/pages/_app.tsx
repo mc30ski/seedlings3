@@ -10,6 +10,8 @@ import { ChakraProvider, Box } from "@chakra-ui/react";
 import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
 import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
+import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/offline";
+import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
@@ -18,11 +20,17 @@ if (!PUBLISHABLE_KEY) {
 
 function AppInner({ Component, pageProps }: AppProps) {
   const { getToken } = useAuth();
+  const offlineState = useOffline();
 
   // Wire Clerk token into API client
   useEffect(() => {
     setAuthTokenFetcher(() => getToken());
   }, [getToken]);
+
+  // Register service worker for offline support
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
 
   // Disable browser pull-to-refresh when any dialog is open
   useEffect(() => {
@@ -64,8 +72,14 @@ function AppInner({ Component, pageProps }: AppProps) {
     <ChakraProvider value={system}>
       {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
       <Box pt={TOP_PAD}>
-        {/* Custom pull-to-refresh remains enabled (appears in standalone, no-op in browsers) */}
-        <PWAPullToRefresh />
+        {/* Custom pull-to-refresh — blocked when offline */}
+        <PWAPullToRefresh onRefresh={async () => {
+          if (offlineState.isOffline) {
+            publishInlineMessage({ type: "WARNING", text: "Can't refresh while offline." });
+            return;
+          }
+          window.location.reload();
+        }} />
 
         <Component {...pageProps} />
       </Box>
@@ -109,7 +123,9 @@ export default function MyApp(props: AppProps) {
       </Head>
 
       <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-        <AppInner {...props} />
+        <OfflineProvider>
+          <AppInner {...props} />
+        </OfflineProvider>
       </ClerkProvider>
     </>
   );

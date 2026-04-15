@@ -153,34 +153,36 @@ export default function PWAPullToRefresh({
         transition={refreshing ? "opacity 0.2s" : "transform 0.1s"}
       >
         <HStack
-          gap="2"
-          px="10px"
-          py="6px"
+          gap="3"
+          px="16px"
+          py="10px"
           borderRadius="full"
           bg="white"
-          boxShadow="sm"
+          boxShadow="lg"
+          borderWidth="1px"
+          borderColor="gray.200"
         >
           {refreshing ? (
             <>
-              <Spinner size="sm" />
-              <Text fontSize="sm">Refreshing…</Text>
+              <Spinner size="sm" color="blue.500" />
+              <Text fontSize="sm" fontWeight="medium" color="blue.600">Refreshing…</Text>
             </>
           ) : (
             <>
               <Box
-                w="16px"
-                h="16px"
+                w="20px"
+                h="20px"
                 borderRadius="full"
-                borderWidth="2px"
-                borderColor="gray.300"
-                // little fill ring to show progress
+                borderWidth="3px"
+                borderColor={progress >= 1 ? "blue.400" : "gray.300"}
                 bgGradient={`conic-gradient(#3182ce ${Math.floor(
                   progress * 360
                 )}deg, transparent 0deg)`}
-                mask="radial-gradient(circle 6px, transparent 6px, black 7px)"
+                mask="radial-gradient(circle 7px, transparent 7px, black 8px)"
+                transition="border-color 0.2s"
               />
-              <Text fontSize="sm" color="gray.700">
-                Pull to refresh
+              <Text fontSize="sm" fontWeight="medium" color={progress >= 1 ? "blue.600" : "gray.600"}>
+                {progress >= 1 ? "Release to refresh" : "Pull to refresh"}
               </Text>
             </>
           )}
