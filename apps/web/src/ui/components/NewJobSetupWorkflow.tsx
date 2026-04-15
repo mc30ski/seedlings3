@@ -11,13 +11,26 @@ import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 
 type Step = "idle" | "contact" | "client" | "property" | "job" | "occurrence" | "saving";
 
+type EstimateDefaults = {
+  occurrenceId?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  estimateAddress?: string | null;
+  proposalAmount?: number | null;
+  proposalNotes?: string | null;
+  title?: string | null;
+  estimatedMinutes?: number | null;
+};
+
 type Props = {
   active: boolean;
   onDone: () => void;
   onComplete?: (jobId?: string) => void;
+  estimateDefaults?: EstimateDefaults | null;
 };
 
-export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Props) {
+export default function NewJobSetupWorkflow({ active, onDone, onComplete, estimateDefaults }: Props) {
   const [step, setStep] = useState<Step>("idle");
   const stepRef = useRef<Step>("idle");
 
@@ -64,6 +77,19 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
     ? [contactData.firstName, contactData.lastName].filter(Boolean).join(" ")
     : undefined;
 
+  // Defaults from light estimate
+  const ed = estimateDefaults;
+  const edNameParts = (ed?.contactName ?? "").trim().split(/\s+/);
+  const edFirstName = edNameParts[0] ?? "";
+  const edLastName = edNameParts.slice(1).join(" ") ?? "";
+  // Parse address: "123 Main St, Austin, TX 78701"
+  const edAddrParts = (ed?.estimateAddress ?? "").split(",").map((s: string) => s.trim());
+  const edStreet = edAddrParts[0] ?? "";
+  const edCity = edAddrParts[1] ?? "";
+  const edStateZip = (edAddrParts[2] ?? "").split(/\s+/);
+  const edState = edStateZip[0] ?? "";
+  const edZip = edStateZip[edStateZip.length - 1] ?? "";
+
   // Batch save everything at the end
   async function batchSave(occurrenceData: any) {
     go("saving");
@@ -91,6 +117,15 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
       // 5. Create occurrence for that job
       await apiPost(`/api/admin/jobs/${job.id}/occurrences`, occurrenceData);
 
+      // 6. If converting a light estimate, link it to the new job
+      if (ed?.occurrenceId) {
+        try {
+          await apiPost(`/api/admin/occurrences/${ed.occurrenceId}/link-to-job`, { jobId: job.id });
+        } catch {
+          // Non-critical — the job was still created
+        }
+      }
+
       publishInlineMessage({ type: "SUCCESS", text: "New job setup complete!" });
       reset();
       onDone();
@@ -116,6 +151,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           preventOutsideClose
           deferSave
           defaultIsPrimary
+          initial={contactData ?? (ed ? { firstName: edFirstName, lastName: edLastName, phone: ed.contactPhone, email: ed.contactEmail, isPrimary: true, role: "OWNER" } as any : undefined)}
           onSaved={(data) => {
             setContactData(data);
             go("client");
@@ -132,7 +168,9 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           role="ADMIN"
           preventOutsideClose
           deferSave
-          defaultDisplayName={defaultClientName}
+          defaultDisplayName={clientData?.displayName ?? defaultClientName}
+          initial={clientData ?? undefined}
+          onBack={() => go("contact")}
           onSaved={(data) => {
             setClientData(data);
             go("property");
@@ -152,6 +190,8 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           deferredClient={clientData ? { id: "__deferred__", displayName: clientData.displayName } : undefined}
           deferredContact={contactData ? { firstName: contactData.firstName, lastName: contactData.lastName, email: contactData.email, phone: contactData.phone } : undefined}
           defaultClientId="__deferred__"
+          initial={propertyData ?? (ed ? { displayName: "Main House", street1: edStreet, city: edCity, state: edState, postalCode: edZip, estimateAddress: ed.estimateAddress } as any : undefined)}
+          onBack={() => go("client")}
           onSaved={(data) => {
             setPropertyData(data);
             go("job");
@@ -169,6 +209,8 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           deferSave
           deferredProperty={propertyData ? { id: "__deferred__", displayName: propertyData.displayName } : undefined}
           defaultPropertyId="__deferred__"
+          initial={jobData ?? (ed ? { defaultPrice: ed.proposalAmount, notes: ed.proposalNotes, estimatedMinutes: ed.estimatedMinutes, frequencyDays: 14 } as any : { frequencyDays: 14 } as any)}
+          onBack={() => go("property")}
           onSaved={(data) => {
             setJobData(data);
             go("occurrence");
@@ -188,9 +230,12 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete }: Prop
           defaultPrice={jobData?.defaultPrice}
           defaultEstimatedMinutes={jobData?.estimatedMinutes}
           defaultNotes={jobData?.notes}
+          defaultWorkflow={ed ? "STANDARD" : undefined}
+          jobFrequencyDays={jobData?.frequencyDays != null ? Number(jobData.frequencyDays) : null}
           title="New Occurrence (Final Step)"
           submitLabel="Create Everything"
           deferSave
+          onBack={() => go("job")}
           onSaved={(data) => {
             void batchSave(data);
           }}

@@ -96,6 +96,7 @@ export default function HomePage() {
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
+  const [workflowEstimateDefaults, setWorkflowEstimateDefaults] = useState<any>(null);
 
   // Track paused workflow for banner display
   const [pausedWorkflow, setPausedWorkflow] = useState<string | null>(null);
@@ -619,7 +620,8 @@ export default function HomePage() {
       headerSlot: (
         <NewJobSetupWorkflow
           active={activeWorkflow === "new-job-setup"}
-          onDone={() => setActiveWorkflow(null)}
+          onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
+          estimateDefaults={workflowEstimateDefaults}
           onComplete={(jobId) => {
             if (jobId) {
               // Navigate to Admin Services tab and highlight the new job
@@ -958,6 +960,18 @@ export default function HomePage() {
     };
     window.addEventListener("navigate:workerTab", onNav as EventListener);
     return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
+  }, []);
+
+  // Listen for "launch New Job Setup with estimate defaults" from JobsTab
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setWorkflowEstimateDefaults(detail ?? null);
+      setTopTab("admin");
+      setActiveWorkflow("new-job-setup");
+    };
+    window.addEventListener("trigger:newJobSetupFromEstimate", handler);
+    return () => window.removeEventListener("trigger:newJobSetupFromEstimate", handler);
   }, []);
 
   // Listen for workflow triggers (e.g., returning from Routes to Plan Workday)

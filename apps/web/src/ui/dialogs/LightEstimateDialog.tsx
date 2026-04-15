@@ -14,7 +14,8 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { X } from "lucide-react";
-import { apiGet, apiPost } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { bizDateKey } from "@/src/lib/lib";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -27,14 +28,28 @@ type WorkerLite = {
   email?: string | null;
 };
 
+type EditEstimate = {
+  id: string;
+  title?: string | null;
+  startAt?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  estimateAddress?: string | null;
+  notes?: string | null;
+  proposalAmount?: number | null;
+  assignees?: { userId: string; user?: { id: string; displayName?: string | null; email?: string | null } }[];
+};
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
   myId?: string;
+  editEstimate?: EditEstimate | null;
 };
 
-export default function LightEstimateDialog({ open, onOpenChange, onCreated, myId }: Props) {
+export default function LightEstimateDialog({ open, onOpenChange, onCreated, myId, editEstimate }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   const [title, setTitle] = useState("");
@@ -55,9 +70,29 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [selectValue, setSelectValue] = useState<string[]>([]);
 
+  const isEdit = !!editEstimate;
+
   useEffect(() => {
     if (!open) return;
-    reset();
+    if (editEstimate) {
+      setTitle(editEstimate.title ?? "");
+      setDate(editEstimate.startAt ? bizDateKey(editEstimate.startAt) : "");
+      const name = editEstimate.contactName ?? "";
+      const parts = name.split(/\s+/);
+      setContactFirstName(parts[0] ?? "");
+      setContactLastName(parts.slice(1).join(" ") ?? "");
+      setContactPhone(editEstimate.contactPhone ?? "");
+      setContactEmail(editEstimate.contactEmail ?? "");
+      setEstimateAddress(editEstimate.estimateAddress ?? "");
+      setNotes(editEstimate.notes ?? "");
+      setProposalAmount(editEstimate.proposalAmount != null ? String(editEstimate.proposalAmount) : "");
+      setPhoneError("");
+      setEmailError("");
+      setAssigneeIds(editEstimate.assignees?.map((a) => a.userId) ?? []);
+      setSelectValue([]);
+    } else {
+      reset();
+    }
     (async () => {
       try {
         const list = await apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true");
@@ -132,7 +167,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: date,
+        startAt: date + "T12:00:00Z",
         assigneeUserIds: assigneeIds,
       };
       const fullName = [contactFirstName.trim(), contactLastName.trim()].filter(Boolean).join(" ");
@@ -146,8 +181,13 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
         if (!isNaN(parsed)) body.proposalAmount = parsed;
       }
 
-      await apiPost("/api/admin/light-estimates", body);
-      publishInlineMessage({ type: "SUCCESS", text: "Light estimate created." });
+      if (isEdit) {
+        await apiPatch(`/api/admin/occurrences/${editEstimate!.id}`, body);
+        publishInlineMessage({ type: "SUCCESS", text: "Estimate updated." });
+      } else {
+        await apiPost("/api/admin/light-estimates", body);
+        publishInlineMessage({ type: "SUCCESS", text: "Estimate created." });
+      }
       reset();
       onOpenChange(false);
       onCreated?.();
@@ -171,10 +211,15 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
         <Dialog.Positioner>
           <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>New Estimate (Stand-alone)</Dialog.Title>
+              <Dialog.Title>{isEdit ? "Edit Estimate" : "New Estimate (Stand-alone)"}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+                  <Text fontSize="xs" color="yellow.800">
+                    This is a lightweight estimate — you don't need to create a Client, Property, or Job Service first. If the estimate is accepted, you'll be prompted to create those.
+                  </Text>
+                </Box>
                 {/* Title */}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
@@ -293,17 +338,20 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                   />
                 </Box>
 
-                {/* Assignee Picker */}
+                {/* Assignee Picker — only for create, not edit */}
+                {!isEdit && (
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Assignees</Text>
                   {assigneeIds.length > 0 && (
                     <VStack align="stretch" gap={1} mb={2}>
                       {assigneeIds.map((uid) => (
-                        <HStack key={uid} px={2} py={1} rounded="md" borderWidth="1px" justify="space-between">
-                          <Text fontSize="sm">{workerLabel(uid)}</Text>
-                          <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => removeAssignee(uid)}>
-                            <X size={14} />
-                          </Button>
+                        <HStack key={uid} px={2} py={1} rounded="md" borderWidth="1px" borderColor={uid === myId ? "teal.200" : "gray.200"} bg={uid === myId ? "teal.50" : undefined} justify="space-between">
+                          <Text fontSize="sm">{workerLabel(uid)}{uid === myId ? " (you)" : ""}</Text>
+                          {uid !== myId && (
+                            <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => removeAssignee(uid)}>
+                              <X size={14} />
+                            </Button>
+                          )}
                         </HStack>
                       ))}
                     </VStack>
@@ -346,6 +394,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                     </Button>
                   </HStack>
                 </Box>
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
@@ -356,7 +405,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                   disabled={!title.trim() || !date || saving || !!phoneError || !!emailError}
                   onClick={() => void handleSave()}
                 >
-                  {saving ? <Spinner size="sm" /> : "Create Estimate"}
+                  {saving ? <Spinner size="sm" /> : isEdit ? "Save Estimate" : "Create Estimate"}
                 </Button>
               </HStack>
             </Dialog.Footer>

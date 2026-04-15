@@ -129,14 +129,14 @@ export default function ClientDialog({
       setIsPrimary(!!initial.isPrimary);
       setShowMissingWarning(false);
     } else {
-      setKindValue([CONTACT_KIND[0]]);
-      setStatusValue([CONTACT_STATUS[0]]);
-      setFirstName("");
-      setLastName("");
-      setNickname("");
-      setEmail("");
-      setPhone("");
-      setIsPrimary(defaultIsPrimary ?? false);
+      setKindValue([initial?.role ?? CONTACT_KIND[0]]);
+      setStatusValue([initial?.status ?? CONTACT_STATUS[0]]);
+      setFirstName(initial?.firstName ?? "");
+      setLastName(initial?.lastName ?? "");
+      setNickname(initial?.nickname ?? "");
+      setEmail(initial?.email ?? "");
+      setPhone(initial?.phone ?? "");
+      setIsPrimary(initial?.isPrimary ?? defaultIsPrimary ?? false);
       setShowMissingWarning(false);
     }
   }, [open, mode, initial]);

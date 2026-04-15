@@ -533,6 +533,12 @@ export const jobs: ServicesJobs = {
       if ("jobType" in patch) data.jobType = patch.jobType ?? null;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
+      if ("title" in patch) data.title = patch.title ?? null;
+      if ("contactName" in patch) data.contactName = patch.contactName ?? null;
+      if ("contactPhone" in patch) data.contactPhone = patch.contactPhone ?? null;
+      if ("contactEmail" in patch) data.contactEmail = patch.contactEmail ?? null;
+      if ("estimateAddress" in patch) data.estimateAddress = patch.estimateAddress ?? null;
+      if ("proposalAmount" in patch) data.proposalAmount = patch.proposalAmount != null ? Number(patch.proposalAmount) : null;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },

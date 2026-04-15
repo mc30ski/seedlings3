@@ -857,6 +857,12 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("startLng" in body) patch.startLng = body.startLng != null ? Number(body.startLng) : null;
       if ("completeLat" in body) patch.completeLat = body.completeLat != null ? Number(body.completeLat) : null;
       if ("completeLng" in body) patch.completeLng = body.completeLng != null ? Number(body.completeLng) : null;
+      if ("title" in body) patch.title = body.title || null;
+      if ("contactName" in body) patch.contactName = body.contactName || null;
+      if ("contactPhone" in body) patch.contactPhone = body.contactPhone || null;
+      if ("contactEmail" in body) patch.contactEmail = body.contactEmail || null;
+      if ("estimateAddress" in body) patch.estimateAddress = body.estimateAddress || null;
+      if ("proposalAmount" in body) patch.proposalAmount = body.proposalAmount != null ? Number(body.proposalAmount) : null;
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(
@@ -1821,6 +1827,29 @@ Respond ONLY with valid JSON in this exact format:
       proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
       assigneeUserIds: Array.isArray(body.assigneeUserIds) ? body.assigneeUserIds.map(String) : undefined,
     });
+  });
+
+  app.delete("/admin/light-estimates/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Estimate not found");
+    if (occ.jobId) throw app.httpErrors.badRequest("This estimate is linked to a job — delete it from the Job Service instead");
+    if (occ.workflow !== "ESTIMATE") throw app.httpErrors.badRequest("Not a stand-alone estimate");
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
+  app.post("/admin/occurrences/:id/link-to-job", adminGuard, async (req: any) => {
+    const occId = String(req.params.id);
+    const jobId = String(req.body?.jobId ?? "");
+    if (!jobId) throw app.httpErrors.badRequest("jobId is required");
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occId } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    await prisma.jobOccurrence.update({
+      where: { id: occId },
+      data: { jobId, kind: "SINGLE_ADDRESS" },
+    });
+    return { ok: true };
   });
 
   app.post("/admin/convert-light-estimate", adminGuard, async (req: any) => {

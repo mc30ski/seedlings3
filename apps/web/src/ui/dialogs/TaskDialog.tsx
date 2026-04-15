@@ -314,7 +314,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button
-                  colorPalette={isReminder ? "pink" : "blue"}
+                  colorPalette={isReminder ? "purple" : "blue"}
                   disabled={!title.trim() || !date || saving}
                   onClick={() => void handleSave()}
                 >

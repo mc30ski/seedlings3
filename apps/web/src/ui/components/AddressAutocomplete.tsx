@@ -13,6 +13,8 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   onValidated?: (validated: boolean) => void;
+  /** Called when a structured suggestion is selected (not on freeform typing) */
+  onSelect?: (placeName: string) => void;
   placeholder?: string;
   disabled?: boolean;
   size?: "sm" | "md" | "lg";
@@ -25,6 +27,7 @@ export default function AddressAutocomplete({
   value,
   onChange,
   onValidated,
+  onSelect,
   placeholder = "Start typing an address...",
   disabled,
   size = "sm",
@@ -85,6 +88,7 @@ export default function AddressAutocomplete({
     setOpen(false);
     setValidated(true);
     onValidated?.(true);
+    onSelect?.(s.place_name);
   }
 
   // Close on outside click

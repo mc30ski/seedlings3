@@ -858,7 +858,7 @@ export default function ServicesTab({
                       )}
                     </Text>
                     {(job.property?.client as any)?.isVip && (job.property?.client as any)?.vipReason && (
-                      <Text fontSize="xs" color="yellow.700" fontWeight="medium">⭐ VIP: {(job.property?.client as any).vipReason}</Text>
+                      <Text fontSize="xs" color="yellow.700" fontWeight="medium">VIP: {(job.property?.client as any).vipReason}</Text>
                     )}
                     <HStack gap={3} fontSize="xs">
                       {job.property?.displayName && (

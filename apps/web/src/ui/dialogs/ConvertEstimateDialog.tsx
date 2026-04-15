@@ -59,14 +59,6 @@ const propertyTypeCollection = createListCollection({
   ],
 });
 
-const frequencyCollection = createListCollection({
-  items: [
-    { label: "One-time", value: "" },
-    { label: "Weekly", value: "7" },
-    { label: "Biweekly", value: "14" },
-    { label: "Monthly", value: "30" },
-  ],
-});
 
 function parseAddress(raw: string): {
   street1: string;
@@ -120,7 +112,8 @@ export default function ConvertEstimateDialog({
 
   // Job
   const [defaultPrice, setDefaultPrice] = useState("");
-  const [frequency, setFrequency] = useState<string[]>([""]);
+  const [isRepeating, setIsRepeating] = useState(false);
+  const [frequencyDays, setFrequencyDays] = useState("7");
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [jobNotes, setJobNotes] = useState("");
 
@@ -162,7 +155,8 @@ export default function ConvertEstimateDialog({
     setJobNotes(defaults.proposalNotes ?? "");
     setClientType(["PERSON"]);
     setPropertyKind(["SINGLE"]);
-    setFrequency([""]);
+    setIsRepeating(false);
+    setFrequencyDays("7");
   }, [open, defaults]);
 
   function handleAddressChange(val: string) {
@@ -200,8 +194,7 @@ export default function ConvertEstimateDialog({
         const parsed = parseFloat(defaultPrice);
         if (!isNaN(parsed)) body.defaultPrice = parsed;
       }
-      const freq = frequency[0];
-      body.frequencyDays = freq ? parseInt(freq, 10) : null;
+      body.frequencyDays = isRepeating && frequencyDays ? parseInt(frequencyDays, 10) : null;
       if (estimatedMinutes.trim()) {
         const parsed = parseInt(estimatedMinutes, 10);
         if (!isNaN(parsed)) body.estimatedMinutes = parsed;
@@ -492,35 +485,38 @@ export default function ConvertEstimateDialog({
                   />
                 </Box>
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>
-                    Frequency
-                  </Text>
-                  <Select.Root
-                    collection={frequencyCollection}
-                    value={frequency}
-                    onValueChange={(e) => setFrequency(e.value)}
-                    size="sm"
-                    positioning={{
-                      strategy: "fixed",
-                      hideWhenDetached: true,
-                    }}
-                  >
-                    <Select.Control>
-                      <Select.Trigger>
-                        <Select.ValueText placeholder="Select frequency" />
-                      </Select.Trigger>
-                    </Select.Control>
-                    <Select.Positioner>
-                      <Select.Content>
-                        {frequencyCollection.items.map((it) => (
-                          <Select.Item key={it.value} item={it.value}>
-                            <Select.ItemText>{it.label}</Select.ItemText>
-                            <Select.ItemIndicator />
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select.Positioner>
-                  </Select.Root>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Job Type</Text>
+                  <HStack gap={2} mb={2}>
+                    <Button
+                      size="sm"
+                      variant={!isRepeating ? "solid" : "outline"}
+                      colorPalette={!isRepeating ? "cyan" : "gray"}
+                      onClick={() => setIsRepeating(false)}
+                    >
+                      One-Off
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={isRepeating ? "solid" : "outline"}
+                      colorPalette={isRepeating ? "blue" : "gray"}
+                      onClick={() => setIsRepeating(true)}
+                    >
+                      Repeating
+                    </Button>
+                  </HStack>
+                  {isRepeating && (
+                    <Box>
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Repeat every (days)</Text>
+                      <input
+                        type="number"
+                        value={frequencyDays}
+                        onChange={(e) => setFrequencyDays(e.target.value)}
+                        min="1"
+                        placeholder="e.g., 7"
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                      />
+                    </Box>
+                  )}
                 </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>
