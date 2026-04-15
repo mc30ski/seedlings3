@@ -903,10 +903,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         } else {
           rest.push(occ);
           // Future reminders — add a ghost at the reminder date if it differs from the occurrence date
-          if (hasReminder) {
+          if (hasReminder && !isOverdueStandaloneReminder) {
             const reminderDateKey = bizDateKey(occ.reminder!.remindAt);
             const occDateKey = occ.startAt ? bizDateKey(occ.startAt) : "";
-            if (reminderDateKey !== occDateKey) {
+            if (reminderDateKey && occDateKey && reminderDateKey !== occDateKey) {
               rest.push({ ...occ, _isReminderGhost: true, _ghostDate: reminderDateKey } as any);
             }
           }
@@ -3138,7 +3138,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   disabled={!reminderDate}
                   onClick={() => {
                     if (reminderDialogOccId && reminderDate) {
-                      void setReminder(reminderDialogOccId, reminderDate + "T09:00:00", reminderNote);
+                      void setReminder(reminderDialogOccId, reminderDate + "T13:00:00Z", reminderNote);
                       setReminderDialogOccId(null);
                     }
                   }}
