@@ -161,7 +161,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Build a rich label for offline queue entries
   function queueLabel(occ: WorkerOccurrence | undefined, action: string, detail?: string): string {
     const property = occ?.job?.property?.displayName;
-    const jobType = occ?.job?.jobType ?? occ?.kind;
+    const jobType = (occ?.job as any)?.jobType ?? occ?.kind;
     const date = occ?.startAt ? bizDateKey(occ.startAt) : null;
     const parts = [action];
     if (property) parts.push(property);
