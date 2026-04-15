@@ -346,6 +346,7 @@ export const jobs: ServicesJobs = {
           isTentative: input.isTentative ?? false,
           isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
           isAdminOnly: input.isAdminOnly ?? (input.workflow === "ESTIMATE" || input.isEstimate ? true : false),
+          frequencyDays: input.frequencyDays ?? null,
         } as any,
       });
 
@@ -539,6 +540,7 @@ export const jobs: ServicesJobs = {
       if ("contactEmail" in patch) data.contactEmail = patch.contactEmail ?? null;
       if ("estimateAddress" in patch) data.estimateAddress = patch.estimateAddress ?? null;
       if ("proposalAmount" in patch) data.proposalAmount = patch.proposalAmount != null ? Number(patch.proposalAmount) : null;
+      if ("frequencyDays" in patch) data.frequencyDays = patch.frequencyDays != null ? Math.round(Number(patch.frequencyDays)) : null;
 
       const updated = await tx.jobOccurrence.update({
         where: { id: occurrenceId },

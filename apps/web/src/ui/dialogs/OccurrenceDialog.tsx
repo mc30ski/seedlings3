@@ -124,6 +124,8 @@ export default function OccurrenceDialog({
   const [workflow, setWorkflow] = useState(defaultWorkflow ?? "ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
+  const [occFrequencyDays, setOccFrequencyDays] = useState("");
+  const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
 
   // Inline expenses
@@ -164,6 +166,7 @@ export default function OccurrenceDialog({
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
+    setOccFrequencyDays("");
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
@@ -193,10 +196,13 @@ export default function OccurrenceDialog({
       publishInlineMessage({ type: "WARNING", text: "Please select a start date." });
       return;
     }
-    if (workflow === "STANDARD" && !jobFrequencyDays) {
-      publishInlineMessage({ type: "WARNING", text: "Repeating job requires a frequency (days) to be set on the Job. Go back and set it, or select One-Off or Estimate instead." });
+    const effectiveFreq = occFrequencyDays !== "" ? Number(occFrequencyDays) : jobFrequencyDays;
+    if (workflow === "STANDARD" && !effectiveFreq) {
+      setFreqError("Repeating job requires a frequency. Set it on the Job or enter a frequency override above.");
+      publishInlineMessage({ type: "WARNING", text: "Repeating job requires a frequency." });
       return;
     }
+    setFreqError("");
     setBusy(true);
     try {
       const startAtIso = startAt + "T12:00:00Z";
@@ -216,6 +222,7 @@ export default function OccurrenceDialog({
         ...(isTentative ? { isTentative: true } : {}),
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
+        ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
       };
 
       if (deferSave) {
@@ -266,6 +273,7 @@ export default function OccurrenceDialog({
         }
         body.isAdminOnly = isAdminOnly;
         body.jobType = jobType || null;
+        body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
         if (isAdmin && occurrenceId) {
@@ -341,6 +349,33 @@ export default function OccurrenceDialog({
                         </Select.Content>
                       </Select.Positioner>
                     </Select.Root>
+                  </div>
+                )}
+                {workflow === "STANDARD" && (
+                  <div>
+                    <Text mb="1">Frequency (days)</Text>
+                    <input
+                      type="number"
+                      value={occFrequencyDays}
+                      onChange={(e) => { setOccFrequencyDays(e.target.value); setFreqError(""); }}
+                      placeholder="e.g. 14"
+                      min="1"
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    />
+                    {freqError && (
+                      <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.200" borderRadius="md" mt={2}>
+                        <Text fontSize="xs" color="red.700">{freqError}</Text>
+                      </Box>
+                    )}
+                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mt={freqError ? 1 : 2}>
+                      <Text fontSize="xs" color="yellow.800">
+                        {occFrequencyDays !== ""
+                          ? `This occurrence will repeat every ${occFrequencyDays} days, overriding the job's ${jobFrequencyDays ? `default of ${jobFrequencyDays} days` : "frequency (not set)"}.`
+                          : jobFrequencyDays
+                          ? `No override set — will use the job's default frequency of ${jobFrequencyDays} days.`
+                          : "The parent job has no frequency set. Set one here to make this occurrence repeat on its own schedule."}
+                      </Text>
+                    </Box>
                   </div>
                 )}
                 {mode === "UPDATE" && (
@@ -659,7 +694,7 @@ export default function OccurrenceDialog({
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy} disabled={!startAt}>
+                <Button onClick={handleSave} loading={busy} disabled={!startAt || (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays)}>
                   {submitLabel ?? (mode === "CREATE" ? "Create" : "Save")}
                 </Button>
               </HStack>

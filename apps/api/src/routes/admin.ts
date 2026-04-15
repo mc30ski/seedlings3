@@ -637,11 +637,26 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.price != null) input.price = Number(body.price);
     if (body.estimatedMinutes != null) input.estimatedMinutes = Math.round(Number(body.estimatedMinutes));
 
+    if (body.frequencyDays != null) {
+      const fd = Math.round(Number(body.frequencyDays));
+      if (!Number.isFinite(fd) || fd < 1) throw app.httpErrors.badRequest("frequencyDays must be a positive integer");
+      input.frequencyDays = fd;
+    }
+
     if (body.assigneeUserIds != null) {
       if (!Array.isArray(body.assigneeUserIds)) {
         throw app.httpErrors.badRequest("assigneeUserIds must be an array");
       }
       input.assigneeUserIds = body.assigneeUserIds.map(String);
+    }
+
+    // Validate: repeating occurrences must have a frequency somewhere
+    if (input.workflow === "STANDARD") {
+      const job = await prisma.job.findUnique({ where: { id: jobId }, select: { frequencyDays: true } });
+      const effectiveFreq = input.frequencyDays ?? job?.frequencyDays;
+      if (!effectiveFreq) {
+        throw app.httpErrors.badRequest("Repeating job occurrence requires a frequency. Set it on the job or on this occurrence.");
+      }
     }
 
     return services.jobs.createOccurrence(
@@ -727,11 +742,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!targetId) throw app.httpErrors.badRequest("targetOccurrenceId is required");
 
     const [occ, target] = await Promise.all([
-      prisma.jobOccurrence.findUnique({ where: { id: occId } }),
-      prisma.jobOccurrence.findUnique({ where: { id: targetId } }),
+      prisma.jobOccurrence.findUnique({ where: { id: occId }, include: { job: { select: { propertyId: true } } } }),
+      prisma.jobOccurrence.findUnique({ where: { id: targetId }, include: { job: { select: { propertyId: true } } } }),
     ]);
     if (!occ || !target) throw app.httpErrors.notFound("Occurrence not found");
-    if (occ.jobId !== target.jobId) throw app.httpErrors.badRequest("Occurrences must belong to the same job");
+    // Allow linking across jobs if they share the same property
+    const occPropertyId = occ.job?.propertyId;
+    const targetPropertyId = target.job?.propertyId;
+    if (occPropertyId && targetPropertyId && occPropertyId !== targetPropertyId) {
+      throw app.httpErrors.badRequest("Occurrences must belong to jobs on the same property");
+    }
     if (occId === targetId) throw app.httpErrors.badRequest("Cannot link an occurrence to itself");
 
     // Determine group ID: merge existing groups or create new
@@ -863,6 +883,15 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("contactEmail" in body) patch.contactEmail = body.contactEmail || null;
       if ("estimateAddress" in body) patch.estimateAddress = body.estimateAddress || null;
       if ("proposalAmount" in body) patch.proposalAmount = body.proposalAmount != null ? Number(body.proposalAmount) : null;
+      if ("frequencyDays" in body) {
+        if (body.frequencyDays != null) {
+          const fd = Math.round(Number(body.frequencyDays));
+          if (!Number.isFinite(fd) || fd < 1) throw app.httpErrors.badRequest("frequencyDays must be a positive integer");
+          patch.frequencyDays = fd;
+        } else {
+          patch.frequencyDays = null;
+        }
+      }
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(

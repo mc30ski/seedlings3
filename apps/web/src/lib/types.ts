@@ -336,6 +336,7 @@ export type JobOccurrenceFull = {
   notes?: string | null;
   price?: number | null;
   estimatedMinutes?: number | null;
+  frequencyDays?: number | null;
   workflow?: OccurrenceWorkflow;
   isOneOff?: boolean;
   isTentative?: boolean;
@@ -511,6 +512,7 @@ export type WorkerOccurrence = {
   notes?: string | null;
   price?: number | null;
   estimatedMinutes?: number | null;
+  frequencyDays?: number | null;
   workflow?: OccurrenceWorkflow;
   isOneOff?: boolean;
   isTentative?: boolean;
