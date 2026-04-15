@@ -148,21 +148,24 @@ export const payments: ServicesPayments = {
           assignees: true,
         },
       });
+      // Use occurrence-level frequency override if set, otherwise fall back to job frequency
+      const effectiveFreq = fullOcc?.frequencyDays ?? fullOcc?.job?.frequencyDays;
       if (
         fullOcc &&
-        fullOcc.job.frequencyDays &&
+        fullOcc.job &&
+        effectiveFreq &&
         fullOcc.job.status !== "PAUSED" &&
         !fullOcc.isOneOff &&
         fullOcc.workflow !== "ONE_OFF"
       ) {
-        const freq = fullOcc.job.frequencyDays;
+        const freq = effectiveFreq;
         const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();
         const nextStart = new Date(baseDate);
         nextStart.setDate(nextStart.getDate() + freq);
         const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
         if (nextEnd) nextEnd.setDate(nextEnd.getDate() + freq);
 
-        const isAdminOnly = !!(fullOcc as any).isAdminOnly;
+        const isAdminOnly = !!fullOcc.isAdminOnly;
 
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
@@ -174,22 +177,25 @@ export const payments: ServicesPayments = {
             source: "GENERATED",
             workflow: "STANDARD",
             isAdminOnly,
+            jobType: fullOcc.jobType ?? null,
             notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
             price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
             estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
+            frequencyDays: fullOcc.frequencyDays ?? null,
           } as any,
         });
 
-        // Only copy assignees for administered occurrences
+        // Copy assignees for administered occurrences, preserving roles (including observer)
         if (isAdminOnly) {
-          const assigneeIds = fullOcc.assignees.map((a) => a.userId);
-          if (assigneeIds.length > 0) {
-            const claimerId = assigneeIds[0];
+          const assignees = fullOcc.assignees;
+          if (assignees.length > 0) {
+            const claimerId = assignees[0].userId;
             await tx.jobOccurrenceAssignee.createMany({
-              data: assigneeIds.map((uid, i) => ({
+              data: assignees.map((a, i) => ({
                 occurrenceId: nextOccurrence.id,
-                userId: uid,
-                assignedById: i === 0 ? uid : claimerId,
+                userId: a.userId,
+                role: a.role ?? null,
+                assignedById: i === 0 ? a.userId : claimerId,
               })),
               skipDuplicates: true,
             });
@@ -434,6 +440,37 @@ export const payments: ServicesPayments = {
         where: { id: paymentId },
       });
       if (!existing) throw new ServiceError("NOT_FOUND", "Payment not found.", 404);
+
+      // Find the occurrence to get its jobId
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: existing.occurrenceId },
+      });
+
+      // Clean up auto-created next occurrence (if any)
+      // The next occurrence was GENERATED, SCHEDULED, created after the payment, for the same job
+      if (occ?.jobId) {
+        const nextOcc = await tx.jobOccurrence.findFirst({
+          where: {
+            jobId: occ.jobId,
+            source: "GENERATED",
+            status: "SCHEDULED",
+            startAt: { gt: occ.startAt ?? new Date() },
+            createdAt: { gte: existing.createdAt },
+          },
+          orderBy: { createdAt: "asc" },
+        });
+        if (nextOcc) {
+          // Only delete if it hasn't been modified (started, etc.)
+          const isUntouched = nextOcc.status === "SCHEDULED" && !nextOcc.startedAt;
+          if (isUntouched) {
+            await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: nextOcc.id } });
+            await tx.pinnedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
+            await tx.likedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
+            await tx.occurrenceComment.deleteMany({ where: { occurrenceId: nextOcc.id } });
+            await tx.jobOccurrence.delete({ where: { id: nextOcc.id } });
+          }
+        }
+      }
 
       // Revert occurrence back to PENDING_PAYMENT
       await tx.jobOccurrence.update({

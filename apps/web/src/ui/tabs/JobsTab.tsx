@@ -1741,7 +1741,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ) : null}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
-                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && <StatusBadge status="Repeating" palette="blue" variant="outline" />}
+                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
+                            const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
+                            return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
+                          })()}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
@@ -1899,9 +1902,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ) : null}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
-                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
-                            <StatusBadge status="Repeating" palette="blue" variant="outline" />
-                          )}
+                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
+                              const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
+                              return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
+                          })()}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                             <StatusBadge status="Estimate" palette="pink" variant="solid" />
                           )}
@@ -2885,7 +2889,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isActiveAssignee && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (
+                      {isActiveAssignee && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
+                        {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
+                          <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mb={1}>
+                            <Text fontSize="xs" color="yellow.800">
+                              This is a repeating job but has no frequency set. Accepting payment will NOT create a next occurrence. Set a frequency on the job or occurrence to enable auto-scheduling.
+                            </Text>
+                          </Box>
+                        )}
                         <StatusButton
                           id="occ-accept-payment"
                           itemId={occ.id}
@@ -2899,7 +2910,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
-                      )}
+                      </>)}
                       {(isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-manage-team"
@@ -3273,9 +3284,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               const nextDate = result.nextOccurrence.startAt
                 ? fmtDate(result.nextOccurrence.startAt)
                 : "upcoming";
+              const freq = result.nextOccurrence.frequencyDays ?? acceptPaymentOcc?.frequencyDays ?? (acceptPaymentOcc?.job as any)?.frequencyDays;
               publishInlineMessage({
                 type: "SUCCESS",
-                text: `Payment accepted. Next occurrence scheduled for ${nextDate}.`,
+                text: `Payment accepted. Next occurrence scheduled for ${nextDate}${freq ? ` (every ${freq} days)` : ""}.`,
+              });
+            } else if (
+              acceptPaymentOcc?.workflow === "STANDARD" &&
+              !acceptPaymentOcc?.isOneOff
+            ) {
+              publishInlineMessage({
+                type: "WARNING",
+                text: "Payment accepted, but no next occurrence was created. This repeating job has no frequency set on the job or occurrence.",
               });
             }
             setAcceptPaymentOcc(null);

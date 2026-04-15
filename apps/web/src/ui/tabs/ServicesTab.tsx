@@ -187,6 +187,7 @@ export default function ServicesTab({
   const [occurrenceDefaultPrice, setOccurrenceDefaultPrice] = useState<number | null>(null);
   const [occurrenceDefaultEstMins, setOccurrenceDefaultEstMins] = useState<number | null>(null);
   const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
+  const [occurrenceJobFreqDays, setOccurrenceJobFreqDays] = useState<number | null>(null);
   const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
@@ -231,6 +232,7 @@ export default function ServicesTab({
 
   const [linkPickerOccId, setLinkPickerOccId] = useState<string | null>(null);
   const [linkPickerJobId, setLinkPickerJobId] = useState<string | null>(null);
+  const [linkPickerPropertyId, setLinkPickerPropertyId] = useState<string | null>(null);
 
   async function load(displayLoading = true) {
     setLoading(displayLoading);
@@ -922,11 +924,11 @@ export default function ServicesTab({
                         : `${job.estimatedMinutes}m`}
                     </Text>
                   )}
-                  {job.frequencyDays && (
-                    <Text fontSize="xs" color="fg.muted">
-                      Frequency: every {job.frequencyDays} day{job.frequencyDays !== 1 ? "s" : ""}
-                    </Text>
-                  )}
+                  <Text fontSize="xs" color={job.frequencyDays ? "fg.muted" : "orange.500"}>
+                    {job.frequencyDays
+                      ? `Default frequency: every ${job.frequencyDays} day${job.frequencyDays !== 1 ? "s" : ""}`
+                      : "Default frequency: not set"}
+                  </Text>
                   {job.notes && (
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
@@ -984,6 +986,7 @@ export default function ServicesTab({
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
                           setOccurrenceJobHasFrequency(!!job.frequencyDays);
+                          setOccurrenceJobFreqDays(job.frequencyDays ?? null);
                           setOccurrenceDefaultAssignees(
                             (detail?.defaultAssignees ?? []).map((a) => ({
                               userId: a.userId,
@@ -1451,9 +1454,10 @@ export default function ServicesTab({
                                 variant="subtle"
                               />
                             ) : null}
-                            {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (
-                              <StatusBadge status="Repeating" palette="blue" variant="outline" />
-                            )}
+                            {(occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
+                              const freq = (occ as any).frequencyDays ?? (job as any).frequencyDays;
+                              return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
+                            })()}
                             {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                               <StatusBadge status="Estimate" palette="pink" variant="solid" />
                             )}
@@ -1511,6 +1515,7 @@ export default function ServicesTab({
                                         setOccurrenceDefaultPrice(result.occurrence?.price ?? null);
                                         setOccurrenceDefaultEstMins(result.occurrence?.estimatedMinutes ?? null);
                                         setOccurrenceJobHasFrequency(false);
+                                        setOccurrenceJobFreqDays(null);
                                         setPromptOccurrenceOpen(true);
                                       }
                                     } catch (err: any) {
@@ -1744,6 +1749,7 @@ export default function ServicesTab({
                                   } else {
                                     setLinkPickerOccId(occ.id);
                                     setLinkPickerJobId(job.id);
+                                    setLinkPickerPropertyId(job.propertyId);
                                   }
                                 }}
                                 variant="outline"
@@ -1803,6 +1809,7 @@ export default function ServicesTab({
               setOccurrenceDefaultPrice(created.defaultPrice ?? null);
               setOccurrenceDefaultEstMins(created.estimatedMinutes ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
+              setOccurrenceJobFreqDays(created.frequencyDays ?? null);
               setPromptOccurrenceOpen(true);
             }
           }}
@@ -1833,6 +1840,7 @@ export default function ServicesTab({
           defaultEstimatedMinutes={occurrenceDefaultEstMins}
           isAdmin={forAdmin}
           showOneOff={occurrenceJobHasFrequency}
+          jobFrequencyDays={occurrenceJobFreqDays}
           defaultAssignees={occurrenceDefaultAssignees}
           onSaved={() => {
             if (occurrenceJobId) {
@@ -1864,6 +1872,7 @@ export default function ServicesTab({
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
           isAdmin={forAdmin}
+          jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
           }}
@@ -1972,7 +1981,7 @@ export default function ServicesTab({
       {/* Link Picker Dialog */}
       <Dialog.Root
         open={!!linkPickerOccId}
-        onOpenChange={(e) => { if (!e.open) { setLinkPickerOccId(null); setLinkPickerJobId(null); } }}
+        onOpenChange={(e) => { if (!e.open) { setLinkPickerOccId(null); setLinkPickerJobId(null); setLinkPickerPropertyId(null); } }}
         placement="center"
       >
         <Portal>
@@ -1983,11 +1992,34 @@ export default function ServicesTab({
                 <Dialog.Title>Link Occurrence</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
-                <Text fontSize="sm" mb={3}>Select another occurrence from this job to link with:</Text>
+                <Text fontSize="sm" mb={3}>Select an occurrence from this property to link with:</Text>
                 <VStack align="stretch" gap={2} maxH="400px" overflowY="auto">
-                  {linkPickerJobId && jobDetails[linkPickerJobId]?.occurrences
-                    .filter((o) => o.id !== linkPickerOccId)
-                    .map((o) => (
+                  {(() => {
+                    // Collect all occurrences from all jobs on the same property
+                    const allOccs: { occ: any; jobLabel: string; jobId: string }[] = [];
+                    if (linkPickerPropertyId) {
+                      for (const job of items) {
+                        if (job.propertyId !== linkPickerPropertyId) continue;
+                        const detail = jobDetails[job.id];
+                        if (!detail) {
+                          // Load detail for this job if not loaded
+                          void loadDetail(job.id);
+                          continue;
+                        }
+                        for (const o of detail.occurrences) {
+                          if (o.id === linkPickerOccId) continue;
+                          allOccs.push({
+                            occ: o,
+                            jobLabel: job.property?.displayName ?? "Job",
+                            jobId: job.id,
+                          });
+                        }
+                      }
+                    }
+                    if (allOccs.length === 0) {
+                      return <Text fontSize="sm" color="fg.muted">No other occurrences on this property.</Text>;
+                    }
+                    return allOccs.map(({ occ: o, jobLabel, jobId: jId }) => (
                       <Box
                         key={o.id}
                         p={2}
@@ -2006,12 +2038,14 @@ export default function ServicesTab({
                               msg += ` ${result._linkedUpdated.length} linked occurrence(s) were also updated.`;
                             }
                             publishInlineMessage({ type: "SUCCESS", text: msg });
-                            void loadDetail(linkPickerJobId!, true);
+                            if (linkPickerJobId) void loadDetail(linkPickerJobId, true);
+                            if (jId !== linkPickerJobId) void loadDetail(jId, true);
                           } catch (err: any) {
                             publishInlineMessage({ type: "ERROR", text: getErrorMessage("Link failed.", err) });
                           }
                           setLinkPickerOccId(null);
                           setLinkPickerJobId(null);
+                          setLinkPickerPropertyId(null);
                         }}
                       >
                         <HStack justify="space-between">
@@ -2023,6 +2057,7 @@ export default function ServicesTab({
                             <Text fontSize="xs" color="fg.muted">
                               {prettyStatus(o.status)}
                               {o.price != null && <> · ${o.price.toFixed(2)}</>}
+                              {jId !== linkPickerJobId && <> · {jobLabel}</>}
                             </Text>
                           </VStack>
                           <StatusBadge
@@ -2032,17 +2067,14 @@ export default function ServicesTab({
                           />
                         </HStack>
                       </Box>
-                    ))}
-                  {linkPickerJobId && jobDetails[linkPickerJobId]?.occurrences
-                    .filter((o) => o.id !== linkPickerOccId).length === 0 && (
-                    <Text fontSize="sm" color="fg.muted">No other occurrences in this job.</Text>
-                  )}
+                    ));
+                  })()}
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>
                 <Button
                   variant="ghost"
-                  onClick={() => { setLinkPickerOccId(null); setLinkPickerJobId(null); }}
+                  onClick={() => { setLinkPickerOccId(null); setLinkPickerJobId(null); setLinkPickerPropertyId(null); }}
                 >
                   Cancel
                 </Button>

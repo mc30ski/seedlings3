@@ -501,6 +501,7 @@ model JobOccurrence {
   notes            String?
   price            Float?
   estimatedMinutes Int?
+  frequencyDays    Int?       // Overrides Job.frequencyDays when set
   proposalAmount   Float?
   proposalNotes    String?
   rejectionReason  String?

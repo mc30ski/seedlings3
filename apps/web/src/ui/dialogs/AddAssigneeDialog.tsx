@@ -254,6 +254,18 @@ export default function AddAssigneeDialog({
                               {!isMeClaimer && !isMeObs && <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>}
                             </HStack>
                           </VStack>
+                          {!isMeClaimer && (
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="red"
+                              loading={removingId === myId}
+                              disabled={removingId !== ""}
+                              onClick={() => handleRemove(myId)}
+                            >
+                              Leave
+                            </Button>
+                          )}
                         </HStack>
                       );
                     })()}

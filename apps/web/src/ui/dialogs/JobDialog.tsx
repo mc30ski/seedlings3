@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Box,
   Button,
   Dialog,
   HStack,
@@ -317,17 +318,6 @@ export default function JobDialog({
                     />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <Text mb="1">Frequency (days)</Text>
-                    <Input
-                      type="number"
-                      value={frequencyDays}
-                      onChange={(e) => setFrequencyDays(e.target.value)}
-                      placeholder="e.g. 14"
-                      min={1}
-                      size="sm"
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
                     <Text mb="1">Est. minutes</Text>
                     <Input
                       type="number"
@@ -339,6 +329,23 @@ export default function JobDialog({
                     />
                   </div>
                 </HStack>
+
+                <div>
+                  <Text mb="1">Default frequency (days)</Text>
+                  <Input
+                    type="number"
+                    value={frequencyDays}
+                    onChange={(e) => setFrequencyDays(e.target.value)}
+                    placeholder="e.g. 14"
+                    min={1}
+                    size="sm"
+                  />
+                  <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mt={2}>
+                    <Text fontSize="xs" color="yellow.800">
+                      This is the default repeat frequency for new occurrences on this job. Individual occurrences can override this with their own frequency.
+                    </Text>
+                  </Box>
+                </div>
 
                 <div>
                   <Text mb="1">Notes</Text>
