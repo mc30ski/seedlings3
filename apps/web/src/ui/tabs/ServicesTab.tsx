@@ -7,14 +7,16 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Portal,
   Select,
   Text,
   Spinner,
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -226,6 +228,9 @@ export default function ServicesTab({
   const [expenseDialogOccId, setExpenseDialogOccId] = useState<string | null>(null);
   const [expenseDialogJobId, setExpenseDialogJobId] = useState<string | null>(null);
   const [acceptPaymentJobId, setAcceptPaymentJobId] = useState<string>("");
+
+  const [linkPickerOccId, setLinkPickerOccId] = useState<string | null>(null);
+  const [linkPickerJobId, setLinkPickerJobId] = useState<string | null>(null);
 
   async function load(displayLoading = true) {
     setLoading(displayLoading);
@@ -1100,8 +1105,8 @@ export default function ServicesTab({
                           }
                         } : undefined}
                       >
-                        <HStack justify="space-between" align="start">
-                          <VStack align="start" gap={0}>
+                        <VStack align="start" gap={0} w="full" overflow="hidden">
+                          <VStack align="start" gap={0} w="full">
                             <Text fontSize="xs" fontWeight="medium">
                               {occ.startAt
                                 ? fmtDate(occ.startAt)
@@ -1401,8 +1406,42 @@ export default function ServicesTab({
                                 <Text>{(occ as any)._count.comments} comment{(occ as any)._count.comments !== 1 ? "s" : ""}</Text>
                               </HStack>
                             )}
+                            {occ.linkGroupId && detail && (() => {
+                              const linked = detail.occurrences.filter(
+                                (o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id
+                              );
+                              if (linked.length === 0) return null;
+                              return (
+                                <Box mt={1} p={1} bg="purple.50" rounded="sm">
+                                  <Text fontSize="xs" fontWeight="medium" color="purple.700">
+                                    <Link2 size={10} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />
+                                    Linked occurrences:
+                                  </Text>
+                                  <HStack gap={1} mt={0.5} wrap="wrap">
+                                    {linked.map((lo) => (
+                                      <Badge
+                                        key={lo.id}
+                                        colorPalette="purple"
+                                        variant="subtle"
+                                        fontSize="xs"
+                                        px="2"
+                                        borderRadius="full"
+                                        cursor="pointer"
+                                        onClick={() => {
+                                          setHighlightOccId(lo.id);
+                                          setFlashOccId(lo.id);
+                                        }}
+                                      >
+                                        {lo.startAt ? fmtDate(lo.startAt) : "No date"} · {prettyStatus(lo.status)}
+                                        {(lo as any).jobType && <> · {jobTypeLabel((lo as any).jobType)}</>}
+                                      </Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              );
+                            })()}
                           </VStack>
-                          <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems={{ base: "flex-end", md: "flex-start" }} flexWrap="wrap">
+                          <HStack gap={1} wrap="wrap" mt={1}>
                             {occ.isTentative ? (
                               <StatusBadge status="Tentative" palette="orange" variant="solid" />
                             ) : occ.status !== "SCHEDULED" ? (
@@ -1424,8 +1463,13 @@ export default function ServicesTab({
                             {(occ as any).isAdminOnly && (
                               <StatusBadge status="Administered" palette="red" variant="outline" />
                             )}
-                          </Box>
-                        </HStack>
+                            {occ.linkGroupId && (
+                              <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
+                                <Link2 size={10} style={{ marginRight: 3 }} /> Linked
+                              </Badge>
+                            )}
+                          </HStack>
+                        </VStack>
 
                         {forAdmin && (
                           <HStack gap={2} mt={2} wrap="wrap">
@@ -1687,6 +1731,26 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
+                            {occ.jobId && (
+                              <StatusButton
+                                id="occ-link"
+                                itemId={occ.id}
+                                label={occ.linkGroupId ? "Unlink" : "Link to..."}
+                                onClick={async () => {
+                                  if (occ.linkGroupId) {
+                                    await apiPost(`/api/admin/occurrences/${occ.id}/unlink`);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Occurrence unlinked." });
+                                    void loadDetail(job.id, true);
+                                  } else {
+                                    setLinkPickerOccId(occ.id);
+                                    setLinkPickerJobId(job.id);
+                                  }
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
                             <StatusButton
                               id="occ-delete"
                               itemId={occ.id}
@@ -1904,6 +1968,89 @@ export default function ServicesTab({
           setExpenseDialogJobId(null);
         }}
       />
+
+      {/* Link Picker Dialog */}
+      <Dialog.Root
+        open={!!linkPickerOccId}
+        onOpenChange={(e) => { if (!e.open) { setLinkPickerOccId(null); setLinkPickerJobId(null); } }}
+        placement="center"
+      >
+        <Portal>
+          <Dialog.Backdrop zIndex={1500} />
+          <Dialog.Positioner zIndex={1600} paddingInline="4" paddingBlock="6">
+            <Dialog.Content>
+              <Dialog.Header>
+                <Dialog.Title>Link Occurrence</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm" mb={3}>Select another occurrence from this job to link with:</Text>
+                <VStack align="stretch" gap={2} maxH="400px" overflowY="auto">
+                  {linkPickerJobId && jobDetails[linkPickerJobId]?.occurrences
+                    .filter((o) => o.id !== linkPickerOccId)
+                    .map((o) => (
+                      <Box
+                        key={o.id}
+                        p={2}
+                        borderWidth="1px"
+                        rounded="md"
+                        cursor="pointer"
+                        _hover={{ bg: "purple.50", borderColor: "purple.300" }}
+                        onClick={async () => {
+                          try {
+                            const result = await apiPost<{ linkGroupId: string; _linkedUpdated?: string[] }>(
+                              `/api/admin/occurrences/${linkPickerOccId}/link`,
+                              { targetOccurrenceId: o.id }
+                            );
+                            let msg = "Occurrences linked.";
+                            if (result._linkedUpdated && result._linkedUpdated.length > 0) {
+                              msg += ` ${result._linkedUpdated.length} linked occurrence(s) were also updated.`;
+                            }
+                            publishInlineMessage({ type: "SUCCESS", text: msg });
+                            void loadDetail(linkPickerJobId!, true);
+                          } catch (err: any) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Link failed.", err) });
+                          }
+                          setLinkPickerOccId(null);
+                          setLinkPickerJobId(null);
+                        }}
+                      >
+                        <HStack justify="space-between">
+                          <VStack align="start" gap={0}>
+                            <Text fontSize="sm" fontWeight="medium">
+                              {o.startAt ? fmtDate(o.startAt) : "No date"}
+                              {(o as any).jobType && <> · {jobTypeLabel((o as any).jobType)}</>}
+                            </Text>
+                            <Text fontSize="xs" color="fg.muted">
+                              {prettyStatus(o.status)}
+                              {o.price != null && <> · ${o.price.toFixed(2)}</>}
+                            </Text>
+                          </VStack>
+                          <StatusBadge
+                            status={o.status}
+                            palette={occurrenceStatusColor(o.status)}
+                            variant="subtle"
+                          />
+                        </HStack>
+                      </Box>
+                    ))}
+                  {linkPickerJobId && jobDetails[linkPickerJobId]?.occurrences
+                    .filter((o) => o.id !== linkPickerOccId).length === 0 && (
+                    <Text fontSize="sm" color="fg.muted">No other occurrences in this job.</Text>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button
+                  variant="ghost"
+                  onClick={() => { setLinkPickerOccId(null); setLinkPickerJobId(null); }}
+                >
+                  Cancel
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }

@@ -1035,6 +1035,12 @@ async function seedDatabase() {
   await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
   await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
 
+  console.log("  Creating linked occurrences...");
+  // Link the Harrington today and tomorrow occurrences
+  const linkGroup1 = "link-group-harrington-1";
+  await prisma.jobOccurrence.update({ where: { id: todayHarrington.id }, data: { linkGroupId: linkGroup1 } });
+  await prisma.jobOccurrence.update({ where: { id: cHarrington7.id }, data: { linkGroupId: linkGroup1 } });
+
   console.log("  Creating standalone reminders...");
   const reminder1 = await prisma.jobOccurrence.create({
     data: {
