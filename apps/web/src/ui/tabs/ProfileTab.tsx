@@ -23,6 +23,7 @@ import {
 import { type Me } from "@/src/lib/types";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
+import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOverride } from "@/src/lib/season";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -491,6 +492,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
           {/* Calendar Feeds management — self only */}
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
+          {isSelf && isAdmin && <SeasonSection />}
         </VStack>
       )}
     </Box>
@@ -716,6 +718,45 @@ function OfflineSection() {
             >
               Clear
             </Button>
+          </HStack>
+        </VStack>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+function SeasonSection() {
+  const [override, setOverride] = useState<SeasonOverride>(getSeasonOverride());
+  const natural = getNaturalSeason();
+
+  function handleChange(value: SeasonOverride) {
+    setSeasonOverride(value);
+    setOverride(value);
+    window.dispatchEvent(new CustomEvent("seedlings:seasonChanged"));
+  }
+
+  return (
+    <Card.Root variant="outline" mt={4}>
+      <Card.Header py="3" px="4" pb="0">
+        <Text fontWeight="semibold">Season Theme</Text>
+      </Card.Header>
+      <Card.Body py="3" px="4">
+        <VStack align="stretch" gap={3}>
+          <Text fontSize="xs" color="fg.muted">
+            The app icon changes with the seasons. Spring/Summer (Mar–Aug) uses the green icon, Fall/Winter (Sep–Feb) uses the fall icon. You can override this for your experience.
+          </Text>
+          <HStack gap={2}>
+            {(["auto", "spring", "fall"] as const).map((val) => (
+              <Button
+                key={val}
+                size="sm"
+                variant={override === val ? "solid" : "outline"}
+                colorPalette={val === "auto" ? "gray" : val === "spring" ? "green" : "orange"}
+                onClick={() => handleChange(val)}
+              >
+                {val === "auto" ? `Auto (${natural === "spring" ? "Spring" : "Fall"})` : val === "spring" ? "Spring" : "Fall"}
+              </Button>
+            ))}
           </HStack>
         </VStack>
       </Card.Body>

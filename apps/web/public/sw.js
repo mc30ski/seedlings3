@@ -66,30 +66,51 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets & pages: cache-first, fall back to network
+  // JS, CSS, and pages: network-first (so new deploys take effect immediately)
+  if (
+    url.pathname.endsWith(".js") ||
+    url.pathname.endsWith(".css") ||
+    url.pathname === "/" ||
+    event.request.mode === "navigate"
+  ) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match(event.request).then((cached) => {
+            if (cached) return cached;
+            if (event.request.mode === "navigate") {
+              return caches.match("/") || new Response("Offline", { status: 503 });
+            }
+            return new Response("Offline", { status: 503 });
+          });
+        })
+    );
+    return;
+  }
+
+  // Static assets (images, fonts): cache-first, fall back to network
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        // Cache static assets (JS, CSS, images)
         if (response.ok && (
-          url.pathname.endsWith(".js") ||
-          url.pathname.endsWith(".css") ||
           url.pathname.endsWith(".png") ||
           url.pathname.endsWith(".jpg") ||
           url.pathname.endsWith(".svg") ||
-          url.pathname.endsWith(".woff2") ||
-          url.pathname === "/"
+          url.pathname.endsWith(".woff2")
         )) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
       }).catch(() => {
-        // For navigation requests, return the cached index page
-        if (event.request.mode === "navigate") {
-          return caches.match("/") || new Response("Offline", { status: 503 });
-        }
         return new Response("Offline", { status: 503 });
       });
     })

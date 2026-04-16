@@ -1,10 +1,23 @@
-import { HStack, Image, Text, Box } from "@chakra-ui/react";
+import { useEffect, useState } from "react";
+import { HStack, Text, Box } from "@chakra-ui/react";
 import {
   SignedIn,
   SignedOut,
   SignInButton,
   UserButton,
 } from "@clerk/clerk-react";
+
+function resolveIcon(): string {
+  if (typeof window === "undefined") return "/seedlings-icon.png";
+  try {
+    const override = localStorage.getItem("seedlings_seasonOverride");
+    if (override === "fall") return "/seedlings-icon-fall.png";
+    if (override === "spring") return "/seedlings-icon.png";
+  } catch {}
+  // Auto — check month
+  const month = new Date().getMonth();
+  return (month >= 2 && month <= 7) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
+}
 
 type Props = {
   /** Pixel height for the icon */
@@ -20,8 +33,16 @@ export default function BrandLabel({
   showText = true,
   showUserControls = true,
 }: Props) {
-  const src = "/seedlings-icon.png";
-  const lineMinH = Math.max(size, 32); // keep row tall enough for the avatar button
+  const [iconSrc, setIconSrc] = useState("/seedlings-icon.png");
+
+  useEffect(() => {
+    setIconSrc(resolveIcon());
+    const handler = () => setIconSrc(resolveIcon());
+    window.addEventListener("seedlings:seasonChanged", handler);
+    return () => window.removeEventListener("seedlings:seasonChanged", handler);
+  }, []);
+
+  const lineMinH = Math.max(size, 32);
 
   return (
     <HStack
@@ -33,12 +54,12 @@ export default function BrandLabel({
     >
       {/* Left: brand */}
       <HStack gap="2" align="center">
-        <Image
-          src={src}
+        <img
+          key={iconSrc}
+          src={iconSrc}
           alt="Seedlings"
-          height={`${size}px`}
-          width="auto"
-          style={{ imageRendering: "auto", display: "block" }}
+          height={size}
+          style={{ height: `${size}px`, width: "auto", imageRendering: "auto", display: "block" }}
         />
         {showText && (
           <Text fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">

@@ -13,6 +13,7 @@ import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
 import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/offline";
 import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
+import { getSeasonIcons } from "../src/lib/season";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {
@@ -32,6 +33,24 @@ function AppInner({ Component, pageProps }: AppProps) {
   useEffect(() => {
     registerServiceWorker();
     initOfflineExecutor();
+  }, []);
+
+  // Update favicon/icons based on season
+  useEffect(() => {
+    function updateFavicons() {
+      const icons = getSeasonIcons();
+      document.querySelectorAll<HTMLLinkElement>("link[rel='icon']").forEach((el) => {
+        if (el.sizes?.contains("32x32")) el.href = icons.icon32;
+        else if (el.sizes?.contains("16x16")) el.href = icons.icon16;
+        else el.href = icons.icon;
+      });
+      document.querySelectorAll<HTMLLinkElement>("link[rel='apple-touch-icon']").forEach((el) => {
+        el.href = icons.icon;
+      });
+    }
+    updateFavicons();
+    window.addEventListener("seedlings:seasonChanged", updateFavicons);
+    return () => window.removeEventListener("seedlings:seasonChanged", updateFavicons);
   }, []);
 
   // Show toast when offline queue processes after coming back online

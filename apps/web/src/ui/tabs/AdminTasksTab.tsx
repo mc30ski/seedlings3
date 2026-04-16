@@ -1,7 +1,7 @@
 "use client";
 
 import { Box, Text, VStack } from "@chakra-ui/react";
-import { FiPlus, FiDownload, FiDatabase } from "react-icons/fi";
+import { FiPlus, FiDownload, FiDatabase, FiShare2 } from "react-icons/fi";
 
 type TaskDef = {
   id: string;
@@ -77,4 +77,4 @@ export default function AdminTasksTab({ tasks }: Props) {
 }
 
 export { type TaskDef };
-export { FiPlus, FiDownload, FiDatabase };
+export { FiPlus, FiDownload, FiDatabase, FiShare2 };
