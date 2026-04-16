@@ -32,7 +32,8 @@ import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
-import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase } from "@/src/ui/tabs/AdminTasksTab";
+import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
+import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
 import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
@@ -170,6 +171,15 @@ export default function HomePage() {
       colorPalette: "green",
       bgColor: "green.50",
       onClick: () => setActiveWorkflow("new-job-setup"),
+    },
+    {
+      id: "share-photos",
+      label: "Share Photos",
+      description: "Select photos from jobs and share to Instagram, social media, or download",
+      icon: FiShare2,
+      colorPalette: "orange",
+      bgColor: "orange.50",
+      onClick: () => setActiveWorkflow("share-photos"),
     },
     {
       id: "export-summary",
@@ -623,23 +633,29 @@ export default function HomePage() {
       icon: GrUserAdmin,
       visible: () => !!isSignedIn && isAdmin,
       headerSlot: (
-        <NewJobSetupWorkflow
-          active={activeWorkflow === "new-job-setup"}
-          onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
-          estimateDefaults={workflowEstimateDefaults}
-          onComplete={(jobId) => {
-            if (jobId) {
-              // Navigate to Admin Services tab and highlight the new job
-              setTopTab("admin");
-              setAdminInnerTab("jobs" as any);
-              setTimeout(() => {
-                window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
-              }, 200);
-            } else {
-              window.location.reload();
-            }
-          }}
-        />
+        <>
+          <NewJobSetupWorkflow
+            active={activeWorkflow === "new-job-setup"}
+            onDone={() => { setActiveWorkflow(null); setWorkflowEstimateDefaults(null); }}
+            estimateDefaults={workflowEstimateDefaults}
+            onComplete={(jobId) => {
+              if (jobId) {
+                // Navigate to Admin Services tab and highlight the new job
+                setTopTab("admin");
+                setAdminInnerTab("jobs" as any);
+                setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("open:jobsTabToServicesTabSearch", { detail: { q: jobId, forAdmin: true, entityId: jobId } }));
+                }, 200);
+              } else {
+                window.location.reload();
+              }
+            }}
+          />
+          <SharePhotosWorkflow
+            active={activeWorkflow === "share-photos"}
+            onDone={() => setActiveWorkflow(null)}
+          />
+        </>
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {

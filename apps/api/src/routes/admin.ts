@@ -1509,6 +1509,67 @@ Respond ONLY with valid JSON in this exact format:
 
   // ── Admin Photos ──
 
+  // List photos across all jobs with optional date range
+  app.get("/admin/photos", adminGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+
+    const where: any = {};
+    if (from || to) {
+      where.occurrence = { startAt: {} };
+      if (from) where.occurrence.startAt.gte = etMidnight(from);
+      if (to) where.occurrence.startAt.lte = etEndOfDay(to);
+    }
+
+    const photos = await prisma.jobOccurrencePhoto.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: {
+        uploadedBy: { select: { id: true, displayName: true } },
+        occurrence: {
+          select: {
+            id: true,
+            startAt: true,
+            status: true,
+            jobType: true,
+            job: {
+              select: {
+                id: true,
+                kind: true,
+                property: {
+                  select: { id: true, displayName: true, street1: true, city: true, state: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return Promise.all(
+      photos.map(async (p) => ({
+        id: p.id,
+        fileName: p.fileName,
+        contentType: p.contentType,
+        uploadedBy: p.uploadedBy,
+        createdAt: p.createdAt,
+        url: await getDownloadUrl(p.r2Key),
+        occurrence: {
+          id: p.occurrence.id,
+          startAt: p.occurrence.startAt,
+          status: p.occurrence.status,
+          jobType: p.occurrence.jobType,
+          property: p.occurrence.job?.property
+            ? {
+                displayName: p.occurrence.job.property.displayName,
+                address: [p.occurrence.job.property.street1, p.occurrence.job.property.city, p.occurrence.job.property.state].filter(Boolean).join(", "),
+              }
+            : null,
+        },
+      }))
+    );
+  });
+
   app.get("/admin/occurrences/:occurrenceId/photos", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.occurrenceId);
 

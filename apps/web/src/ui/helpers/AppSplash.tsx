@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Portal } from "@chakra-ui/react";
 import { keyframes } from "@emotion/react";
+import { getSeasonIcons } from "@/src/lib/season";
 
 const dropIn = keyframes`
   0%   { transform: translateY(-40vh) scale(0.95); opacity: 0; }
@@ -85,7 +86,7 @@ export default function AppSplash({
           animation={`${dropIn} 520ms cubic-bezier(.17,.84,.44,1) both`}
         >
           <img
-            src="/seedlings-icon.png"
+            src={typeof window !== "undefined" ? getSeasonIcons().icon : "/seedlings-icon.png"}
             alt="Seedlings"
             width={84}
             height={84}
