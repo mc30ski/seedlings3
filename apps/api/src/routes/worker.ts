@@ -15,6 +15,77 @@ export default async function workerRoutes(app: FastifyInstance) {
       app.requireRole(req, reply, RoleVal.WORKER),
   };
 
+  // Dashboard summary — single endpoint for all badge counts
+  app.get("/dashboard-summary", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const todayMidnight = etMidnight(todayStr);
+    const tomorrowDate = new Date(now); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = tomorrowDate.toISOString().slice(0, 10);
+    const tomorrowMidnight = etMidnight(tomorrowStr);
+    const tomorrowEnd = etEndOfDay(tomorrowStr);
+
+    // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED)
+    const myAssignments = await prisma.jobOccurrenceAssignee.findMany({
+      where: { userId: uid },
+      select: { occurrenceId: true },
+    });
+    const myOccIds = myAssignments.map((a) => a.occurrenceId);
+
+    if (myOccIds.length === 0) {
+      return { overdue: 0, today: 0, tomorrow: 0, pendingPayment: 0, estimatesReady: 0, followUps: 0, planning: 0 };
+    }
+
+    const [overdue, todayCount, tomorrowCount, pendingPayment, estimatesReady, reminders] = await Promise.all([
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          startAt: { lt: todayMidnight },
+          status: { notIn: ["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"] as any },
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          status: "PENDING_PAYMENT" as any,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          status: "PROPOSAL_SUBMITTED" as any,
+          workflow: "ESTIMATE",
+        },
+      }),
+      prisma.reminder.count({
+        where: {
+          userId: uid,
+          dismissedAt: null,
+          remindAt: { lte: now },
+        },
+      }),
+    ]);
+
+    const planning = overdue + todayCount + tomorrowCount + pendingPayment + estimatesReady + reminders;
+
+    return { overdue, today: todayCount, tomorrow: tomorrowCount, pendingPayment, estimatesReady, followUps: reminders, planning };
+  });
+
   app.get("/equipment/all", workerGuard, async () => {
     return services.equipment.listAllAdmin();
   });
@@ -452,6 +523,48 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
     return services.payments.listMyPayments(uid, { from, to });
+  });
+
+  app.get("/payments/earnings-summary", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+
+    const now = new Date();
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const splits = await prisma.paymentSplit.findMany({
+      where: { userId: uid },
+      include: {
+        payment: {
+          select: { createdAt: true, method: true, amountPaid: true },
+        },
+      },
+    });
+
+    let thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
+    const byMethod: Record<string, number> = {};
+    let jobCount = 0;
+
+    for (const sp of splits) {
+      allTime += sp.amount;
+      const d = sp.payment.createdAt;
+      if (d >= startOfWeek) thisWeek += sp.amount;
+      if (d >= startOfMonth) thisMonth += sp.amount;
+      if (d >= startOfYear) thisYear += sp.amount;
+      byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+      jobCount++;
+    }
+
+    return {
+      thisWeek: Math.round(thisWeek * 100) / 100,
+      thisMonth: Math.round(thisMonth * 100) / 100,
+      thisYear: Math.round(thisYear * 100) / 100,
+      allTime: Math.round(allTime * 100) / 100,
+      jobCount,
+      byMethod,
+    };
   });
 
   app.get("/payments/equipment-charges", workerGuard, async (req: any) => {

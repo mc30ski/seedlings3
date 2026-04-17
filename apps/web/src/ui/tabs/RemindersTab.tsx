@@ -105,11 +105,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const tomorrow = bizDateKey(tomorrowDate);
 
   const myItems = useMemo(() => {
-    let rows = showAll
-      ? items.filter((occ) => (occ.assignees ?? []).length > 0)
+    // Filter out ghost cards (pinned/reminder ghosts from the API) — they're for the Jobs tab
+    let rows = items.filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost);
+
+    rows = showAll
+      ? rows.filter((occ) => (occ.assignees ?? []).length > 0)
       : myId
-      ? items.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
-      : items;
+      ? rows.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
+      : rows;
 
     // Text search
     const qlc = q.trim().toLowerCase();
@@ -500,14 +503,14 @@ function Section({
                 <HStack justify="space-between" align="start" gap={3}>
                   <VStack align="start" gap={1} flex="1" minW={0}>
                     <Text fontSize={isExpanded ? "sm" : "sm"} fontWeight="medium">
-                      {occ.workflow === "TASK" ? (occ.title || "Task") : (
+                      {occ.workflow === "TASK" || occ.workflow === "REMINDER" ? (occ.title || (occ.workflow === "TASK" ? "Task" : "Reminder")) : occ.job?.property?.displayName ? (
                         <>
-                          {occ.job?.property?.displayName}
-                          {occ.job?.property?.client?.displayName && (
+                          {occ.job.property.displayName}
+                          {occ.job.property.client?.displayName && (
                             <> — {clientLabel(occ.job.property.client.displayName)}</>
                           )}
                         </>
-                      )}
+                      ) : (occ.title || "Job")}
                     </Text>
                     {isExpanded && (
                       <>

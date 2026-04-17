@@ -908,15 +908,14 @@ export default function HomePage() {
 
   // Planning badge count — items on the worker's Planning tab that haven't been dismissed
   const [planningCount, setPlanningCount] = useState(0);
-  const loadPlanningCount = useCallback(async () => {
+  // Single dashboard summary replaces multiple separate API calls for badge counts
+  const loadDashboardSummary = useCallback(async () => {
     if (!me?.id) { setPlanningCount(0); return; }
     try {
-      const list = await apiGet<any[]>("/api/occurrences");
-      if (!Array.isArray(list)) { setPlanningCount(0); return; }
-      const myId = me.id;
-      const myItems = list.filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
+      const summary = await apiGet<{ planning: number }>("/api/dashboard-summary");
+      const serverCount = summary?.planning ?? 0;
 
-      // Load dismissed IDs from localStorage (same logic as RemindersTab)
+      // Load locally dismissed IDs to subtract from server count
       let dismissedIds = new Set<string>();
       try {
         const raw = localStorage.getItem("seedlings_reminders_dismissed");
@@ -927,50 +926,29 @@ export default function HomePage() {
           }
         }
       } catch {}
-      const notDismissed = (occ: any) => !dismissedIds.has(occ.id);
 
-      const todayKey = bizDateKey(new Date());
-      const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
-      const tomorrowKey = bizDateKey(tomorrowD);
-      const terminalStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-
-      // Follow-ups (reminders due — filtered to my items)
-      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey).filter(notDismissed).length;
-
-      // Overdue
-      const overdue = myItems.filter((occ: any) => occ.startAt && !terminalStatuses.has(occ.status) && bizDateKey(occ.startAt) < todayKey).filter(notDismissed).length;
-
-      // Today
-      const today_ = myItems.filter((occ: any) => (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS") && occ.startAt && bizDateKey(occ.startAt) === todayKey).filter(notDismissed).length;
-
-      // Tomorrow
-      const tomorrow_ = myItems.filter((occ: any) => occ.status === "SCHEDULED" && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey).filter(notDismissed).length;
-
-      // Pending payment
-      const pending_ = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT").filter(notDismissed).length;
-
-      // Estimates ready
-      const estimates_ = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)).filter(notDismissed).length;
-
-      // Route plan reminder (unless dismissed)
+      // Route plan reminder: +1 unless dismissed today
       const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
 
-      setPlanningCount(followUps + overdue + today_ + tomorrow_ + pending_ + estimates_ + routePlan);
+      // Subtract dismissed items (excluding __route_plan__ which the server doesn't count)
+      const dismissedOccCount = [...dismissedIds].filter((id) => id !== "__route_plan__").length;
+
+      setPlanningCount(Math.max(0, serverCount - dismissedOccCount + routePlan));
     } catch {
       setPlanningCount(0);
     }
   }, [me?.id]);
 
   useEffect(() => {
-    void loadPlanningCount();
-    const onRefresh = () => void loadPlanningCount();
+    void loadDashboardSummary();
+    const onRefresh = () => void loadDashboardSummary();
     window.addEventListener("seedlings3:jobs-changed", onRefresh);
     window.addEventListener("seedlings3:planning-changed", onRefresh);
     return () => {
       window.removeEventListener("seedlings3:jobs-changed", onRefresh);
       window.removeEventListener("seedlings3:planning-changed", onRefresh);
     };
-  }, [loadPlanningCount]);
+  }, [loadDashboardSummary]);
 
   const goToPlanning = useCallback(() => {
     setTopTab("worker");
