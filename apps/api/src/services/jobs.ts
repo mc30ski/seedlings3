@@ -185,7 +185,9 @@ export const jobs: ServicesJobs = {
       include: {
         property: true,
         schedule: true,
-        defaultAssignees: true,
+        defaultAssignees: {
+          include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
         occurrences: {
           orderBy: [{ createdAt: "desc" }],
           take: 50,
