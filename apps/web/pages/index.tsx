@@ -990,10 +990,16 @@ export default function HomePage() {
   const loadDashboardSummary = useCallback(async () => {
     if (!me?.id) { setPlanningCount(0); return; }
     try {
-      const summary = await apiGet<{ planning: number }>("/api/dashboard-summary");
-      const serverCount = summary?.planning ?? 0;
+      const list = await apiGet<any[]>("/api/occurrences");
+      if (!Array.isArray(list)) { setPlanningCount(0); return; }
 
-      // Load locally dismissed IDs to subtract from server count
+      // Filter to my assigned items, exclude ghosts
+      const myId = me.id;
+      const myItems = list
+        .filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost)
+        .filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
+
+      // Load dismissed IDs (same logic as RemindersTab)
       let dismissedIds = new Set<string>();
       try {
         const raw = localStorage.getItem("seedlings_reminders_dismissed");
@@ -1004,14 +1010,24 @@ export default function HomePage() {
           }
         }
       } catch {}
+      const notDismissed = (occ: any) => !dismissedIds.has(occ.id);
 
-      // Route plan reminder: +1 unless dismissed today
+      const todayKey = bizDateKey(new Date());
+      const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
+      const tomorrowKey = bizDateKey(tomorrowD);
+      const terminalStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "REJECTED", "CANCELED"]);
+      const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
+      const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
+
+      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey).filter(notDismissed).length;
+      const overdue = myItems.filter((occ: any) => occ.startAt && !terminalStatuses.has(occ.status) && bizDateKey(occ.startAt) < todayKey).filter(notDismissed).length;
+      const today_ = myItems.filter((occ: any) => activeStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === todayKey).filter(notDismissed).length;
+      const tomorrow_ = myItems.filter((occ: any) => upcomingStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey).filter(notDismissed).length;
+      const pending_ = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT").filter(notDismissed).length;
+      const estimates_ = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)).filter(notDismissed).length;
       const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
 
-      // Subtract dismissed items (excluding __route_plan__ which the server doesn't count)
-      const dismissedOccCount = [...dismissedIds].filter((id) => id !== "__route_plan__").length;
-
-      setPlanningCount(Math.max(0, serverCount - dismissedOccCount + routePlan));
+      setPlanningCount(followUps + overdue + today_ + tomorrow_ + pending_ + estimates_ + routePlan);
     } catch {
       setPlanningCount(0);
     }
