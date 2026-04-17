@@ -94,12 +94,19 @@ function LazyPhoto({ src, onClick }: { src: string; onClick?: () => void }) {
   return (
     <Box ref={ref} flexShrink={0} w="80px" h="80px" rounded="lg" overflow="hidden" cursor={onClick ? "pointer" : undefined} onClick={onClick} borderWidth="1px" borderColor="gray.200" position="relative">
       {!loaded && (
-        <Box position="absolute" inset="0" bg="gray.100" css={{
-          animation: "shimmer 1.5s ease-in-out infinite",
-          backgroundImage: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)",
-          backgroundSize: "200% 100%",
-          "@keyframes shimmer": { "0%": { backgroundPosition: "200% 0" }, "100%": { backgroundPosition: "-200% 0" } },
-        }} />
+        <>
+          <style>{`
+            @keyframes img-shimmer {
+              0% { background-position: 200% 0; }
+              100% { background-position: -200% 0; }
+            }
+          `}</style>
+          <Box position="absolute" inset="0" style={{
+            background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
+            backgroundSize: "200% 100%",
+            animation: "img-shimmer 1.5s ease-in-out infinite",
+          }} />
+        </>
       )}
       {inView && (
         <img src={src} alt="Photo" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: loaded ? 1 : 0, transition: "opacity 0.3s ease" }} onLoad={() => setLoaded(true)} />

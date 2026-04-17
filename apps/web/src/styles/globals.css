@@ -1,0 +1,8 @@
+/* Prevent Safari iOS from zooming on input focus — requires font-size >= 16px */
+@media screen and (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}

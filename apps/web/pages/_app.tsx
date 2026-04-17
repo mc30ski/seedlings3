@@ -14,6 +14,7 @@ import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/o
 import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
+import "../src/styles/globals.css";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 if (!PUBLISHABLE_KEY) {

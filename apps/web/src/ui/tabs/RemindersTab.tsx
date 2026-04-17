@@ -199,6 +199,26 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           placeholder="Search planning…"
           inputId="planning-search"
         />
+        {hasReminders && (
+          <Button
+            size="sm"
+            variant="ghost"
+            colorPalette="gray"
+            px="2"
+            flexShrink={0}
+            onClick={() => {
+              const allIds = new Set(dismissed);
+              allIds.add("__route_plan__");
+              for (const occ of [...overdue, ...todayJobs, ...tomorrowJobs, ...pendingPayment, ...estimatesReady, ...followUps]) {
+                allIds.add(occ.id);
+              }
+              setDismissed(allIds);
+              saveDismissed(allIds);
+            }}
+          >
+            Dismiss all
+          </Button>
+        )}
         <Button
           size="sm"
           variant={compact ? "solid" : "ghost"}
