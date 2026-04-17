@@ -512,13 +512,27 @@ export const jobs: ServicesJobs = {
     patch: any
   ) {
     return prisma.$transaction(async (tx) => {
-      // Fetch original before update (for link cascade delta)
+      // Fetch original before update (for link cascade delta + status validation)
       const original = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+      if (!original) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
 
       const data: any = {};
 
       if (patch.kind != null) data.kind = patch.kind;
-      if (patch.status != null) data.status = patch.status;
+      if (patch.status != null) {
+        // Enforce valid status transitions (admins still can't skip states)
+        if (patch.status !== original.status) {
+          const workflow = (original as any).workflow ?? "STANDARD";
+          if (!isValidTransition(workflow, original.status, patch.status)) {
+            throw new ServiceError(
+              "INVALID_TRANSITION",
+              `Cannot transition from ${original.status} to ${patch.status} in ${workflow} workflow.`,
+              409
+            );
+          }
+        }
+        data.status = patch.status;
+      }
 
       if ("startAt" in patch)
         data.startAt = patch.startAt ? new Date(patch.startAt) : null;

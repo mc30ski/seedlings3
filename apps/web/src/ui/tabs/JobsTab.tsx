@@ -33,6 +33,8 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import SendReceiptDialog from "@/src/ui/dialogs/SendReceiptDialog";
+import { type ReceiptData } from "@/src/lib/receipt";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
@@ -310,6 +312,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Reschedule state
   const [rescheduleOcc, setRescheduleOcc] = useState<WorkerOccurrence | null>(null);
+  const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+  const [receiptContact, setReceiptContact] = useState<{ phone?: string | null; email?: string | null }>({});
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
@@ -2247,9 +2252,39 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Badge>
                     )}
                     {occ.payment && (
-                      <Badge colorPalette="teal" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                        Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
-                      </Badge>
+                      <HStack gap={1}>
+                        <Badge colorPalette="teal" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                          Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                        </Badge>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorPalette="teal"
+                          px="1"
+                          minW="0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const poc = occ.job?.property?.pointOfContact;
+                            setReceiptContact({ phone: poc?.phone, email: poc?.email });
+                            setReceiptData({
+                              businessName: "Seedlings Lawn Care",
+                              clientName: occ.job?.property?.client?.displayName ?? "Client",
+                              propertyAddress: [occ.job?.property?.street1, occ.job?.property?.city, occ.job?.property?.state].filter(Boolean).join(", "),
+                              jobType: (occ as any).jobType ?? occ.kind ?? "Lawn Care",
+                              serviceDate: occ.startAt ? fmtDate(occ.startAt) : "—",
+                              completedDate: occ.completedAt ? fmtDate(occ.completedAt) : "—",
+                              amount: (occ.payment as any).amountPaid,
+                              method: (occ.payment as any).method ?? "CASH",
+                              workers: (occ.assignees ?? []).filter((a) => a.role !== "observer").map((a) => a.user?.displayName ?? ""),
+                              receiptId: occ.id.slice(-8).toUpperCase(),
+                            });
+                            setReceiptDialogOpen(true);
+                          }}
+                          title="Send receipt"
+                        >
+                          Receipt
+                        </Button>
+                      </HStack>
                     )}
                     {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
                       const displayPrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
@@ -3557,6 +3592,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
         occurrenceId={expenseDialogOccId ?? ""}
         onChanged={() => void load(false)}
+      />
+
+      <SendReceiptDialog
+        open={receiptDialogOpen}
+        onOpenChange={setReceiptDialogOpen}
+        data={receiptData}
+        contactPhone={receiptContact.phone}
+        contactEmail={receiptContact.email}
       />
 
       {acceptPaymentOcc && (

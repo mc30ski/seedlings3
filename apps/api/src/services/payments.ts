@@ -16,6 +16,13 @@ export const payments: ServicesPayments = {
     if (amountPaid <= 0) {
       throw new ServiceError("INVALID_AMOUNT", "Amount paid must be greater than zero.", 400);
     }
+    if (!splits || splits.length === 0) {
+      throw new ServiceError("INVALID_SPLITS", "At least one payment split is required.", 400);
+    }
+    const splitTotal = splits.reduce((s, sp) => s + sp.amount, 0);
+    if (Math.abs(splitTotal - amountPaid) > 0.01) {
+      throw new ServiceError("SPLIT_MISMATCH", `Split amounts ($${splitTotal.toFixed(2)}) do not equal payment total ($${amountPaid.toFixed(2)}).`, 400);
+    }
 
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({
@@ -172,6 +179,19 @@ export const payments: ServicesPayments = {
 
         const isAdminOnly = !!fullOcc.isAdminOnly;
 
+        // Guard against duplicate: check if a SCHEDULED occurrence already exists at this date
+        const existing = await tx.jobOccurrence.findFirst({
+          where: {
+            jobId: fullOcc.jobId,
+            status: JobOccurrenceStatus.SCHEDULED,
+            startAt: nextStart,
+          },
+        });
+        if (existing) {
+          // Already exists — skip creation, use existing as "next"
+          nextOccurrence = existing;
+        } else {
+
         nextOccurrence = await tx.jobOccurrence.create({
           data: {
             jobId: fullOcc.jobId,
@@ -211,6 +231,7 @@ export const payments: ServicesPayments = {
             });
           }
         }
+        } // end else (duplicate guard)
       }
 
       // Carry over likes to the new occurrence

@@ -1349,6 +1349,42 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  app.get("/admin/users/:id/earnings-summary", adminGuard, async (req: any) => {
+    const userId = String(req.params.id);
+    const now = new Date();
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const splits = await prisma.paymentSplit.findMany({
+      where: { userId },
+      include: { payment: { select: { createdAt: true, method: true } } },
+    });
+
+    let thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
+    const byMethod: Record<string, number> = {};
+    let jobCount = 0;
+
+    for (const sp of splits) {
+      allTime += sp.amount;
+      const d = sp.payment.createdAt;
+      if (d >= startOfWeek) thisWeek += sp.amount;
+      if (d >= startOfMonth) thisMonth += sp.amount;
+      if (d >= startOfYear) thisYear += sp.amount;
+      byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+      jobCount++;
+    }
+
+    return {
+      thisWeek: Math.round(thisWeek * 100) / 100,
+      thisMonth: Math.round(thisMonth * 100) / 100,
+      thisYear: Math.round(thisYear * 100) / 100,
+      allTime: Math.round(allTime * 100) / 100,
+      jobCount,
+      byMethod,
+    };
+  });
+
   app.patch("/admin/users/:id/profile", adminGuard, async (req: any) => {
     const userId = String(req.params.id);
     const body = req.body || {};
@@ -2315,7 +2351,12 @@ Respond ONLY with valid JSON in this exact format:
     lines.push(sr);
     for (const u of users) {
       const roles = u.roles.map((r: any) => r.role).join(", ") || "No role";
-      lines.push(`  ${u.displayName || u.email || u.id}  (${roles})${u.email ? "  " + u.email : ""}`);
+      lines.push(`  ${u.displayName || u.email || u.id}  (${roles})`);
+      if (u.email) lines.push(`    Email: ${u.email}`);
+      if (u.phone) lines.push(`    Phone: ${u.phone}`);
+      if (u.workerType) lines.push(`    Type: ${u.workerType}`);
+      if (u.homeBaseAddress) lines.push(`    Home base: ${u.homeBaseAddress}`);
+      lines.push(`    Approved: ${u.isApproved ? "Yes" : "No"}  Joined: ${date(u.createdAt)}`);
     }
     lines.push("");
 
@@ -2336,24 +2377,34 @@ Respond ONLY with valid JSON in this exact format:
     for (const client of clients) {
       lines.push("");
       lines.push(`CLIENT: ${client.displayName}  [${client.status}]  (${client.type})`);
+      if ((client as any).isVip) lines.push(`  VIP: Yes${(client as any).vipReason ? " — " + (client as any).vipReason : ""}`);
       if (client.notesInternal) lines.push(`  Notes: ${client.notesInternal}`);
+      lines.push(`  Created: ${date(client.createdAt)}`);
 
       // Contacts
       if (client.contacts.length > 0) {
         lines.push(`  Contacts:`);
         for (const c of client.contacts) {
           const primary = c.isPrimary ? " (PRIMARY)" : "";
-          lines.push(`    - ${c.firstName} ${c.lastName}${primary}${c.role ? " [" + c.role + "]" : ""}${c.phone ? "  " + c.phone : ""}${c.email ? "  " + c.email : ""}`);
+          const status = (c as any).status && (c as any).status !== "ACTIVE" ? `  [${(c as any).status}]` : "";
+          lines.push(`    - ${c.firstName} ${c.lastName}${primary}${c.role ? " [" + c.role + "]" : ""}${status}`);
+          if (c.phone) lines.push(`      Phone: ${c.phone}`);
+          if (c.email) lines.push(`      Email: ${c.email}`);
+          if ((c as any).nickname) lines.push(`      Nickname: ${(c as any).nickname}`);
         }
       }
 
       // Properties
       for (const prop of client.properties) {
         lines.push("");
-        lines.push(`  PROPERTY: ${prop.displayName}  [${prop.status}]`);
-        lines.push(`    Address: ${prop.street1}${prop.street2 ? ", " + prop.street2 : ""}, ${prop.city}, ${prop.state} ${prop.postalCode}`);
+        lines.push(`  PROPERTY: ${prop.displayName}  [${prop.status}]  (${(prop as any).kind ?? ""})`);
+        lines.push(`    Address: ${prop.street1}${prop.street2 ? ", " + prop.street2 : ""}, ${prop.city}, ${prop.state} ${prop.postalCode}${(prop as any).country ? " " + (prop as any).country : ""}`);
+        if ((prop as any).lotSize) lines.push(`    Lot: ${(prop as any).lotSize} ${(prop as any).lotSizeUnit ?? ""}`);
         if (prop.accessNotes) lines.push(`    Access: ${prop.accessNotes}`);
-        if (prop.pointOfContact) lines.push(`    POC: ${prop.pointOfContact.firstName} ${prop.pointOfContact.lastName}`);
+        if (prop.pointOfContact) {
+          const poc = prop.pointOfContact;
+          lines.push(`    Point of Contact: ${poc.firstName} ${poc.lastName}${poc.phone ? "  Phone: " + poc.phone : ""}${poc.email ? "  Email: " + poc.email : ""}`);
+        }
 
         // Jobs
         for (const job of prop.jobs) {

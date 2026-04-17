@@ -492,6 +492,9 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
             </Button>
           </Box>
 
+          {/* Earnings — visible when viewing own profile or admin viewing a worker */}
+          <EarningsSection targetUserId={targetUserId} isSelf={isSelf} />
+
           {/* Self-only sections — shown on any tab when viewing your own profile.
               Gate on `isSelf` for features any user gets.
               Gate on `isSelf && me?.roles?.includes(...)` for role-restricted features. */}
@@ -744,6 +747,7 @@ function SeasonSection() {
     <Card.Root variant="outline" mt={4}>
       <Card.Header py="3" px="4" pb="0">
         <Text fontWeight="semibold">Season Theme</Text>
+
       </Card.Header>
       <Card.Body py="3" px="4">
         <VStack align="stretch" gap={3}>
@@ -762,6 +766,82 @@ function SeasonSection() {
                 {val === "auto" ? `Auto (${natural === "spring" ? "Spring" : "Fall"})` : val === "spring" ? "Spring" : "Fall"}
               </Button>
             ))}
+          </HStack>
+        </VStack>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+type EarningsSummary = {
+  thisWeek: number;
+  thisMonth: number;
+  thisYear: number;
+  allTime: number;
+  jobCount: number;
+  byMethod: Record<string, number>;
+};
+
+function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSelf: boolean }) {
+  const [data, setData] = useState<EarningsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!targetUserId) { setLoading(false); return; }
+    setLoading(true);
+    const endpoint = isSelf ? "/api/payments/earnings-summary" : `/api/admin/users/${targetUserId}/earnings-summary`;
+    apiGet<EarningsSummary>(endpoint)
+      .then((d) => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [targetUserId, isSelf]);
+
+  if (loading) return null;
+  if (!data) return null;
+
+  const fmt = (v: number) => `$${v.toFixed(2)}`;
+  const methodLabel = (m: string) => {
+    const map: Record<string, string> = { CASH: "Cash", CHECK: "Check", VENMO: "Venmo", ZELLE: "Zelle", APPLE_PAY: "Apple Pay", CASH_APP: "Cash App", OTHER: "Other" };
+    return map[m] ?? m;
+  };
+
+  return (
+    <Card.Root variant="outline">
+      <Card.Header py="3" px="4" pb="0">
+        <Text fontWeight="semibold">Earnings</Text>
+      </Card.Header>
+      <Card.Body py="3" px="4">
+        <VStack align="stretch" gap={3}>
+          <HStack gap={4} wrap="wrap">
+            <VStack align="start" gap={0}>
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Week</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisWeek)}</Text>
+            </VStack>
+            <VStack align="start" gap={0}>
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Month</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisMonth)}</Text>
+            </VStack>
+            <VStack align="start" gap={0}>
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Year</Text>
+              <Text fontSize="lg" fontWeight="bold" color="green.600">{fmt(data.thisYear)}</Text>
+            </VStack>
+            <VStack align="start" gap={0}>
+              <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">All Time</Text>
+              <Text fontSize="lg" fontWeight="bold">{fmt(data.allTime)}</Text>
+            </VStack>
+          </HStack>
+          <HStack gap={2} wrap="wrap">
+            <Text fontSize="xs" color="fg.muted">{data.jobCount} job{data.jobCount !== 1 ? "s" : ""} total</Text>
+            {Object.entries(data.byMethod).length > 0 && (
+              <>
+                <Text fontSize="xs" color="fg.muted">·</Text>
+                {Object.entries(data.byMethod).map(([method, amount]) => (
+                  <Badge key={method} size="sm" variant="subtle" colorPalette="gray">
+                    {methodLabel(method)}: {fmt(amount)}
+                  </Badge>
+                ))}
+              </>
+            )}
           </HStack>
         </VStack>
       </Card.Body>
