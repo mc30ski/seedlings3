@@ -155,7 +155,7 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
         files.push(new File([blob], name, { type: photo.contentType || "image/jpeg" }));
       }
 
-      // Check if Web Share API with files is supported
+      // Use Web Share API if available
       if (navigator.canShare && navigator.canShare({ files })) {
         await navigator.share({
           text: caption || undefined,
@@ -164,8 +164,18 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
         publishInlineMessage({ type: "SUCCESS", text: "Photos shared successfully!" });
         onDone();
       } else {
-        // Fallback: download files and copy caption
-        await fallbackShare(files);
+        // Desktop fallback: trigger downloads
+        for (const file of files) {
+          const url = URL.createObjectURL(file);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+        publishInlineMessage({ type: "SUCCESS", text: "Photos downloaded." });
       }
     } catch (err: any) {
       // User cancelled share is not an error
