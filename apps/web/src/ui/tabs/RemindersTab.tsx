@@ -144,14 +144,17 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     return bizDateKey(occ.startAt) < today;
   }).filter(notDismissed);
 
+  const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
+  const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
+
   const todayJobs = myItems.filter((occ) => {
-    if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS") return false;
+    if (!activeStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === today;
   }).filter(notDismissed);
 
   const tomorrowJobs = myItems.filter((occ) => {
-    if (occ.status !== "SCHEDULED") return false;
+    if (!upcomingStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === tomorrow;
   }).filter(notDismissed);

@@ -49,14 +49,14 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           id: { in: myOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
-          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED"] as any },
         },
       }),
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
           startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
-          status: "SCHEDULED" as any,
+          status: { in: ["SCHEDULED", "ACCEPTED"] as any },
         },
       }),
       prisma.jobOccurrence.count({
