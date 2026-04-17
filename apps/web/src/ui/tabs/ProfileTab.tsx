@@ -29,7 +29,17 @@ type Worker = { id: string; displayName?: string | null; email?: string | null; 
 
 type Props = {
   me: Me | null;
-  /** When true, shows admin controls (user selector) */
+  /**
+   * When true, this is the Admin Profile tab (shows user selector, no self-only sections).
+   * When false/omitted, this is the Worker Profile tab (always shows own profile).
+   *
+   * NOTE: This prop controls which TAB context we're in, NOT the user's role.
+   * To check if the current user has admin privileges, use `me?.roles?.includes("ADMIN")`.
+   * Use `isAdmin` (prop) for: user selector, save endpoint routing, tab-level layout.
+   * Use `me?.roles` for: feature gating (e.g., season override is admin-only regardless of tab).
+   * Use `isSelf` for: self-only features (calendar feeds, offline, season) that only make
+   *   sense when viewing your own profile.
+   */
   isAdmin?: boolean;
   onProfileUpdated?: () => void;
 };
@@ -76,9 +86,9 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
     return () => window.removeEventListener("beforeunload", handler);
   }, [hasChanges]);
 
-  // The user we're viewing — admin can switch, worker is always self
-  const targetUserId = isAdmin && selectedUserId ? selectedUserId : me?.id ?? "";
-  const isSelf = targetUserId === me?.id;
+  // The user we're viewing — admin must select a user; worker is always self
+  const targetUserId = isAdmin ? (selectedUserId || "") : (me?.id ?? "");
+  const isSelf = !!targetUserId && targetUserId === me?.id;
 
   // Load workers list for admin
   useEffect(() => {
@@ -92,10 +102,8 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   useEffect(() => {
     const onSelect = (e: Event) => {
       const { userId } = (e as CustomEvent).detail || {};
-      if (userId && userId !== me?.id) {
+      if (userId) {
         setSelectedUserId(userId);
-      } else {
-        setSelectedUserId("");
       }
     };
     window.addEventListener("profile:selectUser", onSelect as EventListener);
@@ -205,7 +213,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
             <Input
               size="sm"
               w="240px"
-              placeholder={selectedUserId ? (workerNameMap[selectedUserId] || selectedUserId) : me?.displayName ?? "You"}
+              placeholder={selectedUserId ? (workerNameMap[selectedUserId] || selectedUserId) : "Select a user..."}
               value={searchText}
               onChange={(e) => {
                 setSearchText(e.target.value);
@@ -230,16 +238,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                   left: dropRef.current?.getBoundingClientRect().left ?? 0,
                 }}
               >
-                {/* Self option */}
-                <Box
-                  px={3} py={1.5} cursor="pointer" fontSize="sm"
-                  bg={!selectedUserId ? "blue.50" : undefined}
-                  _hover={{ bg: "gray.100" }}
-                  onClick={() => { setSelectedUserId(""); setDropOpen(false); setSearchText(""); }}
-                >
-                  <Text fontWeight="medium">{me?.displayName ?? me?.email ?? "You"} (me)</Text>
-                </Box>
-                {limited.filter((w) => w.id !== me?.id).map((w) => (
+                {limited.map((w) => (
                   <Box
                     key={w.id} px={3} py={1.5} cursor="pointer" fontSize="sm"
                     bg={selectedUserId === w.id ? "blue.50" : undefined}
@@ -265,7 +264,11 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         </HStack>
       )}
 
-      {loading ? (
+      {isAdmin && !targetUserId ? (
+        <Box py={10} textAlign="center">
+          <Text color="fg.muted" fontSize="sm">Select a user above to view their profile.</Text>
+        </Box>
+      ) : loading ? (
         <Box py={10} textAlign="center"><Spinner size="lg" /></Box>
       ) : (
         <VStack align="stretch" gap={4} w="full">
@@ -489,10 +492,12 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
             </Button>
           </Box>
 
-          {/* Calendar Feeds management — self only */}
+          {/* Self-only sections — shown on any tab when viewing your own profile.
+              Gate on `isSelf` for features any user gets.
+              Gate on `isSelf && me?.roles?.includes(...)` for role-restricted features. */}
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
-          {isSelf && isAdmin && <SeasonSection />}
+          {isSelf && me?.roles?.includes("ADMIN") && <SeasonSection />}
         </VStack>
       )}
     </Box>

@@ -1037,6 +1037,71 @@ export default async function workerRoutes(app: FastifyInstance) {
     return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, workerType: u.workerType }));
   });
 
+  // ── Worker Reschedule ──
+
+  app.post("/occurrences/:id/reschedule", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const { startAt, endAt, comment, source } = (req.body || {}) as { startAt?: string; endAt?: string; comment?: string; source?: string };
+
+    if (!startAt) throw app.httpErrors.badRequest("startAt is required");
+
+    // Comment is required unless triggered by the route planner
+    const isRoutePlanner = source === "route-planner";
+    const reason = (comment ?? "").trim();
+    if (!isRoutePlanner && !reason) {
+      throw app.httpErrors.badRequest("A comment explaining the reschedule is required");
+    }
+
+    // Verify occurrence exists and is SCHEDULED, not a task/reminder
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: { assignees: { select: { userId: true, assignedById: true } } },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.status !== JobOccurrenceStatus.SCHEDULED) {
+      throw app.httpErrors.badRequest("Only scheduled jobs can be rescheduled");
+    }
+    if ((occ as any).workflow === "TASK" || (occ as any).workflow === "REMINDER") {
+      throw app.httpErrors.badRequest("Tasks and reminders cannot be rescheduled");
+    }
+
+    // Only the claimer can reschedule (assignedById === self)
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    if (!isClaimer) {
+      throw app.httpErrors.forbidden("Only the claimer can reschedule this job");
+    }
+
+    // Enforce 2-day window using ET dates (consistent with the rest of the app)
+    const newDateET = etMidnight(startAt.slice(0, 10));
+    const todayET = etMidnight(new Date().toISOString().slice(0, 10));
+    const diffDays = Math.round(Math.abs(newDateET.getTime() - todayET.getTime()) / 86400000);
+    if (diffDays > 2) {
+      throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");
+    }
+
+    // Update occurrence dates
+    const patch: any = { startAt };
+    if (endAt) patch.endAt = endAt;
+    else if (occ.startAt && occ.endAt) {
+      const duration = occ.endAt.getTime() - occ.startAt.getTime();
+      const newStart = new Date(startAt);
+      patch.endAt = new Date(newStart.getTime() + duration).toISOString();
+    }
+
+    const updated = await services.jobs.updateOccurrence(uid, occurrenceId, patch);
+
+    // Post comment
+    const commentBody = isRoutePlanner
+      ? "Rescheduled via route planner"
+      : `Rescheduled: ${reason}`;
+    await prisma.occurrenceComment.create({
+      data: { occurrenceId, authorId: uid, body: commentBody },
+    });
+
+    return updated;
+  });
+
   // ── Occurrence Comments ──
 
   app.get("/occurrences/:id/comments", workerGuard, async (req: any) => {

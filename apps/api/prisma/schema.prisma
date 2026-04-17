@@ -578,7 +578,7 @@ model JobAssigneeDefault {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  role      String?  // optional: "primary" | "helper"
+  role      String?  // "observer" for observer role, null for worker
   active    Boolean  @default(true)
 
   createdAt DateTime @default(now())

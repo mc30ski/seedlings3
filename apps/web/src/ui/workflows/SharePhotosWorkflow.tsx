@@ -226,7 +226,7 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p="0" shadow="lg">
+          <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" shadow="lg" overflow="hidden">
             <Dialog.Header px="4" pt="4" pb="2">
               <HStack justify="space-between" w="full">
                 <Dialog.Title fontSize="lg">
@@ -477,8 +477,7 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                   {/* Info box */}
                   <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
                     <Text fontSize="xs" color="blue.700">
-                      Share will open your device's share sheet so you can post directly to Instagram, Facebook, or any other app.
-                      On unsupported browsers, photos will be downloaded and the caption copied to your clipboard.
+                      <strong>For Instagram:</strong> Tap "Save Photos" to download them to your device and copy the caption. Then open Instagram, create a new post, select the saved photos, and paste the caption.
                     </Text>
                   </Box>
                 </VStack>
@@ -500,51 +499,44 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
                   </Button>
                 </HStack>
               ) : (
-                <HStack justify="space-between" w="full">
-                  <Button size="sm" variant="ghost" onClick={() => setStep("select")}>Back</Button>
-                  <HStack gap={2}>
+                <VStack align="stretch" gap={2} w="full">
+                  <HStack gap={2} w="full">
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={handleDownload}
+                      flex="1"
+                      variant="solid"
+                      bg="black"
+                      color="white"
+                      onClick={async () => {
+                        await handleDownload();
+                        if (caption) {
+                          try {
+                            await navigator.clipboard.writeText(caption);
+                          } catch {}
+                        }
+                        publishInlineMessage({ type: "SUCCESS", text: `${selectedPhotos.length} photo${selectedPhotos.length !== 1 ? "s" : ""} saved${caption ? " & caption copied" : ""}.` });
+                      }}
                       loading={sharing}
                       disabled={selectedPhotos.length === 0}
                     >
                       <Download size={14} />
-                      Download
+                      Save Photos{caption ? " & Copy Caption" : ""}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={async () => {
-                        if (caption) {
-                          try {
-                            await navigator.clipboard.writeText(caption);
-                            publishInlineMessage({ type: "SUCCESS", text: "Caption copied to clipboard." });
-                          } catch {
-                            publishInlineMessage({ type: "ERROR", text: "Failed to copy caption." });
-                          }
-                        }
-                      }}
-                      disabled={!caption}
-                    >
-                      <Copy size={14} />
-                      Copy Caption
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="solid"
-                      bg="black"
-                      color="white"
-                      onClick={handleShare}
-                      loading={sharing}
-                      disabled={selectedPhotos.length === 0}
-                    >
-                      <Share2 size={14} />
-                      Share
-                    </Button>
+                    {typeof window !== "undefined" && typeof navigator !== "undefined" && !!navigator.share && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleShare}
+                        loading={sharing}
+                        disabled={selectedPhotos.length === 0}
+                        px="3"
+                      >
+                        <Share2 size={14} />
+                      </Button>
+                    )}
                   </HStack>
-                </HStack>
+                  <Button size="sm" variant="ghost" onClick={() => setStep("select")} w="full">Back</Button>
+                </VStack>
               )}
             </Dialog.Footer>
             <Dialog.CloseTrigger />

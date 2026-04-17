@@ -144,7 +144,12 @@ export const payments: ServicesPayments = {
       const fullOcc = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
         include: {
-          job: { select: { id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true } },
+          job: {
+            select: {
+              id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true,
+              defaultAssignees: { where: { active: true }, select: { userId: true, role: true } },
+            },
+          },
           assignees: true,
         },
       });
@@ -185,13 +190,18 @@ export const payments: ServicesPayments = {
           } as any,
         });
 
-        // Copy assignees for administered occurrences, preserving roles (including observer)
+        // Copy assignees for administered occurrences from job defaults (not current occurrence).
+        // This ensures one-time team swaps don't persist to future occurrences.
+        // Falls back to current occurrence assignees if no job defaults are set.
         if (isAdminOnly) {
-          const assignees = fullOcc.assignees;
-          if (assignees.length > 0) {
-            const claimerId = assignees[0].userId;
+          const defaults = fullOcc.job?.defaultAssignees ?? [];
+          const assigneeSource = defaults.length > 0
+            ? defaults.map((d) => ({ userId: d.userId, role: d.role }))
+            : fullOcc.assignees.map((a) => ({ userId: a.userId, role: a.role }));
+          if (assigneeSource.length > 0) {
+            const claimerId = assigneeSource[0].userId;
             await tx.jobOccurrenceAssignee.createMany({
-              data: assignees.map((a, i) => ({
+              data: assigneeSource.map((a, i) => ({
                 occurrenceId: nextOccurrence.id,
                 userId: a.userId,
                 role: a.role ?? null,

@@ -308,6 +308,45 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
   }
 
+  // Reschedule state
+  const [rescheduleOcc, setRescheduleOcc] = useState<WorkerOccurrence | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
+
+  async function submitReschedule() {
+    if (!rescheduleOcc || !rescheduleDate) return;
+    if (!forAdmin && !rescheduleReason.trim()) return;
+    setRescheduleBusy(true);
+    try {
+      const patchData: any = { startAt: rescheduleDate + "T09:00:00Z" };
+      if (rescheduleOcc.startAt && rescheduleOcc.endAt) {
+        const duration = new Date(rescheduleOcc.endAt).getTime() - new Date(rescheduleOcc.startAt).getTime();
+        patchData.endAt = new Date(new Date(rescheduleDate + "T09:00:00Z").getTime() + duration).toISOString();
+      }
+      if (forAdmin) {
+        // Admin uses the admin endpoint — no comment requirement enforced server-side
+        await apiPatch(`/api/admin/occurrences/${rescheduleOcc.id}`, patchData);
+        // Still post the comment since the user filled it in
+        if (rescheduleReason.trim()) {
+          await apiPost(`/api/occurrences/${rescheduleOcc.id}/comments`, { body: `Rescheduled: ${rescheduleReason.trim()}` });
+        }
+      } else {
+        // Worker uses the reschedule endpoint (claimer-only, comment required)
+        await apiPost(`/api/occurrences/${rescheduleOcc.id}/reschedule`, { ...patchData, comment: rescheduleReason.trim() });
+      }
+      publishInlineMessage({ type: "SUCCESS", text: `Job rescheduled to ${fmtDate(rescheduleDate + "T12:00:00Z")}.` });
+      setRescheduleOcc(null);
+      setRescheduleDate("");
+      setRescheduleReason("");
+      await load(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reschedule failed.", err) });
+    } finally {
+      setRescheduleBusy(false);
+    }
+  }
+
   // Listen for navigation from Reminders tab
   const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
   useEffect(() => {
@@ -858,6 +897,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const filtered = useMemo(() => {
     let rows = items;
+    // Enforce date range — items outside the range should not appear in the feed
+    // Exception: pinned and liked items (they have their own sections / filter)
+    if (dateFrom || dateTo) {
+      rows = rows.filter((occ) => {
+        // Pinned and liked items bypass date filter (shown in dedicated sections)
+        if (pinnedIds.has(occ.id) || likedIds.has(occ.id)) return true;
+        const day = occ.startAt ? bizDateKey(occ.startAt) : null;
+        if (!day) return true; // no date — include
+        if (dateFrom && day < dateFrom) return false;
+        if (dateTo && day > dateTo) return false;
+        return true;
+      });
+    }
     // Trainees should not see tentative jobs
     if (isTrainee) rows = rows.filter((occ) => !occ.isTentative);
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
@@ -934,7 +986,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -969,18 +1021,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         const hasReminder = !!occ.reminder;
         if (isPinned) {
           pinnedGroup.push(occ);
-          // Add a ghost in the regular feed at its natural date
-          rest.push({ ...occ, _isPinnedGhost: true } as any);
+          // Add a ghost in the regular feed at its natural date — only if within date range
+          const occDay = occ.startAt ? bizDateKey(occ.startAt) : null;
+          if (occDay && (!dateFrom || occDay >= dateFrom) && (!dateTo || occDay <= dateTo)) {
+            rest.push({ ...occ, _isPinnedGhost: true } as any);
+          }
         } else if (hasReminderDue) {
           reminderDueGroup.push(occ);
           reminderDueIds.add(occ.id);
         } else {
           rest.push(occ);
-          // Future reminders — add a ghost at the reminder date if it's a different ET day than the occurrence
+          // Future reminders — add a ghost at the reminder date if it's a different ET day than the occurrence AND within date range
           if (hasReminder) {
             const remKey = bizDateKey(occ.reminder!.remindAt);
             const occKey = occ.startAt ? bizDateKey(occ.startAt) : "";
-            if (remKey !== occKey) {
+            if (remKey !== occKey && (!dateFrom || remKey >= dateFrom) && (!dateTo || remKey <= dateTo)) {
               rest.push({ ...occ, _isReminderGhost: true, _ghostDate: remKey } as any);
             }
           }
@@ -2878,6 +2933,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
+                      {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !isOffline && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setRescheduleOcc(occ);
+                            setRescheduleDate(occ.startAt ? bizDateKey(occ.startAt) : bizDateKey(new Date()));
+                            setRescheduleReason("");
+                          }}
+                        >
+                          Reschedule
+                        </Button>
+                      )}
                       {isActiveAssignee && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                         <StatusButton
                           id="occ-complete"
@@ -3397,6 +3465,86 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   }}
                 >
                   Set Reminder
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Reschedule dialog */}
+      <Dialog.Root open={!!rescheduleOcc} onOpenChange={(e) => { if (!e.open) setRescheduleOcc(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="sm">
+              <Dialog.Header>
+                <Dialog.Title>Reschedule Job</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.muted">
+                    {forAdmin
+                      ? "Move this job to a new date."
+                      : "Move this job to a new date (within 2 days of today). A comment explaining the reason is required."
+                    }
+                  </Text>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>New date</Text>
+                    <HStack gap={2} wrap="wrap">
+                      {[
+                        { label: "Yesterday", days: -1 },
+                        { label: "Today", days: 0 },
+                        { label: "Tomorrow", days: 1 },
+                        { label: "In 2 days", days: 2 },
+                      ].map((opt) => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + opt.days);
+                        const val = bizDateKey(d);
+                        return (
+                          <Button
+                            key={opt.days}
+                            size="xs"
+                            variant={rescheduleDate === val ? "solid" : "outline"}
+                            colorPalette="blue"
+                            onClick={() => setRescheduleDate(val)}
+                          >
+                            {opt.label}
+                          </Button>
+                        );
+                      })}
+                    </HStack>
+                    <HStack gap={2} align="center" mt={2}>
+                      <Text fontSize="sm" flexShrink={0}>Or pick:</Text>
+                      <DateInput value={rescheduleDate} onChange={setRescheduleDate} />
+                    </HStack>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Reason {forAdmin ? "(optional)" : "(required)"}</Text>
+                    <input
+                      type="text"
+                      placeholder="e.g., Rain forecast, client requested change"
+                      value={rescheduleReason}
+                      onChange={(e) => setRescheduleReason(e.target.value)}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    />
+                  </Box>
+                  {rescheduleDate === (rescheduleOcc?.startAt ? bizDateKey(rescheduleOcc.startAt) : "") && (
+                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+                      <Text fontSize="xs" color="yellow.700">This is the same date as currently scheduled.</Text>
+                    </Box>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="ghost" onClick={() => setRescheduleOcc(null)}>Cancel</Button>
+                <Button
+                  colorPalette="blue"
+                  disabled={!rescheduleDate || (!forAdmin && !rescheduleReason.trim()) || rescheduleBusy || rescheduleDate === (rescheduleOcc?.startAt ? bizDateKey(rescheduleOcc.startAt) : "")}
+                  loading={rescheduleBusy}
+                  onClick={submitReschedule}
+                >
+                  Reschedule
                 </Button>
               </Dialog.Footer>
             </Dialog.Content>
