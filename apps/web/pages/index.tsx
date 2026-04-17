@@ -1015,19 +1015,34 @@ export default function HomePage() {
       const todayKey = bizDateKey(new Date());
       const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
       const tomorrowKey = bizDateKey(tomorrowD);
-      const terminalStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "REJECTED", "CANCELED"]);
+      // Match RemindersTab exactly
+      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
       const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
 
-      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey).filter(notDismissed).length;
-      const overdue = myItems.filter((occ: any) => occ.startAt && !terminalStatuses.has(occ.status) && bizDateKey(occ.startAt) < todayKey).filter(notDismissed).length;
-      const today_ = myItems.filter((occ: any) => activeStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === todayKey).filter(notDismissed).length;
-      const tomorrow_ = myItems.filter((occ: any) => upcomingStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey).filter(notDismissed).length;
-      const pending_ = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT").filter(notDismissed).length;
-      const estimates_ = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)).filter(notDismissed).length;
-      const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
+      // Collect unique IDs across all sections (an item in multiple sections still counts as 1)
+      const planningIds = new Set<string>();
 
-      setPlanningCount(followUps + overdue + today_ + tomorrow_ + pending_ + estimates_ + routePlan);
+      for (const occ of myItems) {
+        if (dismissedIds.has(occ.id)) continue;
+        const day = occ.startAt ? bizDateKey(occ.startAt) : null;
+
+        // Follow-ups
+        if (occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey) planningIds.add(occ.id);
+        // Overdue
+        if (day && !overdueExclude.has(occ.status) && day < todayKey) planningIds.add(occ.id);
+        // Today
+        if (activeStatuses.has(occ.status) && day === todayKey) planningIds.add(occ.id);
+        // Tomorrow
+        if (upcomingStatuses.has(occ.status) && day === tomorrowKey) planningIds.add(occ.id);
+        // Pending payment
+        if (occ.status === "PENDING_PAYMENT") planningIds.add(occ.id);
+        // Estimates ready
+        if (occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)) planningIds.add(occ.id);
+      }
+
+      const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
+      setPlanningCount(planningIds.size + routePlan);
     } catch {
       setPlanningCount(0);
     }
