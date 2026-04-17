@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -629,7 +629,7 @@ export default function ServicesTab({
           variant={includeArchived ? "solid" : "outline"}
           px="2"
           onClick={() => setIncludeArchived(!includeArchived)}
-          title={includeArchived ? "Hiding archived" : "Show archived"}
+          title={includeArchived ? "Showing archived" : "Show archived"}
           css={includeArchived ? {
             background: "var(--chakra-colors-gray-200)",
             color: "var(--chakra-colors-gray-700)",
@@ -637,7 +637,7 @@ export default function ServicesTab({
             "&:hover": { background: "var(--chakra-colors-gray-300)" },
           } : undefined}
         >
-          <Text fontSize="xs" fontWeight="medium">Archived</Text>
+          <Archive size={14} />
         </Button>
         <Box flex="1" />
         {forAdmin && (

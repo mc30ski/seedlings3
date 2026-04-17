@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
   Card,
@@ -98,35 +98,28 @@ export default function ClientFeedTab() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [daysShown, setDaysShown] = useState(3);
   const [loadingMore, setLoadingMore] = useState(false);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
   const [viewerPhotos, setViewerPhotos] = useState<FeedPhoto[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const feed = await apiGet<{ items: FeedItem[] }>("/api/public/feed?limit=30&days=7");
-        setItems(feed.items);
-      } catch (err: any) {
-        console.error("Feed load failed:", err);
-        setError(err?.message || "Failed to load feed");
-      }
-      setLoading(false);
-    }
-    void load();
-  }, []);
-
-  async function loadMore() {
-    setLoadingMore(true);
+  async function loadFeed(days: number, showLoading = true) {
+    if (showLoading) setLoadingMore(true);
     try {
-      const feed = await apiGet<{ items: FeedItem[] }>("/api/public/feed?limit=50&days=30");
+      const feed = await apiGet<{ items: FeedItem[] }>(`/api/public/feed?limit=50&days=${days}`);
       setItems(feed.items);
-      setExpanded(true);
-    } catch {}
+      setDaysShown(days);
+    } catch (err: any) {
+      if (days === 3) setError(err?.message || "Failed to load feed");
+    }
+    setLoading(false);
     setLoadingMore(false);
   }
+
+  useEffect(() => {
+    void loadFeed(3, false);
+  }, []);
 
   function openViewer(photos: FeedPhoto[], idx: number) {
     setViewerPhotos(photos);
@@ -160,28 +153,13 @@ export default function ClientFeedTab() {
         <Text textAlign="center" color="red.500" py={4} fontSize="sm">{error}</Text>
       )}
 
-      {/* In Progress section */}
-      {inProgress.length > 0 && (
+      {items.length > 0 && (
         <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="blue.500" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Happening Now
+          <Text fontSize="xs" fontWeight="semibold" color={daysShown <= 3 ? "blue.500" : "green.600"} mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
+            {daysShown <= 3 ? "Happening Now" : `Recent Activity — Last ${daysShown} days`}
           </Text>
           <VStack align="stretch" gap={2}>
-            {inProgress.map((item) => (
-              <FeedCard key={item.id} item={item} onPhotoClick={openViewer} />
-            ))}
-          </VStack>
-        </Box>
-      )}
-
-      {/* Completed section */}
-      {completed.length > 0 && (
-        <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Recent Activity — {expanded ? "Last 30 days" : "Last 7 days"}
-          </Text>
-          <VStack align="stretch" gap={2}>
-            {completed.map((item) => (
+            {items.map((item) => (
               <FeedCard key={item.id} item={item} onPhotoClick={openViewer} />
             ))}
           </VStack>
@@ -189,7 +167,7 @@ export default function ClientFeedTab() {
       )}
 
       {/* Show more */}
-      {!expanded && !error && (
+      {daysShown < 30 && !error && (
         <Box textAlign="center" py={3}>
           <Text
             as="button"
@@ -197,10 +175,10 @@ export default function ClientFeedTab() {
             color="blue.600"
             fontWeight="medium"
             cursor="pointer"
-            onClick={() => void loadMore()}
+            onClick={() => void loadFeed(daysShown === 3 ? 7 : 30)}
             _hover={{ textDecoration: "underline" }}
           >
-            {loadingMore ? "Loading..." : "Show more — last 30 days"}
+            {loadingMore ? "Loading..." : daysShown === 3 ? "Show more — last 7 days" : "Show more — last 30 days"}
           </Text>
         </Box>
       )}
@@ -276,6 +254,71 @@ export default function ClientFeedTab() {
   );
 }
 
+function LazyImage({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
+  const [loaded, setLoaded] = useState(false);
+  const [inView, setInView] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
+      { rootMargin: "200px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <Box
+      ref={ref}
+      flexShrink={0}
+      w="90px"
+      h="90px"
+      rounded="lg"
+      overflow="hidden"
+      cursor={onClick ? "pointer" : undefined}
+      onClick={onClick}
+      borderWidth="1px"
+      borderColor="gray.200"
+      position="relative"
+    >
+      {/* Skeleton shimmer */}
+      {!loaded && (
+        <Box
+          position="absolute"
+          inset="0"
+          bg="gray.100"
+          css={{
+            animation: "shimmer 1.5s ease-in-out infinite",
+            backgroundImage: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)",
+            backgroundSize: "200% 100%",
+            "@keyframes shimmer": {
+              "0%": { backgroundPosition: "200% 0" },
+              "100%": { backgroundPosition: "-200% 0" },
+            },
+          }}
+        />
+      )}
+      {inView && (
+        <img
+          src={src}
+          alt={alt}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: loaded ? 1 : 0,
+            transition: "opacity 0.3s ease",
+          }}
+          onLoad={() => setLoaded(true)}
+        />
+      )}
+    </Box>
+  );
+}
+
 function FeedCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photos: FeedPhoto[], idx: number) => void }) {
   const style = typeStyle[item.type];
   const isUpcoming = item.type === "upcoming";
@@ -309,25 +352,12 @@ function FeedCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
             {item.photos.length > 0 && (
               <HStack gap={2} mt={1} wrap="wrap">
                 {item.photos.map((p, idx) => (
-                  <Box
+                  <LazyImage
                     key={p.id}
-                    flexShrink={0}
-                    w="90px"
-                    h="90px"
-                    rounded="lg"
-                    overflow="hidden"
-                    cursor="pointer"
+                    src={p.url}
+                    alt="Job photo"
                     onClick={() => onPhotoClick(item.photos, idx)}
-                    borderWidth="1px"
-                    borderColor="gray.200"
-                  >
-                    <img
-                      src={p.url}
-                      alt="Job photo"
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      loading="lazy"
-                    />
-                  </Box>
+                  />
                 ))}
               </HStack>
             )}
