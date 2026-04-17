@@ -1739,34 +1739,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               );
             }
 
-            const cardBorderColor = isPinned
-              ? "blue.400"
-              : isReminder
-              ? (isClosed ? "gray.200" : "purple.300")
-              : isTask
-              ? (isClosed ? "gray.200" : "blue.300")
-              : (isClosed || isAcceptedEstimate)
-              ? "gray.200"
-              : isTentative
-              ? "orange.300"
-              : isEstimateOcc
-              ? "pink.300"
-              : isAssignedToMe ? "teal.400" : "gray.200";
-            const cardBg = (isClosed || isAcceptedEstimate)
-              ? undefined
-              : isReminder
-              ? "purple.50"
-              : isTask
-              ? "blue.50"
-              : isTentative
-              ? "orange.50"
-              : isEstimateOcc
-              ? "pink.50"
-              : isAssignedToMe
-              ? "teal.50"
-              : isAssignedToOthers
-              ? "gray.100"
+            // Card color theme — bg and border derive from the same base color
+            const cardColorBase = (isClosed || isAcceptedEstimate)
+              ? "gray"
+              : isReminder ? "purple"
+              : isTask ? "blue"
+              : isTentative ? "orange"
+              : isEstimateOcc ? "pink"
+              : isAssignedToMe ? "teal"
+              : isAssignedToOthers ? "gray"
+              : null;
+            const cardBg = cardColorBase === "gray" && isAssignedToOthers ? "gray.100"
+              : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
+            const cardBorderColor = !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
+              : `${cardColorBase}.300`;
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"

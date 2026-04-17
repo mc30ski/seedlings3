@@ -97,12 +97,17 @@ export default async function clientRoutes(app: FastifyInstance) {
     const propertyIds = contact.client.properties.map((p) => p.id);
     if (propertyIds.length === 0) return { items: [] };
 
+    // Last 30 days of completed/pending payment jobs
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["CLOSED", "PENDING_PAYMENT"] },
         job: { propertyId: { in: propertyIds } },
         workflow: { not: "ESTIMATE" },
         isEstimate: false,
+        completedAt: { gte: thirtyDaysAgo },
       },
       orderBy: { completedAt: "desc" },
       take: 50,
@@ -115,16 +120,20 @@ export default async function clientRoutes(app: FastifyInstance) {
         estimatedMinutes: true,
         startedAt: true,
         workflow: true,
+        jobType: true,
+        price: true,
+        notes: true,
         job: {
           select: {
             kind: true,
             property: {
-              select: { id: true, displayName: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
             },
           },
         },
         assignees: {
           select: {
+            role: true,
             user: { select: { displayName: true } },
           },
         },
@@ -157,13 +166,20 @@ export default async function clientRoutes(app: FastifyInstance) {
           status: occ.status,
           startAt: occ.startAt,
           completedAt: occ.completedAt,
+          jobType: occ.jobType,
+          price: occ.price,
           property: occ.job.property,
-          workers: occ.assignees.map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
+          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
           durationMinutes: occ.startedAt && occ.completedAt
             ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
             : null,
           photos: photos.filter(Boolean),
           paid: !!occ.payment,
+          payment: occ.payment ? {
+            amountPaid: occ.payment.amountPaid,
+            method: occ.payment.method,
+            paidAt: occ.payment.createdAt,
+          } : null,
         };
       })
     );
@@ -182,7 +198,7 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
-        status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED"] },
         job: { propertyId: { in: propertyIds } },
         workflow: { not: "ESTIMATE" },
         isEstimate: false,
@@ -197,33 +213,56 @@ export default async function clientRoutes(app: FastifyInstance) {
         startedAt: true,
         estimatedMinutes: true,
         workflow: true,
+        jobType: true,
+        price: true,
+        notes: true,
         job: {
           select: {
             kind: true,
             property: {
-              select: { id: true, displayName: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true },
             },
           },
         },
         assignees: {
           select: {
+            role: true,
             user: { select: { displayName: true } },
           },
+        },
+        photos: {
+          select: { id: true, r2Key: true, contentType: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
+          take: 5,
         },
       },
     });
 
-    return {
-      items: occurrences.map((occ) => ({
-        id: occ.id,
-        kind: occ.kind,
-        status: occ.status,
-        startAt: occ.startAt,
-        startedAt: occ.startedAt,
-        estimatedMinutes: occ.estimatedMinutes,
-        property: occ.job.property,
-        workers: occ.assignees.map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
-      })),
-    };
+    const items = await Promise.all(
+      occurrences.map(async (occ) => {
+        const photos = await Promise.all(
+          occ.photos.map(async (p) => {
+            try {
+              return { id: p.id, url: await getDownloadUrl(p.r2Key, 3600), contentType: p.contentType };
+            } catch { return null; }
+          })
+        );
+        return {
+          id: occ.id,
+          kind: occ.kind,
+          status: occ.status,
+          startAt: occ.startAt,
+          startedAt: occ.startedAt,
+          estimatedMinutes: occ.estimatedMinutes,
+          jobType: occ.jobType,
+          price: occ.price,
+          property: occ.job.property,
+          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
+          photos: photos.filter(Boolean),
+        };
+      })
+    );
+
+    return { items };
   });
 }

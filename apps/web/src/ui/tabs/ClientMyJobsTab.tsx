@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
+  Button,
   Card,
   HStack,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { Download } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { fmtDate } from "@/src/lib/lib";
+import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
+import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
+import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 type Photo = { id: string; url: string; contentType?: string | null };
 
@@ -22,11 +26,14 @@ type CompletedJob = {
   status: string;
   startAt?: string | null;
   completedAt?: string | null;
-  property: { id: string; displayName: string; city?: string | null; state?: string | null };
+  jobType?: string | null;
+  price?: number | null;
+  property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
   durationMinutes: number | null;
   photos: Photo[];
   paid: boolean;
+  payment?: { amountPaid: number; method: string; paidAt: string } | null;
 };
 
 type UpcomingJob = {
@@ -36,8 +43,11 @@ type UpcomingJob = {
   startAt?: string | null;
   startedAt?: string | null;
   estimatedMinutes?: number | null;
-  property: { id: string; displayName: string; city?: string | null; state?: string | null };
+  jobType?: string | null;
+  price?: number | null;
+  property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
+  photos?: Photo[];
 };
 
 type ClientProfile = {
@@ -60,6 +70,44 @@ function workerLabel(workers: string[]): string {
   return `${workers[0]} + ${workers.length - 1} others`;
 }
 
+function prettyJobType(jt: string | null | undefined): string {
+  if (!jt) return "";
+  return jt.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function LazyPhoto({ src, onClick }: { src: string; onClick?: () => void }) {
+  const [loaded, setLoaded] = useState(false);
+  const [inView, setInView] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
+      { rootMargin: "200px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <Box ref={ref} flexShrink={0} w="80px" h="80px" rounded="lg" overflow="hidden" cursor={onClick ? "pointer" : undefined} onClick={onClick} borderWidth="1px" borderColor="gray.200" position="relative">
+      {!loaded && (
+        <Box position="absolute" inset="0" bg="gray.100" css={{
+          animation: "shimmer 1.5s ease-in-out infinite",
+          backgroundImage: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)",
+          backgroundSize: "200% 100%",
+          "@keyframes shimmer": { "0%": { backgroundPosition: "200% 0" }, "100%": { backgroundPosition: "-200% 0" } },
+        }} />
+      )}
+      {inView && (
+        <img src={src} alt="Photo" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: loaded ? 1 : 0, transition: "opacity 0.3s ease" }} onLoad={() => setLoaded(true)} />
+      )}
+    </Box>
+  );
+}
+
 export default function ClientMyJobsTab() {
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
@@ -71,9 +119,7 @@ export default function ClientMyJobsTab() {
 
   useEffect(() => {
     async function load() {
-      // Try to auto-link on first load
       try { await apiPost("/api/client/link"); } catch {}
-
       try {
         const me = await apiGet<ClientProfile>("/api/client/me");
         setProfile(me);
@@ -108,9 +154,26 @@ export default function ClientMyJobsTab() {
     }
   }
 
-  if (loading) {
-    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+  function handleDownloadReceipt(job: CompletedJob) {
+    if (!job.payment || !profile?.client) return;
+    const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
+    const data: ReceiptData = {
+      businessName: "Seedlings Lawn Care",
+      clientName: profile.client.displayName,
+      propertyAddress: addr,
+      jobType: prettyJobType(job.jobType) || prettyJobType(job.kind) || "Lawn Care",
+      serviceDate: job.startAt ? fmtDate(job.startAt) : "—",
+      completedDate: job.completedAt ? fmtDate(job.completedAt) : "—",
+      amount: job.payment.amountPaid,
+      method: job.payment.method,
+      workers: job.workers,
+      receiptId: job.id.slice(-8).toUpperCase(),
+    };
+    downloadReceipt(data);
+    publishInlineMessage({ type: "SUCCESS", text: "Receipt downloaded." });
   }
+
+  if (loading) return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
 
   if (!profile?.linked) {
     return (
@@ -124,9 +187,7 @@ export default function ClientMyJobsTab() {
             <Text fontSize="sm" color="blue.600">
               Once linked, you'll be able to see your properties, upcoming services, completed work with photos, and payment history right here.
             </Text>
-            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="3" py="1" borderRadius="full">
-              Pending setup
-            </Badge>
+            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="3" py="1" borderRadius="full">Pending setup</Badge>
           </VStack>
         </Box>
       </Box>
@@ -158,9 +219,7 @@ export default function ClientMyJobsTab() {
                     <HStack justify="space-between" align="start" gap={3}>
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="semibold">{p.displayName}</Text>
-                        <Box fontSize="xs">
-                          <MapLink address={addr} />
-                        </Box>
+                        {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
                       </VStack>
                       <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Active</Badge>
                     </HStack>
@@ -181,28 +240,47 @@ export default function ClientMyJobsTab() {
           <VStack align="stretch" gap={2}>
             {upcoming.map((job) => {
               const isActive = job.status === "IN_PROGRESS";
+              const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
-                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.200" : undefined} bg={isActive ? "blue.50" : undefined}>
+                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : undefined} bg={isActive ? "blue.50" : undefined}>
                   <Card.Body py="3" px="4">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>
+                        {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
                         <HStack gap={2} wrap="wrap">
                           <Badge colorPalette={isActive ? "blue" : "gray"} variant={isActive ? "solid" : "outline"} fontSize="xs" borderRadius="full" px="2">
                             {isActive ? "In Progress" : "Scheduled"}
                           </Badge>
+                          {job.jobType && (
+                            <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
+                              {prettyJobType(job.jobType)}
+                            </Badge>
+                          )}
                           {job.estimatedMinutes && (
                             <Text fontSize="xs" color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>
                           )}
                         </HStack>
                         {job.workers.length > 0 && (
-                          <Text fontSize="xs" color="fg.muted">{workerLabel(job.workers)}</Text>
+                          <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
+                        )}
+                        {job.price != null && (
+                          <Text fontSize="xs" color="green.600" fontWeight="medium">${job.price.toFixed(2)}</Text>
                         )}
                       </VStack>
-                      <Text fontSize="xs" color="fg.muted" flexShrink={0}>
-                        {job.startAt ? fmtDate(job.startAt) : ""}
-                      </Text>
+                      <VStack align="end" gap={1} flexShrink={0}>
+                        <Text fontSize="xs" color="fg.muted">
+                          {job.startAt ? fmtDateWeekday(job.startAt) : ""}
+                        </Text>
+                      </VStack>
                     </HStack>
+                    {(job.photos ?? []).length > 0 && (
+                      <HStack gap={2} mt={2} wrap="wrap">
+                        {(job.photos ?? []).map((p, idx) => (
+                          <LazyPhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos!, idx)} />
+                        ))}
+                      </HStack>
+                    )}
                   </Card.Body>
                 </Card.Root>
               );
@@ -211,70 +289,78 @@ export default function ClientMyJobsTab() {
         </Box>
       )}
 
-      {/* Completed */}
+      {/* Completed — last 30 days */}
       {completed.length > 0 && (
         <Box mb={5}>
           <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Completed
+            Completed — Last 30 days
           </Text>
           <VStack align="stretch" gap={2}>
-            {completed.map((job) => (
-              <Card.Root key={job.id} variant="outline">
-                <Card.Body py="3" px="4">
-                  <HStack justify="space-between" align="start">
-                    <VStack align="start" gap={1} flex="1" minW={0}>
-                      <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>
-                      <HStack gap={2} wrap="wrap">
-                        <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                          Completed
-                        </Badge>
-                        {job.paid && (
-                          <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                            Paid
+            {completed.map((job) => {
+              const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
+              return (
+                <Card.Root key={job.id} variant="outline">
+                  <Card.Body py="3" px="4">
+                    <HStack justify="space-between" align="start">
+                      <VStack align="start" gap={1} flex="1" minW={0}>
+                        <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>
+                        {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
+                        <HStack gap={2} wrap="wrap">
+                          <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                            Completed
                           </Badge>
+                          {job.paid && (
+                            <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">
+                              Paid
+                            </Badge>
+                          )}
+                          {job.jobType && (
+                            <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
+                              {prettyJobType(job.jobType)}
+                            </Badge>
+                          )}
+                        </HStack>
+                        <HStack gap={3} wrap="wrap" fontSize="xs" color="fg.muted">
+                          {job.completedAt && <Text>Completed: {fmtDate(job.completedAt)}</Text>}
+                          {job.durationMinutes != null && job.durationMinutes > 0 && <Text>Duration: {formatDuration(job.durationMinutes)}</Text>}
+                        </HStack>
+                        {job.workers.length > 0 && (
+                          <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
-                        {job.durationMinutes != null && job.durationMinutes > 0 && (
-                          <Text fontSize="xs" color="fg.muted">{formatDuration(job.durationMinutes)}</Text>
+                        {job.payment && (
+                          <HStack gap={2} align="center">
+                            <Text fontSize="xs" color="green.600" fontWeight="medium">
+                              ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette="teal"
+                              px="2"
+                              onClick={() => handleDownloadReceipt(job)}
+                            >
+                              <Download size={12} />
+                              Receipt
+                            </Button>
+                          </HStack>
                         )}
-                      </HStack>
-                      {job.workers.length > 0 && (
-                        <Text fontSize="xs" color="fg.muted">{workerLabel(job.workers)}</Text>
-                      )}
-                    </VStack>
-                    <Text fontSize="xs" color="fg.muted" flexShrink={0}>
-                      {job.completedAt ? fmtDate(job.completedAt) : ""}
-                    </Text>
-                  </HStack>
-
-                  {/* Photos */}
-                  {job.photos.length > 0 && (
-                    <HStack gap={2} mt={2} wrap="wrap">
-                      {job.photos.map((p, idx) => (
-                        <Box
-                          key={p.id}
-                          flexShrink={0}
-                          w="90px"
-                          h="90px"
-                          rounded="lg"
-                          overflow="hidden"
-                          cursor="pointer"
-                          onClick={() => openViewer(job.photos, idx)}
-                          borderWidth="1px"
-                          borderColor="gray.200"
-                        >
-                          <img
-                            src={p.url}
-                            alt="Job photo"
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                            loading="lazy"
-                          />
-                        </Box>
-                      ))}
+                      </VStack>
+                      <Text fontSize="xs" color="fg.muted" flexShrink={0}>
+                        {job.startAt ? fmtDate(job.startAt) : ""}
+                      </Text>
                     </HStack>
-                  )}
-                </Card.Body>
-              </Card.Root>
-            ))}
+
+                    {job.photos.length > 0 && (
+                      <HStack gap={2} mt={2} wrap="wrap">
+                        {job.photos.map((p, idx) => (
+                          <LazyPhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos, idx)} />
+                        ))}
+                      </HStack>
+                    )}
+                  </Card.Body>
+                </Card.Root>
+              );
+            })}
           </VStack>
         </Box>
       )}
@@ -288,45 +374,15 @@ export default function ClientMyJobsTab() {
 
       {/* Photo viewer */}
       {viewerPhoto && (
-        <Box
-          position="fixed"
-          inset="0"
-          zIndex={10000}
-          bg="blackAlpha.800"
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          onClick={() => { setViewerPhoto(null); setViewerPhotos([]); }}
-        >
+        <Box position="fixed" inset="0" zIndex={10000} bg="blackAlpha.800" display="flex" alignItems="center" justifyContent="center" onClick={() => { setViewerPhoto(null); setViewerPhotos([]); }}>
           {viewerIdx > 0 && (
-            <Box
-              position="absolute" left="3" top="50%" transform="translateY(-50%)"
-              color="white" fontSize="2xl" cursor="pointer" p={2}
-              onClick={(e) => { e.stopPropagation(); navigateViewer(-1); }}
-              userSelect="none"
-            >
-              ◀
-            </Box>
+            <Box position="absolute" left="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigateViewer(-1); }} userSelect="none">◀</Box>
           )}
-          <img
-            src={viewerPhoto}
-            alt="Photo"
-            style={{ maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: "8px" }}
-            onClick={(e) => e.stopPropagation()}
-          />
+          <img src={viewerPhoto} alt="Photo" style={{ maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: "8px" }} onClick={(e) => e.stopPropagation()} />
           {viewerIdx < viewerPhotos.length - 1 && (
-            <Box
-              position="absolute" right="3" top="50%" transform="translateY(-50%)"
-              color="white" fontSize="2xl" cursor="pointer" p={2}
-              onClick={(e) => { e.stopPropagation(); navigateViewer(1); }}
-              userSelect="none"
-            >
-              ▶
-            </Box>
+            <Box position="absolute" right="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigateViewer(1); }} userSelect="none">▶</Box>
           )}
-          <Text position="absolute" bottom="4" color="whiteAlpha.700" fontSize="sm">
-            {viewerIdx + 1} / {viewerPhotos.length}
-          </Text>
+          <Text position="absolute" bottom="4" color="whiteAlpha.700" fontSize="sm">{viewerIdx + 1} / {viewerPhotos.length}</Text>
         </Box>
       )}
     </Box>
