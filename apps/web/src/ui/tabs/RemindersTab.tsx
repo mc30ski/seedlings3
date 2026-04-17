@@ -415,6 +415,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           onDismiss={dismissReminder}
         />
       )}
+
+      {hasDismissed && hasReminders && (
+        <Box textAlign="center" py={3}>
+          <Button size="sm" variant="ghost" colorPalette="gray" onClick={undismissAll}>
+            Show {dismissed.size} dismissed
+          </Button>
+        </Box>
+      )}
     </Box>
   );
 }
