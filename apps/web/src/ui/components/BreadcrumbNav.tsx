@@ -32,6 +32,8 @@ type Props = {
   onInnerChange: (value: string, outerValue?: string) => void;
   categoryValue?: string;
   onCategoryChange?: (value: string) => void;
+  /** Content rendered before the outer tab selector (e.g., back button) */
+  headerLeft?: React.ReactNode;
 };
 
 function isVisible(v?: boolean | (() => boolean)): boolean {
@@ -47,6 +49,7 @@ export default function BreadcrumbNav({
   onInnerChange,
   categoryValue,
   onCategoryChange,
+  headerLeft,
 }: Props) {
   const [outerOpen, setOuterOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
@@ -188,7 +191,8 @@ export default function BreadcrumbNav({
 
   return (
     <Box>
-      <HStack gap={1} py={2} px={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
+      <HStack gap={1} pt={1} pb={2} px={1} align="center" flexWrap="nowrap" overflowX="auto" css={{ "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}>
+        {headerLeft}
         {/* Level 1: Outer (Client/Worker/Admin/Super) */}
         <Box position="relative" ref={outerRef}>
           <HStack
@@ -216,7 +220,6 @@ export default function BreadcrumbNav({
           )}
         </Box>
 
-        <Text color="fg.muted" fontSize="sm" userSelect="none">/</Text>
 
         {hasCategories ? (
           <>
@@ -259,8 +262,7 @@ export default function BreadcrumbNav({
             {/* Level 3: Inner tab — only if category has multiple tabs */}
             {!isSingleTabCategory && (
               <>
-                <Text color="fg.muted" fontSize="sm" userSelect="none">/</Text>
-                <Box position="relative" ref={innerRef}>
+                        <Box position="relative" ref={innerRef}>
                   <HStack
                     as="button"
                     gap={1}

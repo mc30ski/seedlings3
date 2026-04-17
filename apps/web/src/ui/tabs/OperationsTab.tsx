@@ -135,7 +135,7 @@ export default function OperationsTab() {
   return (
     <Box w="full" pb={8}>
       {/* Date controls */}
-      <HStack mb={3} gap={2} wrap="wrap">
+      <HStack mb={2} gap={2} wrap="wrap">
         <DateInput value={dateFrom} onChange={(v) => { setDateFrom(v); setDatePreset(null); }} />
         <Text fontSize="sm">–</Text>
         <DateInput value={dateTo} onChange={(v) => { setDateTo(v); setDatePreset(null); }} />

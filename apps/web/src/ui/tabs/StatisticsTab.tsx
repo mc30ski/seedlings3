@@ -173,7 +173,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
       </Box>
 
       {/* Controls */}
-      <HStack mb={3} gap={2} wrap="wrap" align="flex-end">
+      <HStack mb={2} gap={2} wrap="wrap" align="flex-end">
         <Box>
           <Text fontSize="xs" fontWeight="medium" mb={1}>From</Text>
           <Input type="date" size="sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
@@ -246,7 +246,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
       </HStack>
 
       {!myId && selectedWorkers.length > 0 && (
-        <HStack mb={3} gap={1} wrap="wrap">
+        <HStack mb={2} gap={1} wrap="wrap">
           {selectedWorkers.map((id) => (
             <Badge key={id} size="sm" colorPalette="blue" variant="solid">{workerNameMap[id] || "Loading…"}</Badge>
           ))}

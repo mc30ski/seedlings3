@@ -189,7 +189,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
 
   return (
     <Box w="full" pb={8}>
-      <HStack mb={3} gap={2}>
+      <HStack mb={2} gap={2}>
         <SearchWithClear
           value={q}
           onChange={setQ}

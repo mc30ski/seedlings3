@@ -141,7 +141,7 @@ export default function SuperUnclaimedTab() {
         />
       </HStack>
 
-      <HStack mb={3} gap={2} align="center" wrap="wrap">
+      <HStack mb={2} gap={2} align="center" wrap="wrap">
         <DateInput
           value={dateFrom}
           onChange={(val) => {
