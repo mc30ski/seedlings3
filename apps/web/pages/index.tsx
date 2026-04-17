@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
@@ -103,6 +103,84 @@ export default function HomePage() {
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
   const [networkInfoOpen, setNetworkInfoOpen] = useState(false);
   const [workflowEstimateDefaults, setWorkflowEstimateDefaults] = useState<any>(null);
+
+  // Navigation history — stack of {outer, inner, category} states, capped at 10.
+  // Both the in-app back button and browser/OS back gesture go through the same path:
+  // - In-app button calls history.back() → triggers popstate → restoreFromHistory()
+  // - Browser back fires popstate → restoreFromHistory()
+  type NavState = { outer: string; inner: string; category?: string };
+  const navHistoryRef = useRef<NavState[]>([]);
+  const [canGoBack, setCanGoBack] = useState(false);
+
+  // Use refs for current nav state so closures always read the latest values
+  const topTabRef = useRef(topTab);
+  const clientInnerTabRef = useRef(clientInnerTab);
+  const workerInnerTabRef = useRef(workerInnerTab);
+  const adminInnerTabRef = useRef(adminInnerTab);
+  const superInnerTabRef = useRef(superInnerTab);
+  const workerCategoryRef = useRef(workerCategory);
+  const adminCategoryRef = useRef(adminCategory);
+  topTabRef.current = topTab;
+  clientInnerTabRef.current = clientInnerTab;
+  workerInnerTabRef.current = workerInnerTab;
+  adminInnerTabRef.current = adminInnerTab;
+  superInnerTabRef.current = superInnerTab;
+  workerCategoryRef.current = workerCategory;
+  adminCategoryRef.current = adminCategory;
+
+  function getCurrentNavState(): NavState {
+    const t = topTabRef.current;
+    const inner = t === "client" ? clientInnerTabRef.current
+      : t === "worker" ? workerInnerTabRef.current
+      : t === "admin" ? adminInnerTabRef.current
+      : superInnerTabRef.current;
+    const category = t === "worker" ? workerCategoryRef.current : t === "admin" ? adminCategoryRef.current : undefined;
+    return { outer: t, inner, category };
+  }
+
+  function pushNavHistory(prev: NavState) {
+    const h = navHistoryRef.current;
+    h.push(prev);
+    if (h.length > 10) h.shift();
+    setCanGoBack(h.length > 0);
+    try { history.pushState({ seedlingsNav: true }, ""); } catch {}
+  }
+
+  function restoreFromHistory() {
+    const h = navHistoryRef.current;
+    if (h.length === 0) return;
+    const prev = h.pop()!;
+    setCanGoBack(h.length > 0);
+    // Update refs immediately so the next pushNavHistory reads the restored state
+    topTabRef.current = prev.outer as any;
+    if (prev.outer === "client") clientInnerTabRef.current = prev.inner as any;
+    else if (prev.outer === "worker") { workerInnerTabRef.current = prev.inner as any; if (prev.category) workerCategoryRef.current = prev.category; }
+    else if (prev.outer === "admin") { adminInnerTabRef.current = prev.inner as any; if (prev.category) adminCategoryRef.current = prev.category; }
+    else if (prev.outer === "super") superInnerTabRef.current = prev.inner as any;
+    // Now set React state (no skipNextPush needed — onOuterChange/onInnerChange only fire from user clicks)
+    setTopTab(prev.outer as any);
+    if (prev.outer === "client") setClientInnerTab(prev.inner as any);
+    else if (prev.outer === "worker") { setWorkerInnerTab(prev.inner as any); if (prev.category) setWorkerCategory(prev.category); }
+    else if (prev.outer === "admin") { setAdminInnerTab(prev.inner as any); if (prev.category) setAdminCategory(prev.category); }
+    else if (prev.outer === "super") setSuperInnerTab(prev.inner as any);
+  }
+
+  function handleBackButton() {
+    if (navHistoryRef.current.length === 0) return;
+    // Use history.back() so the browser stack stays in sync — popstate will call restoreFromHistory
+    try { history.back(); } catch { restoreFromHistory(); }
+  }
+
+  // Listen for browser back button / OS back gesture
+  useEffect(() => {
+    function handlePopstate(e: PopStateEvent) {
+      if (navHistoryRef.current.length > 0) {
+        restoreFromHistory();
+      }
+    }
+    window.addEventListener("popstate", handlePopstate);
+    return () => window.removeEventListener("popstate", handlePopstate);
+  }, []);
 
   // Track paused workflow for banner display
   const [pausedWorkflow, setPausedWorkflow] = useState<string | null>(null);
@@ -1106,7 +1184,7 @@ export default function HomePage() {
   }, []);
 
   return (
-    <Container maxW="5xl" py={8}>
+    <Container maxW="5xl" pt={4} pb={8}>
       <AppSplash show={!authLoaded || (isSignedIn && meLoading)} />
       <Box
         as="header"
@@ -1117,7 +1195,7 @@ export default function HomePage() {
         px={{ base: 3, md: 4 }}
         py={{ base: 2, md: 3 }}
         borderRadius="md"
-        mb={2}
+        mb={1}
       >
         {/* GRID header: left brand, right controls */}
         <Box
@@ -1356,7 +1434,10 @@ export default function HomePage() {
         <BreadcrumbNav
           outerTabs={navTabs}
           outerValue={topTab}
-          onOuterChange={(v: string) => setTopTab(v as typeof topTab)}
+          onOuterChange={(v: string) => {
+            if (v !== topTab) pushNavHistory(getCurrentNavState());
+            setTopTab(v as typeof topTab);
+          }}
           innerValue={
             topTab === "client" ? clientInnerTab
             : topTab === "worker" ? workerInnerTab
@@ -1365,6 +1446,8 @@ export default function HomePage() {
           }
           onInnerChange={(v: string, newOuter?: string) => {
             const outer = newOuter ?? topTab;
+            const current = getCurrentNavState();
+            if (v !== current.inner || outer !== current.outer) pushNavHistory(current);
             if (outer === "client") setClientInnerTab(v as ClientTabs);
             else if (outer === "worker") {
               setWorkerInnerTab(v as WorkerTabs);
@@ -1384,9 +1467,30 @@ export default function HomePage() {
           }}
           categoryValue={topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : undefined}
           onCategoryChange={(v: string) => {
+            const currentCat = topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : undefined;
+            if (v !== currentCat) pushNavHistory(getCurrentNavState());
             if (topTab === "worker") setWorkerCategory(v);
             else if (topTab === "admin") setAdminCategory(v);
           }}
+          headerLeft={
+            <Box
+              as="button"
+              aria-label="Go back"
+              onClick={canGoBack ? handleBackButton : undefined}
+              aria-disabled={!canGoBack}
+              px="0"
+              py="0"
+              flexShrink={0}
+              color={canGoBack ? "blue.600" : "gray.300"}
+              opacity={canGoBack ? 1 : 0.4}
+              cursor={canGoBack ? "pointer" : "default"}
+              _hover={canGoBack ? { color: "blue.700" } : {}}
+              transition="all 0.1s"
+              style={{ pointerEvents: canGoBack ? "auto" : "none" }}
+            >
+              <ArrowLeftCircle size={18} />
+            </Box>
+          }
         />
       )}
       {/* Offline Queue Dialog */}

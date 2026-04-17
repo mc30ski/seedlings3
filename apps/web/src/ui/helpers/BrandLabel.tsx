@@ -62,7 +62,7 @@ export default function BrandLabel({
           style={{ height: `${size}px`, width: "auto", imageRendering: "auto", display: "block" }}
         />
         {showText && (
-          <Text fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
+          <Text fontSize="sm" fontWeight="bold" lineHeight="1" whiteSpace="nowrap">
             Seedlings
           </Text>
         )}

@@ -1206,7 +1206,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Box>
       </HStack>
       {headerBelowSlot}
-      <HStack mb={3} gap={1} wrap="nowrap" pl="1">
+      <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -1349,7 +1349,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Button>
       </HStack>
 
-      <HStack mb={3} gap={2} align="center">
+      <HStack mb={2} gap={2} align="center">
         <DateInput
           value={dateFrom}
           onChange={(val) => {

@@ -48,7 +48,7 @@ export default function AdminRoutesTab() {
 
   return (
     <Box w="full">
-      <HStack mb={3} gap={2} align="center" wrap="wrap">
+      <HStack mb={2} gap={2} align="center" wrap="wrap">
         <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
           Run for:
         </Text>
