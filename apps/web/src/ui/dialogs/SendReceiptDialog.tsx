@@ -22,8 +22,10 @@ type Props = {
   contactEmail?: string | null;
 };
 
+type PendingSend = { target: "text" | "email" } | null;
+
 export default function SendReceiptDialog({ open, onOpenChange, data, contactPhone, contactEmail }: Props) {
-  const [busy, setBusy] = useState(false);
+  const [pendingSend, setPendingSend] = useState<PendingSend>(null);
 
   if (!data) return null;
 
@@ -33,36 +35,75 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
     publishInlineMessage({ type: "SUCCESS", text: "Receipt downloaded." });
   }
 
-  function handleText() {
-    if (!data || !contactPhone) return;
-    const msg = `Hi ${data.clientName}, here is your receipt from ${data.businessName} for service on ${data.serviceDate}. Amount paid: $${data.amount.toFixed(2)} via ${data.method}. Receipt #${data.receiptId}. Thank you!`;
-    window.open(`sms:${contactPhone}?body=${encodeURIComponent(msg)}`, "_self");
+  function openMessagingApp(target: "text" | "email") {
+    if (!data) return;
+    if (target === "text" && contactPhone) {
+      const msg = `Hi ${data.clientName}, here is your receipt from ${data.businessName} for service on ${data.serviceDate}. Amount paid: $${data.amount.toFixed(2)}. Receipt #${data.receiptId}.`;
+      window.open(`sms:${contactPhone}?body=${encodeURIComponent(msg)}`, "_self");
+    } else if (target === "email" && contactEmail) {
+      const subject = `Receipt from ${data.businessName} — ${data.serviceDate}`;
+      const body = `Hi ${data.clientName},\n\nPlease find your receipt details below.\n\nReceipt #: ${data.receiptId}\nAmount: $${data.amount.toFixed(2)}\nService Date: ${data.serviceDate}\nProperty: ${data.propertyAddress}\n\nThank you,\n${data.businessName}`;
+      window.open(`mailto:${contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+    }
   }
 
-  function handleEmail() {
-    if (!data || !contactEmail) return;
-    const subject = `Receipt from ${data.businessName} — ${data.serviceDate}`;
-    const body = [
-      `Hi ${data.clientName},`,
-      "",
-      `Thank you for your business! Here are the details of your recent service:`,
-      "",
-      `Service: ${data.jobType}`,
-      `Property: ${data.propertyAddress}`,
-      `Service Date: ${data.serviceDate}`,
-      `Completed: ${data.completedDate}`,
-      `Amount Paid: $${data.amount.toFixed(2)}`,
-      `Payment Method: ${data.method}`,
-      `Receipt #: ${data.receiptId}`,
-      "",
-      `If you have any questions, please don't hesitate to reach out.`,
-      "",
-      `Thank you,`,
-      data.businessName,
-    ].join("\n");
-    window.open(`mailto:${contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+  function handleSendClick(target: "text" | "email") {
+    setPendingSend({ target });
   }
 
+  function handleSendWithPDF() {
+    if (!data || !pendingSend) return;
+    downloadReceipt(data);
+    publishInlineMessage({ type: "INFO", text: "PDF saved — attach it to your message." });
+    setTimeout(() => {
+      openMessagingApp(pendingSend.target);
+      setPendingSend(null);
+    }, 500);
+  }
+
+  function handleSendWithoutPDF() {
+    if (!pendingSend) return;
+    openMessagingApp(pendingSend.target);
+    setPendingSend(null);
+  }
+
+  // Step 2: "Attach PDF?" prompt
+  if (pendingSend) {
+    return (
+      <Dialog.Root open={open} onOpenChange={(e) => { if (!e.open) { setPendingSend(null); onOpenChange(false); } }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Attach PDF Receipt?</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.muted">
+                    Would you like to generate a PDF receipt to attach to the message? The PDF will be saved to your device so you can add it as an attachment.
+                  </Text>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <VStack w="full" gap={2}>
+                  <Button size="sm" variant="solid" bg="black" color="white" onClick={handleSendWithPDF} w="full">
+                    Yes, save PDF & send
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={handleSendWithoutPDF} w="full">
+                    No, just send message
+                  </Button>
+                </VStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+    );
+  }
+
+  // Step 1: Main receipt dialog
   return (
     <Dialog.Root open={open} onOpenChange={(e) => onOpenChange(e.open)}>
       <Portal>
@@ -105,11 +146,12 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
                       size="sm"
                       variant="outline"
                       colorPalette="green"
-                      onClick={handleText}
+                      onClick={() => handleSendClick("text")}
                       w="full"
+                      overflow="hidden"
                     >
-                      <MessageCircle size={14} />
-                      Text Receipt to {contactPhone}
+                      <MessageCircle size={14} style={{ flexShrink: 0 }} />
+                      <Text lineClamp={1}>Text to {contactPhone}</Text>
                     </Button>
                   )}
 
@@ -118,11 +160,12 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
                       size="sm"
                       variant="outline"
                       colorPalette="blue"
-                      onClick={handleEmail}
+                      onClick={() => handleSendClick("email")}
                       w="full"
+                      overflow="hidden"
                     >
-                      <Mail size={14} />
-                      Email Receipt to {contactEmail}
+                      <Mail size={14} style={{ flexShrink: 0 }} />
+                      <Text lineClamp={1}>Email to {contactEmail}</Text>
                     </Button>
                   )}
 

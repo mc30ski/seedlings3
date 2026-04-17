@@ -2258,10 +2258,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Badge>
                         <Button
                           size="xs"
-                          variant="ghost"
+                          variant="outline"
                           colorPalette="teal"
-                          px="1"
-                          minW="0"
+                          px="2"
                           onClick={(e) => {
                             e.stopPropagation();
                             const poc = occ.job?.property?.pointOfContact;
