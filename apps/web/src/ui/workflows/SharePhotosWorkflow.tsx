@@ -176,29 +176,6 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
     }
   }
 
-  async function fallbackShare(files: File[]) {
-    // Copy caption to clipboard
-    if (caption) {
-      try {
-        await navigator.clipboard.writeText(caption);
-        publishInlineMessage({ type: "INFO", text: `Caption copied to clipboard. Downloading ${files.length} photo${files.length === 1 ? "" : "s"}...` });
-      } catch {
-        publishInlineMessage({ type: "INFO", text: `Downloading ${files.length} photo${files.length === 1 ? "" : "s"}...` });
-      }
-    }
-    // Download each file
-    for (const file of files) {
-      const url = URL.createObjectURL(file);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  }
-
   async function handleDownload() {
     if (selectedPhotos.length === 0) return;
     setSharing(true);
@@ -211,9 +188,36 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
         const name = photo.fileName || `seedlings-${photo.id}.${ext}`;
         files.push(new File([blob], name, { type: photo.contentType || "image/jpeg" }));
       }
-      await fallbackShare(files);
-    } catch {
-      publishInlineMessage({ type: "ERROR", text: "Failed to download photos." });
+
+      // Copy caption to clipboard
+      if (caption) {
+        try { await navigator.clipboard.writeText(caption); } catch {}
+      }
+
+      // Use Web Share API if available (works on iOS Safari)
+      if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({
+          files,
+          text: caption || undefined,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length === 1 ? "" : "s"} shared${caption ? " & caption copied" : ""}.` });
+      } else {
+        // Desktop fallback: trigger downloads
+        for (const file of files) {
+          const url = URL.createObjectURL(file);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length === 1 ? "" : "s"} saved${caption ? " & caption copied" : ""}.` });
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      publishInlineMessage({ type: "ERROR", text: "Failed to save photos." });
     } finally {
       setSharing(false);
     }
