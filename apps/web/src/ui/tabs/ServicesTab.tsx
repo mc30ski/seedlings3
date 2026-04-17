@@ -957,19 +957,26 @@ export default function ServicesTab({
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
                   {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
-                    <Text fontSize="xs" color="teal.600">
-                      Default crew: {detail.defaultAssignees.map((a, i) => (
-                        <span key={a.userId}>
-                          {i > 0 && ", "}
-                          <span
-                            style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                            onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                          >
-                            {a.user?.displayName ?? a.user?.email ?? a.userId}
+                    <>
+                      <Text fontSize="xs" color="teal.600">
+                        Default crew: {detail.defaultAssignees.map((a, i) => (
+                          <span key={a.userId}>
+                            {i > 0 && ", "}
+                            <span
+                              style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                            >
+                              {a.user?.displayName ?? a.user?.email ?? a.userId}
+                            </span>
                           </span>
-                        </span>
-                      ))}
-                    </Text>
+                        ))}
+                      </Text>
+                      <Box px={2} py={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                        <Text fontSize="2xs" color="yellow.700">
+                          The default crew is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default crew is restored on the next one.
+                        </Text>
+                      </Box>
+                    </>
                   )}
                 </VStack>
                 {forAdmin && (

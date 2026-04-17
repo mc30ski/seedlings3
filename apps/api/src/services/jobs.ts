@@ -350,25 +350,24 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
-      // If caller passed assignees, use those; otherwise copy defaults.
-      const assigneeIds =
-        (input.assigneeUserIds?.length
-          ? input.assigneeUserIds
-          : job.defaultAssignees.map((d) => d.userId)) ?? [];
+      // If caller passed assignees, use those; otherwise copy defaults (with roles).
+      const useCallerIds = input.assigneeUserIds?.length;
+      const assigneeSource = useCallerIds
+        ? input.assigneeUserIds!.map((uid) => ({ userId: uid, role: null as string | null }))
+        : job.defaultAssignees.filter((d) => d.active).map((d) => ({ userId: d.userId, role: d.role ?? null }));
 
-      for (const uid of assigneeIds) {
-        await assertWorkerAssignable(tx, uid);
+      for (const a of assigneeSource) {
+        await assertWorkerAssignable(tx, a.userId);
       }
 
-      if (assigneeIds.length) {
-        // First assignee is the claimer (assignedById = themselves)
-        // Subsequent assignees are assigned by the claimer
-        const claimerId = assigneeIds[0];
+      if (assigneeSource.length) {
+        const claimerId = assigneeSource[0].userId;
         await tx.jobOccurrenceAssignee.createMany({
-          data: assigneeIds.map((uid, i) => ({
+          data: assigneeSource.map((a, i) => ({
             occurrenceId: occ.id,
-            userId: uid,
-            assignedById: i === 0 ? uid : claimerId,
+            userId: a.userId,
+            role: a.role,
+            assignedById: i === 0 ? a.userId : claimerId,
           })),
           skipDuplicates: true,
         });
@@ -672,7 +671,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
-                pointOfContact: { select: { firstName: true, lastName: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
               },
             },
           },
@@ -693,7 +692,7 @@ export const jobs: ServicesJobs = {
         linkedOccurrence: {
           select: {
             id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
-            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
+            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } }, pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } } } } } },
           },
         },
         _count: { select: { photos: true, comments: true } },
@@ -718,7 +717,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
-                pointOfContact: { select: { firstName: true, lastName: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
               },
             },
           },
@@ -739,7 +738,7 @@ export const jobs: ServicesJobs = {
         linkedOccurrence: {
           select: {
             id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
-            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } } } } } },
+            job: { include: { property: { select: { id: true, displayName: true, client: { select: { displayName: true } }, pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } } } } } },
           },
         },
         _count: { select: { photos: true, comments: true } },
@@ -765,7 +764,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
-                pointOfContact: { select: { firstName: true, lastName: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
               },
             },
           },
@@ -803,7 +802,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true } },
-                pointOfContact: { select: { firstName: true, lastName: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
               },
             },
           },
@@ -1222,17 +1221,19 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
-      // copy default assignees to the occurrence
-      const defaultIds = job.defaultAssignees.map((d) => d.userId);
-      for (const uid of defaultIds) {
-        await assertWorkerAssignable(tx, uid);
+      // copy default assignees to the occurrence (with roles)
+      const defaults = job.defaultAssignees.filter((d) => d.active);
+      for (const d of defaults) {
+        await assertWorkerAssignable(tx, d.userId);
       }
-      if (defaultIds.length) {
+      if (defaults.length) {
+        const claimerId = defaults[0].userId;
         await tx.jobOccurrenceAssignee.createMany({
-          data: defaultIds.map((uid) => ({
+          data: defaults.map((d, i) => ({
             occurrenceId: occ.id,
-            userId: uid,
-            assignedById: currentUserId,
+            userId: d.userId,
+            role: d.role ?? null,
+            assignedById: i === 0 ? d.userId : claimerId,
           })),
           skipDuplicates: true,
         });

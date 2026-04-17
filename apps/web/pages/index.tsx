@@ -346,7 +346,7 @@ export default function HomePage() {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
-      content: wrapWithInlineMessage(<RemindersTab myId={me?.id} />),
+      content: wrapWithInlineMessage(<RemindersTab myId={me?.id} me={me} />),
     },
     {
       value: "jobs",
@@ -418,7 +418,7 @@ export default function HomePage() {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
-      content: wrapWithInlineMessage(<AdminRemindersTab />),
+      content: wrapWithInlineMessage(<AdminRemindersTab me={me} />),
     },
     {
       value: "admin-jobs",
@@ -906,6 +906,77 @@ export default function HomePage() {
     }, 100);
   }, []);
 
+  // Planning badge count — items on the worker's Planning tab that haven't been dismissed
+  const [planningCount, setPlanningCount] = useState(0);
+  const loadPlanningCount = useCallback(async () => {
+    if (!me?.id) { setPlanningCount(0); return; }
+    try {
+      const list = await apiGet<any[]>("/api/occurrences");
+      if (!Array.isArray(list)) { setPlanningCount(0); return; }
+      const myId = me.id;
+      const myItems = list.filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
+
+      // Load dismissed IDs from localStorage (same logic as RemindersTab)
+      let dismissedIds = new Set<string>();
+      try {
+        const raw = localStorage.getItem("seedlings_reminders_dismissed");
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.date === new Date().toISOString().slice(0, 10)) {
+            dismissedIds = new Set(data.ids ?? []);
+          }
+        }
+      } catch {}
+      const notDismissed = (occ: any) => !dismissedIds.has(occ.id);
+
+      const todayKey = bizDateKey(new Date());
+      const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
+      const tomorrowKey = bizDateKey(tomorrowD);
+      const terminalStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+
+      // Follow-ups (reminders due — filtered to my items)
+      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey).filter(notDismissed).length;
+
+      // Overdue
+      const overdue = myItems.filter((occ: any) => occ.startAt && !terminalStatuses.has(occ.status) && bizDateKey(occ.startAt) < todayKey).filter(notDismissed).length;
+
+      // Today
+      const today_ = myItems.filter((occ: any) => (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS") && occ.startAt && bizDateKey(occ.startAt) === todayKey).filter(notDismissed).length;
+
+      // Tomorrow
+      const tomorrow_ = myItems.filter((occ: any) => occ.status === "SCHEDULED" && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey).filter(notDismissed).length;
+
+      // Pending payment
+      const pending_ = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT").filter(notDismissed).length;
+
+      // Estimates ready
+      const estimates_ = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)).filter(notDismissed).length;
+
+      // Route plan reminder (unless dismissed)
+      const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
+
+      setPlanningCount(followUps + overdue + today_ + tomorrow_ + pending_ + estimates_ + routePlan);
+    } catch {
+      setPlanningCount(0);
+    }
+  }, [me?.id]);
+
+  useEffect(() => {
+    void loadPlanningCount();
+    const onRefresh = () => void loadPlanningCount();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    window.addEventListener("seedlings3:planning-changed", onRefresh);
+    return () => {
+      window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+      window.removeEventListener("seedlings3:planning-changed", onRefresh);
+    };
+  }, [loadPlanningCount]);
+
+  const goToPlanning = useCallback(() => {
+    setTopTab("worker");
+    setWorkerInnerTab("reminders" as any);
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -1215,6 +1286,29 @@ export default function HomePage() {
                 _active={{ transform: "translateY(1px)" }}
               >
                 {overdueCount}
+              </Box>
+            )}
+            {planningCount > 0 && (
+              <Box
+                as="button"
+                aria-label="Planning items"
+                title={`${planningCount} planning item${planningCount !== 1 ? "s" : ""}`}
+                onClick={goToPlanning}
+                width="22px"
+                height="22px"
+                minW="22px"
+                borderRadius="9999px"
+                bg="cyan.500"
+                color="white"
+                fontSize="12px"
+                fontWeight="bold"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "cyan.600" }}
+                _active={{ transform: "translateY(1px)" }}
+              >
+                {planningCount}
               </Box>
             )}
             {me && hasAnyRole && (

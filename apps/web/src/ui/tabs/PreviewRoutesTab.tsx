@@ -245,24 +245,33 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
       }
 
+      const origDate = job?.startAt ? bizDateKey(job.startAt) : null;
+      const needsDateChange = origDate !== targetDate;
+
       if (userId) {
         // Admin claiming on behalf of a worker — use admin assign endpoint
         await apiPost(`/api/admin/occurrences/${occurrenceId}/add-assignee`, { userId });
-        // Update the date via admin endpoint
-        if (job?.startAt !== targetDate) {
+        if (needsDateChange) {
           await apiPatch(`/api/admin/occurrences/${occurrenceId}`, patchData);
         }
       } else {
         // Worker claiming for themselves
         await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
-        // Update the date to the target date
-        if (job?.startAt !== targetDate) {
-          await apiPatch(`/api/occurrences/${occurrenceId}`, patchData);
+        if (needsDateChange) {
+          try {
+            await apiPost(`/api/occurrences/${occurrenceId}/reschedule`, { ...patchData, source: "route-planner" });
+          } catch (reschedErr: any) {
+            // Claim succeeded but reschedule failed — inform user
+            setClaimedIds((prev) => new Set(prev).add(occurrenceId));
+            publishInlineMessage({ type: "WARNING", text: `Job claimed but could not be rescheduled: ${reschedErr?.message || "Unknown error"}. The job is still on its original date.` });
+            setClaimingId(null);
+            return;
+          }
         }
       }
 
       setClaimedIds((prev) => new Set(prev).add(occurrenceId));
-      publishInlineMessage({ type: "SUCCESS", text: `Job claimed and scheduled for ${fmtDate(targetDate + "T12:00:00Z")}.` });
+      publishInlineMessage({ type: "SUCCESS", text: `Job claimed${needsDateChange ? ` and moved to ${fmtDate(targetDate + "T12:00:00Z")}` : ""}.` });
     } catch (err: any) {
       const msg = err?.message || "";
       if (msg.includes("already") || msg.includes("ALREADY") || msg.includes("claimed")) {
@@ -307,10 +316,11 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         patchData.endAt = new Date(newStart.getTime() + durationMs).toISOString();
       }
 
-      const endpoint = userId
-        ? `/api/admin/occurrences/${occurrenceId}`
-        : `/api/occurrences/${occurrenceId}`;
-      await apiPatch(endpoint, patchData);
+      if (userId) {
+        await apiPatch(`/api/admin/occurrences/${occurrenceId}`, patchData);
+      } else {
+        await apiPost(`/api/occurrences/${occurrenceId}/reschedule`, { ...patchData, source: "route-planner" });
+      }
 
       setRescheduledIds((prev) => new Set(prev).add(occurrenceId));
       publishInlineMessage({ type: "SUCCESS", text: `Job rescheduled to ${fmtDate(newDate + "T12:00:00Z")}.` });

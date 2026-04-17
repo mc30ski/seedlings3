@@ -11,9 +11,9 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Bell, Copy, List, Maximize2, Pin } from "lucide-react";
+import { Bell, Copy, List, Mail, Maximize2, MessageCircle } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { type WorkerOccurrence } from "@/src/lib/types";
+import { type Me, type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -22,6 +22,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 
 type Props = {
   myId?: string;
+  me?: Me | null;
   showAll?: boolean;
   forAdmin?: boolean;
 };
@@ -48,17 +49,21 @@ function saveDismissed(ids: Set<string>) {
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem(DISMISSED_KEY, JSON.stringify({ date: today, ids: Array.from(ids) }));
   } catch {}
+  // Notify the planning badge in the title bar
+  window.dispatchEvent(new CustomEvent("seedlings3:planning-changed"));
 }
 
 function contactName(occ: WorkerOccurrence): string {
-  const poc = (occ.job?.property as any)?.pointOfContact;
+  const poc = occ.job?.property?.pointOfContact
+    ?? occ.linkedOccurrence?.job?.property?.pointOfContact;
   if (poc?.firstName) return poc.firstName;
-  const clientDisplay = occ.job?.property?.client?.displayName;
+  const clientDisplay = occ.job?.property?.client?.displayName
+    ?? occ.linkedOccurrence?.job?.property?.client?.displayName;
   if (clientDisplay) return `${clientDisplay}`;
   return "there";
 }
 
-export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
+export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -78,23 +83,6 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
   function undismissAll() {
     setDismissed(new Set());
     saveDismissed(new Set());
-  }
-
-  // Pinned occurrences
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (forAdmin) return;
-    apiGet<string[]>("/api/occurrences/pinned")
-      .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
-      .catch(() => {});
-  }, [forAdmin]);
-
-  async function unpinOccurrence(occId: string) {
-    try {
-      await apiPost(`/api/occurrences/${occId}/unpin`);
-      setPinnedIds((prev) => { const next = new Set(prev); next.delete(occId); return next; });
-    } catch {}
   }
 
   useEffect(() => {
@@ -171,23 +159,17 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
     occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
   ).filter(notDismissed);
 
-  // Pinned jobs — show all pinned occurrences regardless of status (unless dismissed)
-  const pinnedJobs = useMemo(() => {
-    if (forAdmin || pinnedIds.size === 0) return [];
-    return items.filter((occ) => pinnedIds.has(occ.id)).filter(notDismissed);
-  }, [items, pinnedIds, forAdmin, dismissed]);
-
-  // Follow-ups — occurrences with reminders due today or earlier
+  // Follow-ups — occurrences with reminders due today or earlier (filtered to current worker)
   const followUps = useMemo(() => {
     if (forAdmin) return [];
-    return items.filter((occ) => {
+    return myItems.filter((occ) => {
       if (!occ.reminder) return false;
       return bizDateKey(occ.reminder.remindAt) <= today;
     }).filter(notDismissed);
-  }, [items, forAdmin, today, dismissed]);
+  }, [myItems, forAdmin, today, dismissed]);
 
   const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
-  const hasReminders = showRoutePlanReminder || pinnedJobs.length > 0 || followUps.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
+  const hasReminders = showRoutePlanReminder || followUps.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
   const hasDismissed = dismissed.size > 0;
 
   if (loading) {
@@ -283,23 +265,6 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
         </Box>
       )}
 
-      {pinnedJobs.length > 0 && (
-        <Section
-          title="Pinned"
-          subtitle="Jobs you've pinned for quick reference"
-          color="blue.600"
-          items={pinnedJobs}
-          badge={() => <Badge colorPalette="blue" variant="solid" fontSize="xs" borderRadius="full" px="2"><Pin size={10} style={{ marginRight: 4 }} />Pinned</Badge>}
-          message="Unpin from the Jobs tab when no longer needed"
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          onDismiss={(occId) => void unpinOccurrence(occId)}
-          dismissLabel="Unpin"
-        />
-      )}
 
       {followUps.length > 0 && (
         <Section
@@ -322,6 +287,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
           onDismiss={(occId) => {
             void apiPost(`/api/occurrences/${occId}/reminder/clear`);
             dismissReminder(occId);
@@ -352,6 +318,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
           onDismiss={dismissReminder}
         />
       )}
@@ -374,6 +341,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
           onDismiss={dismissReminder}
         />
       )}
@@ -396,6 +364,7 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
           onDismiss={dismissReminder}
         />
       )}
@@ -418,6 +387,8 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
+          onDismiss={dismissReminder}
         />
       )}
 
@@ -434,11 +405,20 @@ export default function RemindersTab({ myId, showAll, forAdmin }: Props) {
           compact={compact}
           expandedCards={expandedCards}
           toggleCard={toggleCard}
+          me={me}
           onDismiss={dismissReminder}
         />
       )}
     </Box>
   );
+}
+
+function getContactInfo(occ: WorkerOccurrence): { phone?: string; email?: string } | null {
+  // Check the occurrence's own property contact, then fall back to linked occurrence's contact
+  const poc = occ.job?.property?.pointOfContact
+    ?? occ.linkedOccurrence?.job?.property?.pointOfContact;
+  if (!poc) return null;
+  return { phone: poc.phone ?? undefined, email: poc.email ?? undefined };
 }
 
 function Section({
@@ -455,6 +435,7 @@ function Section({
   toggleCard,
   onDismiss,
   dismissLabel = "Dismiss",
+  me,
 }: {
   title: string;
   subtitle: string;
@@ -469,6 +450,7 @@ function Section({
   toggleCard: (id: string) => void;
   onDismiss?: (id: string) => void;
   dismissLabel?: string;
+  me?: Me | null;
 }) {
   return (
     <Box mb={5}>
@@ -543,26 +525,70 @@ function Section({
                         )}
                         {(() => {
                           const msg = typeof message === "function" ? message(occ) : message;
+                          const contact = getContactInfo(occ);
+                          const contactPhone = contact?.phone;
+                          const contactEmail = contact?.email;
                           return (
-                            <HStack gap={1} align="start">
-                              <Text fontSize="xs" color="fg.muted" fontStyle="italic" flex="1">{msg}</Text>
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                colorPalette="gray"
-                                px="1"
-                                minW="0"
-                                flexShrink={0}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigator.clipboard.writeText(msg);
-                                  publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
-                                }}
-                                title="Copy to clipboard"
-                              >
-                                <Copy size={12} style={{ display: "block" }} />
-                              </Button>
-                            </HStack>
+                            <VStack align="stretch" gap={1}>
+                              <Text fontSize="xs" color="fg.muted" fontStyle="italic">{msg}</Text>
+                              <HStack gap={1} flexWrap="wrap">
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="gray"
+                                  px="1"
+                                  minW="0"
+                                  flexShrink={0}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(msg);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
+                                  }}
+                                  title="Copy to clipboard"
+                                >
+                                  <Copy size={12} style={{ display: "block" }} />
+                                  <Text fontSize="xs">Copy</Text>
+                                </Button>
+                                {contactPhone && (
+                                  <Button
+                                    size="xs"
+                                    variant="ghost"
+                                    colorPalette="green"
+                                    px="1"
+                                    minW="0"
+                                    flexShrink={0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(`sms:${contactPhone}?body=${encodeURIComponent(msg)}`, "_self");
+                                    }}
+                                    title={`Text ${contactPhone}`}
+                                  >
+                                    <MessageCircle size={12} style={{ display: "block" }} />
+                                    <Text fontSize="xs">Text</Text>
+                                  </Button>
+                                )}
+                                {!contactPhone && contactEmail && (
+                                  <Button
+                                    size="xs"
+                                    variant="ghost"
+                                    colorPalette="blue"
+                                    px="1"
+                                    minW="0"
+                                    flexShrink={0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const fromName = me?.displayName || "Seedlings Lawn Care";
+                                      const subject = encodeURIComponent(`Message from ${fromName}`);
+                                      window.open(`mailto:${contactEmail}?subject=${subject}&body=${encodeURIComponent(msg)}`, "_self");
+                                    }}
+                                    title={`Email ${contactEmail}`}
+                                  >
+                                    <Mail size={12} style={{ display: "block" }} />
+                                    <Text fontSize="xs">Email</Text>
+                                  </Button>
+                                )}
+                              </HStack>
+                            </VStack>
                           );
                         })()}
                       </>

@@ -497,15 +497,14 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   // Default assignees for a job
+  // Legacy bulk-replace (kept for backwards compatibility)
   app.put("/admin/jobs/:id/default-assignees", adminGuard, async (req: any) => {
     const jobId = String(req.params.id);
     const body = req.body || {};
     const userIds: string[] = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
 
     await prisma.$transaction(async (tx) => {
-      // Remove existing
       await tx.jobAssigneeDefault.deleteMany({ where: { jobId } });
-      // Add new
       if (userIds.length > 0) {
         await tx.jobAssigneeDefault.createMany({
           data: userIds.map((uid) => ({ jobId, userId: uid })),
@@ -514,6 +513,66 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
     });
 
+    return { updated: true };
+  });
+
+  // Per-member default crew management (mirrors occurrence assignee endpoints)
+
+  app.post("/admin/jobs/:id/default-assignees/add", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const { userId, role } = (req.body || {}) as { userId?: string; role?: string | null };
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+
+    const validRole = role === "observer" ? "observer" : null;
+
+    const existing = await prisma.jobAssigneeDefault.findUnique({
+      where: { jobId_userId: { jobId, userId } },
+    });
+    if (existing) {
+      // Reactivate if inactive, or update role if it changed
+      if (!existing.active || existing.role !== validRole) {
+        await prisma.jobAssigneeDefault.update({
+          where: { id: existing.id },
+          data: { active: true, role: validRole },
+        });
+      }
+      return { added: true };
+    }
+
+    await prisma.jobAssigneeDefault.create({
+      data: { jobId, userId, role: validRole, active: true },
+    });
+    return { added: true };
+  });
+
+  app.delete("/admin/jobs/:id/default-assignees/:userId", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const userId = String(req.params.userId);
+
+    const existing = await prisma.jobAssigneeDefault.findUnique({
+      where: { jobId_userId: { jobId, userId } },
+    });
+    if (!existing) throw app.httpErrors.notFound("Not found");
+
+    await prisma.jobAssigneeDefault.delete({ where: { id: existing.id } });
+    return { removed: true };
+  });
+
+  app.patch("/admin/jobs/:id/default-assignees/:userId/role", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const userId = String(req.params.userId);
+    const { role } = (req.body || {}) as { role?: string | null };
+
+    const existing = await prisma.jobAssigneeDefault.findUnique({
+      where: { jobId_userId: { jobId, userId } },
+    });
+    if (!existing) throw app.httpErrors.notFound("Not found");
+
+    const validRole = role === "observer" ? "observer" : null;
+    await prisma.jobAssigneeDefault.update({
+      where: { id: existing.id },
+      data: { role: validRole },
+    });
     return { updated: true };
   });
 

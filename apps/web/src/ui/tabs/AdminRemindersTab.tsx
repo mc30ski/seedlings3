@@ -6,15 +6,17 @@ import { Badge, Box, Button, HStack, Input, Text } from "@chakra-ui/react";
 import { X } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
+import { type Me } from "@/src/lib/types";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null };
 
-export default function AdminRemindersTab() {
+export default function AdminRemindersTab({ me }: { me?: Me | null }) {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorker, setSelectedWorker] = usePersistedState<string | null>("adminreminders_worker", null);
   const [searchText, setSearchText] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
+  // No default selection — admin must pick a worker (or All Workers)
 
   useEffect(() => {
     apiGet<Worker[]>("/api/workers")
@@ -51,13 +53,13 @@ export default function AdminRemindersTab() {
     <Box w="full">
       <HStack mb={3} gap={2} align="center" wrap="wrap">
         <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
-          View as:
+          Worker:
         </Text>
         <Box ref={dropRef} position="relative">
           <Input
             size="sm"
             w="200px"
-            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "All Workers"}
+            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "Select a worker..."}
             value={searchText}
             onChange={(e) => {
               setSearchText(e.target.value);
@@ -88,25 +90,6 @@ export default function AdminRemindersTab() {
               }}
             >
               <Box maxH="250px" overflowY="auto">
-                <Box
-                  px="3"
-                  py="1.5"
-                  fontSize="sm"
-                  cursor="pointer"
-                  bg={!selectedWorker ? "blue.50" : undefined}
-                  _hover={{ bg: "gray.100" }}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setSelectedWorker(null);
-                    setDropOpen(false);
-                    setSearchText("");
-                  }}
-                >
-                  <HStack gap={2}>
-                    <Text flex="1">All Workers</Text>
-                    {!selectedWorker && <Text color="blue.500" fontWeight="bold">✓</Text>}
-                  </HStack>
-                </Box>
                 {limited.map((w) => (
                   <Box
                     key={w.id}
@@ -158,7 +141,13 @@ export default function AdminRemindersTab() {
         )}
       </HStack>
 
-      <RemindersTab myId={selectedWorker ?? undefined} showAll={!selectedWorker} forAdmin />
+      {selectedWorker ? (
+        <RemindersTab myId={selectedWorker} me={me} showAll={false} forAdmin />
+      ) : (
+        <Box py={10} textAlign="center">
+          <Text color="fg.muted" fontSize="sm">Select a worker above to view their planning items.</Text>
+        </Box>
+      )}
     </Box>
   );
 }

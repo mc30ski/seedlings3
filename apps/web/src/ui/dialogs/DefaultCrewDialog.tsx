@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -12,7 +13,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiGet, apiPut } from "@/src/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -27,6 +28,7 @@ type WorkerLite = {
 type DefaultAssignee = {
   id: string;
   userId: string;
+  role?: string | null;
   user?: { id: string; displayName?: string | null; email?: string | null };
 };
 
@@ -46,10 +48,13 @@ export default function DefaultCrewDialog({
   onChanged,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+
   const [assignees, setAssignees] = useState<DefaultAssignee[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [addBusy, setAddBusy] = useState(false);
+  const [addAsObserver, setAddAsObserver] = useState(false);
+  const [busyId, setBusyId] = useState<string>("");
 
   useEffect(() => {
     if (!open) return;
@@ -82,33 +87,62 @@ export default function DefaultCrewDialog({
     [workerItems]
   );
 
-  function addSelected() {
-    for (const uid of selected) {
-      const w = workers.find((w) => w.id === uid);
-      if (w && !assignedIds.includes(uid)) {
-        setAssignees((prev) => [...prev, { id: "", userId: uid, user: { id: uid, displayName: w.displayName, email: w.email } }]);
-      }
-    }
-    setSelected([]);
-  }
-
-  function remove(userId: string) {
-    setAssignees((prev) => prev.filter((a) => a.userId !== userId));
-  }
-
-  async function handleSave() {
-    setBusy(true);
+  async function handleAdd() {
+    if (selected.length === 0) return;
+    setAddBusy(true);
+    const role = addAsObserver ? "observer" : null;
     try {
-      await apiPut(`/api/admin/jobs/${jobId}/default-assignees`, {
-        userIds: assignees.map((a) => a.userId),
+      for (const userId of selected) {
+        await apiPost(`/api/admin/jobs/${jobId}/default-assignees/add`, { userId, role });
+        const worker = workers.find((w) => w.id === userId);
+        if (worker) {
+          setAssignees((prev) => [
+            ...prev,
+            { id: "", userId, role, user: { id: userId, displayName: worker.displayName, email: worker.email } },
+          ]);
+        }
+      }
+      setSelected([]);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: selected.length === 1 ? "Worker added to default crew." : `${selected.length} workers added.`,
       });
-      publishInlineMessage({ type: "SUCCESS", text: "Default crew updated." });
       onChanged?.();
-      onOpenChange(false);
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update default crew.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add worker.", err) });
     } finally {
-      setBusy(false);
+      setAddBusy(false);
+    }
+  }
+
+  async function handleRemove(targetUserId: string) {
+    setBusyId(targetUserId);
+    try {
+      await apiDelete(`/api/admin/jobs/${jobId}/default-assignees/${targetUserId}`);
+      setAssignees((prev) => prev.filter((a) => a.userId !== targetUserId));
+      publishInlineMessage({ type: "SUCCESS", text: "Worker removed from default crew." });
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove worker.", err) });
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function handleToggleRole(targetUserId: string, currentRole: string | null) {
+    const newRole = currentRole === "observer" ? null : "observer";
+    setBusyId(targetUserId);
+    try {
+      await apiPatch(`/api/admin/jobs/${jobId}/default-assignees/${targetUserId}/role`, { role: newRole });
+      setAssignees((prev) => prev.map((a) =>
+        a.userId === targetUserId ? { ...a, role: newRole } : a
+      ));
+      publishInlineMessage({ type: "SUCCESS", text: newRole === "observer" ? "Changed to observer." : "Changed to worker." });
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to change role.", err) });
+    } finally {
+      setBusyId("");
     }
   }
 
@@ -125,29 +159,98 @@ export default function DefaultCrewDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={4}>
-                <Text fontSize="xs" color="fg.muted">
-                  When a new occurrence is created for this job and no specific team is selected, these workers will be automatically assigned.
-                </Text>
+                <Box px={2} py={1.5} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                  <Text fontSize="2xs" color="yellow.700">
+                    The default crew is automatically assigned to each new occurrence. One-time team changes on individual occurrences won't affect these defaults.
+                  </Text>
+                </Box>
 
                 <div>
-                  <Text fontWeight="medium" mb="2">Current default crew</Text>
+                  <Text fontWeight="medium" mb="2">Default crew</Text>
                   {assignees.length === 0 && (
                     <Text fontSize="sm" color="fg.muted">No default crew set. Occurrences will be unassigned (claimable).</Text>
                   )}
                   <VStack align="stretch" gap={1}>
-                    {assignees.map((a) => (
-                      <HStack key={a.userId} px={2} py={1} rounded="md" borderWidth="1px" justify="space-between">
-                        <Text fontSize="sm">{a.user?.displayName ?? a.user?.email ?? a.userId}</Text>
-                        <Button size="xs" variant="ghost" colorPalette="red" onClick={() => remove(a.userId)}>
-                          Remove
-                        </Button>
-                      </HStack>
-                    ))}
+                    {assignees.map((a) => {
+                      const isObs = a.role === "observer";
+                      return (
+                        <Box
+                          key={a.userId}
+                          px={2}
+                          py={1.5}
+                          rounded="md"
+                          borderWidth="1px"
+                          borderColor={isObs ? "blue.200" : "gray.200"}
+                          bg={isObs ? "blue.50" : undefined}
+                        >
+                          <HStack justify="space-between" align="center">
+                            <VStack align="start" gap={0.5}>
+                              <Text fontSize="sm" color={isObs ? "blue.700" : undefined}>
+                                {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              </Text>
+                              <HStack gap={1}>
+                                {isObs ? (
+                                  <Badge size="sm" colorPalette="blue" variant="solid" fontSize="2xs" px="1.5" borderRadius="full">Observer</Badge>
+                                ) : (
+                                  <Badge size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full">Worker</Badge>
+                                )}
+                              </HStack>
+                            </VStack>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="red"
+                              loading={busyId === a.userId}
+                              disabled={busyId !== ""}
+                              onClick={() => handleRemove(a.userId)}
+                            >
+                              Remove
+                            </Button>
+                          </HStack>
+                          <HStack gap={1} mt={1}>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette={isObs ? "teal" : "blue"}
+                              disabled={busyId !== ""}
+                              onClick={() => handleToggleRole(a.userId, a.role ?? null)}
+                            >
+                              {isObs ? "→ Worker" : "→ Observer"}
+                            </Button>
+                          </HStack>
+                        </Box>
+                      );
+                    })}
                   </VStack>
                 </div>
 
                 <div>
-                  <Text fontWeight="medium" mb="2">Add workers</Text>
+                  <Text fontWeight="medium" mb="2">Add to default crew</Text>
+
+                  <HStack gap={2} mb={2}>
+                    <Button
+                      size="sm"
+                      variant={!addAsObserver ? "solid" : "outline"}
+                      colorPalette={!addAsObserver ? "teal" : "gray"}
+                      onClick={() => setAddAsObserver(false)}
+                    >
+                      Worker
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={addAsObserver ? "solid" : "outline"}
+                      colorPalette={addAsObserver ? "blue" : "gray"}
+                      onClick={() => setAddAsObserver(true)}
+                    >
+                      Observer
+                    </Button>
+                  </HStack>
+                  <Text fontSize="xs" color="fg.muted" mb={2}>
+                    {addAsObserver
+                      ? "Observers can see the job and set reminders, but cannot start, complete, or manage it."
+                      : "Workers can take actions on the job — start, complete, manage expenses, etc."}
+                  </Text>
+
                   <HStack gap={2} align="flex-end">
                     <Box flex="1">
                       <Select.Root
@@ -162,7 +265,9 @@ export default function DefaultCrewDialog({
                           <Select.Trigger>
                             <Select.ValueText
                               placeholder={
-                                availableWorkers.length === 0
+                                workers.length === 0
+                                  ? "Loading…"
+                                  : availableWorkers.length === 0
                                   ? "All workers assigned"
                                   : "Select workers"
                               }
@@ -181,8 +286,14 @@ export default function DefaultCrewDialog({
                         </Select.Positioner>
                       </Select.Root>
                     </Box>
-                    <Button size="sm" onClick={addSelected} disabled={selected.length === 0}>
-                      Add
+                    <Button
+                      size="sm"
+                      colorPalette={addAsObserver ? "blue" : "teal"}
+                      onClick={handleAdd}
+                      loading={addBusy}
+                      disabled={selected.length === 0 || busyId !== ""}
+                    >
+                      {addAsObserver ? "Add as Observer" : "Add as Worker"}
                     </Button>
                   </HStack>
                 </div>
@@ -191,11 +302,12 @@ export default function DefaultCrewDialog({
 
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
-                <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSave} loading={busy}>
-                  Save
+                <Button
+                  ref={cancelRef}
+                  onClick={() => onOpenChange(false)}
+                  disabled={addBusy || busyId !== ""}
+                >
+                  Done
                 </Button>
               </HStack>
             </Dialog.Footer>

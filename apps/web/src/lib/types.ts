@@ -393,7 +393,7 @@ export type JobListItem = {
 };
 
 export type JobDetail = JobListItem & {
-  defaultAssignees?: { id: string; userId: string; user?: { id: string; displayName?: string | null; email?: string | null } }[];
+  defaultAssignees?: { id: string; userId: string; role?: string | null; user?: { id: string; displayName?: string | null; email?: string | null } }[];
   occurrences: JobOccurrenceFull[];
 };
 
@@ -549,6 +549,7 @@ export type WorkerOccurrence = {
       city: string;
       state: string;
       client?: { id: string; displayName: string; isVip?: boolean; vipReason?: string | null };
+      pointOfContact?: { firstName: string; lastName: string; phone?: string | null; email?: string | null } | null;
     };
   } | null;
   assignees?: {
@@ -569,7 +570,7 @@ export type WorkerOccurrence = {
     workflow?: string;
     jobType?: string | null;
     price?: number | null;
-    job?: { id: string; property: { id: string; displayName: string; client?: { displayName?: string } } } | null;
+    job?: { id: string; property: { id: string; displayName: string; client?: { displayName?: string }; pointOfContact?: { firstName: string; lastName: string; phone?: string | null; email?: string | null } | null } } | null;
   } | null;
 };
 
