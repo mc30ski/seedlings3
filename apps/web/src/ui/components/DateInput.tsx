@@ -6,6 +6,8 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   size?: string;
+  min?: string;
+  max?: string;
   css?: Record<string, unknown>;
 };
 
@@ -13,7 +15,7 @@ type Props = {
  * Thin wrapper around a native <input type="date"> that imperatively
  * syncs the DOM value, which fixes Safari ignoring React controlled updates.
  */
-export default function DateInput({ value, onChange, css: cssProp }: Props) {
+export default function DateInput({ value, onChange, min, max, css: cssProp }: Props) {
   const ref = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -27,6 +29,8 @@ export default function DateInput({ value, onChange, css: cssProp }: Props) {
       ref={ref}
       type="date"
       defaultValue={value}
+      min={min}
+      max={max}
       onChange={(e) => onChange(e.target.value)}
       style={{
         flex: 1,

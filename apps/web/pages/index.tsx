@@ -1017,17 +1017,17 @@ export default function HomePage() {
       const tomorrowKey = bizDateKey(tomorrowD);
 
       // Exact same filters as RemindersTab — sum of all sections (items CAN appear in multiple sections)
+      // Scoped dismissals — section:occId keys match RemindersTab exactly
       const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
       const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
       const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
-      const nd = (occ: any) => !dismissedIds.has(occ.id);
 
-      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey).filter(nd).length;
-      const overdueCount = myItems.filter((occ: any) => occ.startAt && !overdueExclude.has(occ.status) && bizDateKey(occ.startAt) < todayKey).filter(nd).length;
-      const todayCount = myItems.filter((occ: any) => activeStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === todayKey).filter(nd).length;
-      const tomorrowCount = myItems.filter((occ: any) => upcomingStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey).filter(nd).length;
-      const pendingCount = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT").filter(nd).length;
-      const estimatesCount = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)).filter(nd).length;
+      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey && !dismissedIds.has(`followups:${occ.id}`)).length;
+      const overdueCount = myItems.filter((occ: any) => occ.startAt && !overdueExclude.has(occ.status) && bizDateKey(occ.startAt) < todayKey && !dismissedIds.has(`overdue:${occ.id}`)).length;
+      const todayCount = myItems.filter((occ: any) => activeStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === todayKey && !dismissedIds.has(`today:${occ.id}`)).length;
+      const tomorrowCount = myItems.filter((occ: any) => upcomingStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey && !dismissedIds.has(`tomorrow:${occ.id}`)).length;
+      const pendingCount = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT" && !dismissedIds.has(`pending:${occ.id}`)).length;
+      const estimatesCount = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && !dismissedIds.has(`estimates:${occ.id}`)).length;
       const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
 
       setPlanningCount(followUps + overdueCount + todayCount + tomorrowCount + pendingCount + estimatesCount + routePlan);

@@ -702,6 +702,8 @@ export default async function adminRoutes(app: FastifyInstance) {
       input.frequencyDays = fd;
     }
 
+    if (body.title != null) input.title = String(body.title).trim() || null;
+
     if (body.assigneeUserIds != null) {
       if (!Array.isArray(body.assigneeUserIds)) {
         throw app.httpErrors.badRequest("assigneeUserIds must be an array");
@@ -952,11 +954,14 @@ export default async function adminRoutes(app: FastifyInstance) {
         }
       }
 
+      if ("jobId" in body) patch.jobId = body.jobId || null;
+
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(
         await currentUserId(req),
         occurrenceId,
-        patch
+        patch,
+        { isAdmin: true }
       );
     }
   );
@@ -2011,6 +2016,7 @@ Respond ONLY with valid JSON in this exact format:
       proposalAmount: body.proposalAmount != null ? Number(body.proposalAmount) : undefined,
       proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
       assigneeUserIds: Array.isArray(body.assigneeUserIds) ? body.assigneeUserIds.map(String) : undefined,
+      jobId: body.jobId ? String(body.jobId) : undefined,
     });
   });
 

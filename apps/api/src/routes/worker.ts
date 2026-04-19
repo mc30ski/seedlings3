@@ -507,11 +507,21 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/accept-payment", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+
+    // Only the claimer can accept payment
+    const assignee = await prisma.jobOccurrenceAssignee.findFirst({
+      where: { occurrenceId, userId: uid },
+    });
+    if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
+    const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
+    if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can accept payments.");
+
     const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid } });
-    if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments. The team lead must take this action.");
+    if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments.");
     const body = req.body || {};
     return services.payments.createPayment(uid, {
-      occurrenceId: String(req.params.id),
+      occurrenceId,
       amountPaid: Number(body.amountPaid),
       method: String(body.method || "CASH"),
       note: body.note ? String(body.note) : null,
