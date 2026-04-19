@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSwipe } from "@/src/lib/useSwipe";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -69,12 +70,12 @@ function actualMinutes(occ: { startedAt?: string | null; completedAt?: string | 
 const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItemsBase = [
-  { label: "Today", value: "today" },
-  { label: "Next 3 days", value: "next3" },
-  { label: "Next week", value: "nextWeek" },
-  { label: "Next month", value: "nextMonth" },
+  { label: "Now", value: "now" },
+  { label: "This week", value: "thisWeek" },
+  { label: "This month", value: "thisMonth" },
   { label: "Yesterday", value: "yesterday" },
   { label: "Last week", value: "lastWeek" },
+  { label: "Last month", value: "lastMonth" },
 ];
 
 const kindStates = ["ALL", ...JOB_KIND] as const;
@@ -425,10 +426,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
   }, [forAdmin]);
 
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "nextMonth");
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "thisMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
-  const [dateFrom, setDateFrom] = useState(presetDates.from);
-  const [dateTo, setDateTo] = useState(presetDates.to);
+  const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
   const [vipOnly, setVipOnly] = useState(false);
@@ -745,7 +746,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       setFilterJobId(null);
       setQ("");
       // Widen date range to ensure the occurrence is loaded
-      const d = computeDatesFromPreset("nextMonth");
+      const d = computeDatesFromPreset("thisMonth");
       setDatePreset(null);
       const from = new Date(); from.setDate(from.getDate() - 14);
       const to = new Date(); to.setMonth(to.getMonth() + 2);
@@ -1429,7 +1430,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? "nextMonth");
+              setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
             } else {
               presetBeforeOverdueRef.current = datePreset;
               const yesterday = new Date();
@@ -1534,8 +1535,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
-                const d = computeDatesFromPreset("nextMonth");
-                setDatePreset("nextMonth");
+                const d = computeDatesFromPreset("thisMonth");
+                setDatePreset("thisMonth");
                 setDateFrom(d.from);
                 setDateTo(d.to);
                 void load(true, { from: d.from, to: d.to });
@@ -3329,6 +3330,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           alignItems="center"
           justifyContent="center"
           onClick={() => setViewerPhotos([])}
+          onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const dx = e.changedTouches[0].clientX - ((e.currentTarget as any)._touchX ?? 0);
+            if (Math.abs(dx) > 50) {
+              e.stopPropagation();
+              if (dx < 0) setViewerIndex((i) => Math.min(i + 1, viewerPhotos.length - 1));
+              else setViewerIndex((i) => Math.max(i - 1, 0));
+            }
+          }}
         >
           {viewerIndex > 0 && (
             <Box

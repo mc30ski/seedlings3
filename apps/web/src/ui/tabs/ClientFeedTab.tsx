@@ -201,6 +201,11 @@ export default function ClientFeedTab() {
           alignItems="center"
           justifyContent="center"
           onClick={() => { setViewerPhoto(null); setViewerPhotos([]); }}
+          onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const dx = e.changedTouches[0].clientX - ((e.currentTarget as any)._touchX ?? 0);
+            if (Math.abs(dx) > 50) { e.stopPropagation(); dx < 0 ? navigateViewer(1) : navigateViewer(-1); }
+          }}
         >
           {viewerIdx > 0 && (
             <Box

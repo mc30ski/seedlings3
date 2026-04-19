@@ -210,26 +210,21 @@ export const payments: ServicesPayments = {
           } as any,
         });
 
-        // Copy assignees for administered occurrences from job defaults (not current occurrence).
-        // This ensures one-time team swaps don't persist to future occurrences.
-        // Falls back to current occurrence assignees if no job defaults are set.
-        if (isAdminOnly) {
-          const defaults = fullOcc.job?.defaultAssignees ?? [];
-          const assigneeSource = defaults.length > 0
-            ? defaults.map((d) => ({ userId: d.userId, role: d.role }))
-            : fullOcc.assignees.map((a) => ({ userId: a.userId, role: a.role }));
-          if (assigneeSource.length > 0) {
-            const claimerId = assigneeSource[0].userId;
-            await tx.jobOccurrenceAssignee.createMany({
-              data: assigneeSource.map((a, i) => ({
-                occurrenceId: nextOccurrence.id,
-                userId: a.userId,
-                role: a.role ?? null,
-                assignedById: i === 0 ? a.userId : claimerId,
-              })),
-              skipDuplicates: true,
-            });
-          }
+        // Assign next occurrence from job's default team.
+        // If no default team is set, leave unassigned (claimable).
+        // Never copy from current occurrence — one-time team changes shouldn't persist.
+        const defaults = fullOcc.job?.defaultAssignees ?? [];
+        if (defaults.length > 0) {
+          const claimerId = defaults[0].userId;
+          await tx.jobOccurrenceAssignee.createMany({
+            data: defaults.map((d, i) => ({
+              occurrenceId: nextOccurrence.id,
+              userId: d.userId,
+              role: d.role ?? null,
+              assignedById: i === 0 ? d.userId : claimerId,
+            })),
+            skipDuplicates: true,
+          });
         }
         } // end else (duplicate guard)
       }

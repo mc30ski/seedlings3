@@ -72,8 +72,8 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
-  const [dateTo, setDateTo] = useState(todayStr);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", defaultDateFrom);
+  const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", todayStr);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_w_type", ["ALL"]);
   const [compact, setCompact] = usePersistedState("pay_w_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -507,8 +507,8 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = useState(defaultDateFrom);
-  const [dateTo, setDateTo] = useState(todayStr);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", defaultDateFrom);
+  const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", todayStr);
   const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
   const [personFilter, setPersonFilter] = usePersistedState<string[]>("pay_a_persons", []);
   const [personDropOpen, setPersonDropOpen] = useState(false);

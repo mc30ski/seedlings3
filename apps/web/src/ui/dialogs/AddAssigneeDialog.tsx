@@ -165,6 +165,7 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                 onMakeClaimer={isAdmin ? handleMakeClaimer : undefined}
                 showRoleControls={!!isAdmin}
                 showMakeClaimer={!!isAdmin}
+                allowRemoveClaimer={!!isAdmin}
                 myId={myId}
                 onLeave={handleLeave}
               />

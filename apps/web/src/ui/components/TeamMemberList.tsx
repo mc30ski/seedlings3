@@ -40,6 +40,8 @@ export type TeamMemberListProps = {
   // Config
   showRoleControls?: boolean;
   showMakeClaimer?: boolean;
+  /** When true, admins can remove the claimer (makes job claimable). Shows a confirmation. */
+  allowRemoveClaimer?: boolean;
 
   // Optional: highlight "you" card
   myId?: string;
@@ -75,6 +77,7 @@ export default function TeamMemberList({
   onMakeClaimer,
   showRoleControls = true,
   showMakeClaimer = false,
+  allowRemoveClaimer = false,
   myId,
   onLeave,
   listTitle = "Current team",
@@ -83,6 +86,7 @@ export default function TeamMemberList({
 }: TeamMemberListProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [addAsObserver, setAddAsObserver] = useState(false);
+  const [confirmRemoveClaimer, setConfirmRemoveClaimer] = useState<string | null>(null);
 
   const assignedIds = useMemo(() => members.map((m) => m.userId), [members]);
   const availableWorkers = useMemo(
@@ -151,9 +155,15 @@ export default function TeamMemberList({
               variant="ghost"
               colorPalette="red"
               loading={busyId === m.userId}
-              disabled={busyId !== "" || isClaimer}
-              title={isClaimer ? "Make someone else the claimer first" : undefined}
-              onClick={() => onRemove(m.userId)}
+              disabled={busyId !== "" || (isClaimer && !allowRemoveClaimer)}
+              title={isClaimer && !allowRemoveClaimer ? "Make someone else the claimer first" : undefined}
+              onClick={() => {
+                if (isClaimer && allowRemoveClaimer) {
+                  setConfirmRemoveClaimer(m.userId);
+                } else {
+                  onRemove(m.userId);
+                }
+              }}
             >
               Remove
             </Button>
@@ -268,6 +278,51 @@ export default function TeamMemberList({
           </Button>
         </HStack>
       </div>
+
+      {/* Confirm remove claimer dialog */}
+      {confirmRemoveClaimer && (
+        <Box
+          position="fixed"
+          inset="0"
+          zIndex={10000}
+          bg="blackAlpha.600"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          onClick={() => setConfirmRemoveClaimer(null)}
+        >
+          <Box
+            bg="white"
+            rounded="xl"
+            p={5}
+            mx={4}
+            maxW="sm"
+            w="full"
+            shadow="lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Text fontWeight="semibold" mb={2}>Remove Claimer?</Text>
+            <Text fontSize="sm" color="fg.muted" mb={4}>
+              Removing the claimer will make this job unassigned and claimable by any worker. Are you sure?
+            </Text>
+            <HStack justify="flex-end" gap={2}>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmRemoveClaimer(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                colorPalette="red"
+                onClick={() => {
+                  onRemove(confirmRemoveClaimer);
+                  setConfirmRemoveClaimer(null);
+                }}
+              >
+                Remove
+              </Button>
+            </HStack>
+          </Box>
+        </Box>
+      )}
     </VStack>
   );
 }

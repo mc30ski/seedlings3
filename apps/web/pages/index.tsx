@@ -1039,11 +1039,16 @@ export default function HomePage() {
   useEffect(() => {
     void loadDashboardSummary();
     const onRefresh = () => void loadDashboardSummary();
+    // Refresh on data changes
     window.addEventListener("seedlings3:jobs-changed", onRefresh);
     window.addEventListener("seedlings3:planning-changed", onRefresh);
+    // Refresh when app becomes visible (day change, phone wake, tab switch)
+    const onVisible = () => { if (document.visibilityState === "visible") void loadDashboardSummary(); };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("seedlings3:jobs-changed", onRefresh);
       window.removeEventListener("seedlings3:planning-changed", onRefresh);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [loadDashboardSummary]);
 

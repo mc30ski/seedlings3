@@ -5,24 +5,33 @@ function localDate(d: Date): string {
 }
 
 export type DatePreset =
+  | "now"
   | "today"
   | "next3"
   | "overdueAndNext3"
   | "overdueOnly"
   | "overdueAndNextWeek"
+  | "thisWeek"
   | "nextWeek"
+  | "thisMonth"
   | "nextMonth"
   | "future"
   | "recent"
   | "rolling"
   | "yesterday"
   | "lastWeek"
+  | "lastMonth"
   | "all"
   | null; // null = custom dates
 
 export function computeDatesFromPreset(preset: DatePreset): { from: string; to: string } {
   const today = new Date();
   switch (preset) {
+    case "now": {
+      const d = new Date(today);
+      d.setDate(d.getDate() + 1);
+      return { from: localDate(today), to: localDate(d) };
+    }
     case "today":
       return { from: localDate(today), to: localDate(today) };
     case "yesterday": {
@@ -52,11 +61,13 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
       d.setDate(d.getDate() + 7);
       return { from: "", to: localDate(d) };
     }
+    case "thisWeek":
     case "nextWeek": {
       const d = new Date(today);
       d.setDate(d.getDate() + 6);
       return { from: localDate(today), to: localDate(d) };
     }
+    case "thisMonth":
     case "nextMonth": {
       const d = new Date(today);
       d.setMonth(d.getMonth() + 1);
@@ -81,6 +92,11 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
       d.setDate(d.getDate() - 7);
       return { from: localDate(d), to: localDate(today) };
     }
+    case "lastMonth": {
+      const d = new Date(today);
+      d.setMonth(d.getMonth() - 1);
+      return { from: localDate(d), to: localDate(today) };
+    }
     case "all":
       return { from: "", to: "" };
     default:
@@ -92,17 +108,21 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
 }
 
 export const PRESET_LABELS: Record<string, string> = {
+  now: "Now",
   today: "Today",
   next3: "Next 3 days",
   overdueOnly: "Overdue only",
   overdueAndNext3: "Last 60 days + Next 3 days",
   overdueAndNextWeek: "Overdue + Next week",
-  nextWeek: "Next week",
-  nextMonth: "Next month",
+  thisWeek: "This week",
+  nextWeek: "This week",
+  thisMonth: "This month",
+  nextMonth: "This month",
   future: "Future",
   recent: "Recent & Future",
   rolling: "Rolling",
   yesterday: "Yesterday",
   lastWeek: "Last week",
+  lastMonth: "Last month",
   all: "All time",
 };

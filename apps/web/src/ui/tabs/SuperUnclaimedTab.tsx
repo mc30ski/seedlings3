@@ -44,8 +44,8 @@ export default function SuperUnclaimedTab() {
   // Date preset (default: next week)
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("super_unclaimed_datePreset", "overdueAndNext3");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
-  const [dateFrom, setDateFrom] = useState(presetDates.from);
-  const [dateTo, setDateTo] = useState(presetDates.to);
+  const [dateFrom, setDateFrom] = usePersistedState("super_unclaimed_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("super_unclaimed_dateTo", presetDates.to);
 
   // Overdue
   const [overdueActive, setOverdueActive] = usePersistedState("super_unclaimed_overdue", false);

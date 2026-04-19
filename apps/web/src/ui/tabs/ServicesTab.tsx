@@ -73,12 +73,12 @@ const jobStatusStates = ["ALL", ...JOB_STATUS] as const;
 const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
 
 const quickDateItemsBase = [
-  { label: "Today", value: "today" },
-  { label: "Next 3 days", value: "next3" },
-  { label: "Next week", value: "nextWeek" },
-  { label: "Next month", value: "nextMonth" },
+  { label: "Now", value: "now" },
+  { label: "This week", value: "thisWeek" },
+  { label: "This month", value: "thisMonth" },
   { label: "Yesterday", value: "yesterday" },
   { label: "Last week", value: "lastWeek" },
+  { label: "Last month", value: "lastMonth" },
 ];
 
 export default function ServicesTab({
@@ -101,11 +101,11 @@ export default function ServicesTab({
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
-  const presetBeforeOverdueRef = useRef<DatePreset>("nextMonth");
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("services_datePreset", "nextMonth");
+  const presetBeforeOverdueRef = useRef<DatePreset>("thisMonth");
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("services_datePreset", "thisMonth");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
-  const [dateFrom, setDateFrom] = useState(presetDates.from);
-  const [dateTo, setDateTo] = useState(presetDates.to);
+  const [dateFrom, setDateFrom] = usePersistedState("services_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("services_dateTo", presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
 
   useEffect(() => {
@@ -730,7 +730,7 @@ export default function ServicesTab({
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? "nextMonth");
+              setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
             } else {
               presetBeforeOverdueRef.current = datePreset;
               const yesterday = new Date();
@@ -823,7 +823,7 @@ export default function ServicesTab({
                 setOverdueActive(false);
                 setVipOnly(false);
                 setIncludeArchived(false);
-                setDatePreset("nextMonth");
+                setDatePreset("thisMonth");
               }}
             >
               ✕ Clear
@@ -959,7 +959,7 @@ export default function ServicesTab({
                   {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
                     <>
                       <Text fontSize="xs" color="teal.600">
-                        Default crew: {detail.defaultAssignees.map((a, i) => (
+                        Default team: {detail.defaultAssignees.map((a, i) => (
                           <span key={a.userId}>
                             {i > 0 && ", "}
                             <span
@@ -971,9 +971,9 @@ export default function ServicesTab({
                           </span>
                         ))}
                       </Text>
-                      <Box px={2} py={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                      <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
                         <Text fontSize="2xs" color="yellow.700">
-                          The default crew is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default crew is restored on the next one.
+                          The default team is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default team is restored on the next one.
                         </Text>
                       </Box>
                     </>
@@ -996,7 +996,7 @@ export default function ServicesTab({
                     <StatusButton
                       id="job-default-crew"
                       itemId={job.id}
-                      label="Default Crew"
+                      label="Default Team"
                       onClick={async () => {
                         setDefaultCrewJobId(job.id);
                         setDefaultCrewCurrent(detail?.defaultAssignees ?? []);
@@ -1908,6 +1908,7 @@ export default function ServicesTab({
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
+            void load(false);
           }}
         />
       )}
