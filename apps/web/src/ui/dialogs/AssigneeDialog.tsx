@@ -163,6 +163,7 @@ export default function AssigneeDialog({ open, onOpenChange, occurrenceId, curre
                 onMakeClaimer={handleMakeClaimer}
                 showRoleControls
                 showMakeClaimer
+                allowRemoveClaimer
                 listTitle="Assigned workers"
                 emptyText="No one assigned yet."
               />

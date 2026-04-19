@@ -85,18 +85,29 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     saveDismissed(new Set());
   }
 
-  useEffect(() => {
+  async function loadItems() {
     setLoading(true);
-    async function load() {
-      try {
-        const list = await apiGet<WorkerOccurrence[]>("/api/occurrences");
-        setItems(Array.isArray(list) ? list : []);
-      } catch {
-        setItems([]);
-      }
-      setLoading(false);
+    try {
+      const list = await apiGet<WorkerOccurrence[]>("/api/occurrences");
+      setItems(Array.isArray(list) ? list : []);
+    } catch {
+      setItems([]);
     }
-    void load();
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    void loadItems();
+    // Reload when app becomes visible (handles day change, phone wake)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        // Re-check dismissed (clears if day changed)
+        setDismissed(loadDismissed());
+        void loadItems();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   const today = bizDateKey(new Date());

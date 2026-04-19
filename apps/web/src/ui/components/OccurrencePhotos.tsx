@@ -230,6 +230,16 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
           justifyContent="center"
           onMouseDown={() => setViewPhoto(null)}
           onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const dx = e.changedTouches[0].clientX - ((e.currentTarget as any)._touchX ?? 0);
+            if (Math.abs(dx) > 50) {
+              e.stopPropagation();
+              const vi = photos.findIndex((p) => p.id === viewPhoto?.id);
+              if (dx < 0 && vi < photos.length - 1) setViewPhoto(photos[vi + 1]);
+              else if (dx > 0 && vi > 0) setViewPhoto(photos[vi - 1]);
+            }
+          }}
         >
           {/* Navigation: prev */}
           {hasPrev && (

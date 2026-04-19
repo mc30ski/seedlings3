@@ -55,7 +55,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
           setMembers((prev) => [...prev, { userId, role, user: { id: userId, displayName: worker.displayName, email: worker.email } }]);
         }
       }
-      publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Worker added to default crew." : `${userIds.length} workers added.` });
+      publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Worker added to default team." : `${userIds.length} workers added.` });
       onChanged?.();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add worker.", err) });
@@ -67,7 +67,7 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     try {
       await apiDelete(`/api/admin/jobs/${jobId}/default-assignees/${userId}`);
       setMembers((prev) => prev.filter((m) => m.userId !== userId));
-      publishInlineMessage({ type: "SUCCESS", text: "Worker removed from default crew." });
+      publishInlineMessage({ type: "SUCCESS", text: "Worker removed from default team." });
       onChanged?.();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove worker.", err) });
@@ -95,13 +95,13 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
           <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.CloseTrigger />
             <Dialog.Header>
-              <Dialog.Title>Default Crew</Dialog.Title>
+              <Dialog.Title>Default Team</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={4}>
                 <Box px={2} py={1.5} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
                   <Text fontSize="2xs" color="yellow.700">
-                    The default crew is automatically assigned to each new occurrence. One-time team changes on individual occurrences won't affect these defaults.
+                    The default team is automatically assigned to each new occurrence. One-time team changes on individual occurrences won't affect these defaults.
                   </Text>
                 </Box>
                 <TeamMemberList
@@ -114,9 +114,9 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                   onToggleRole={handleToggleRole}
                   showRoleControls
                   showMakeClaimer={false}
-                  listTitle="Default crew"
-                  addTitle="Add to default crew"
-                  emptyText="No default crew set. Occurrences will be unassigned (claimable)."
+                  listTitle="Default team"
+                  addTitle="Add to default team"
+                  emptyText="No default team set. Occurrences will be unassigned (claimable)."
                 />
               </VStack>
             </Dialog.Body>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -48,11 +49,12 @@ type OpsData = {
 
 const presetItems = [
   { value: "rolling", label: "Rolling" },
-  { value: "today", label: "Today" },
+  { value: "now", label: "Now" },
   { value: "yesterday", label: "Yesterday" },
-  { value: "lastWeek", label: "Last 7 days" },
-  { value: "nextWeek", label: "Next week" },
-  { value: "nextMonth", label: "Next month" },
+  { value: "lastWeek", label: "Last week" },
+  { value: "lastMonth", label: "Last month" },
+  { value: "thisWeek", label: "This week" },
+  { value: "thisMonth", label: "This month" },
   { value: "all", label: "All time" },
 ];
 const presetCollection = createListCollection({ items: presetItems });
@@ -102,8 +104,8 @@ export default function OperationsTab() {
     return "rolling";
   });
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
-  const [dateFrom, setDateFrom] = useState(presetDates.from);
-  const [dateTo, setDateTo] = useState(presetDates.to);
+  const [dateFrom, setDateFrom] = usePersistedState("ops_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("ops_dateTo", presetDates.to);
 
   useEffect(() => {
     if (datePreset) {

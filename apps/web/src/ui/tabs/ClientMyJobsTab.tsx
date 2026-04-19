@@ -381,7 +381,7 @@ export default function ClientMyJobsTab() {
 
       {/* Photo viewer */}
       {viewerPhoto && (
-        <Box position="fixed" inset="0" zIndex={10000} bg="blackAlpha.800" display="flex" alignItems="center" justifyContent="center" onClick={() => { setViewerPhoto(null); setViewerPhotos([]); }}>
+        <Box position="fixed" inset="0" zIndex={10000} bg="blackAlpha.800" display="flex" alignItems="center" justifyContent="center" onClick={() => { setViewerPhoto(null); setViewerPhotos([]); }} onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = e.changedTouches[0].clientX - ((e.currentTarget as any)._touchX ?? 0); if (Math.abs(dx) > 50) { e.stopPropagation(); dx < 0 ? navigateViewer(1) : navigateViewer(-1); } }}>
           {viewerIdx > 0 && (
             <Box position="absolute" left="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigateViewer(-1); }} userSelect="none">◀</Box>
           )}
