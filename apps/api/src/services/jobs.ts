@@ -78,8 +78,45 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
   },
 };
 
+/** Admin-allowed transitions — includes reversals for correcting mistakes */
+const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
+  STANDARD: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
+    CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
+  },
+  ONE_OFF: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
+    CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
+  },
+  ESTIMATE: {
+    SCHEDULED: ["IN_PROGRESS", "CANCELED"],
+    IN_PROGRESS: ["SCHEDULED", "PROPOSAL_SUBMITTED", "CANCELED"],
+    PROPOSAL_SUBMITTED: ["IN_PROGRESS", "ACCEPTED", "REJECTED"],
+    ACCEPTED: ["PROPOSAL_SUBMITTED", "CLOSED"],
+    REJECTED: ["PROPOSAL_SUBMITTED", "CLOSED"],
+    CLOSED: ["ACCEPTED", "ARCHIVED"],
+  },
+  TASK: {
+    SCHEDULED: ["CLOSED", "CANCELED"],
+    CLOSED: ["SCHEDULED", "ARCHIVED"],
+    CANCELED: ["SCHEDULED"],
+  },
+  REMINDER: {
+    SCHEDULED: ["CLOSED"],
+    CLOSED: ["SCHEDULED"],
+  },
+};
+
 function isValidTransition(workflow: string, from: string, to: string): boolean {
   return VALID_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
+}
+
+function isValidAdminTransition(workflow: string, from: string, to: string): boolean {
+  return ADMIN_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
 export const jobs: ServicesJobs = {
@@ -349,6 +386,7 @@ export const jobs: ServicesJobs = {
           isEstimate: input.workflow === "ESTIMATE" || input.isEstimate || false,
           isAdminOnly: input.isAdminOnly ?? (input.workflow === "ESTIMATE" || input.isEstimate ? true : false),
           frequencyDays: input.frequencyDays ?? null,
+          title: input.title ?? null,
         } as any,
       });
 
@@ -463,10 +501,12 @@ export const jobs: ServicesJobs = {
     proposalAmount?: number;
     proposalNotes?: string;
     assigneeUserIds?: string[];
+    jobId?: string;
   }) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.create({
         data: {
+          jobId: input.jobId ?? null,
           kind: null,
           title: input.title,
           notes: input.notes ?? null,
@@ -511,7 +551,8 @@ export const jobs: ServicesJobs = {
   async updateOccurrence(
     currentUserId: string,
     occurrenceId: string,
-    patch: any
+    patch: any,
+    options?: { isAdmin?: boolean }
   ) {
     return prisma.$transaction(async (tx) => {
       // Fetch original before update (for link cascade delta + status validation)
@@ -520,12 +561,14 @@ export const jobs: ServicesJobs = {
 
       const data: any = {};
 
+      if ("jobId" in patch) data.jobId = patch.jobId ?? null;
       if (patch.kind != null) data.kind = patch.kind;
       if (patch.status != null) {
-        // Enforce valid status transitions (admins still can't skip states)
+        // Enforce valid status transitions — admins get expanded transitions (can revert)
         if (patch.status !== original.status) {
           const workflow = (original as any).workflow ?? "STANDARD";
-          if (!isValidTransition(workflow, original.status, patch.status)) {
+          const validate = options?.isAdmin ? isValidAdminTransition : isValidTransition;
+          if (!validate(workflow, original.status, patch.status)) {
             throw new ServiceError(
               "INVALID_TRANSITION",
               `Cannot transition from ${original.status} to ${patch.status} in ${workflow} workflow.`,
@@ -1141,7 +1184,13 @@ export const jobs: ServicesJobs = {
         throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
       }
 
-      // Trainees cannot take actions — only the claimer/lead can
+      // Only the claimer can start, complete, or manage jobs
+      const isClaimer = assignee.assignedById === currentUserId && assignee.role !== "observer";
+      if (!isClaimer) {
+        throw new ServiceError("NOT_CLAIMER", "Only the claimer can perform this action.", 403);
+      }
+
+      // Trainees cannot take actions
       const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
       if (actionUser.workerType === "TRAINEE") {
         throw new ServiceError("TRAINEE_CANNOT_ACT", "Trainees cannot start, complete, or manage jobs. The team lead must take this action.", 403);

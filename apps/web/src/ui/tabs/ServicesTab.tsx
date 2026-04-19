@@ -190,6 +190,7 @@ export default function ServicesTab({
   const [occurrenceJobHasFrequency, setOccurrenceJobHasFrequency] = useState(false);
   const [occurrenceJobFreqDays, setOccurrenceJobFreqDays] = useState<number | null>(null);
   const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
+  const [occurrenceDefaultWorkflow, setOccurrenceDefaultWorkflow] = useState<string | undefined>(undefined);
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
@@ -957,26 +958,26 @@ export default function ServicesTab({
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
                   {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
-                    <>
-                      <Text fontSize="xs" color="teal.600">
-                        Default team: {detail.defaultAssignees.map((a, i) => (
-                          <span key={a.userId}>
-                            {i > 0 && ", "}
-                            <span
-                              style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                            >
-                              {a.user?.displayName ?? a.user?.email ?? a.userId}
-                            </span>
+                    <Text fontSize="xs" color="teal.600">
+                      Default team: {detail.defaultAssignees.map((a, i) => (
+                        <span key={a.userId}>
+                          {i > 0 && ", "}
+                          <span
+                            style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                            onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                          >
+                            {a.user?.displayName ?? a.user?.email ?? a.userId}
                           </span>
-                        ))}
+                        </span>
+                      ))}
+                    </Text>
+                  )}
+                  {((job as any).assigneeCount > 0 || (detail?.defaultAssignees && detail.defaultAssignees.length > 0)) && (
+                    <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                      <Text fontSize="2xs" color="yellow.700">
+                        The default team is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default team is restored on the next one.
                       </Text>
-                      <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
-                        <Text fontSize="2xs" color="yellow.700">
-                          The default team is automatically assigned to each new occurrence. If a team member is swapped for a single occurrence, the default team is restored on the next one.
-                        </Text>
-                      </Box>
-                    </>
+                    </Box>
                   )}
                 </VStack>
                 {forAdmin && (
@@ -1197,71 +1198,47 @@ export default function ServicesTab({
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
                               const net = occ.price! - expTotal;
+                              const hasContractors = assignees.some((a: any) => a.user?.workerType !== "EMPLOYEE" && a.user?.workerType !== "TRAINEE");
+                              const hasEmployees = assignees.some((a: any) => a.user?.workerType === "EMPLOYEE" || a.user?.workerType === "TRAINEE");
+                              const commission = hasContractors && commissionPercent > 0 ? Math.round(net * commissionPercent) / 100 : 0;
+                              const margin = hasEmployees && marginPercent > 0 ? Math.round(net * marginPercent) / 100 : 0;
+                              const totalPayout = Math.max(0, occ.price! - expTotal - commission - margin);
 
-                              // If we have assignees with worker types, show per-person breakdown
-                              if (assignees.length > 0) {
-                                const splitAmount = occ.price! / assignees.length;
-                                return (
-                                  <VStack align="start" gap={0.5} mt={0.5} fontSize="xs">
-                                    <Text fontWeight="medium" color="fg.muted">Est. payouts:</Text>
-                                    {assignees.map((a: any) => {
-                                      const expShare = expTotal / assignees.length;
-                                      const personNet = splitAmount - expShare;
-                                      const isEmp = a.user?.workerType === "EMPLOYEE" || a.user?.workerType === "TRAINEE";
-                                      const pct = isEmp ? marginPercent : commissionPercent;
-                                      const deduction = Math.round(personNet * pct) / 100;
-                                      const payout = personNet - deduction;
-                                      const label = isEmp ? "margin" : "commission";
-                                      return (
-                                        <HStack key={a.userId} gap={1} wrap="wrap">
-                                          <Text color="fg.muted">
-                                            <span
-                                              style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                                            >
-                                              {a.user?.displayName ?? a.user?.email ?? a.userId}
-                                            </span>:
-                                          </Text>
-                                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                                            ${payout.toFixed(2)}
-                                          </Badge>
-                                          {pct > 0 && <Text color="orange.500">({pct}% {label})</Text>}
-                                        </HStack>
-                                      );
-                                    })}
-                                  </VStack>
-                                );
-                              }
-
-                              // No assignees yet — show generic estimates
-                              if (marginPercent > 0 || commissionPercent > 0) {
-                                const marginDed = Math.round(net * marginPercent) / 100;
-                                const commDed = Math.round(net * commissionPercent) / 100;
-                                return (
-                                  <VStack align="start" gap={0} mt={0.5} fontSize="xs" color="fg.muted">
-                                    <Text fontWeight="medium">Est. payout (per worker):</Text>
-                                    {marginPercent > 0 && (
-                                      <HStack gap={1}>
-                                        <Text>Employee:</Text>
-                                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                                          ${(net - marginDed).toFixed(2)}
-                                        </Badge>
-                                        <Text color="orange.500">({marginPercent}% margin)</Text>
-                                      </HStack>
-                                    )}
-                                    {commissionPercent > 0 && (
-                                      <HStack gap={1}>
-                                        <Text>Contractor:</Text>
-                                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                                          ${(net - commDed).toFixed(2)}
-                                        </Badge>
-                                        <Text color="orange.500">({commissionPercent}% commission)</Text>
-                                      </HStack>
-                                    )}
-                                  </VStack>
-                                );
-                              }
-                              return null;
+                              return (
+                                <Box fontSize="xs" color="fg.muted" mt={0.5}>
+                                  <HStack gap={2}>
+                                    <Text>Est. payout:</Text>
+                                    <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                      ${totalPayout.toFixed(2)}
+                                    </Badge>
+                                  </HStack>
+                                  <Text fontSize="xs" color="fg.muted">
+                                    ${occ.price!.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""}{commission > 0 ? ` − $${commission.toFixed(2)} commission (${commissionPercent}%)` : ""}{margin > 0 ? ` − $${margin.toFixed(2)} margin (${marginPercent}%)` : ""}
+                                  </Text>
+                                  {assignees.length > 0 && (
+                                    <VStack align="start" gap={0.5} mt={1}>
+                                      {assignees.map((a: any) => {
+                                        const perPerson = Math.round(totalPayout / assignees.length * 100) / 100;
+                                        return (
+                                          <HStack key={a.userId} gap={1} wrap="wrap">
+                                            <Text color="fg.muted">
+                                              <span
+                                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                              >
+                                                {a.user?.displayName ?? a.user?.email ?? a.userId}
+                                              </span>:
+                                            </Text>
+                                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                                              ${perPerson.toFixed(2)}
+                                            </Badge>
+                                          </HStack>
+                                        );
+                                      })}
+                                    </VStack>
+                                  )}
+                                </Box>
+                              );
                             })()}
                             {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
                               <HStack fontSize="xs" gap={2}>
@@ -1347,9 +1324,6 @@ export default function ServicesTab({
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const fee = pay.platformFeeAmount ?? 0;
                               const margin = pay.businessMarginAmount ?? 0;
-                              const splitTotal = (pay.splits ?? []).reduce((s: number, sp: any) => s + sp.amount, 0);
-                              const feeableSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
-                              const employeeSplitTotal = (pay.splits ?? []).filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s: number, sp: any) => s + sp.amount, 0);
                               return (
                                 <Box mt={1} p={2} bg="green.50" rounded="sm">
                                   <Text fontSize="xs" fontWeight="medium" color="green.700">
@@ -1360,33 +1334,23 @@ export default function ServicesTab({
                                   )}
                                   {(pay.splits ?? []).length > 0 && (
                                     <VStack align="start" gap={1} mt={1}>
-                                      {(pay.splits ?? []).map((sp: any) => {
-                                        const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-                                        const expShare = expTotal * ratio;
-                                        const isContractor = sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE";
-                                        const isEmp = sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE";
-                                        const feeShare = isContractor && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                                        const marginShare = isEmp && employeeSplitTotal > 0 ? margin * (sp.amount / employeeSplitTotal) : 0;
-                                        const payout = sp.amount - expShare - feeShare - marginShare;
-                                        return (
-                                          <Box key={sp.userId} fontSize="xs">
-                                            <HStack gap={2} align="center">
-                                              <Text fontWeight="medium" color="green.700">
-                                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
-                                              </Text>
-                                              <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
-                                                Payout: ${payout.toFixed(2)}
-                                              </Badge>
-                                            </HStack>
-                                            <Box pl={2} color="fg.muted">
-                                              <Text>Split: ${sp.amount.toFixed(2)}</Text>
-                                              {expShare > 0 && <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>}
-                                              {feeShare > 0 && <Text color="orange.600">−${feeShare.toFixed(2)} commission ({pay.platformFeePercent}%)</Text>}
-                                              {marginShare > 0 && <Text color="orange.600">−${marginShare.toFixed(2)} margin ({pay.businessMarginPercent}%)</Text>}
-                                            </Box>
-                                          </Box>
-                                        );
-                                      })}
+                                      {(pay.splits ?? []).map((sp: any) => (
+                                        <HStack key={sp.userId} gap={2} align="center" fontSize="xs">
+                                          <Text fontWeight="medium" color="green.700">
+                                            {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                          </Text>
+                                          <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                                            ${sp.amount.toFixed(2)}
+                                          </Badge>
+                                        </HStack>
+                                      ))}
+                                      {(expTotal > 0 || fee > 0 || margin > 0) && (
+                                        <Box fontSize="xs" color="fg.muted" mt={0.5}>
+                                          {expTotal > 0 && <Text>Expenses: ${expTotal.toFixed(2)}</Text>}
+                                          {fee > 0 && <Text>Commission ({pay.platformFeePercent}%): ${fee.toFixed(2)}</Text>}
+                                          {margin > 0 && <Text>Margin ({pay.businessMarginPercent}%): ${margin.toFixed(2)}</Text>}
+                                        </Box>
+                                      )}
                                     </VStack>
                                   )}
                                 </Box>
@@ -1404,7 +1368,7 @@ export default function ServicesTab({
                                       <Text fontSize="xs" color="orange.600" flex="1">
                                         ${exp.cost.toFixed(2)} — {exp.description}
                                       </Text>
-                                      {forAdmin && (
+                                      {forAdmin && !["COMPLETED", "PENDING_PAYMENT", "CLOSED", "ARCHIVED"].includes(occ.status) && (
                                         <Button
                                           size="xs"
                                           variant="ghost"
@@ -1547,6 +1511,7 @@ export default function ServicesTab({
                                         setOccurrenceDefaultEstMins(result.occurrence?.estimatedMinutes ?? null);
                                         setOccurrenceJobHasFrequency(false);
                                         setOccurrenceJobFreqDays(null);
+                                        setOccurrenceDefaultWorkflow("STANDARD");
                                         setPromptOccurrenceOpen(true);
                                       }
                                     } catch (err: any) {
@@ -1841,6 +1806,7 @@ export default function ServicesTab({
               setOccurrenceDefaultEstMins(created.estimatedMinutes ?? null);
               setOccurrenceJobHasFrequency(!!(created.frequencyDays));
               setOccurrenceJobFreqDays(created.frequencyDays ?? null);
+              setOccurrenceDefaultWorkflow("STANDARD");
               setPromptOccurrenceOpen(true);
             }
           }}
@@ -1873,7 +1839,9 @@ export default function ServicesTab({
           showOneOff={occurrenceJobHasFrequency}
           jobFrequencyDays={occurrenceJobFreqDays}
           defaultAssignees={occurrenceDefaultAssignees}
+          defaultWorkflow={occurrenceDefaultWorkflow}
           onSaved={() => {
+            setOccurrenceDefaultWorkflow(undefined);
             if (occurrenceJobId) {
               setExpandedMap((prev) => ({ ...prev, [occurrenceJobId]: true }));
               void loadDetail(occurrenceJobId, true);
@@ -1903,6 +1871,7 @@ export default function ServicesTab({
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
           defaultWorkflow={editingOccurrence.workflow}
+          defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
           isAdmin={forAdmin}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
@@ -1985,9 +1954,13 @@ export default function ServicesTab({
           }}
           endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           defaultAmount={acceptPaymentOcc.price}
-          assignees={(acceptPaymentOcc.assignees ?? []).filter((a: any) => a.role !== "observer").map((a) => ({
+          totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0)}
+          commissionPercent={commissionPercent}
+          marginPercent={marginPercent}
+          assignees={(acceptPaymentOcc.assignees ?? []).filter((a: any) => a.role !== "observer").map((a: any) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
+            workerType: a.user?.workerType,
           }))}
           onAccepted={(result) => {
             const jobId = acceptPaymentJobId;

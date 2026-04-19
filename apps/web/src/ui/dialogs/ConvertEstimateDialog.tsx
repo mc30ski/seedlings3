@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   Box,
   Button,
@@ -474,15 +475,7 @@ export default function ConvertEstimateDialog({
                   <Text fontSize="sm" fontWeight="medium" mb={1}>
                     Default Price
                   </Text>
-                  <input
-                    type="number"
-                    placeholder="e.g., 250.00"
-                    value={defaultPrice}
-                    onChange={(e) => setDefaultPrice(e.target.value)}
-                    step="0.01"
-                    min="0"
-                    style={inputStyle}
-                  />
+                  <CurrencyInput value={defaultPrice} onChange={setDefaultPrice} placeholder="250.00" size="sm" />
                 </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Job Type</Text>

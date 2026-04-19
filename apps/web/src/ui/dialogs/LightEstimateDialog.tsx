@@ -21,11 +21,19 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 
 type WorkerLite = {
   id: string;
   displayName?: string | null;
   email?: string | null;
+};
+
+type JobListItem = {
+  id: string;
+  kind: string;
+  status: string;
+  property?: { displayName?: string; client?: { displayName?: string } } | null;
 };
 
 type EditEstimate = {
@@ -38,6 +46,7 @@ type EditEstimate = {
   estimateAddress?: string | null;
   notes?: string | null;
   proposalAmount?: number | null;
+  jobId?: string | null;
   assignees?: { userId: string; user?: { id: string; displayName?: string | null; email?: string | null } }[];
 };
 
@@ -65,6 +74,10 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
   const [proposalAmount, setProposalAmount] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Optional Job Service link
+  const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string[]>([]);
+
   // Assignee picker
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
@@ -90,15 +103,21 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
       setEmailError("");
       setAssigneeIds(editEstimate.assignees?.map((a) => a.userId) ?? []);
       setSelectValue([]);
+      setSelectedJobId(editEstimate.jobId ? [editEstimate.jobId] : []);
     } else {
       reset();
     }
     (async () => {
       try {
-        const list = await apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true");
-        setWorkers(Array.isArray(list) ? list : []);
+        const [workerList, jobList] = await Promise.all([
+          apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true"),
+          apiGet<JobListItem[]>("/api/admin/jobs?status=ALL"),
+        ]);
+        setWorkers(Array.isArray(workerList) ? workerList : []);
+        setJobs(Array.isArray(jobList) ? jobList : []);
       } catch {
         setWorkers([]);
+        setJobs([]);
       }
     })();
   }, [open]);
@@ -146,6 +165,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
     setProposalAmount("");
     setAssigneeIds(myId ? [myId] : []);
     setSelectValue([]);
+    setSelectedJobId([]);
   }
 
   function validatePhone(val: string) {
@@ -171,6 +191,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
         assigneeUserIds: assigneeIds,
       };
       const fullName = [contactFirstName.trim(), contactLastName.trim()].filter(Boolean).join(" ");
+      if (selectedJobId[0]) body.jobId = selectedJobId[0];
       if (fullName) body.contactName = fullName;
       if (contactPhone.trim()) body.contactPhone = contactPhone.trim();
       if (contactEmail.trim()) body.contactEmail = contactEmail.trim();
@@ -211,15 +232,10 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
         <Dialog.Positioner>
           <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>{isEdit ? "Edit Estimate" : "New Estimate (Stand-alone)"}</Dialog.Title>
+              <Dialog.Title>{isEdit ? "Edit Estimate" : "New Estimate"}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
-                <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-                  <Text fontSize="xs" color="yellow.800">
-                    This is a lightweight estimate — you don't need to create a Client, Property, or Job Service first. If the estimate is accepted, you'll be prompted to create those.
-                  </Text>
-                </Box>
                 {/* Title */}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
@@ -312,6 +328,56 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                   />
                 </Box>
 
+                {/* Optional Job Service link */}
+                {!selectedJobId[0] && (
+                  <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+                    <Text fontSize="xs" color="yellow.800">
+                      You can optionally link to an existing Job Service below. If the estimate is accepted without one, you'll be prompted to create a Client, Property, and Job Service.
+                    </Text>
+                  </Box>
+                )}
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Job Service (optional)</Text>
+                  <Select.Root
+                    collection={createListCollection({
+                      items: [
+                        { label: "None — standalone estimate", value: "" },
+                        ...jobs.map((j) => ({
+                          label: `${j.property?.displayName ?? "Unknown"} — ${j.property?.client?.displayName ?? ""}`.trim(),
+                          value: j.id,
+                        })),
+                      ],
+                    })}
+                    value={selectedJobId}
+                    onValueChange={(e) => setSelectedJobId(e.value)}
+                    size="sm"
+                    positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                  >
+                    <Select.Control>
+                      <Select.Trigger>
+                        <Select.ValueText placeholder="None — standalone estimate" />
+                      </Select.Trigger>
+                    </Select.Control>
+                    <Select.Positioner>
+                      <Select.Content>
+                        <Select.Item item="">
+                          <Select.ItemText>None — standalone estimate</Select.ItemText>
+                        </Select.Item>
+                        {jobs.map((j) => (
+                          <Select.Item key={j.id} item={j.id}>
+                            <Select.ItemText>
+                              {j.property?.displayName ?? "Unknown"} — {j.property?.client?.displayName ?? ""}
+                            </Select.ItemText>
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Select.Root>
+                  <Text fontSize="xs" color="fg.muted" mt={1}>
+                    Link to an existing Job Service. When accepted, it will create an occurrence under that job instead of starting the New Job workflow.
+                  </Text>
+                </Box>
+
                 {/* Notes */}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Notes</Text>
@@ -327,15 +393,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                 {/* Proposal Amount */}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Proposal Amount</Text>
-                  <input
-                    type="number"
-                    placeholder="e.g., 250.00"
-                    value={proposalAmount}
-                    onChange={(e) => setProposalAmount(e.target.value)}
-                    step="0.01"
-                    min="0"
-                    style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                  />
+                  <CurrencyInput value={proposalAmount} onChange={setProposalAmount} placeholder="250.00" size="sm" />
                 </Box>
 
                 {/* Assignee Picker — only for create, not edit */}

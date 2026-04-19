@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
   Badge,
   Box,
@@ -245,16 +246,8 @@ export default function PricingTab({ isSuper }: Props) {
                   </Box>
                   <HStack gap={3}>
                     <Box flex="1">
-                      <Text fontSize="sm" fontWeight="medium" mb={1}>Amount ($) *</Text>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="60.00"
-                        value={formAmount}
-                        onChange={(e) => setFormAmount(e.target.value)}
-                        style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                      />
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>Amount *</Text>
+                      <CurrencyInput value={formAmount} onChange={setFormAmount} placeholder="60.00" size="sm" />
                     </Box>
                     <Box flex="1">
                       <Text fontSize="sm" fontWeight="medium" mb={1}>Unit *</Text>

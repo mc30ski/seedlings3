@@ -11,6 +11,7 @@ import Head from "next/head";
 import { setAuthTokenFetcher } from "../src/lib/api";
 import PWAPullToRefresh from "../src/ui/helpers/PWAPullToRefresh";
 import { OfflineProvider, useOffline, registerServiceWorker } from "../src/lib/offline";
+import { clearAllPersistedState } from "../src/lib/usePersistedState";
 import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
@@ -22,7 +23,16 @@ if (!PUBLISHABLE_KEY) {
 }
 
 function AppInner({ Component, pageProps }: AppProps) {
-  const { getToken } = useAuth();
+  const { getToken, userId } = useAuth();
+
+  // Clear localStorage when user changes (sign-out → sign-in as different user)
+  useEffect(() => {
+    const lastUser = localStorage.getItem("seedlings_lastUserId");
+    if (userId && lastUser && lastUser !== userId) {
+      clearAllPersistedState();
+    }
+    if (userId) localStorage.setItem("seedlings_lastUserId", userId);
+  }, [userId]);
   const offlineState = useOffline();
 
   // Wire Clerk token into API client

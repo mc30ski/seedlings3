@@ -19,10 +19,6 @@ export const payments: ServicesPayments = {
     if (!splits || splits.length === 0) {
       throw new ServiceError("INVALID_SPLITS", "At least one payment split is required.", 400);
     }
-    const splitTotal = splits.reduce((s, sp) => s + sp.amount, 0);
-    if (Math.abs(splitTotal - amountPaid) > 0.01) {
-      throw new ServiceError("SPLIT_MISMATCH", `Split amounts ($${splitTotal.toFixed(2)}) do not equal payment total ($${amountPaid.toFixed(2)}).`, 400);
-    }
 
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.findUnique({
@@ -40,77 +36,40 @@ export const payments: ServicesPayments = {
         data: { status: JobOccurrenceStatus.CLOSED },
       });
 
-      // Calculate platform fee only on contractor/unclassified workers' splits
+      // Calculate fees on (amountPaid - expenses), not on splits (splits already represent payout)
       let platformFeePercent: number | null = null;
       let platformFeeAmount: number | null = null;
+      let businessMarginPercent: number | null = null;
+      let businessMarginAmount: number | null = null;
 
       const activeAssignees = occ.assignees.filter((a) => a.role !== "observer");
       const assigneeUsers = await tx.user.findMany({
         where: { id: { in: activeAssignees.map((a) => a.userId) } },
         select: { id: true, workerType: true },
       });
-      const feeableUserIds = new Set(
-        assigneeUsers
-          .filter((u) => u.workerType !== "EMPLOYEE" && u.workerType !== "TRAINEE")
-          .map((u) => u.id)
-      );
 
-      if (feeableUserIds.size > 0) {
+      const expensesAgg = await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
+      const totalExpenses = expensesAgg._sum.cost ?? 0;
+      const netAfterExpenses = Math.max(0, amountPaid - totalExpenses);
+
+      const hasContractors = assigneeUsers.some((u) => u.workerType !== "EMPLOYEE" && u.workerType !== "TRAINEE");
+      const hasEmployees = assigneeUsers.some((u) => u.workerType === "EMPLOYEE" || u.workerType === "TRAINEE");
+
+      if (hasContractors) {
         const feeSetting = await tx.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } });
         const feePercent = Number(feeSetting?.value ?? 0);
         if (feePercent > 0) {
-          // Only apply fee to contractor/unclassified splits
-          const feeableSplitTotal = splits
-            .filter((sp) => feeableUserIds.has(sp.userId))
-            .reduce((s, sp) => s + sp.amount, 0);
-
-          // Pro-rate expenses across all splits, then only fee the contractor portion
-          const expensesAgg = await tx.expense.aggregate({
-            where: { occurrenceId },
-            _sum: { cost: true },
-          });
-          const totalExpenses = expensesAgg._sum.cost ?? 0;
-          const totalSplitAmount = splits.reduce((s, sp) => s + sp.amount, 0);
-          const feeableExpenseShare = totalSplitAmount > 0
-            ? totalExpenses * (feeableSplitTotal / totalSplitAmount)
-            : 0;
-
-          const feeableNet = feeableSplitTotal - feeableExpenseShare;
           platformFeePercent = feePercent;
-          platformFeeAmount = Math.round(feeableNet * feePercent) / 100;
+          platformFeeAmount = Math.round(netAfterExpenses * feePercent) / 100;
         }
       }
 
-      // Calculate business margin on employee/trainee splits
-      let businessMarginPercent: number | null = null;
-      let businessMarginAmount: number | null = null;
-
-      const employeeUserIds = new Set(
-        assigneeUsers
-          .filter((u) => u.workerType === "EMPLOYEE" || u.workerType === "TRAINEE")
-          .map((u) => u.id)
-      );
-
-      if (employeeUserIds.size > 0) {
+      if (hasEmployees) {
         const marginSetting = await tx.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } });
         const marginPercent = Number(marginSetting?.value ?? 0);
         if (marginPercent > 0) {
-          const employeeSplitTotal = splits
-            .filter((sp) => employeeUserIds.has(sp.userId))
-            .reduce((s, sp) => s + sp.amount, 0);
-
-          const expensesAgg2 = platformFeeAmount != null
-            ? { _sum: { cost: (await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost } }
-            : await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } });
-          const totalExpenses2 = expensesAgg2._sum.cost ?? 0;
-          const totalSplitAmount2 = splits.reduce((s, sp) => s + sp.amount, 0);
-          const employeeExpenseShare = totalSplitAmount2 > 0
-            ? totalExpenses2 * (employeeSplitTotal / totalSplitAmount2)
-            : 0;
-
-          const employeeNet = employeeSplitTotal - employeeExpenseShare;
           businessMarginPercent = marginPercent;
-          businessMarginAmount = Math.round(employeeNet * marginPercent) / 100;
+          businessMarginAmount = Math.round(netAfterExpenses * marginPercent) / 100;
         }
       }
 
@@ -542,8 +501,12 @@ export const payments: ServicesPayments = {
         throw new ServiceError("NO_ASSIGNEES", "Cannot recalculate — no assignees on this occurrence.", 400);
       }
 
-      // Even split across current assignees
-      const splitAmount = Math.round((payment.amountPaid / assigneeIds.length) * 100) / 100;
+      // Even split across current assignees — deduct expenses, commission, and margin first
+      const totalPayout = payment.amountPaid
+        - (payment.platformFeeAmount ?? 0)
+        - (payment.businessMarginAmount ?? 0)
+        - ((await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost ?? 0);
+      const splitAmount = Math.round((Math.max(0, totalPayout) / assigneeIds.length) * 100) / 100;
 
       await tx.paymentSplit.deleteMany({ where: { paymentId: payment.id } });
       await tx.paymentSplit.createMany({

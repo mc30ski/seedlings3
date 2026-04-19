@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -313,6 +313,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Reschedule state
   const [rescheduleOcc, setRescheduleOcc] = useState<WorkerOccurrence | null>(null);
+  const [rescheduleNotify, setRescheduleNotify] = useState<{ message: string; phone?: string | null; email?: string | null } | null>(null);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const [receiptContact, setReceiptContact] = useState<{ phone?: string | null; email?: string | null }>({});
   const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
@@ -342,9 +343,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         await apiPost(`/api/occurrences/${rescheduleOcc.id}/reschedule`, { ...patchData, comment: rescheduleReason.trim() });
       }
       publishInlineMessage({ type: "SUCCESS", text: `Job rescheduled to ${fmtDate(rescheduleDate + "T12:00:00Z")}.` });
+
+      // Build notify message
+      const clientName = rescheduleOcc.job?.property?.client?.displayName ?? "Client";
+      const property = rescheduleOcc.job?.property?.displayName ?? "";
+      const newDateStr = fmtDate(rescheduleDate + "T12:00:00Z");
+      const reason = rescheduleReason.trim();
+      const notifyMsg = `Hi ${clientName}, this is Seedlings Lawn Care. Your service at ${property} has been rescheduled to ${newDateStr}.${reason ? ` Reason: ${reason}.` : ""} Please let us know if you have any questions. Thank you!`;
+      const poc = rescheduleOcc.job?.property?.pointOfContact;
+
       setRescheduleOcc(null);
       setRescheduleDate("");
       setRescheduleReason("");
+
+      setRescheduleNotify({
+        message: notifyMsg,
+        phone: poc?.phone,
+        email: poc?.email,
+      });
+
       await load(false);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reschedule failed.", err) });
@@ -426,7 +443,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
   }, [forAdmin]);
 
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "thisMonth");
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);
   const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
@@ -435,6 +452,33 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [vipOnly, setVipOnly] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
+
+  // Daily reset for worker tab — clear filters and set time frame to "Now" on the first render of a new day
+  useEffect(() => {
+    if (forAdmin) return;
+    const key = `${pfx}_lastUsedDate`;
+    try {
+      const lastDate = localStorage.getItem(key);
+      const today = new Date().toISOString().slice(0, 10);
+      if (lastDate && lastDate !== today) {
+        // New day — reset filters
+        setDatePreset("now");
+        const nowDates = computeDatesFromPreset("now");
+        setDateFrom(nowDates.from);
+        setDateTo(nowDates.to);
+        setKind(["ALL"]);
+        setTypeFilter(["ALL"]);
+        setStatusFilter(["ALL"]);
+        setOverdueActive(false);
+        setVipOnly(false);
+        setLikedOnly(false);
+        setQ("");
+        setHighlightOccId(null);
+        setFilterJobId(null);
+      }
+      localStorage.setItem(key, today);
+    } catch {}
+  }, []);
 
   // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
   useEffect(() => {
@@ -1430,7 +1474,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
+              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisMonth" : "now"));
             } else {
               presetBeforeOverdueRef.current = datePreset;
               const yesterday = new Date();
@@ -1535,8 +1579,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
-                const d = computeDatesFromPreset("thisMonth");
-                setDatePreset("thisMonth");
+                const defaultPreset = forAdmin ? "thisMonth" : "now";
+                const d = computeDatesFromPreset(defaultPreset);
+                setDatePreset(defaultPreset);
                 setDateFrom(d.from);
                 setDateTo(d.to);
                 void load(true, { from: d.from, to: d.to });
@@ -1601,7 +1646,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
-          {group.items.map((occ) => {
+          {group.items.map((occ, occIdx) => {
             const assignees = occ.assignees ?? [];
             const myAssignee = assignees.find((a) => a.userId === myId);
             const isObserver = myAssignee?.role === "observer";
@@ -1631,7 +1676,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             if (isGhost) {
               return (
                 <Card.Root
-                  key={`ghost-${occ.id}`}
+                  key={`ghost-${occ.id}-${occIdx}`}
                   variant="outline"
                   borderColor="purple.300"
                   bg="purple.50"
@@ -1699,7 +1744,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 : "gray";
               return (
                 <Card.Root
-                  key={`pin-ghost-${occ.id}`}
+                  key={`pin-ghost-${occ.id}-${occIdx}`}
                   variant="outline"
                   borderColor={`${ghostColor}.300`}
                   bg={`${ghostColor}.50`}
@@ -1749,8 +1794,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isEstimateOcc ? "pink"
               : isAssignedToMe ? "teal"
               : isAssignedToOthers ? "gray"
+              : isUnassigned ? "yellow"
               : null;
             const cardBg = cardColorBase === "gray" && isAssignedToOthers ? "gray.100"
+              : cardColorBase === "yellow" ? "yellow.50"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
@@ -1826,7 +1873,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
                   </Box>
                 )}
-                <Card.Header py="3" px="4" pb="0">
+                <Card.Header py="3" px="4" pb="0" display="block">
                   {isCardCompact ? (
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection="column" gap={1}>
@@ -1849,6 +1896,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               {occ.job?.property?.displayName}
                               {occ.job?.property?.client?.displayName && (
                                 <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                              )}
+                              {isEstimateOcc && occ.title && (
+                                <Text as="span" color="fg.muted" fontWeight="normal"> · {occ.title}</Text>
                               )}
                             </>
                           )}
@@ -1914,7 +1964,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </Box>
                     ) : (
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
-                      <VStack align="stretch" gap={1}>
+                      <Box display="flex" flexDirection="column" gap="4px" w="full">
                         <HStack justifyContent="space-between" alignItems="center">
                           <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">
                             {isReminder ? (
@@ -1949,6 +1999,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </HStack>
                           )}
                         </HStack>
+                        {isEstimateOcc && occ.title && !isLightEstimate && (
+                          <Text fontSize="sm" color="fg.muted">{occ.title}</Text>
+                        )}
                         {((!isLightEstimate && !isTaskOrReminder) || (isTaskOrReminder && occ.linkedOccurrence) || (isVipClient && vipReason)) && (
                         <VStack align="start" gap={0} flex="1" minW={0}>
                             {isTaskOrReminder && occ.linkedOccurrence && (
@@ -2030,69 +2083,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             )}
                           </VStack>
                         )}
-                          <HStack gap={1} flexWrap="wrap" alignItems="center">
-                          {isLightEstimate && occ.estimateAddress && (
-                            <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
-                          )}
-                          {isTentative ? (
-                            <StatusBadge status="Tentative" palette="orange" variant="solid" />
-                          ) : occ.status !== "SCHEDULED" ? (
-                            <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
-                          ) : null}
-                          {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
-                          {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
-                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
-                              const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
-                              return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
-                          })()}
-                          {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                            <StatusBadge status="Estimate" palette="pink" variant="solid" />
-                          )}
-                          {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && (
-                            <StatusBadge status="One-off" palette="cyan" variant="solid" />
-                          )}
-                          {isAdminOnlyOcc && (
-                            <StatusBadge status="Administered" palette="red" variant="outline" />
-                          )}
-                          {occ.linkGroupId && (
-                            <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
-                              <Link2 size={10} style={{ marginRight: 3 }} /> Linked
-                            </Badge>
-                          )}
-                          {(occ.price ?? 0) >= highValueThreshold && (
-                            <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
-                              <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
-                            </span>
-                          )}
-                          {isWorkerView && occ.reminder && (
-                            <HStack gap={1}>
-                              <Badge
-                                colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
-                                variant="subtle" fontSize="xs" borderRadius="full" px="2"
-                              >
-                                <Bell size={10} style={{ marginRight: 3 }} />
-                                {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
-                              </Badge>
-                              {occ.reminder.note && (
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  px="1"
-                                  minW="0"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigator.clipboard.writeText(occ.reminder!.note!);
-                                    publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
-                                  }}
-                                  title="Copy reminder note"
-                                >
-                                  <Copy size={12} style={{ display: "block" }} />
-                                </Button>
-                              )}
-                            </HStack>
-                          )}
-                          </HStack>
-                      </VStack>
+                      </Box>
                     )}
                 </Card.Header>
 
@@ -2100,9 +2091,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
                       {/* Job type */}
-                      {!isTaskOrReminder && (
+                      {!isTaskOrReminder && (occ as any).jobType && (
                         <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                          {(occ as any).jobType ? jobTypeLabel((occ as any).jobType) : "Unspecified"}
+                          {jobTypeLabel((occ as any).jobType)}
                         </Badge>
                       )}
                       {/* Price / payout / time */}
@@ -2134,11 +2125,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         })()}
                         {(() => {
                           const actual = actualMinutes(occ);
-                          if (actual != null && occ.estimatedMinutes) {
-                            const color = actual <= occ.estimatedMinutes ? "green.600" : "red.600";
+                          const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
+                          const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
+                          if (actual != null && adjEst) {
+                            const color = actual <= adjEst ? "green.600" : "red.600";
                             return <Text color={color} fontWeight="medium">{formatDuration(actual)}</Text>;
                           }
-                          if (occ.estimatedMinutes != null) return <Text color="fg.muted">{formatDuration(occ.estimatedMinutes)}</Text>;
+                          if (adjEst != null) return <Text color="fg.muted">{formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>;
                           return null;
                         })()}
                       </Box>
@@ -2212,8 +2205,62 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                   </Card.Body>
                 ) : (
-                <Card.Body pt="0">
-                  <VStack align="start" gap={1}>
+                <Card.Body pt="2" px="4">
+                  <VStack align="start" gap={2} w="full">
+                    {isLightEstimate && occ.estimateAddress && (
+                      <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
+                    )}
+                    <HStack gap={1} flexWrap="wrap" alignItems="center">
+                      {isTentative ? (
+                        <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                      ) : occ.status !== "SCHEDULED" ? (
+                        <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
+                      ) : null}
+                      {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
+                      {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
+                      {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
+                          const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
+                          return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
+                      })()}
+                      {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                        <StatusBadge status="Estimate" palette="pink" variant="solid" />
+                      )}
+                      {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && (
+                        <StatusBadge status="One-off" palette="cyan" variant="solid" />
+                      )}
+                      {isAdminOnlyOcc && (
+                        <StatusBadge status="Administered" palette="red" variant="outline" />
+                      )}
+                      {occ.linkGroupId && (
+                        <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
+                          <Link2 size={10} style={{ marginRight: 3 }} /> Linked
+                        </Badge>
+                      )}
+                      {(occ.price ?? 0) >= highValueThreshold && (
+                        <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
+                          <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
+                        </span>
+                      )}
+                      {isWorkerView && occ.reminder && (
+                        <HStack gap={1}>
+                          <Badge
+                            colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
+                            variant="subtle" fontSize="xs" borderRadius="full" px="2"
+                          >
+                            <Bell size={10} style={{ marginRight: 3 }} />
+                            {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
+                          </Badge>
+                          {occ.reminder.note && (
+                            <Button size="xs" variant="ghost" px="1" minW="0"
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(occ.reminder!.note!); publishInlineMessage({ type: "SUCCESS", text: "Copied!" }); }}
+                              title="Copy reminder note"
+                            >
+                              <Copy size={12} style={{ display: "block" }} />
+                            </Button>
+                          )}
+                        </HStack>
+                      )}
+                    </HStack>
                     {occ.startAt && (
                       <Text fontSize="xs">
                         {fmtDate(occ.startAt)}
@@ -2283,35 +2330,50 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       const deduction = Math.round(net * pct) / 100;
                       const payout = net - deduction;
                       const label = isEmp ? "margin" : "commission";
-                      return pct > 0 ? (
+                      const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+                      const perPerson = activeAssignees.length > 1 ? Math.round(payout / activeAssignees.length * 100) / 100 : null;
+                      return (
                         <Box fontSize="xs" color="fg.muted" mt={0.5}>
-                          <HStack gap={2}>
-                            <Text>Est. payout:</Text>
-                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                              ${payout.toFixed(2)}
-                            </Badge>
-                          </HStack>
-                          <Text fontSize="xs" color="fg.muted">
-                            ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
-                          </Text>
+                          {pct > 0 && (
+                            <>
+                              <HStack gap={2}>
+                                <Text>Est. payout:</Text>
+                                <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                  ${payout.toFixed(2)}
+                                </Badge>
+                              </HStack>
+                              <Text fontSize="xs" color="fg.muted">
+                                ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
+                              </Text>
+                            </>
+                          )}
+                          {perPerson != null && (
+                            <Text fontSize="xs" color="fg.muted" mt={pct > 0 ? 0.5 : 0}>
+                              ~${perPerson.toFixed(2)}/person if split evenly ({activeAssignees.length} workers)
+                            </Text>
+                          )}
                         </Box>
-                      ) : null;
+                      );
                     })()}
-                    {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (
+                    {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (() => {
+                      const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
+                      const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
+                      return (
                       <HStack fontSize="xs" gap={2}>
-                        {occ.estimatedMinutes != null && (
-                          <Text color="fg.muted">Est: {formatDuration(occ.estimatedMinutes)}</Text>
+                        {adjEst != null && (
+                          <Text color="fg.muted">Est: {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>
                         )}
                         {(() => {
                           const actual = actualMinutes(occ);
                           if (actual == null) return null;
-                          const color = occ.estimatedMinutes
-                            ? actual <= occ.estimatedMinutes ? "green.600" : "red.600"
+                          const color = adjEst
+                            ? actual <= adjEst ? "green.600" : "red.600"
                             : "fg.muted";
                           return <Text color={color} fontWeight="medium">Actual: {formatDuration(actual)}</Text>;
                         })()}
                       </HStack>
-                    )}
+                      );
+                    })()}
                     {occ.startedAt && (
                       <Text fontSize="xs" color="fg.muted">
                         Start Time: {fmtDateTime(occ.startedAt)}
@@ -2482,33 +2544,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           )}
                           {(pay.splits ?? []).length > 0 && (
                             <VStack align="start" gap={1} mt={1}>
-                              {(pay.splits ?? []).map((sp: any) => {
-                                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-                                const expShare = expTotal * ratio;
-                                const isContractor = sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE";
-                                const isEmployee = sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE";
-                                const feeShare = isContractor && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                                const marginShare = isEmployee && employeeSplitTotal > 0 ? margin * (sp.amount / employeeSplitTotal) : 0;
-                                const payout = sp.amount - expShare - feeShare - marginShare;
-                                return (
-                                  <Box key={sp.userId} fontSize="xs">
-                                    <HStack gap={2} align="center">
-                                      <Text fontWeight="medium" color="green.700">
-                                        {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
-                                      </Text>
-                                      <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
-                                        Payout: ${payout.toFixed(2)}
-                                      </Badge>
-                                    </HStack>
-                                    <Box pl={2} color="fg.muted">
-                                      <Text>Split: ${sp.amount.toFixed(2)}</Text>
-                                      {expShare > 0 && <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>}
-                                      {feeShare > 0 && <Text color="orange.600">−${feeShare.toFixed(2)} commission ({pay.platformFeePercent}%)</Text>}
-                                      {marginShare > 0 && <Text color="orange.600">−${marginShare.toFixed(2)} margin ({pay.businessMarginPercent}%)</Text>}
-                                    </Box>
-                                  </Box>
-                                );
-                              })}
+                              {(pay.splits ?? []).map((sp: any) => (
+                                <HStack key={sp.userId} gap={2} align="center" fontSize="xs">
+                                  <Text fontWeight="medium" color="green.700">
+                                    {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                  </Text>
+                                  <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                                    ${sp.amount.toFixed(2)}
+                                  </Badge>
+                                </HStack>
+                              ))}
+                              {(expTotal > 0 || fee > 0 || margin > 0) && (
+                                <Box fontSize="xs" color="fg.muted" mt={0.5}>
+                                  {expTotal > 0 && <Text>Expenses: ${expTotal.toFixed(2)}</Text>}
+                                  {fee > 0 && <Text>Commission ({pay.platformFeePercent}%): ${fee.toFixed(2)}</Text>}
+                                  {margin > 0 && <Text>Margin ({pay.businessMarginPercent}%): ${margin.toFixed(2)}</Text>}
+                                </Box>
+                              )}
                             </VStack>
                           )}
                         </Box>
@@ -2683,27 +2735,235 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                 {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
-                    <HStack gap={2} wrap="wrap" mb="2">
-                      {/* Task close button */}
-                      {isTask && occ.status === "SCHEDULED" && (<>
+                    <VStack align="start" gap={2} mb="2">
+                    {/* Primary action — Start / Complete / Accept Payment */}
+                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        onClick={async () => {
+                          if (isOffline) {
+                            await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+                            setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+                            publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                            return;
+                          }
+                          const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
+                          const todayDate = bizDateKey(new Date());
+                          const isEarly = occDate && occDate !== todayDate;
+                          if (isEarly) {
+                            setConfirmAction({
+                              title: "Start Job Early?",
+                              message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Update date to today? Are you currently on-site?`,
+                              confirmLabel: "Yes — on-site, record location",
+                              colorPalette: "blue",
+                              onConfirm: async () => {
+                                try {
+                                  const loc = await getLocation();
+                                  const body: Record<string, unknown> = { updateStartAt: true };
+                                  if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+                                  await apiPost(`/api/occurrences/${occ.id}/start`, body);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+                                }
+                              },
+                              cancelLabel: "Start without location",
+                              onCancelAction: async () => {
+                                try {
+                                  await apiPost(`/api/occurrences/${occ.id}/start`, { updateStartAt: true });
+                                  publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+                                }
+                              },
+                            });
+                          } else {
+                            setConfirmAction({
+                              title: "Start Job?",
+                              message: "Are you currently on-site at the job location?",
+                              confirmLabel: "Yes — record location & start",
+                              colorPalette: "blue",
+                              onConfirm: () => void updateStatus(occ, "start", undefined, true),
+                              cancelLabel: "No — start without location",
+                              onCancelAction: () => void updateStatus(occ, "start", undefined, false),
+                            });
+                          }
+                        }}
+                      >
+                        Start Job
+                      </Button>
+                    )}
+                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                      <Button size="sm" variant="solid" colorPalette="blue" onClick={() => setCompleteDialogOcc(occ)}>
+                        Complete Job
+                      </Button>
+                    )}
+                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        disabled={isOffline}
+                        onClick={() => setConfirmAction({
+                          title: "Complete Estimate?",
+                          message: "Add any comments about this estimate (optional):",
+                          confirmLabel: "Complete",
+                          colorPalette: "purple",
+                          inputLabel: "Comments",
+                          inputPlaceholder: "Notes about this estimate...",
+                          inputOptional: true,
+                          inputDefaultValue: occ.proposalNotes ?? "",
+                          onConfirm: (comments: string) => void completeEstimate(occ.id, comments),
+                        })}
+                      >
+                        Complete Estimate
+                      </Button>
+                    )}
+                    {(isClaimer || forAdmin) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
+                      {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
+                        <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+                          <Text fontSize="xs" color="yellow.800">
+                            This is a repeating job but has no frequency set. Accepting payment will NOT create a next occurrence.
+                          </Text>
+                        </Box>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        disabled={isOffline}
+                        onClick={() => { setAcceptPaymentOcc(occ); setAcceptPaymentOpen(true); }}
+                      >
+                        Accept Payment
+                      </Button>
+                    </>)}
+                    {(isClaimer || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                      <HStack gap={2}>
+                        <Button
+                          size="sm"
+                          variant="solid"
+                          colorPalette="blue"
+                          disabled={isOffline}
+                          onClick={() => setConfirmAction({
+                            title: "Accept Estimate?",
+                            message: "Add a comment:",
+                            confirmLabel: "Accept",
+                            colorPalette: "green",
+                            inputPlaceholder: "Comment...",
+                            inputLabel: "Comment",
+                            onConfirm: async (comment: string) => {
+                              try {
+                                const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+                                await load(false);
+                                if (!result.jobId) {
+                                  setPendingEstimateConvert({
+                                    occurrenceId: occ.id,
+                                    contactName: occ.contactName,
+                                    contactPhone: occ.contactPhone,
+                                    contactEmail: occ.contactEmail,
+                                    estimateAddress: occ.estimateAddress,
+                                    proposalAmount: occ.proposalAmount,
+                                    proposalNotes: occ.proposalNotes,
+                                    title: occ.title,
+                                    estimatedMinutes: occ.estimatedMinutes,
+                                  });
+                                } else if (result.jobId) {
+                                  setPromptOccDefaults({
+                                    notes: result.occurrence?.notes ?? null,
+                                    price: result.occurrence?.price ?? null,
+                                    estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
+                                  });
+                                  setPromptOccJobId(result.jobId);
+                                }
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                              }
+                            },
+                          })}
+                        >
+                          Accept Estimate
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="solid"
+                          colorPalette="red"
+                          disabled={isOffline}
+                          onClick={() => setConfirmAction({
+                            title: "Reject Estimate?",
+                            message: "Add a reason:",
+                            confirmLabel: "Reject",
+                            colorPalette: "red",
+                            inputPlaceholder: "Reason...",
+                            inputLabel: "Reason",
+                            onConfirm: async (reason: string) => {
+                              try {
+                                await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
+                                await load(false);
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                              }
+                            },
+                          })}
+                        >
+                          Reject Estimate
+                        </Button>
+                      </HStack>
+                    )}
+                    {isTask && occ.status === "SCHEDULED" && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        disabled={isOffline}
+                        title={isOffline ? "Requires internet" : undefined}
+                        onClick={async () => {
+                          try {
+                            await apiPost(`/api/tasks/${occ.id}/close`);
+                            publishInlineMessage({ type: "SUCCESS", text: "Task completed." });
+                            await load(false);
+                          } catch (err) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete task.", err) });
+                          }
+                        }}
+                      >
+                        Complete
+                      </Button>
+                    )}
+                    {isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder && (() => {
+                      const isContractor = me?.workerType === "CONTRACTOR";
+                      const jobDate = occ.startAt ? new Date(occ.startAt) : null;
+                      const now = new Date();
+                      const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                      const contractorBlocked = isContractor && daysAhead > 2;
+                      if (contractorBlocked) {
+                        return (
+                          <Text fontSize="xs" color="orange.500">
+                            Contractors can only claim jobs within 2 days. This job is {daysAhead} days out.
+                          </Text>
+                        );
+                      }
+                      return (
                         <Button
                           size="sm"
                           variant="solid"
                           colorPalette="blue"
                           disabled={isOffline}
                           title={isOffline ? "Requires internet" : undefined}
-                          onClick={async () => {
-                            try {
-                              await apiPost(`/api/tasks/${occ.id}/close`);
-                              publishInlineMessage({ type: "SUCCESS", text: "Task completed." });
-                              await load(false);
-                            } catch (err) {
-                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete task.", err) });
-                            }
-                          }}
+                          onClick={() => void claim(occ.id)}
                         >
-                          Complete
+                          Claim
                         </Button>
+                      );
+                    })()}
+                    <HStack gap={2} wrap="wrap">
+                      {/* Task edit/delete buttons */}
+                      {isTask && occ.status === "SCHEDULED" && (<>
                         <Button
                           size="sm"
                           variant="outline"
@@ -2849,116 +3109,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       )}
-                      {isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder && (() => {
-                        const isContractor = me?.workerType === "CONTRACTOR";
-                        const jobDate = occ.startAt ? new Date(occ.startAt) : null;
-                        const now = new Date();
-                        const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 0;
-                        const contractorBlocked = isContractor && daysAhead > 2;
-
-                        if (forAdmin) {
-                          return (
-                            <StatusButton
-                              id="occ-claim"
-                              itemId={occ.id}
-                              label="Claim"
-                              onClick={async () => void claim(occ.id)}
-                              variant="outline"
-                              colorPalette="green"
-                              disabled={isOffline}
-                              title={isOffline ? "Requires internet" : undefined}
-                              busyId={statusButtonBusyId}
-                              setBusyId={setStatusButtonBusyId}
-                            />
-                          );
-                        }
-                        if (contractorBlocked) {
-                          return (
-                            <Text fontSize="xs" color="orange.500">
-                              Contractors can only claim jobs within 2 days. This job is {daysAhead} days out.
-                            </Text>
-                          );
-                        }
-                        return (
-                          <StatusButton
-                            id="occ-claim"
-                            itemId={occ.id}
-                            label="Claim"
-                            onClick={async () => void claim(occ.id)}
-                            variant="outline"
-                            colorPalette="green"
-                            disabled={isOffline}
-                            title={isOffline ? "Requires internet" : undefined}
-                            busyId={statusButtonBusyId}
-                            setBusyId={setStatusButtonBusyId}
-                          />
-                        );
-                      })()}
-                      {isActiveAssignee && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && (
-                        <StatusButton
-                          id="occ-start"
-                          itemId={occ.id}
-                          label="Start"
-                          onClick={async () => {
-                            if (isOffline) {
-                              await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
-                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
-                              publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
-                              return;
-                            }
-                            const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
-                            const todayDate = bizDateKey(new Date());
-                            const isEarly = occDate && occDate !== todayDate;
-                            if (isEarly) {
-                              setConfirmAction({
-                                title: "Start Job Early?",
-                                message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Update date to today? Are you currently on-site?`,
-                                confirmLabel: "Yes — on-site, record location",
-                                colorPalette: "blue",
-                                onConfirm: async () => {
-                                  try {
-                                    const loc = await getLocation();
-                                    const body: Record<string, unknown> = { updateStartAt: true };
-                                    if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
-                                    await apiPost(`/api/occurrences/${occ.id}/start`, body);
-                                    publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
-                                    await load(false);
-                                  } catch (err) {
-                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
-                                  }
-                                },
-                                cancelLabel: "Start without location",
-                                onCancelAction: async () => {
-                                  try {
-                                    await apiPost(`/api/occurrences/${occ.id}/start`, { updateStartAt: true });
-                                    publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
-                                    await load(false);
-                                  } catch (err) {
-                                    publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
-                                  }
-                                },
-                              });
-                            } else {
-                              setConfirmAction({
-                                title: "Start Job?",
-                                message: "Are you currently on-site at the job location?",
-                                confirmLabel: "Yes — record location & start",
-                                colorPalette: "blue",
-                                onConfirm: () => void updateStatus(occ, "start", undefined, true),
-                                cancelLabel: "No — start without location",
-                                onCancelAction: () => void updateStatus(occ, "start", undefined, false),
-                              });
-                            }
-                          }}
-                          variant="outline"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
                       {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !isOffline && (
                         <Button
                           size="sm"
-                          variant="ghost"
+                          variant="outline"
                           onClick={() => {
                             setRescheduleOcc(occ);
                             setRescheduleDate(occ.startAt ? bizDateKey(occ.startAt) : bizDateKey(new Date()));
@@ -2967,123 +3121,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           Reschedule
                         </Button>
-                      )}
-                      {isActiveAssignee && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
-                        <StatusButton
-                          id="occ-complete"
-                          itemId={occ.id}
-                          label="Complete"
-                          onClick={async () => setCompleteDialogOcc(occ)}
-                          variant="outline"
-                          colorPalette="green"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
-                      {isActiveAssignee && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                        <StatusButton
-                          id="occ-submit-proposal"
-                          itemId={occ.id}
-                          label="Complete Estimate"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
-                          onClick={async () => setConfirmAction({
-                            title: "Complete Estimate?",
-                            message: "Add any comments about this estimate (optional):",
-                            confirmLabel: "Complete",
-                            colorPalette: "purple",
-                            inputLabel: "Comments",
-                            inputPlaceholder: "Notes about this estimate...",
-                            inputOptional: true,
-                            inputDefaultValue: occ.proposalNotes ?? "",
-                            onConfirm: (comments: string) => void completeEstimate(occ.id, comments),
-                          })}
-                          variant="outline"
-                          colorPalette="purple"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
-                      {isActiveAssignee && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                        <StatusButton
-                          id="occ-accept-estimate"
-                          itemId={occ.id}
-                          label="Accept Estimate"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
-                          onClick={async () => setConfirmAction({
-                            title: "Accept Estimate?",
-                            message: "Add a comment:",
-                            confirmLabel: "Accept",
-                            colorPalette: "green",
-                            inputPlaceholder: "Comment...",
-                            inputLabel: "Comment",
-                            onConfirm: async (comment: string) => {
-                              try {
-                                const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
-                                publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
-                                await load(false);
-                                if (!result.jobId) {
-                                  // Light estimate — show pre-dialog then launch New Job Setup workflow
-                                  setPendingEstimateConvert({
-                                    occurrenceId: occ.id,
-                                    contactName: occ.contactName,
-                                    contactPhone: occ.contactPhone,
-                                    contactEmail: occ.contactEmail,
-                                    estimateAddress: occ.estimateAddress,
-                                    proposalAmount: occ.proposalAmount,
-                                    proposalNotes: occ.proposalNotes,
-                                    title: occ.title,
-                                    estimatedMinutes: occ.estimatedMinutes,
-                                  });
-                                } else if (result.jobId) {
-                                  setPromptOccDefaults({
-                                    notes: result.occurrence?.notes ?? null,
-                                    price: result.occurrence?.price ?? null,
-                                    estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
-                                  });
-                                  setPromptOccJobId(result.jobId);
-                                }
-                              } catch (err: any) {
-                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
-                              }
-                            },
-                          })}
-                          variant="solid"
-                          colorPalette="green"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      )}
-                      {isActiveAssignee && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                        <StatusButton
-                          id="occ-reject-estimate"
-                          itemId={occ.id}
-                          label="Reject Estimate"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
-                          onClick={async () => setConfirmAction({
-                            title: "Reject Estimate?",
-                            message: "Add a reason:",
-                            confirmLabel: "Reject",
-                            colorPalette: "red",
-                            inputPlaceholder: "Reason...",
-                            inputLabel: "Reason",
-                            onConfirm: async (reason: string) => {
-                              try {
-                                await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
-                                publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
-                                await load(false);
-                              } catch (err: any) {
-                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
-                              }
-                            },
-                          })}
-                          variant="outline"
-                          colorPalette="red"
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
                       )}
                       {forAdmin && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                         <StatusButton
@@ -3109,30 +3146,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isActiveAssignee && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
-                        {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
-                          <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mb={1}>
-                            <Text fontSize="xs" color="yellow.800">
-                              This is a repeating job but has no frequency set. Accepting payment will NOT create a next occurrence. Set a frequency on the job or occurrence to enable auto-scheduling.
-                            </Text>
-                          </Box>
-                        )}
-                        <StatusButton
-                          id="occ-accept-payment"
-                          itemId={occ.id}
-                          label="Accept Payment"
-                          onClick={async () => {
-                            setAcceptPaymentOcc(occ);
-                            setAcceptPaymentOpen(true);
-                          }}
-                          variant="outline"
-                          colorPalette="green"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
-                          busyId={statusButtonBusyId}
-                          setBusyId={setStatusButtonBusyId}
-                        />
-                      </>)}
                       {(isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-manage-team"
@@ -3210,6 +3223,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       )}
                     </HStack>
+                    </VStack>
                   </Card.Footer>
                 )}
 
@@ -3524,7 +3538,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="sm" fontWeight="medium" mb={1}>New date</Text>
                     <HStack gap={2} wrap="wrap">
                       {[
-                        { label: "Yesterday", days: -1 },
                         { label: "Today", days: 0 },
                         { label: "Tomorrow", days: 1 },
                         { label: "In 2 days", days: 2 },
@@ -3547,7 +3560,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </HStack>
                     <HStack gap={2} align="center" mt={2}>
                       <Text fontSize="sm" flexShrink={0}>Or pick:</Text>
-                      <DateInput value={rescheduleDate} onChange={setRescheduleDate} />
+                      <DateInput value={rescheduleDate} onChange={setRescheduleDate} min={bizDateKey(new Date())} />
                     </HStack>
                   </Box>
                   <Box>
@@ -3583,6 +3596,75 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Portal>
       </Dialog.Root>
 
+      {/* Reschedule notify dialog */}
+      <Dialog.Root open={!!rescheduleNotify} onOpenChange={(e) => { if (!e.open) setRescheduleNotify(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="sm" mx="4">
+              <Dialog.Header>
+                <Dialog.Title>Notify Client</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Text fontSize="sm" color="fg.muted">
+                    The job has been rescheduled. Let the client know about the change:
+                  </Text>
+                  <Box p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                    <Text fontSize="xs" color="blue.800">{rescheduleNotify?.message}</Text>
+                  </Box>
+                  <VStack align="stretch" gap={2}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      colorPalette="gray"
+                      onClick={() => {
+                        if (rescheduleNotify?.message) {
+                          navigator.clipboard.writeText(rescheduleNotify.message);
+                          publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
+                        }
+                      }}
+                    >
+                      <Copy size={14} /> Copy Message
+                    </Button>
+                    {rescheduleNotify?.phone && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        colorPalette="green"
+                        overflow="hidden"
+                        onClick={() => {
+                          window.open(`sms:${rescheduleNotify!.phone}?body=${encodeURIComponent(rescheduleNotify!.message)}`, "_self");
+                        }}
+                      >
+                        <MessageCircle size={14} style={{ flexShrink: 0 }} /> <Text lineClamp={1}>Text to {rescheduleNotify.phone}</Text>
+                      </Button>
+                    )}
+                    {rescheduleNotify?.email && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        colorPalette="blue"
+                        overflow="hidden"
+                        onClick={() => {
+                          const subject = encodeURIComponent("Schedule Change — Seedlings Lawn Care");
+                          window.open(`mailto:${rescheduleNotify!.email}?subject=${subject}&body=${encodeURIComponent(rescheduleNotify!.message)}`, "_self");
+                        }}
+                      >
+                        <Mail size={14} style={{ flexShrink: 0 }} /> <Text lineClamp={1}>Email to {rescheduleNotify.email}</Text>
+                      </Button>
+                    )}
+                  </VStack>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="ghost" onClick={() => setRescheduleNotify(null)}>Done</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
       <ManageExpensesDialog
         open={!!expenseDialogOccId}
         onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
@@ -3607,9 +3689,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
           endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           defaultAmount={acceptPaymentOcc.price}
+          totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
+          commissionPercent={commissionPercent}
+          marginPercent={marginPercent}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
+            workerType: a.user?.workerType,
           }))}
           onAccepted={(result: any) => {
             void load(false);

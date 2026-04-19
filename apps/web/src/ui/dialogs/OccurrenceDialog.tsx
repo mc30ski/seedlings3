@@ -71,6 +71,8 @@ type Props = {
   title?: string;
   submitLabel?: string;
   defaultWorkflow?: string;
+  /** Occurrence title (used for estimates) */
+  defaultOccTitle?: string | null;
   /** Occurrence-level frequency override (for pre-populating in edit mode) */
   defaultFrequencyDays?: number | null;
   /** Job's frequencyDays — used to warn if "Repeating" is selected without frequency */
@@ -102,6 +104,7 @@ export default function OccurrenceDialog({
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
+  defaultOccTitle,
   defaultFrequencyDays,
   jobFrequencyDays,
   createEndpoint,
@@ -124,6 +127,7 @@ export default function OccurrenceDialog({
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
+  const [occTitle, setOccTitle] = useState("");
   const [workflow, setWorkflow] = useState(defaultWorkflow ?? "ESTIMATE");
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
@@ -165,6 +169,7 @@ export default function OccurrenceDialog({
     setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
     setStartedAt(toDateTimeLocal(defaultStartedAt));
     setCompletedAt(toDateTimeLocal(defaultCompletedAt));
+    setOccTitle(defaultOccTitle ?? "");
     setWorkflow(defaultWorkflow ?? "ESTIMATE");
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
@@ -217,6 +222,7 @@ export default function OccurrenceDialog({
         ...createBody,
         startAt: startAtIso,
         endAt: endAtIso ?? undefined,
+        title: occTitle.trim() || undefined,
         notes: notesVal ?? undefined,
         price: priceVal ?? undefined,
         estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : undefined,
@@ -259,6 +265,7 @@ export default function OccurrenceDialog({
         const body: Record<string, unknown> = {
           startAt: startAtIso,
           endAt: endAtIso,
+          title: occTitle.trim() || null,
           notes: notesVal,
           price: priceVal,
           estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
@@ -354,6 +361,18 @@ export default function OccurrenceDialog({
                     </Select.Root>
                   </div>
                 )}
+                {(workflow === "ESTIMATE") && (
+                  <div>
+                    <Text mb="1">Estimate Title</Text>
+                    <input
+                      type="text"
+                      placeholder="e.g., Tree trimming estimate for backyard"
+                      value={occTitle}
+                      onChange={(e) => setOccTitle(e.target.value)}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    />
+                  </div>
+                )}
                 {workflow === "STANDARD" && (
                   <div>
                     <Text mb="1">Frequency (days)</Text>
@@ -370,13 +389,13 @@ export default function OccurrenceDialog({
                         <Text fontSize="xs" color="red.700">{freqError}</Text>
                       </Box>
                     )}
-                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" mt={freqError ? 1 : 2}>
-                      <Text fontSize="xs" color="yellow.800">
+                    <Box p={2} bg={!occFrequencyDays && !jobFrequencyDays ? "red.50" : "yellow.50"} borderWidth="1px" borderColor={!occFrequencyDays && !jobFrequencyDays ? "red.200" : "yellow.200"} borderRadius="md" mt={freqError ? 1 : 2}>
+                      <Text fontSize="xs" color={!occFrequencyDays && !jobFrequencyDays ? "red.700" : "yellow.800"}>
                         {occFrequencyDays !== ""
                           ? `This occurrence will repeat every ${occFrequencyDays} days, overriding the job's ${jobFrequencyDays ? `default of ${jobFrequencyDays} days` : "frequency (not set)"}.`
                           : jobFrequencyDays
                           ? `No override set — will use the job's default frequency of ${jobFrequencyDays} days.`
-                          : "The parent job has no frequency set. Set one here to make this occurrence repeat on its own schedule."}
+                          : "⚠ The parent job has no frequency set. Enter a frequency above to enable creating this occurrence."}
                       </Text>
                     </Box>
                   </div>
@@ -467,25 +486,26 @@ export default function OccurrenceDialog({
                     }}
                   />
                 </div>
-                <HStack gap={3}>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Price</Text>
-                    <CurrencyInput
-                      value={price}
-                      onChange={setPrice}
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Est. minutes</Text>
-                    <Input
-                      type="number"
-                      value={estimatedMinutes}
-                      onChange={(e) => setEstimatedMinutes(e.target.value)}
-                      placeholder="e.g. 45"
-                      min={1}
-                    />
-                  </div>
-                </HStack>
+                <div>
+                  <Text mb="1">Price</Text>
+                  <CurrencyInput
+                    value={price}
+                    onChange={setPrice}
+                  />
+                </div>
+                <div>
+                  <Text mb="1">Est. minutes</Text>
+                  <Input
+                    type="number"
+                    value={estimatedMinutes}
+                    onChange={(e) => setEstimatedMinutes(e.target.value)}
+                    placeholder="e.g. 45"
+                    min={1}
+                  />
+                  <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                    <Text fontSize="2xs" color="yellow.700">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
+                  </Box>
+                </div>
                 {isAdmin && mode === "UPDATE" && (
                   <>
                     <div>
@@ -697,7 +717,9 @@ export default function OccurrenceDialog({
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy} disabled={!startAt || (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays)}>
+                <Button onClick={handleSave} loading={busy} disabled={!startAt || (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays)}
+                  title={!startAt ? "Select a start date" : (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays) ? "Enter a frequency for repeating jobs" : undefined}
+                >
                   {submitLabel ?? (mode === "CREATE" ? "Create" : "Save")}
                 </Button>
               </HStack>

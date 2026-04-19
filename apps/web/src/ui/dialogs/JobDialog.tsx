@@ -308,27 +308,28 @@ export default function JobDialog({
                   </div>
                 </HStack>
 
-                <HStack gap={3} align="flex-end">
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Default price</Text>
-                    <CurrencyInput
-                      value={defaultPrice}
-                      onChange={setDefaultPrice}
-                      size="sm"
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Text mb="1">Est. minutes</Text>
-                    <Input
-                      type="number"
-                      value={estimatedMinutes}
-                      onChange={(e) => setEstimatedMinutes(e.target.value)}
-                      placeholder="e.g. 45"
-                      min={1}
-                      size="sm"
-                    />
-                  </div>
-                </HStack>
+                <div>
+                  <Text mb="1">Default price</Text>
+                  <CurrencyInput
+                    value={defaultPrice}
+                    onChange={setDefaultPrice}
+                    size="sm"
+                  />
+                </div>
+                <div>
+                  <Text mb="1">Est. minutes</Text>
+                  <Input
+                    type="number"
+                    value={estimatedMinutes}
+                    onChange={(e) => setEstimatedMinutes(e.target.value)}
+                    placeholder="e.g. 45"
+                    min={1}
+                    size="sm"
+                  />
+                  <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                    <Text fontSize="2xs" color="yellow.700">Enter the time as if one person were completing the job alone. The app will automatically adjust the estimate when multiple workers are assigned.</Text>
+                  </Box>
+                </div>
 
                 <div>
                   <Text mb="1">Default frequency (days)</Text>

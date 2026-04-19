@@ -71,13 +71,17 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
 
-  function dismissReminder(occId: string) {
+  function dismissReminder(key: string) {
     setDismissed((prev) => {
       const next = new Set(prev);
-      next.add(occId);
+      next.add(key);
       saveDismissed(next);
       return next;
     });
+  }
+
+  function dismissInSection(section: string, occId: string) {
+    dismissReminder(`${section}:${occId}`);
   }
 
   function undismissAll() {
@@ -146,14 +150,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     return rows;
   }, [items, myId, showAll, q]);
 
-  const notDismissed = (occ: WorkerOccurrence) => !dismissed.has(occ.id);
+  const ndIn = (section: string) => (occ: WorkerOccurrence) => !dismissed.has(`${section}:${occ.id}`);
 
   const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
   const overdue = myItems.filter((occ) => {
     if (!occ.startAt) return false;
     if (overdueExclude.has(occ.status)) return false;
     return bizDateKey(occ.startAt) < today;
-  }).filter(notDismissed);
+  }).filter(ndIn("overdue"));
 
   const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
   const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
@@ -162,19 +166,19 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     if (!activeStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === today;
-  }).filter(notDismissed);
+  }).filter(ndIn("today"));
 
   const tomorrowJobs = myItems.filter((occ) => {
     if (!upcomingStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
     return bizDateKey(occ.startAt) === tomorrow;
-  }).filter(notDismissed);
+  }).filter(ndIn("tomorrow"));
 
-  const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT").filter(notDismissed);
+  const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT").filter(ndIn("pending"));
 
   const estimatesReady = myItems.filter((occ) =>
     occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
-  ).filter(notDismissed);
+  ).filter(ndIn("estimates"));
 
   // Follow-ups — occurrences with reminders due today or earlier (filtered to current worker)
   const followUps = useMemo(() => {
@@ -182,7 +186,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     return myItems.filter((occ) => {
       if (!occ.reminder) return false;
       return bizDateKey(occ.reminder.remindAt) <= today;
-    }).filter(notDismissed);
+    }).filter(ndIn("followups"));
   }, [myItems, forAdmin, today, dismissed]);
 
   const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
@@ -220,9 +224,12 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
             onClick={() => {
               const allIds = new Set(dismissed);
               allIds.add("__route_plan__");
-              for (const occ of [...overdue, ...todayJobs, ...tomorrowJobs, ...pendingPayment, ...estimatesReady, ...followUps]) {
-                allIds.add(occ.id);
-              }
+              for (const occ of overdue) allIds.add(`overdue:${occ.id}`);
+              for (const occ of todayJobs) allIds.add(`today:${occ.id}`);
+              for (const occ of tomorrowJobs) allIds.add(`tomorrow:${occ.id}`);
+              for (const occ of pendingPayment) allIds.add(`pending:${occ.id}`);
+              for (const occ of estimatesReady) allIds.add(`estimates:${occ.id}`);
+              for (const occ of followUps) allIds.add(`followups:${occ.id}`);
               setDismissed(allIds);
               saveDismissed(allIds);
             }}
@@ -327,7 +334,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           me={me}
           onDismiss={(occId) => {
             void apiPost(`/api/occurrences/${occId}/reminder/clear`);
-            dismissReminder(occId);
+            dismissInSection("followups", occId);
           }}
           dismissLabel="Clear Reminder"
         />
@@ -356,7 +363,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={dismissReminder}
+          onDismiss={(occId) => dismissInSection("overdue", occId)}
         />
       )}
 
@@ -379,7 +386,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={dismissReminder}
+          onDismiss={(occId) => dismissInSection("today", occId)}
         />
       )}
 
@@ -402,7 +409,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={dismissReminder}
+          onDismiss={(occId) => dismissInSection("tomorrow", occId)}
         />
       )}
 
@@ -425,7 +432,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={dismissReminder}
+          onDismiss={(occId) => dismissInSection("pending", occId)}
         />
       )}
 
@@ -443,7 +450,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={dismissReminder}
+          onDismiss={(occId) => dismissInSection("estimates", occId)}
         />
       )}
 
