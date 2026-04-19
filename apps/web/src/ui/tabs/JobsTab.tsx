@@ -312,6 +312,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }
 
   // Reschedule state
+  const [startJobOcc, setStartJobOcc] = useState<WorkerOccurrence | null>(null);
+  const [startJobTime, setStartJobTime] = useState("");
   const [rescheduleOcc, setRescheduleOcc] = useState<WorkerOccurrence | null>(null);
   const [rescheduleNotify, setRescheduleNotify] = useState<{ message: string; phone?: string | null; email?: string | null } | null>(null);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
@@ -1786,21 +1788,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             }
 
             // Card color theme — bg and border derive from the same base color
+            const isPendingPayment = occ.status === "PENDING_PAYMENT";
             const cardColorBase = (isClosed || isAcceptedEstimate)
               ? "gray"
               : isReminder ? "purple"
               : isTask ? "blue"
               : isTentative ? "orange"
               : isEstimateOcc ? "pink"
+              : isPendingPayment ? "green"
               : isAssignedToMe ? "teal"
               : isAssignedToOthers ? "gray"
               : isUnassigned ? "yellow"
               : null;
-            const cardBg = cardColorBase === "gray" && isAssignedToOthers ? "gray.100"
+            const cardBg = cardColorBase === "gray" && (isAssignedToOthers || isClosed || isAcceptedEstimate) ? "gray.50"
               : cardColorBase === "yellow" ? "yellow.50"
+              : cardColorBase === "green" ? "green.100"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
+              : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
 
             // Comment badge color: darker shade of card bg
@@ -2742,56 +2748,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         size="sm"
                         variant="solid"
                         colorPalette="blue"
-                        onClick={async () => {
+                        onClick={() => {
                           if (isOffline) {
-                            await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
-                            setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
-                            publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                            void (async () => {
+                              await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+                              publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                            })();
                             return;
                           }
-                          const occDate = occ.startAt ? bizDateKey(occ.startAt) : "";
-                          const todayDate = bizDateKey(new Date());
-                          const isEarly = occDate && occDate !== todayDate;
-                          if (isEarly) {
-                            setConfirmAction({
-                              title: "Start Job Early?",
-                              message: `This job is scheduled for ${fmtDate(occ.startAt!)}. Update date to today? Are you currently on-site?`,
-                              confirmLabel: "Yes — on-site, record location",
-                              colorPalette: "blue",
-                              onConfirm: async () => {
-                                try {
-                                  const loc = await getLocation();
-                                  const body: Record<string, unknown> = { updateStartAt: true };
-                                  if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
-                                  await apiPost(`/api/occurrences/${occ.id}/start`, body);
-                                  publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
-                                  await load(false);
-                                } catch (err) {
-                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
-                                }
-                              },
-                              cancelLabel: "Start without location",
-                              onCancelAction: async () => {
-                                try {
-                                  await apiPost(`/api/occurrences/${occ.id}/start`, { updateStartAt: true });
-                                  publishInlineMessage({ type: "SUCCESS", text: "Job started. Date updated to today." });
-                                  await load(false);
-                                } catch (err) {
-                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
-                                }
-                              },
-                            });
-                          } else {
-                            setConfirmAction({
-                              title: "Start Job?",
-                              message: "Are you currently on-site at the job location?",
-                              confirmLabel: "Yes — record location & start",
-                              colorPalette: "blue",
-                              onConfirm: () => void updateStatus(occ, "start", undefined, true),
-                              cancelLabel: "No — start without location",
-                              onCancelAction: () => void updateStatus(occ, "start", undefined, false),
-                            });
-                          }
+                          const now = new Date();
+                          const pad = (n: number) => String(n).padStart(2, "0");
+                          setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+                          setStartJobOcc(occ);
                         }}
                       >
                         Start Job
@@ -3517,6 +3486,98 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Portal>
       </Dialog.Root>
 
+      {/* Start Job dialog */}
+      <Dialog.Root open={!!startJobOcc} onOpenChange={(e) => { if (!e.open) setStartJobOcc(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content maxW="sm">
+              <Dialog.Header>
+                <Dialog.Title>Start Job</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Start time</Text>
+                    <input
+                      type="datetime-local"
+                      value={startJobTime}
+                      onChange={(e) => setStartJobTime(e.target.value)}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    />
+                  </Box>
+                  {startJobOcc?.startAt && bizDateKey(startJobOcc.startAt) !== bizDateKey(new Date()) && (
+                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
+                      <Text fontSize="xs" color="yellow.700">
+                        This job is scheduled for {fmtDate(startJobOcc.startAt)}. Starting it now will update the date.
+                      </Text>
+                    </Box>
+                  )}
+                  <Text fontSize="sm" color="fg.muted">Are you currently on-site at the job location?</Text>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <VStack w="full" gap={2}>
+                  <Button
+                    colorPalette="blue"
+                    w="full"
+                    disabled={!startJobTime}
+                    onClick={async () => {
+                      if (!startJobOcc) return;
+                      try {
+                        const startedAt = new Date(startJobTime).toISOString();
+                        const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
+                        const todayDate = bizDateKey(new Date());
+                        const isEarly = occDate && occDate !== todayDate;
+                        const body: Record<string, unknown> = { startedAt };
+                        if (isEarly) body.updateStartAt = true;
+                        try {
+                          const loc = await getLocation();
+                          if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+                        } catch {}
+                        await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
+                        publishInlineMessage({ type: "SUCCESS", text: "Job started with location recorded." });
+                        setStartJobOcc(null);
+                        await load(false);
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                      }
+                    }}
+                  >
+                    Yes — record location & start
+                  </Button>
+                  <Button
+                    variant="outline"
+                    w="full"
+                    disabled={!startJobTime}
+                    onClick={async () => {
+                      if (!startJobOcc) return;
+                      try {
+                        const startedAt = new Date(startJobTime).toISOString();
+                        const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
+                        const todayDate = bizDateKey(new Date());
+                        const isEarly = occDate && occDate !== todayDate;
+                        const body: Record<string, unknown> = { startedAt };
+                        if (isEarly) body.updateStartAt = true;
+                        await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
+                        publishInlineMessage({ type: "SUCCESS", text: "Job started." });
+                        setStartJobOcc(null);
+                        await load(false);
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
+                      }
+                    }}
+                  >
+                    No — start without location
+                  </Button>
+                  <Button variant="ghost" w="full" onClick={() => setStartJobOcc(null)}>Cancel</Button>
+                </VStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
       {/* Reschedule dialog */}
       <Dialog.Root open={!!rescheduleOcc} onOpenChange={(e) => { if (!e.open) setRescheduleOcc(null); }}>
         <Portal>
@@ -3749,17 +3810,33 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           onOpenChange={(o) => { if (!o) setCompleteDialogOcc(null); }}
           occurrenceId={completeDialogOcc.id}
           occurrencePrice={completeDialogOcc.price}
-          onCompleted={() => {
+          startedAt={completeDialogOcc.startedAt}
+          onCompleted={(completedAt) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
+            const completeWithLocation = async (recordLoc: boolean) => {
+              try {
+                const body: Record<string, unknown> = {};
+                if (completedAt) body.completedAt = completedAt;
+                if (recordLoc) {
+                  const loc = await getLocation();
+                  if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
+                }
+                await apiPost(`/api/occurrences/${occToComplete.id}/complete`, body);
+                publishInlineMessage({ type: "SUCCESS", text: "Job completed." });
+                await load(false);
+              } catch (err) {
+                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete failed.", err) });
+              }
+            };
             setConfirmAction({
               title: "Record Location?",
               message: "Are you currently on-site at the job location?",
               confirmLabel: "Yes — record location & complete",
               colorPalette: "green",
-              onConfirm: () => void updateStatus(occToComplete, "complete", undefined, true),
+              onConfirm: () => void completeWithLocation(true),
               cancelLabel: "No — complete without location",
-              onCancelAction: () => void updateStatus(occToComplete, "complete", undefined, false),
+              onCancelAction: () => void completeWithLocation(false),
             });
           }}
         />

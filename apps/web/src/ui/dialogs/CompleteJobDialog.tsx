@@ -26,7 +26,8 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   occurrenceId: string;
   occurrencePrice?: number | null;
-  onCompleted: () => void;
+  startedAt?: string | null;
+  onCompleted: (completedAt?: string) => void;
 };
 
 export default function CompleteJobDialog({
@@ -34,11 +35,13 @@ export default function CompleteJobDialog({
   onOpenChange,
   occurrenceId,
   occurrencePrice,
+  startedAt,
   onCompleted,
 }: Props) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [completedAtTime, setCompletedAtTime] = useState("");
 
   // New expense fields
   const [newCost, setNewCost] = useState("");
@@ -55,6 +58,10 @@ export default function CompleteJobDialog({
     setNewCost("");
     setNewDesc("");
     setEditingId(null);
+    // Default completedAt to now
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setCompletedAtTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
     apiGet<Expense[]>(`/api/occurrences/${occurrenceId}/expenses`)
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
       .catch(() => setExpenses([]))
@@ -106,10 +113,24 @@ export default function CompleteJobDialog({
     }
   }
 
+  // Compute min for completedAt from startedAt
+  const minCompletedAt = (() => {
+    if (!startedAt) return undefined;
+    const d = new Date(startedAt);
+    if (isNaN(d.getTime())) return undefined;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })();
+
   async function handleComplete() {
+    if (minCompletedAt && completedAtTime < minCompletedAt) {
+      publishInlineMessage({ type: "WARNING", text: "End time cannot be before start time." });
+      return;
+    }
     setBusy(true);
     try {
-      onCompleted();
+      const completedAt = completedAtTime ? new Date(completedAtTime).toISOString() : undefined;
+      onCompleted(completedAt);
       onOpenChange(false);
     } finally {
       setBusy(false);
@@ -128,6 +149,19 @@ export default function CompleteJobDialog({
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Completion time</Text>
+                  <input
+                    type="datetime-local"
+                    value={completedAtTime}
+                    onChange={(e) => setCompletedAtTime(e.target.value)}
+                    min={minCompletedAt}
+                    style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                  />
+                  {minCompletedAt && completedAtTime && completedAtTime < minCompletedAt && (
+                    <Text fontSize="xs" color="red.500" mt={1}>End time cannot be before start time.</Text>
+                  )}
+                </Box>
                 <Text fontSize="sm" color="fg.muted">
                   Review and update expenses before marking this job as complete.
                 </Text>
@@ -238,7 +272,7 @@ export default function CompleteJobDialog({
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
                   Cancel
                 </Button>
-                <Button colorPalette="green" onClick={handleComplete} loading={busy}>
+                <Button colorPalette="green" onClick={handleComplete} loading={busy} disabled={!completedAtTime || (!!minCompletedAt && completedAtTime < minCompletedAt)}>
                   Complete Job
                 </Button>
               </HStack>

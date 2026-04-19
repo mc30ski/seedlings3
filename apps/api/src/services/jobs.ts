@@ -1175,7 +1175,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }) {
+  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string }) {
     return prisma.$transaction(async (tx) => {
       const assignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
@@ -1221,7 +1221,7 @@ export const jobs: ServicesJobs = {
 
       const data: any = { status: finalStatus };
       if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
-        data.startedAt = new Date();
+        data.startedAt = timestamps?.startedAt ? new Date(timestamps.startedAt) : new Date();
       }
       if (
         (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
@@ -1229,7 +1229,7 @@ export const jobs: ServicesJobs = {
          finalStatus === JobOccurrenceStatus.PROPOSAL_SUBMITTED) &&
         !occ.completedAt
       ) {
-        data.completedAt = new Date();
+        data.completedAt = timestamps?.completedAt ? new Date(timestamps.completedAt) : new Date();
       }
       if (notes !== undefined) data.notes = notes;
       if (location) {
