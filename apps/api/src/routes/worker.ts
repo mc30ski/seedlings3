@@ -363,7 +363,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       String(req.params.id),
       JobOccurrenceStatus.IN_PROGRESS,
       undefined,
-      location
+      location,
+      body.startedAt ? { startedAt: String(body.startedAt) } : undefined
     );
   });
 
@@ -379,7 +380,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       String(req.params.id),
       JobOccurrenceStatus.PENDING_PAYMENT,
       notes,
-      location
+      location,
+      body.completedAt ? { completedAt: String(body.completedAt) } : undefined
     );
   });
 
