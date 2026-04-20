@@ -46,6 +46,7 @@ export type EventTypes =
   | "paymentsTabToClientsTabSearch"
   | "paymentsTabToServicesTabSearch"
   | "jobsTabToServicesTabSearch"
+  | "servicesTabToJobsTabSearch"
   | "remindersToJobsTabSearch";
 
 export type DialogMode = "CREATE" | "UPDATE";
@@ -258,7 +259,7 @@ export const JOB_OCCURRENCE_STATUS = [
 ] as const;
 export type JobOccurrenceStatus = (typeof JOB_OCCURRENCE_STATUS)[number];
 
-export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE", "TASK", "REMINDER"] as const;
+export const OCCURRENCE_WORKFLOW = ["STANDARD", "ONE_OFF", "ESTIMATE", "TASK", "REMINDER", "EVENT", "FOLLOWUP"] as const;
 export type OccurrenceWorkflow = (typeof OCCURRENCE_WORKFLOW)[number];
 
 export const JOB_TYPE_OPTIONS = [

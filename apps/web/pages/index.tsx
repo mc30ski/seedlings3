@@ -1169,12 +1169,16 @@ export default function HomePage() {
     }
   }, [router.query.workflow, me?.isApproved, meLoading]);
 
-  // Deep-link to a specific occurrence from calendar feed (e.g., ?occ=OCCURRENCE_ID)
+  // Deep-link to a specific occurrence (e.g., ?occ=OCCURRENCE_ID or ?occ=OCCURRENCE_ID&view=admin)
   // Persist through login: save to sessionStorage if not logged in, restore after login
   useEffect(() => {
     const occId = router.query.occ as string | undefined;
+    const view = router.query.view as string | undefined;
     if (occId) {
-      try { sessionStorage.setItem("seedlings_deeplink_occ", occId); } catch {}
+      try {
+        sessionStorage.setItem("seedlings_deeplink_occ", occId);
+        if (view) sessionStorage.setItem("seedlings_deeplink_view", view);
+      } catch {}
       router.replace("/", undefined, { shallow: true });
     }
   }, [router.query.occ]);
@@ -1182,15 +1186,30 @@ export default function HomePage() {
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
     let occId: string | null = null;
-    try { occId = sessionStorage.getItem("seedlings_deeplink_occ"); } catch {}
+    let view: string | null = null;
+    try {
+      occId = sessionStorage.getItem("seedlings_deeplink_occ");
+      view = sessionStorage.getItem("seedlings_deeplink_view");
+    } catch {}
     if (!occId) return;
-    try { sessionStorage.removeItem("seedlings_deeplink_occ"); } catch {}
-    setTopTab("worker");
-    setWorkerInnerTab("jobs" as any);
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
-      window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
-    }, 200);
+    try {
+      sessionStorage.removeItem("seedlings_deeplink_occ");
+      sessionStorage.removeItem("seedlings_deeplink_view");
+    } catch {}
+    if (view === "admin") {
+      setTopTab("admin");
+      setAdminInnerTab("admin-jobs");
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
+      }, 300);
+    } else {
+      setTopTab("worker");
+      setWorkerInnerTab("jobs" as any);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
+      }, 200);
+    }
   }, [me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {

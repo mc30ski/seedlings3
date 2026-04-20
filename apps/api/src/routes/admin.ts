@@ -2033,6 +2033,112 @@ Respond ONLY with valid JSON in this exact format:
     return { deleted: true };
   });
 
+  // ── Events (admin-only shared occurrences) ──
+  app.post("/admin/events", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createEvent(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      frequencyDays: body.frequencyDays != null ? Number(body.frequencyDays) : null,
+    });
+  });
+
+  app.patch("/admin/events/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Event not found");
+    if (occ.workflow !== "EVENT") throw app.httpErrors.badRequest("Not an event");
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
+    return prisma.jobOccurrence.update({ where: { id }, data });
+  });
+
+  app.post("/admin/events/:id/complete", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.completeEvent(uid, String(req.params.id));
+  });
+
+  app.delete("/admin/events/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Event not found");
+    if (occ.workflow !== "EVENT") throw app.httpErrors.badRequest("Not an event");
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
+  // ── Followups (admin-only, with optional client/job attachments) ──
+  app.post("/admin/followups", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createFollowup(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      frequencyDays: body.frequencyDays != null ? Number(body.frequencyDays) : null,
+      clientIds: Array.isArray(body.clientIds) ? body.clientIds : [],
+      jobIds: Array.isArray(body.jobIds) ? body.jobIds : [],
+    });
+  });
+
+  app.patch("/admin/followups/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Followup not found");
+    if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
+    await prisma.jobOccurrence.update({ where: { id }, data });
+
+    // Replace client/job attachments if provided
+    if (Array.isArray(body.clientIds)) {
+      await prisma.followupClient.deleteMany({ where: { occurrenceId: id } });
+      if (body.clientIds.length > 0) {
+        await prisma.followupClient.createMany({
+          data: body.clientIds.map((clientId: string) => ({ occurrenceId: id, clientId })),
+        });
+      }
+    }
+    if (Array.isArray(body.jobIds)) {
+      await prisma.followupJob.deleteMany({ where: { occurrenceId: id } });
+      if (body.jobIds.length > 0) {
+        await prisma.followupJob.createMany({
+          data: body.jobIds.map((jobId: string) => ({ occurrenceId: id, jobId })),
+        });
+      }
+    }
+
+    return prisma.jobOccurrence.findUnique({ where: { id } });
+  });
+
+  app.post("/admin/followups/:id/complete", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.completeFollowup(uid, String(req.params.id));
+  });
+
+  app.delete("/admin/followups/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Followup not found");
+    if (occ.workflow !== "FOLLOWUP") throw app.httpErrors.badRequest("Not a followup");
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
   app.post("/admin/occurrences/:id/link-to-job", adminGuard, async (req: any) => {
     const occId = String(req.params.id);
     const jobId = String(req.body?.jobId ?? "");

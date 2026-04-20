@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -52,6 +52,8 @@ import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import LightEstimateDialog from "@/src/ui/dialogs/LightEstimateDialog";
+import EventDialog from "@/src/ui/dialogs/EventDialog";
+import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -109,6 +111,15 @@ type JobsTabProps = TabPropsType & {
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot }: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const { isOffline } = useOffline();
+
+  function shareOccurrenceLink(occId: string) {
+    const url = `${window.location.origin}/?occ=${occId}${forAdmin ? "&view=admin" : ""}`;
+    navigator.clipboard.writeText(url).then(() => {
+      publishInlineMessage({ type: "SUCCESS", text: "Link copied to clipboard." });
+    }).catch(() => {
+      publishInlineMessage({ type: "ERROR", text: "Failed to copy link." });
+    });
+  }
   const myId = viewAsUserIds?.length === 1 ? viewAsUserIds[0] : me?.id || "";
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
@@ -135,6 +146,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Tentative", value: "TENTATIVE" },
       { label: "Task", value: "TASK" },
       { label: "Reminder", value: "REMINDER" },
+      { label: "Event", value: "EVENT" },
+      { label: "Followup", value: "FOLLOWUP" },
     ],
     []
   );
@@ -275,6 +288,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Standalone reminder dialog
   const [standaloneReminderDialogOpen, setStandaloneReminderDialogOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState<any>(null);
+
+  // Event dialog
+  const [eventDialogOpen, setEventDialogOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<any>(null);
+
+  // Followup dialog
+  const [followupDialogOpen, setFollowupDialogOpen] = useState(false);
+  const [editingFollowup, setEditingFollowup] = useState<any>(null);
 
   // Light estimate & convert dialogs
   const [lightEstDialogOpen, setLightEstDialogOpen] = useState(false);
@@ -422,6 +443,34 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     };
     window.addEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
     return () => window.removeEventListener("remindersToJobsTabSearch:run", onRun as EventListener);
+  }, []);
+
+  // Listen for navigation from Services tab → specific occurrence
+  useEffect(() => {
+    const onNav = (ev: Event) => {
+      const { entityId } = (ev as CustomEvent<{ q?: string; entityId?: string }>).detail || {};
+      if (!entityId) return;
+      // entityId is "occId|startAt"
+      const sepIdx = entityId.indexOf("|");
+      const occId = sepIdx >= 0 ? entityId.slice(0, sepIdx) : entityId;
+      const startAt = sepIdx >= 0 ? entityId.slice(sepIdx + 1) : "";
+      setHighlightOccId(occId);
+      setExpandedCards(new Set([occId]));
+      setFilterJobId(null);
+      setQ("");
+      setOverdueActive(false);
+      setDatePreset(null);
+      if (startAt) {
+        const occDate = new Date(startAt);
+        const from = new Date(occDate); from.setDate(from.getDate() - 3);
+        const to = new Date(occDate); to.setDate(to.getDate() + 3);
+        setDateFrom(bizDateKey(from));
+        setDateTo(bizDateKey(to));
+        void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occId);
+      }
+    };
+    window.addEventListener("open:servicesTabToJobsTabSearch", onNav as EventListener);
+    return () => window.removeEventListener("open:servicesTabToJobsTabSearch", onNav as EventListener);
   }, []);
 
   // Check for "show overdue" flag from header badge — on mount and via event
@@ -983,6 +1032,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "TENTATIVE") rows = rows.filter((occ) => occ.isTentative);
     else if (tf === "TASK") rows = rows.filter((occ) => occ.workflow === "TASK");
     else if (tf === "REMINDER") rows = rows.filter((occ) => occ.workflow === "REMINDER");
+    else if (tf === "EVENT") rows = rows.filter((occ) => occ.workflow === "EVENT");
+    else if (tf === "FOLLOWUP") rows = rows.filter((occ) => occ.workflow === "FOLLOWUP");
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
@@ -1252,6 +1303,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               >
                 Reminder
               </Button>
+              {(isAdmin || isSuper) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  w="full"
+                  justifyContent="start"
+                  onClick={() => { setCreateMenuOpen(false); setEditingEvent(null); setEventDialogOpen(true); }}
+                >
+                  Event
+                </Button>
+              )}
+              {(isAdmin || isSuper) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  w="full"
+                  justifyContent="start"
+                  onClick={() => { setCreateMenuOpen(false); setEditingFollowup(null); setFollowupDialogOpen(true); }}
+                >
+                  Followup
+                </Button>
+              )}
               {(isAdmin || isSuper) && (
                 <Button
                   size="sm"
@@ -1676,7 +1749,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           {isOffline && dayGroups.length > 0 && (
             <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" mt={2}>
               <Text fontSize="xs" color="orange.800">
-                You're viewing cached data. Some occurrences from your selected date range may not be available offline. Actions are disabled until you reconnect.
+                You're viewing cached data. Some occurrences may not be available offline. You can still: pin/unpin, like/unlike, set reminders, post comments, start jobs, complete jobs, and dismiss reminders — these will sync when you reconnect. Other actions require an internet connection.
               </Text>
             </Box>
           )}
@@ -1728,8 +1801,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isAdminOnlyOcc = !!occ.isAdminOnly;
             const isTask = occ.workflow === "TASK";
             const isReminder = occ.workflow === "REMINDER";
+            const isEvent = occ.workflow === "EVENT";
+            const isFollowup = occ.workflow === "FOLLOWUP";
             const isHighPriority = isReminder && !!(occ as any).isHighPriority;
-            const isTaskOrReminder = isTask || isReminder;
+            const isTaskOrReminder = isTask || isReminder || isEvent || isFollowup;
             const isLightEstimate = isEstimateOcc && !occ.jobId;
             const isGhost = !!occ._isReminderGhost;
             const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
@@ -1857,8 +1932,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // Card color theme — bg and border derive from the same base color
             const isPendingPayment = occ.status === "PENDING_PAYMENT";
             const isInProgressOthers = occ.status === "IN_PROGRESS" && isAssignedToOthers;
-            const cardColorBase = (isClosed || isAcceptedEstimate)
-              ? "gray"
+            const cardColorBase = isFollowup ? (isClosed ? "followup-closed" : "followup")
+              : isEvent ? (isClosed ? "event-closed" : "event")
+              : (isClosed || isAcceptedEstimate) ? "gray"
               : isReminder ? "purple"
               : isTask ? "blue"
               : isTentative ? "orange"
@@ -1870,19 +1946,30 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isUnassigned ? "yellow"
               : null;
             const cardBg = isHighPriority ? "purple.100"
+              : cardColorBase === "followup-closed" ? "#FED7D7"
+              : cardColorBase === "followup" ? "#FECACA"
+              : cardColorBase === "event-closed" ? "#FEF9C3"
+              : cardColorBase === "event" ? "#FDE68A"
               : cardColorBase === "gray" && (isAssignedToOthers || isClosed || isAcceptedEstimate) ? "gray.50"
               : cardColorBase === "yellow" ? "yellow.50"
               : cardColorBase === "green" ? "green.100"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = isHighPriority ? "purple.500"
+              : cardColorBase === "followup-closed" ? "#E11D48"
+              : cardColorBase === "followup" ? "#BE123C"
+              : cardColorBase === "event-closed" ? "#CA8A04"
+              : cardColorBase === "event" ? "#D97706"
               : !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
               : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
-            const cardBorderWidth = isHighPriority ? "2px" : "1px";
+            const isInProgress = occ.status === "IN_PROGRESS";
+            const cardBorderWidth = isHighPriority ? "2px" : isInProgress ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"
+              : isFollowup ? "#FDA4AF"
+              : isEvent ? "#FDE68A"
               : isReminder ? "purple.200"
               : isTask ? "blue.200"
               : isTentative ? "orange.200"
@@ -1891,6 +1978,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers ? "gray.300"
               : "gray.200";
             const commentBadgeColor = (isClosed || isAcceptedEstimate) ? "gray.700"
+              : isFollowup ? "#881337"
+              : isEvent ? "#92400E"
               : isReminder ? "purple.700"
               : isTask ? "blue.700"
               : isTentative ? "orange.700"
@@ -1919,7 +2008,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
-                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : (isFollowup && !isClosed) ? { borderLeft: "4px solid #BE123C" } : (isFollowup && isClosed) ? { borderLeft: "4px solid #E11D48", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid #D97706" } : (isEvent && isClosed) ? { borderLeft: "4px solid #CA8A04", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
@@ -1960,6 +2049,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isReminder ? (
                             <>{occ.title || "Reminder"}</>
+                          ) : isEvent || isFollowup ? (
+                            <>{occ.title || (isFollowup ? "Followup" : "Event")}</>
                           ) : isTask ? (
                             <>{occ.title || "Task"}</>
                           ) : isLightEstimate ? (
@@ -1982,16 +2073,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </>
                           )}
                         </Text>
-                        {isWorkerView && (
-                          <HStack gap={1} flexShrink={0}>
-                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
-                              <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                            </Button>
-                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                              {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-                            </Button>
-                          </HStack>
-                        )}
+                        <HStack gap={1} flexShrink={0}>
+                          {isWorkerView && (
+                            <>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                                <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                              </Button>
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                                {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                              </Button>
+                            </>
+                          )}
+                          <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); shareOccurrenceLink(occ.id); }} title="Share link">
+                            <Share2 size={14} />
+                          </Button>
+                        </HStack>
                       </HStack>
                       {isLightEstimate && occ.estimateAddress && (
                         <Box fontSize="xs" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap"><MapLink address={occ.estimateAddress} /></Box>
@@ -2010,6 +2106,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
+                          {isEvent && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Event · ${freqLabel}`} palette="yellow" variant="solid" />;
+                          })()}
+                          {isFollowup && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Followup · ${freqLabel}`} palette="red" variant="solid" />;
+                          })()}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
                             return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
@@ -2049,6 +2155,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">
                             {isReminder ? (
                               <>{occ.title || "Reminder"}</>
+                            ) : isEvent || isFollowup ? (
+                              <>{occ.title || (isFollowup ? "Followup" : "Event")}</>
                             ) : isTask ? (
                               <>{occ.title || "Task"}</>
                             ) : isLightEstimate ? (
@@ -2068,16 +2176,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               </>
                             )}
                           </Text>
-                          {isWorkerView && (
-                            <HStack gap={1} flexShrink={0}>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
-                                <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                              </Button>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                                {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-                              </Button>
-                            </HStack>
-                          )}
+                          <HStack gap={1} flexShrink={0}>
+                            {isWorkerView && (
+                              <>
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
+                                  <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                                </Button>
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
+                                  {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+                                </Button>
+                              </>
+                            )}
+                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); shareOccurrenceLink(occ.id); }} title="Share link">
+                              <Share2 size={14} />
+                            </Button>
+                          </HStack>
                         </HStack>
                         {isEstimateOcc && occ.title && !isLightEstimate && (
                           <Text fontSize="sm" color="fg.muted">{occ.title}</Text>
@@ -2177,6 +2290,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
+                          {isEvent && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Event · ${freqLabel}`} palette="yellow" variant="solid" />;
+                          })()}
+                          {isFollowup && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Followup · ${freqLabel}`} palette="red" variant="solid" />;
+                          })()}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
                             return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
@@ -2192,6 +2315,32 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
+                      {/* Event time */}
+                      {isEvent && occ.startAt && (() => {
+                        const d = new Date(occ.startAt);
+                        const h = d.getHours(); const m = d.getMinutes();
+                        if (h === 9 && m === 0) return null;
+                        return (
+                          <Text fontSize="sm" fontWeight="bold" color="#B45309">
+                            {d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          </Text>
+                        );
+                      })()}
+                      {/* Followup attachments (compact) */}
+                      {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
+                        <Box display="flex" gap="4px" flexWrap="wrap">
+                          {(occ as any).followupClients?.map((fc: any) => (
+                            <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} onClick={forAdmin ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, forAdmin, fc.client.id); } : undefined}>
+                              {fc.client.displayName}
+                            </Badge>
+                          ))}
+                          {(occ as any).followupJobs?.map((fj: any) => (
+                            <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} onClick={forAdmin ? (e: any) => { e.stopPropagation(); openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", true, `${fj.job.id}:`); } : undefined}>
+                              {fj.job.property?.displayName ?? "Job"}{fj.job.property?.client?.displayName ? ` — ${fj.job.property.client.displayName}` : ""}
+                            </Badge>
+                          ))}
+                        </Box>
+                      )}
                       {/* Job tags */}
                       {!isTaskOrReminder && (parseJobTags(occ).length > 0 || (occ as any).jobType) && (
                         <Box display="flex" gap="4px" flexWrap="wrap">
@@ -2260,7 +2409,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Text>
                       ) : occ.status !== "ARCHIVED" ? (
                         <Text fontSize="xs" fontWeight="semibold" color="orange.500">
-                          {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                          {(isEvent || isFollowup) ? null : isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
                         </Text>
                       ) : <Box />}
                       {(occ._count?.comments ?? 0) > 0 && (
@@ -2318,6 +2467,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 ) : (
                 <Card.Body pt="2" px="4">
                   <VStack align="start" gap={2} w="full">
+                    {/* Event time — prominent */}
+                    {isEvent && occ.startAt && (() => {
+                      const d = new Date(occ.startAt);
+                      const h = d.getHours(); const m = d.getMinutes();
+                      if (h === 9 && m === 0) return null;
+                      return (
+                        <Text fontSize="md" fontWeight="bold" color="#B45309">
+                          {d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        </Text>
+                      );
+                    })()}
                     {isLightEstimate && occ.estimateAddress && (
                       <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
                     )}
@@ -2484,6 +2644,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         Complete Time: {fmtDateTime(occ.completedAt)}
                       </Text>
                     )}
+                    {/* Followup attachments */}
+                    {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
+                      <Box p={2} bg="red.50" rounded="md" fontSize="xs">
+                        {(occ as any).followupClients?.length > 0 && (
+                          <Box mb={(occ as any).followupJobs?.length > 0 ? 1 : 0}>
+                            <Text fontWeight="medium" mb={0.5}>Clients:</Text>
+                            <Box display="flex" gap="4px" flexWrap="wrap">
+                              {(occ as any).followupClients.map((fc: any) => (
+                                <Badge key={fc.client.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} _hover={forAdmin ? { opacity: 0.8 } : undefined} onClick={forAdmin ? () => openEventSearch("jobsTabToClientsTabSearch", fc.client.displayName, forAdmin, fc.client.id) : undefined}>
+                                  {fc.client.displayName}
+                                </Badge>
+                              ))}
+                            </Box>
+                          </Box>
+                        )}
+                        {(occ as any).followupJobs?.length > 0 && (
+                          <Box>
+                            <Text fontWeight="medium" mb={0.5}>Job Services:</Text>
+                            <Box display="flex" gap="4px" flexWrap="wrap">
+                              {(occ as any).followupJobs.map((fj: any) => (
+                                <Badge key={fj.job.id} colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full" cursor={forAdmin ? "pointer" : undefined} _hover={forAdmin ? { opacity: 0.8 } : undefined} onClick={forAdmin ? () => openEventSearch("jobsTabToServicesTabSearch", fj.job.property?.displayName ?? "", true, `${fj.job.id}:`) : undefined}>
+                                  {fj.job.property?.displayName ?? "Job"}{fj.job.property?.client?.displayName ? ` — ${fj.job.property.client.displayName}` : ""}
+                                </Badge>
+                              ))}
+                            </Box>
+                          </Box>
+                        )}
+                      </Box>
+                    )}
                     {(() => {
                       // Split notes: lines starting with "Accepted:" are accept comments
                       const raw = occ.notes ?? "";
@@ -2617,7 +2806,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         })}
                       </VStack>
                     )}
-                    {isUnassigned && occ.status !== "ARCHIVED" && (
+                    {isUnassigned && !isEvent && !isFollowup && occ.status !== "ARCHIVED" && (
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         {isTentative
                           ? "Unclaimed — tentative, awaiting admin confirmation"
@@ -3129,6 +3318,118 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       </>)}
+                      {/* Event complete/edit/delete buttons — admin only */}
+                      {isEvent && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+                        <Button
+                          size="sm"
+                          variant="solid"
+                          colorPalette="yellow"
+                          disabled={isOffline}
+                          onClick={async () => {
+                            try {
+                              await apiPost(`/api/admin/events/${occ.id}/complete`);
+                              publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
+                              await load(false);
+                            } catch (err) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
+                            }
+                          }}
+                        >
+                          Complete
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setEditingEvent(occ);
+                            setEventDialogOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="red"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setConfirmAction({
+                              title: "Delete Event?",
+                              message: `Are you sure you want to delete "${occ.title}"?`,
+                              confirmLabel: "Delete",
+                              colorPalette: "red",
+                              onConfirm: async () => {
+                                try {
+                                  await apiDelete(`/api/admin/events/${occ.id}`);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Event deleted." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete event.", err) });
+                                }
+                              },
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </>)}
+                      {/* Followup complete/edit/delete buttons — admin only */}
+                      {isFollowup && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+                        <Button
+                          size="sm"
+                          variant="solid"
+                          colorPalette="red"
+                          disabled={isOffline}
+                          onClick={async () => {
+                            try {
+                              await apiPost(`/api/admin/followups/${occ.id}/complete`);
+                              publishInlineMessage({ type: "SUCCESS", text: "Followup completed." });
+                              await load(false);
+                            } catch (err) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete followup.", err) });
+                            }
+                          }}
+                        >
+                          Complete
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setEditingFollowup(occ);
+                            setFollowupDialogOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="red"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setConfirmAction({
+                              title: "Delete Followup?",
+                              message: `Are you sure you want to delete "${occ.title}"?`,
+                              confirmLabel: "Delete",
+                              colorPalette: "red",
+                              onConfirm: async () => {
+                                try {
+                                  await apiDelete(`/api/admin/followups/${occ.id}`);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Followup deleted." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete followup.", err) });
+                                }
+                              },
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </>)}
                       {/* Light estimate edit/delete */}
                       {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
                         <Button
@@ -3406,6 +3707,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           display="flex"
           alignItems="center"
           justifyContent="center"
+          tabIndex={0}
+          ref={(el: HTMLDivElement | null) => { if (el) el.focus(); }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") { e.stopPropagation(); setViewerIndex((i) => Math.max(i - 1, 0)); }
+            else if (e.key === "ArrowRight") { e.stopPropagation(); setViewerIndex((i) => Math.min(i + 1, viewerPhotos.length - 1)); }
+            else if (e.key === "Escape") { setViewerPhotos([]); }
+          }}
           onClick={() => setViewerPhotos([])}
           onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
           onTouchEnd={(e) => {
@@ -3462,6 +3770,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCreated={() => void load(false)}
         editTask={editingReminder}
         mode="reminder"
+      />
+
+      <EventDialog
+        open={eventDialogOpen}
+        onOpenChange={(o) => { setEventDialogOpen(o); if (!o) setEditingEvent(null); }}
+        onCreated={() => void load(false)}
+        editEvent={editingEvent}
+      />
+
+      <FollowupDialog
+        open={followupDialogOpen}
+        onOpenChange={(o) => { setFollowupDialogOpen(o); if (!o) setEditingFollowup(null); }}
+        onCreated={() => void load(false)}
+        editFollowup={editingFollowup}
       />
 
       {/* Pre-dialog before launching New Job Setup from accepted light estimate */}
@@ -3952,33 +4274,45 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="xs" color="fg.muted" mb={2}>Each job service can have multiple occurrences. The type determines the workflow.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300" bg="blue.50">
                     <Badge colorPalette="blue" variant="subtle" mb={1}>Repeating</Badge>
                     <Text fontSize="sm">A recurring job on a schedule (e.g., every 14 days). Workers can claim it, or an admin can assign a team. When payment is accepted, the next occurrence is automatically created using the Job Service's default team. If no default team is set, the next occurrence is left unassigned (claimable).</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Next auto-created</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="cyan.300" bg="cyan.50">
                     <Badge colorPalette="cyan" variant="solid" mb={1}>One-Off</Badge>
                     <Text fontSize="sm">A single job that does not repeat. No next occurrence is created after payment.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Done</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="pink.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="pink.300" bg="pink.50">
                     <Badge colorPalette="pink" variant="solid" mb={1}>Estimate</Badge>
                     <Text fontSize="sm">A site visit to assess work. Estimates are administered by default — they must be assigned by an admin. After starting and completing, the claimer or admin can accept or reject with comments. Estimates can be standalone (lightweight) or linked to a Job Service.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Assign → Start → Complete → Accept or Reject</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300" bg="blue.50">
                     <Badge colorPalette="blue" variant="solid" mb={1}>Task</Badge>
                     <Text fontSize="sm">A personal to-do item (e.g., "Call client about pricing"). Tasks can be completed directly from Scheduled status — no start/complete workflow. Can be linked to a job occurrence for context.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300" bg="purple.50">
                     <Badge colorPalette="purple" variant="solid" mb={1}>Reminder</Badge>
                     <Text fontSize="sm">A standalone reminder not tied to a specific job (e.g., "Pick up supplies"). Appears in the Planning tab when due. Can be dismissed and reopened.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#BE123C" bg="#FECACA">
+                    <Badge colorPalette="red" variant="solid" mb={1}>Followup</Badge>
+                    <Text fontSize="sm">A shared follow-up visible to all workers and admins. Works like an Event, but can optionally attach one or more clients and/or job services — so the team knows exactly who or what to follow up on. Admin-only to create, edit, and complete. Can be one-off or repeating.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#D97706" bg="#FDE68A">
+                    <Badge colorPalette="yellow" variant="solid" mb={1}>Event</Badge>
+                    <Text fontSize="sm">A shared occurrence visible to all workers and admins (e.g., "Weekly team meeting", "Equipment inspection"). Created by admins only. Can be one-off or repeating — repeating events auto-create the next instance when completed. Only admins can edit and complete events. Becomes overdue if not completed by its date.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
                   </Box>
 
                   <Box mt={2}>
@@ -4006,7 +4340,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
-                    <Badge colorPalette="red" variant="outline" mb={1}>Administered</Badge>
+                    <Badge bg="red.200" color="red.700" border="1px solid" borderColor="red.300" mb={1}>Administered</Badge>
                     <Text fontSize="sm">Cannot be claimed by workers — an admin must assign the team. Once assigned, the claimer can start, complete, and manage it normally. Estimates are administered by default.</Text>
                   </Box>
 
@@ -4053,6 +4387,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <HStack p={2} bg="purple.50" borderWidth="1px" borderColor="purple.300" rounded="md" gap={2}>
                       <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Purple</Badge>
                       <Text fontSize="xs">Reminder</Text>
+                    </HStack>
+                    <HStack p={2} bg="#FECACA" borderWidth="1px" borderColor="#BE123C" rounded="md" gap={2}>
+                      <Badge colorPalette="red" variant="solid" fontSize="xs" flexShrink={0}>Rose</Badge>
+                      <Text fontSize="xs">Followup — shared, with attached clients/jobs</Text>
+                    </HStack>
+                    <HStack p={2} bg="#FDE68A" borderWidth="1px" borderColor="#D97706" rounded="md" gap={2}>
+                      <Badge colorPalette="yellow" variant="solid" fontSize="xs" flexShrink={0}>Amber</Badge>
+                      <Text fontSize="xs">Event — shared, admin-managed</Text>
                     </HStack>
                     <HStack p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" flexShrink={0}>Gray</Badge>

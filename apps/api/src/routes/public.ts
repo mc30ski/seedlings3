@@ -311,6 +311,9 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Determine workflow type label
     const workflowLabel = (occ: any) => {
       if (occ.workflow === "TASK") return "Task";
+      if (occ.workflow === "REMINDER") return "Reminder";
+      if (occ.workflow === "EVENT") return "Event";
+      if (occ.workflow === "FOLLOWUP") return "Followup";
       if (occ.workflow === "ESTIMATE" || occ.isEstimate) return "Estimate";
       if (occ.workflow === "ONE_OFF" || occ.isOneOff) return "One-Off";
       if (occ.workflow === "STANDARD") return "Repeating";
@@ -327,12 +330,14 @@ export default async function publicRoutes(app: FastifyInstance) {
       const address = [prop?.street1, prop?.city, prop?.state, prop?.postalCode].filter(Boolean).join(", ");
       const jobType = occ.jobType ? prettyEnum(occ.jobType) : "";
       const isTask = occ.workflow === "TASK";
+      const isEventOrFollowup = occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP";
+      const isReminder = occ.workflow === "REMINDER";
       const type = workflowLabel(occ);
 
       // Summary: [Type] Property (Client) — Job Type
       const summaryParts = [`[${type}]`];
-      if (isTask) {
-        summaryParts.push(occ.title || "Task");
+      if (isTask || isReminder || isEventOrFollowup) {
+        summaryParts.push(occ.title || type);
       } else {
         summaryParts.push(propName);
         if (client) summaryParts.push(`(${client})`);
@@ -381,19 +386,38 @@ export default async function publicRoutes(app: FastifyInstance) {
         desc.push(`Reminder: ${reminder.note || "Set"} (${reminder.remindAt.toISOString().slice(0, 10)})`);
       }
 
-      // All-day event using VALUE=DATE format
-      events.push([
-        "BEGIN:VEVENT",
-        `UID:${occ.id}@seedlings`,
-        `DTSTART;VALUE=DATE:${fmtDateOnly(start)}`,
-        `DTEND;VALUE=DATE:${fmtDateOnly(new Date(start.getTime() + 86400000))}`,
-        `SUMMARY:${esc(summary)}`,
-        address && !isTask ? `LOCATION:${esc(address)}` : null,
-        `DESCRIPTION:${esc(desc.join("\\n"))}`,
-        `URL:${appUrl}?occ=${occ.id}`,
-        `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
-        "END:VEVENT",
-      ].filter(Boolean).join("\r\n"));
+      // Check if this is an EVENT with a specific time (not default 09:00)
+      const isTimedEvent = occ.workflow === "EVENT" && start instanceof Date && (start.getHours() !== 9 || start.getMinutes() !== 0);
+
+      if (isTimedEvent) {
+        // Timed event — 1 hour duration
+        const endTime = new Date(start.getTime() + 60 * 60 * 1000);
+        events.push([
+          "BEGIN:VEVENT",
+          `UID:${occ.id}@seedlings`,
+          `DTSTART:${fmtDt(start)}`,
+          `DTEND:${fmtDt(endTime)}`,
+          `SUMMARY:${esc(summary)}`,
+          `DESCRIPTION:${esc(desc.join("\\n"))}`,
+          `URL:${appUrl}?occ=${occ.id}`,
+          `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+          "END:VEVENT",
+        ].filter(Boolean).join("\r\n"));
+      } else {
+        // All-day event using VALUE=DATE format
+        events.push([
+          "BEGIN:VEVENT",
+          `UID:${occ.id}@seedlings`,
+          `DTSTART;VALUE=DATE:${fmtDateOnly(start)}`,
+          `DTEND;VALUE=DATE:${fmtDateOnly(new Date(start.getTime() + 86400000))}`,
+          `SUMMARY:${esc(summary)}`,
+          address && !isTask ? `LOCATION:${esc(address)}` : null,
+          `DESCRIPTION:${esc(desc.join("\\n"))}`,
+          `URL:${appUrl}?occ=${occ.id}`,
+          `LAST-MODIFIED:${fmtDt(occ.updatedAt ?? occ.createdAt ?? new Date())}`,
+          "END:VEVENT",
+        ].filter(Boolean).join("\r\n"));
+      }
 
       // Ghost reminder event (if reminder date differs from occurrence date)
       if (reminder) {
