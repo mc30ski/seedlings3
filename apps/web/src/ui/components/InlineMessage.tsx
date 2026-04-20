@@ -153,21 +153,21 @@ export default function InlineMessage({
                 : "status"
             }
             aria-live="polite"
-            borderWidth="1px"
-            borderRadius="md"
-            px={3}
-            py={2}
+            borderWidth="2px"
+            borderRadius="lg"
+            px={4}
+            py={3}
             bg={palette.bg}
             borderColor={palette.border}
             color={palette.fg}
-            boxShadow="md"
+            boxShadow="lg"
             className={className}
             style={style}
           >
-            <HStack justify="space-between" align="center" gap="2" minH="36px">
-              <HStack align="start" gap="2" minW={0}>
-                <Icon as={palette.icon} boxSize={4} mt="1px" />
-                <Text fontSize="sm" fontWeight="medium" lineClamp={4}>
+            <HStack justify="space-between" align="center" gap="3" minH="44px">
+              <HStack align="center" gap="3" minW={0}>
+                <Icon as={palette.icon} boxSize={5} flexShrink={0} />
+                <Text fontSize="md" fontWeight="semibold" lineClamp={4}>
                   {msg?.text ?? ""}
                 </Text>
               </HStack>
@@ -175,6 +175,7 @@ export default function InlineMessage({
                 <CloseButton
                   size="sm"
                   aria-label="Dismiss"
+                  color="white"
                   onClick={() => beginHide(fadeOutMs)}
                 />
               )}
@@ -190,31 +191,31 @@ function getPalette(kind: MessageKind) {
   switch (kind) {
     case "SUCCESS":
       return {
-        bg: "green.50",
-        border: "green.200",
-        fg: "green.800",
+        bg: "green.500",
+        border: "green.600",
+        fg: "white",
         icon: CheckCircle2,
       };
     case "WARNING":
       return {
-        bg: "orange.50",
-        border: "orange.200",
-        fg: "orange.900",
+        bg: "orange.400",
+        border: "orange.500",
+        fg: "white",
         icon: AlertTriangle,
       };
     case "ERROR":
       return {
-        bg: "red.100",
-        border: "red.400",
-        fg: "red.900",
+        bg: "red.500",
+        border: "red.600",
+        fg: "white",
         icon: OctagonAlert,
       };
     case "INFO":
     default:
       return {
-        bg: "blue.50",
-        border: "blue.200",
-        fg: "blue.800",
+        bg: "blue.500",
+        border: "blue.600",
+        fg: "white",
         icon: Info,
       };
   }

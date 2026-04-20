@@ -492,6 +492,209 @@ export const jobs: ServicesJobs = {
     });
   },
 
+  async createEvent(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
+    return prisma.$transaction(async (tx) => {
+      const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: "EVENT" as any,
+          frequencyDays: isRepeating ? input.frequencyDays : null,
+        } as any,
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+        occurrenceId: occ.id,
+        type: "EVENT",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
+  async completeEvent(adminUserId: string, occurrenceId: string) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+      if (!occ) throw new Error("Event not found");
+      if (occ.workflow !== "EVENT") throw new Error("Not an event");
+      if (occ.status !== "SCHEDULED") throw new Error("Event is not in SCHEDULED status");
+
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+      });
+
+      let nextOccurrence = null;
+      const freq = (occ as any).frequencyDays;
+      if (freq && freq > 0) {
+        const baseDate = occ.startAt ? new Date(occ.startAt) : new Date();
+        let nextStart: Date;
+        if (freq === 30) {
+          // Monthly: same day next month (clamp to last day if needed)
+          const day = baseDate.getDate();
+          const next = new Date(baseDate);
+          next.setMonth(next.getMonth() + 1, 1); // go to 1st of next month
+          const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+          next.setDate(Math.min(day, lastDay));
+          nextStart = next;
+        } else if (freq === 365) {
+          // Yearly: same month+day next year (clamp for leap day)
+          const month = baseDate.getMonth();
+          const day = baseDate.getDate();
+          const nextYear = baseDate.getFullYear() + 1;
+          const lastDay = new Date(nextYear, month + 1, 0).getDate();
+          nextStart = new Date(baseDate);
+          nextStart.setFullYear(nextYear);
+          nextStart.setMonth(month);
+          nextStart.setDate(Math.min(day, lastDay));
+        } else {
+          nextStart = new Date(baseDate);
+          nextStart.setDate(nextStart.getDate() + freq);
+        }
+
+        nextOccurrence = await tx.jobOccurrence.create({
+          data: {
+            kind: null,
+            title: occ.title,
+            notes: occ.notes,
+            startAt: nextStart,
+            status: JobOccurrenceStatus.SCHEDULED,
+            source: "GENERATED" as any,
+            workflow: "EVENT" as any,
+            frequencyDays: freq,
+          } as any,
+        });
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+        occurrenceId,
+        action: "COMPLETE_EVENT",
+        nextOccurrenceId: nextOccurrence?.id ?? null,
+      });
+
+      return { completed: occ, next: nextOccurrence };
+    });
+  },
+
+  async createFollowup(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null; clientIds?: string[]; jobIds?: string[] }) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: "FOLLOWUP" as any,
+          frequencyDays: (input.frequencyDays != null && input.frequencyDays > 0) ? input.frequencyDays : null,
+        } as any,
+      });
+
+      if (input.clientIds?.length) {
+        await tx.followupClient.createMany({
+          data: input.clientIds.map((clientId) => ({ occurrenceId: occ.id, clientId })),
+        });
+      }
+      if (input.jobIds?.length) {
+        await tx.followupJob.createMany({
+          data: input.jobIds.map((jobId) => ({ occurrenceId: occ.id, jobId })),
+        });
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+        occurrenceId: occ.id,
+        type: "FOLLOWUP",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
+  async completeFollowup(adminUserId: string, occurrenceId: string) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        include: { followupClients: true, followupJobs: true },
+      });
+      if (!occ) throw new Error("Followup not found");
+      if (occ.workflow !== "FOLLOWUP") throw new Error("Not a followup");
+      if (occ.status !== "SCHEDULED") throw new Error("Followup is not in SCHEDULED status");
+
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+      });
+
+      let nextOccurrence = null;
+      const freq = (occ as any).frequencyDays;
+      if (freq && freq > 0) {
+        const baseDate = occ.startAt ? new Date(occ.startAt) : new Date();
+        let nextStart: Date;
+        if (freq === 30) {
+          const day = baseDate.getDate();
+          const next = new Date(baseDate);
+          next.setMonth(next.getMonth() + 1, 1);
+          const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+          next.setDate(Math.min(day, lastDay));
+          nextStart = next;
+        } else if (freq === 365) {
+          const month = baseDate.getMonth();
+          const day = baseDate.getDate();
+          const nextYear = baseDate.getFullYear() + 1;
+          const lastDay = new Date(nextYear, month + 1, 0).getDate();
+          nextStart = new Date(baseDate);
+          nextStart.setFullYear(nextYear);
+          nextStart.setMonth(month);
+          nextStart.setDate(Math.min(day, lastDay));
+        } else {
+          nextStart = new Date(baseDate);
+          nextStart.setDate(nextStart.getDate() + freq);
+        }
+
+        nextOccurrence = await tx.jobOccurrence.create({
+          data: {
+            kind: null,
+            title: occ.title,
+            notes: occ.notes,
+            startAt: nextStart,
+            status: JobOccurrenceStatus.SCHEDULED,
+            source: "GENERATED" as any,
+            workflow: "FOLLOWUP" as any,
+            frequencyDays: freq,
+          } as any,
+        });
+
+        // Copy client and job attachments to the next occurrence
+        if ((occ as any).followupClients?.length) {
+          await tx.followupClient.createMany({
+            data: (occ as any).followupClients.map((fc: any) => ({ occurrenceId: nextOccurrence!.id, clientId: fc.clientId })),
+          });
+        }
+        if ((occ as any).followupJobs?.length) {
+          await tx.followupJob.createMany({
+            data: (occ as any).followupJobs.map((fj: any) => ({ occurrenceId: nextOccurrence!.id, jobId: fj.jobId })),
+          });
+        }
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+        occurrenceId,
+        action: "COMPLETE_FOLLOWUP",
+        nextOccurrenceId: nextOccurrence?.id ?? null,
+      });
+
+      return { completed: occ, next: nextOccurrence };
+    });
+  },
+
   async createLightEstimate(adminUserId: string, input: {
     title: string;
     notes?: string;
@@ -763,6 +966,12 @@ export const jobs: ServicesJobs = {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
           orderBy: { createdAt: "desc" as const },
           take: 3,
+        },
+        followupClients: {
+          include: { client: { select: { id: true, displayName: true } } },
+        },
+        followupJobs: {
+          include: { job: { include: { property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } } } } },
         },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],

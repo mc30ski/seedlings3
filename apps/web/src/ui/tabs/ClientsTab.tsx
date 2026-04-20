@@ -382,8 +382,8 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           return (
             <>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{active} Active</Badge>
-              {paused > 0 && <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>}
-              {archived > 0 && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>}
+              <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>
+              <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>
             </>
           );
         })()}

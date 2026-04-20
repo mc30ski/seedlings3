@@ -185,6 +185,7 @@ export default function ServicesTab({
   const [jobDetails, setJobDetails] = useState<Record<string, JobDetail>>({});
   const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+  const [showAllOccs, setShowAllOccs] = useState<Set<string>>(new Set());
 
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
@@ -199,6 +200,65 @@ export default function ServicesTab({
   const [occurrenceJobFreqDays, setOccurrenceJobFreqDays] = useState<number | null>(null);
   const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
   const [occurrenceDefaultWorkflow, setOccurrenceDefaultWorkflow] = useState<string | undefined>(undefined);
+
+  // Comments
+  type OccComment = { id: string; body: string; createdAt: string; updatedAt: string; author: { id: string; displayName?: string | null; email?: string | null } };
+  const [commentsOpenFor, setCommentsOpenFor] = useState<Set<string>>(new Set());
+  const [commentsCache, setCommentsCache] = useState<Record<string, OccComment[]>>({});
+  const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
+  const [commentEditing, setCommentEditing] = useState<{ id: string; body: string } | null>(null);
+  const [commentBusy, setCommentBusy] = useState(false);
+
+  async function loadComments(occId: string) {
+    try {
+      const list = await apiGet<OccComment[]>(`/api/occurrences/${occId}/comments`);
+      setCommentsCache((prev) => ({ ...prev, [occId]: Array.isArray(list) ? list : [] }));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load comments.", err) });
+    }
+  }
+
+  function toggleComments(occId: string) {
+    setCommentsOpenFor((prev) => {
+      const next = new Set(prev);
+      if (next.has(occId)) { next.delete(occId); } else { next.add(occId); if (!commentsCache[occId]) void loadComments(occId); }
+      return next;
+    });
+  }
+
+  async function postComment(occId: string) {
+    const body = (commentDraft[occId] ?? "").trim();
+    if (!body) return;
+    setCommentBusy(true);
+    try {
+      await apiPost(`/api/occurrences/${occId}/comments`, { body });
+      setCommentDraft((prev) => ({ ...prev, [occId]: "" }));
+      await loadComments(occId);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to post comment.", err) });
+    } finally { setCommentBusy(false); }
+  }
+
+  async function editComment(commentId: string, occId: string, body: string) {
+    setCommentBusy(true);
+    try {
+      await apiPatch(`/api/occurrences/comments/${commentId}`, { body });
+      setCommentEditing(null);
+      await loadComments(occId);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to edit comment.", err) });
+    } finally { setCommentBusy(false); }
+  }
+
+  async function deleteComment(commentId: string, occId: string) {
+    setCommentBusy(true);
+    try {
+      await apiDelete(`/api/occurrences/comments/${commentId}`);
+      await loadComments(occId);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete comment.", err) });
+    } finally { setCommentBusy(false); }
+  }
 
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
@@ -886,7 +946,7 @@ export default function ServicesTab({
                 if (highlightOccId && o.id === highlightOccId) return true;
                 if (!showArchived && o.status === "ARCHIVED") return false;
                 if (!showCanceled && o.status === "CANCELED") return false;
-                if (o.startAt) {
+                if (!showAllOccs.has(job.id) && o.startAt) {
                   const d = bizDateKey(o.startAt);
                   if (dateFrom && d < dateFrom) return false;
                   if (dateTo && d > dateTo) return false;
@@ -1126,15 +1186,37 @@ export default function ServicesTab({
                 {(detail ? detail.occurrences.length === 0 : (job.occurrenceCount ?? 0) === 0) ? (
                   <Text fontSize="xs" color="fg.muted">No occurrences</Text>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => toggleExpand(job.id)}
-                  >
-                    {expanded
-                      ? `Hide occurrences (${visibleOccs.length} of ${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▲`
-                      : `Show occurrences (${job.occurrenceCount ?? 0}) ▼`}
-                  </Button>
+                  <HStack gap={1}>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => toggleExpand(job.id)}
+                    >
+                      {expanded
+                        ? `Hide occurrences (${visibleOccs.length} of ${detail ? detail.occurrences.length : (job.occurrenceCount ?? 0)}) ▲`
+                        : `Show occurrences (${job.occurrenceCount ?? 0}) ▼`}
+                    </Button>
+                    {expanded && detail && detail.occurrences.length > visibleOccs.length && !showAllOccs.has(job.id) && (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        colorPalette="blue"
+                        onClick={() => setShowAllOccs((prev) => { const next = new Set(prev); next.add(job.id); return next; })}
+                      >
+                        Show All
+                      </Button>
+                    )}
+                    {expanded && showAllOccs.has(job.id) && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        colorPalette="gray"
+                        onClick={() => setShowAllOccs((prev) => { const next = new Set(prev); next.delete(job.id); return next; })}
+                      >
+                        Date Filter
+                      </Button>
+                    )}
+                  </HStack>
                 )}
 
                 {expanded && (
@@ -1431,12 +1513,73 @@ export default function ServicesTab({
                                 photoCount={(occ as any)._count?.photos ?? 0}
                               />
                             )}
-                            {(occ as any)._count?.comments > 0 && (
-                              <HStack gap={1} fontSize="xs" color="fg.muted">
-                                <MessageCircle size={12} />
-                                <Text>{(occ as any)._count.comments} comment{(occ as any)._count.comments !== 1 ? "s" : ""}</Text>
-                              </HStack>
-                            )}
+                            {/* Comments */}
+                            <Box>
+                              <Badge
+                                variant="subtle"
+                                colorPalette="gray"
+                                fontSize="xs"
+                                px="2"
+                                borderRadius="full"
+                                cursor="pointer"
+                                onClick={() => toggleComments(occ.id)}
+                              >
+                                <MessageCircle size={11} style={{ marginRight: 3 }} />
+                                Comments ({(occ as any)._count?.comments ?? 0}) {commentsOpenFor.has(occ.id) ? "▼" : "▶"}
+                              </Badge>
+                              {commentsOpenFor.has(occ.id) && (
+                                <VStack align="stretch" gap={2} mt={2}>
+                                  {(commentsCache[occ.id] ?? []).length === 0 && !commentBusy && (
+                                    <Text fontSize="xs" color="fg.muted">No comments yet.</Text>
+                                  )}
+                                  {(commentsCache[occ.id] ?? []).map((c) => (
+                                    <Box key={c.id} p={2} bg="gray.100" rounded="md" fontSize="xs">
+                                      <HStack justifyContent="space-between" alignItems="center">
+                                        <Text fontWeight="semibold">{c.author.displayName ?? c.author.email ?? "Unknown"}</Text>
+                                        <Text color="fg.muted" fontSize="xs">{fmtDateTime(c.createdAt)}</Text>
+                                      </HStack>
+                                      {commentEditing?.id === c.id ? (
+                                        <VStack align="stretch" gap={1} mt={1}>
+                                          <input
+                                            type="text"
+                                            value={commentEditing.body}
+                                            onChange={(e) => setCommentEditing({ id: c.id, body: e.target.value })}
+                                            style={{ fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, width: "100%" }}
+                                          />
+                                          <HStack gap={1}>
+                                            <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !commentEditing.body.trim()} onClick={() => void editComment(c.id, occ.id, commentEditing.body)}>Save</Button>
+                                            <Button size="xs" variant="ghost" onClick={() => setCommentEditing(null)}>Cancel</Button>
+                                          </HStack>
+                                        </VStack>
+                                      ) : (
+                                        <>
+                                          <Text mt={1}>{c.body}</Text>
+                                          <HStack gap={1} mt={1}>
+                                            {c.author.id === me?.id && (
+                                              <Button size="xs" variant="ghost" onClick={() => setCommentEditing({ id: c.id, body: c.body })}>Edit</Button>
+                                            )}
+                                            {(c.author.id === me?.id || forAdmin) && (
+                                              <Button size="xs" variant="ghost" colorPalette="red" disabled={commentBusy} onClick={() => void deleteComment(c.id, occ.id)}>Delete</Button>
+                                            )}
+                                          </HStack>
+                                        </>
+                                      )}
+                                    </Box>
+                                  ))}
+                                  <HStack gap={1} mt={1}>
+                                    <input
+                                      type="text"
+                                      placeholder="Write a comment…"
+                                      value={commentDraft[occ.id] ?? ""}
+                                      onChange={(e) => setCommentDraft((prev) => ({ ...prev, [occ.id]: e.target.value }))}
+                                      onKeyDown={(e) => { if (e.key === "Enter") void postComment(occ.id); }}
+                                      style={{ flex: 1, fontSize: "12px", padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4 }}
+                                    />
+                                    <Button size="xs" variant="solid" colorPalette="blue" disabled={commentBusy || !(commentDraft[occ.id] ?? "").trim()} onClick={() => void postComment(occ.id)}>Post</Button>
+                                  </HStack>
+                                </VStack>
+                              )}
+                            </Box>
                             {occ.linkGroupId && detail && (() => {
                               const linked = detail.occurrences.filter(
                                 (o) => o.linkGroupId === occ.linkGroupId && o.id !== occ.id
@@ -1506,6 +1649,21 @@ export default function ServicesTab({
 
                         {forAdmin && (
                           <HStack gap={2} mt={2} wrap="wrap">
+                            <Button
+                              size="xs"
+                              variant="solid"
+                              colorPalette="blue"
+                              onClick={() =>
+                                openEventSearch(
+                                  "servicesTabToJobsTabSearch",
+                                  "",
+                                  true,
+                                  `${occ.id}|${occ.startAt ?? ""}`,
+                                )
+                              }
+                            >
+                              View in Jobs
+                            </Button>
                             <StatusButton
                               id="occ-edit"
                               itemId={occ.id}

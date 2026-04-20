@@ -245,6 +245,7 @@ model Client {
   contacts      ClientContact[]
   properties    Property[]
   jobClients    JobClient[]
+  followups     FollowupClient[]
 
   @@index([status])
   @@index([displayName])
@@ -391,6 +392,8 @@ enum OccurrenceWorkflow {
   ESTIMATE
   TASK
   REMINDER
+  EVENT
+  FOLLOWUP
 }
 
 enum JobOccurrenceSource {
@@ -421,6 +424,7 @@ model Job {
   schedule          JobSchedule?
   occurrences       JobOccurrence[]
   defaultAssignees  JobAssigneeDefault[]
+  followups         FollowupJob[]
 }
 
 model JobContact {
@@ -543,10 +547,12 @@ model JobOccurrence {
   payment     Payment?
   expenses    Expense[]
   photos      JobOccurrencePhoto[]
-  pins        PinnedOccurrence[]
-  likes       LikedOccurrence[]
-  reminders   Reminder[]
-  comments    OccurrenceComment[]
+  pins             PinnedOccurrence[]
+  likes            LikedOccurrence[]
+  reminders        Reminder[]
+  comments         OccurrenceComment[]
+  followupClients  FollowupClient[]
+  followupJobs     FollowupJob[]
 
   @@index([jobId, status])
   @@index([startAt])
@@ -774,4 +780,26 @@ model Reminder {
 
   @@unique([userId, occurrenceId])
   @@index([userId, remindAt])
+}
+
+model FollowupClient {
+  id            String        @id @default(cuid())
+  occurrenceId  String
+  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt     DateTime      @default(now())
+
+  @@unique([occurrenceId, clientId])
+}
+
+model FollowupJob {
+  id            String        @id @default(cuid())
+  occurrenceId  String
+  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  jobId         String
+  job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdAt     DateTime      @default(now())
+
+  @@unique([occurrenceId, jobId])
 }
