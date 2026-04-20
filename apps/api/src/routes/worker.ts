@@ -748,6 +748,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       notes: body.notes ? String(body.notes) : undefined,
       startAt: String(body.startAt),
       linkedOccurrenceId: body.linkedOccurrenceId ? String(body.linkedOccurrenceId) : undefined,
+      isHighPriority: !!body.isHighPriority,
     });
   });
 
@@ -779,6 +780,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
     if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
     if (body.linkedOccurrenceId !== undefined) data.linkedOccurrenceId = body.linkedOccurrenceId || null;
+    if (body.isHighPriority !== undefined) data.isHighPriority = !!body.isHighPriority;
     return prisma.jobOccurrence.update({ where: { id }, data });
   });
 

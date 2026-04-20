@@ -9,6 +9,7 @@ import {
   HStack,
   Portal,
   Spinner,
+  Switch,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -27,6 +28,7 @@ type EditTask = {
   title?: string | null;
   notes?: string | null;
   startAt?: string | null;
+  isHighPriority?: boolean;
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {
     id: string;
@@ -63,6 +65,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
   const [date, setDate] = useState(() => bizDateKey(new Date()));
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [isHighPriority, setIsHighPriority] = useState(false);
   const isEdit = !!editTask;
 
   // Occurrence linking
@@ -95,6 +98,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
       setTitle(editTask.title ?? "");
       setDate(editTask.startAt ? bizDateKey(editTask.startAt) : bizDateKey(new Date()));
       setNotes(editTask.notes ?? "");
+      setIsHighPriority(editTask.isHighPriority ?? false);
       if (editTask.linkedOccurrence) {
         const lo = editTask.linkedOccurrence;
         setSelectedOcc({
@@ -135,6 +139,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
     setTitle("");
     setDate(bizDateKey(new Date()));
     setNotes("");
+    setIsHighPriority(false);
     setOccSearch("");
     setSelectedOcc(null);
     setShowOccResults(false);
@@ -160,6 +165,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
           startAt: date + "T09:00:00",
           notes: notes.trim() || null,
           linkedOccurrenceId: selectedOcc?.id || null,
+          ...(isReminder ? { isHighPriority } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: `${entityLabel} updated.` });
       } else {
@@ -168,6 +174,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
           startAt: date + "T09:00:00",
           notes: notes.trim() || undefined,
           linkedOccurrenceId: selectedOcc?.id || undefined,
+          ...(isReminder ? { isHighPriority } : {}),
         });
         publishInlineMessage({ type: "SUCCESS", text: `${entityLabel} created.` });
       }
@@ -198,6 +205,17 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {isReminder && (
+                  <HStack justify="space-between" align="center">
+                    <Text fontSize="sm" fontWeight="medium">High Priority</Text>
+                    <Switch.Root checked={isHighPriority} onCheckedChange={(e) => setIsHighPriority(e.checked)} colorPalette="red" size="sm">
+                      <Switch.HiddenInput />
+                      <Switch.Control>
+                        <Switch.Thumb />
+                      </Switch.Control>
+                    </Switch.Root>
+                  </HStack>
+                )}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
                   <input

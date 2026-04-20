@@ -22,6 +22,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import JobTagPicker from "@/src/ui/components/JobTagPicker";
 
 type WorkerLite = {
   id: string;
@@ -73,6 +74,8 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
   const [notes, setNotes] = useState("");
   const [proposalAmount, setProposalAmount] = useState("");
   const [saving, setSaving] = useState(false);
+  const [jobTags, setJobTags] = useState<string[]>([]);
+  const [jobTagNote, setJobTagNote] = useState("");
 
   // Optional Job Service link
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -166,6 +169,8 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
     setAssigneeIds(myId ? [myId] : []);
     setSelectValue([]);
     setSelectedJobId([]);
+    setJobTags([]);
+    setJobTagNote("");
   }
 
   function validatePhone(val: string) {
@@ -201,6 +206,8 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
         const parsed = parseFloat(proposalAmount);
         if (!isNaN(parsed)) body.proposalAmount = parsed;
       }
+      if (jobTags.length > 0) body.jobTags = jobTags;
+      if (jobTagNote.trim()) body.jobType = jobTagNote.trim();
 
       if (isEdit) {
         await apiPatch(`/api/admin/occurrences/${editEstimate!.id}`, body);
@@ -376,6 +383,17 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                   <Text fontSize="xs" color="fg.muted" mt={1}>
                     Link to an existing Job Service. When accepted, it will create an occurrence under that job instead of starting the New Job workflow.
                   </Text>
+                </Box>
+
+                {/* Job Tags */}
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Job Tags</Text>
+                  <JobTagPicker
+                    selected={jobTags}
+                    onChange={setJobTags}
+                    customNote={jobTagNote}
+                    onCustomNoteChange={setJobTagNote}
+                  />
                 </Box>
 
                 {/* Notes */}

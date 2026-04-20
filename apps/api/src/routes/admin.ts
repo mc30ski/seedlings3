@@ -689,6 +689,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.isEstimate != null) input.isEstimate = !!body.isEstimate;
     if (body.isAdminOnly != null) input.isAdminOnly = !!body.isAdminOnly;
     if ("jobType" in body) input.jobType = body.jobType || null;
+    if ("jobTags" in body) input.jobTags = body.jobTags ? JSON.stringify(body.jobTags) : null;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
@@ -932,6 +933,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
       if ("isAdminOnly" in body) patch.isAdminOnly = !!body.isAdminOnly;
       if ("jobType" in body) patch.jobType = body.jobType || null;
+      if ("jobTags" in body) patch.jobTags = body.jobTags ? JSON.stringify(body.jobTags) : null;
       if ("startedAt" in body) patch.startedAt = body.startedAt || null;
       if ("completedAt" in body) patch.completedAt = body.completedAt || null;
       if ("startLat" in body) patch.startLat = body.startLat != null ? Number(body.startLat) : null;
@@ -2015,6 +2017,7 @@ Respond ONLY with valid JSON in this exact format:
       estimateAddress: body.estimateAddress ? String(body.estimateAddress).trim() : undefined,
       proposalAmount: body.proposalAmount != null ? Number(body.proposalAmount) : undefined,
       proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
+      jobTags: Array.isArray(body.jobTags) ? JSON.stringify(body.jobTags) : undefined,
       assigneeUserIds: Array.isArray(body.assigneeUserIds) ? body.assigneeUserIds.map(String) : undefined,
       jobId: body.jobId ? String(body.jobId) : undefined,
     });

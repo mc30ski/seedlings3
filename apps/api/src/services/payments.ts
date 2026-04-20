@@ -162,6 +162,7 @@ export const payments: ServicesPayments = {
             workflow: "STANDARD",
             isAdminOnly,
             jobType: fullOcc.jobType ?? null,
+            jobTags: (fullOcc as any).jobTags ?? null,
             notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
             price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
             estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,

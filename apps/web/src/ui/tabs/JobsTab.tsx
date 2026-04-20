@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -42,6 +42,7 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
+import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
 import { enqueueAction } from "@/src/lib/offlineQueue";
@@ -67,7 +68,13 @@ function actualMinutes(occ: { startedAt?: string | null; completedAt?: string | 
   return (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000;
 }
 
-const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
+function parseJobTags(occ: any): string[] {
+  if (!occ.jobTags) return [];
+  if (Array.isArray(occ.jobTags)) return occ.jobTags;
+  try { return JSON.parse(occ.jobTags); } catch { return []; }
+}
+
+const statusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED" && s !== "CANCELED")] as const;
 
 const quickDateItemsBase = [
   { label: "Now", value: "now" },
@@ -145,6 +152,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     () => createListCollection({ items: statusItems }),
     [statusItems]
   );
+  const [showCanceled, setShowCanceled] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
@@ -164,7 +173,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Build a rich label for offline queue entries
   function queueLabel(occ: WorkerOccurrence | undefined, action: string, detail?: string): string {
     const property = occ?.job?.property?.displayName;
-    const jobType = (occ?.job as any)?.jobType ?? occ?.kind;
+    const tags = occ ? parseJobTags(occ) : [];
+    const tagStr = tags.length > 0 ? tags.map(jobTagLabel).join(", ") : null;
+    const hasCustom = !!(occ as any)?.jobType;
+    const jobType = [tagStr, hasCustom ? "Custom" : null].filter(Boolean).join(", ") || occ?.kind;
     const date = occ?.startAt ? bizDateKey(occ.startAt) : null;
     const parts = [action];
     if (property) parts.push(property);
@@ -462,7 +474,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     try {
       const lastDate = localStorage.getItem(key);
       const today = new Date().toISOString().slice(0, 10);
-      if (lastDate && lastDate !== today) {
+      if (!lastDate || lastDate !== today) {
         // New day — reset filters
         setDatePreset("now");
         const nowDates = computeDatesFromPreset("now");
@@ -978,6 +990,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (sf === "UNCLAIMED") return !hasAssignees;
         return occ.status === sf;
       });
+    } else {
+      if (!showCanceled) rows = rows.filter((occ) => occ.status !== "CANCELED");
+      if (!showArchived) rows = rows.filter((occ) => occ.status !== "ARCHIVED");
     }
     if (overdueActive) {
       const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
@@ -1038,7 +1053,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return da < db ? -1 : da > db ? 1 : 0;
     });
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -1357,6 +1372,40 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
           </Button>
         )}
+        {forAdmin && (
+          <Button
+            size="sm"
+            variant={showCanceled ? "solid" : "outline"}
+            px="2"
+            onClick={() => setShowCanceled(!showCanceled)}
+            css={showCanceled ? {
+              background: "var(--chakra-colors-red-100)",
+              color: "var(--chakra-colors-red-700)",
+              border: "1px solid var(--chakra-colors-red-300)",
+              "&:hover": { background: "var(--chakra-colors-red-200)" },
+            } : undefined}
+            title={showCanceled ? "Hide canceled" : "Show canceled"}
+          >
+            <Ban size={14} />
+          </Button>
+        )}
+        {forAdmin && (
+          <Button
+            size="sm"
+            variant={showArchived ? "solid" : "outline"}
+            px="2"
+            onClick={() => setShowArchived(!showArchived)}
+            css={showArchived ? {
+              background: "var(--chakra-colors-gray-200)",
+              color: "var(--chakra-colors-gray-700)",
+              border: "1px solid var(--chakra-colors-gray-400)",
+              "&:hover": { background: "var(--chakra-colors-gray-300)" },
+            } : undefined}
+            title={showArchived ? "Hide archived" : "Show archived"}
+          >
+            <Archive size={14} />
+          </Button>
+        )}
         <Box flex="1" />
         <Button
           size="sm"
@@ -1513,7 +1562,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || highlightOccId || filterJobId || datePreset) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -1555,6 +1604,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Liked
             </Badge>
           )}
+          {showCanceled && (
+            <Badge size="sm" colorPalette="red" variant="subtle">
+              + Canceled
+            </Badge>
+          )}
+          {showArchived && (
+            <Badge size="sm" colorPalette="gray" variant="solid">
+              + Archived
+            </Badge>
+          )}
           {highlightOccId && (
             <Badge size="sm" colorPalette="teal" variant="subtle">
               Filtered to 1 occurrence
@@ -1565,7 +1624,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Filtered to job
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !highlightOccId && !filterJobId && !q) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -1578,6 +1637,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setOverdueActive(false);
                 setVipOnly(false);
                 setLikedOnly(false);
+                setShowCanceled(false);
+                setShowArchived(false);
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
@@ -1667,6 +1728,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isAdminOnlyOcc = !!occ.isAdminOnly;
             const isTask = occ.workflow === "TASK";
             const isReminder = occ.workflow === "REMINDER";
+            const isHighPriority = isReminder && !!(occ as any).isHighPriority;
             const isTaskOrReminder = isTask || isReminder;
             const isLightEstimate = isEstimateOcc && !occ.jobId;
             const isGhost = !!occ._isReminderGhost;
@@ -1675,17 +1737,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isPinned = isWorkerView && pinnedIds.has(occ.id);
 
             // Ghost reminder cards — render a simplified card
+            const ghostHighPriority = !!(occ as any).isHighPriority;
             if (isGhost) {
               return (
                 <Card.Root
                   key={`ghost-${occ.id}-${occIdx}`}
                   variant="outline"
-                  borderColor="purple.300"
-                  bg="purple.50"
+                  borderColor={ghostHighPriority ? "purple.500" : "purple.300"}
+                  borderWidth={ghostHighPriority ? "2px" : "1px"}
+                  bg={ghostHighPriority ? "purple.100" : "purple.50"}
                   css={{
-                    borderLeft: "4px dashed var(--chakra-colors-purple-400)",
+                    borderLeft: ghostHighPriority ? "4px dashed var(--chakra-colors-purple-600)" : "4px dashed var(--chakra-colors-purple-400)",
                     borderStyle: "dashed",
-                    opacity: 0.8,
+                    opacity: ghostHighPriority ? 1 : 0.8,
                   }}
                 >
                   <Card.Body py="3" px="4">
@@ -1693,6 +1757,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <HStack gap={2} align="center">
                         <Bell size={14} style={{ color: "var(--chakra-colors-purple-600)" }} />
                         <Badge colorPalette="purple" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
+                        {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="2" borderRadius="full">High Priority</Badge>}
                         {occ.reminder?.note && (
                           <Text fontSize="xs" color="purple.700">— {occ.reminder.note.length > 50 ? occ.reminder.note.slice(0, 50) + "…" : occ.reminder.note}</Text>
                         )}
@@ -1700,7 +1765,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Text fontSize="xs" color="fg.muted">
                         {occ.job?.property?.displayName ?? occ.title ?? "Job"}
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
-                        {(occ as any).jobType && ` · ${jobTypeLabel((occ as any).jobType)}`}
+                        {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
+                        {(occ as any).jobType && ` · Custom`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
                       <Button
@@ -1765,7 +1831,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Text fontSize="xs" color="fg.muted">
                         {ghostIsTask ? (occ.title || "Task") : ghostIsReminder ? (occ.title || "Reminder") : (occ.job?.property?.displayName ?? "Job")}
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
-                        {(occ as any).jobType && ` · ${jobTypeLabel((occ as any).jobType)}`}
+                        {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
+                        {(occ as any).jobType && ` · Custom`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
                       <Button
@@ -1789,6 +1856,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             // Card color theme — bg and border derive from the same base color
             const isPendingPayment = occ.status === "PENDING_PAYMENT";
+            const isInProgressOthers = occ.status === "IN_PROGRESS" && isAssignedToOthers;
             const cardColorBase = (isClosed || isAcceptedEstimate)
               ? "gray"
               : isReminder ? "purple"
@@ -1797,17 +1865,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isEstimateOcc ? "pink"
               : isPendingPayment ? "green"
               : isAssignedToMe ? "teal"
+              : isInProgressOthers ? "teal"
               : isAssignedToOthers ? "gray"
               : isUnassigned ? "yellow"
               : null;
-            const cardBg = cardColorBase === "gray" && (isAssignedToOthers || isClosed || isAcceptedEstimate) ? "gray.50"
+            const cardBg = isHighPriority ? "purple.100"
+              : cardColorBase === "gray" && (isAssignedToOthers || isClosed || isAcceptedEstimate) ? "gray.50"
               : cardColorBase === "yellow" ? "yellow.50"
               : cardColorBase === "green" ? "green.100"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
-            const cardBorderColor = !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
+            const cardBorderColor = isHighPriority ? "purple.500"
+              : !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
               : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
+            const cardBorderWidth = isHighPriority ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"
@@ -1842,11 +1914,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 key={occ.id}
                 variant="outline"
                 borderColor={cardBorderColor}
+                borderWidth={cardBorderWidth}
                 bg={cardBg}
                 overflow="hidden"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
-                  ...(isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
@@ -1935,10 +2008,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             />
                           ) : null}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
+                          {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
-                            return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
+                            return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
                           })()}
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
@@ -2040,7 +2114,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 >
                                   {occ.linkedOccurrence.job?.property?.displayName ?? "Job"}
                                   {occ.linkedOccurrence.job?.property?.client?.displayName && ` — ${clientLabel(occ.linkedOccurrence.job.property.client.displayName)}`}
-                                  {occ.linkedOccurrence.jobType && ` · ${jobTypeLabel(occ.linkedOccurrence.jobType)}`}
+                                  {parseJobTags(occ.linkedOccurrence).length > 0 && ` · ${parseJobTags(occ.linkedOccurrence).map(jobTagLabel).join(", ")}`}
+                                  {occ.linkedOccurrence.jobType && ` · Custom`}
                                   {occ.linkedOccurrence.startAt && ` · ${fmtDate(occ.linkedOccurrence.startAt)}`}
                                 </a>
                               </Box>
@@ -2089,6 +2164,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             )}
                           </VStack>
                         )}
+                        <HStack gap={1} flexWrap="wrap" mt={1}>
+                          {isTentative ? (
+                            <StatusBadge status="Tentative" palette="orange" variant="solid" />
+                          ) : occ.status !== "SCHEDULED" ? (
+                            <StatusBadge
+                              status={occ.status}
+                              palette={occurrenceStatusColor(occ.status)}
+                              variant="solid"
+                            />
+                          ) : null}
+                          {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
+                          {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
+                          {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
+                          {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
+                            const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
+                            return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
+                          })()}
+                          {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
+                          {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
+                          {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                        </HStack>
                       </Box>
                     )}
                 </Card.Header>
@@ -2096,11 +2192,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
-                      {/* Job type */}
-                      {!isTaskOrReminder && (occ as any).jobType && (
-                        <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                          {jobTypeLabel((occ as any).jobType)}
-                        </Badge>
+                      {/* Job tags */}
+                      {!isTaskOrReminder && (parseJobTags(occ).length > 0 || (occ as any).jobType) && (
+                        <Box display="flex" gap="4px" flexWrap="wrap">
+                          {parseJobTags(occ).map((tag: string) => (
+                            <Badge key={tag} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                              {jobTagLabel(tag)}
+                            </Badge>
+                          ))}
+                          {(occ as any).jobType && (
+                            <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                              Custom
+                            </Badge>
+                          )}
+                        </Box>
                       )}
                       {/* Price / payout / time */}
                       {(() => { const displayPrice = (occ.price || null) ?? (occ.proposalAmount || null); return (
@@ -2111,7 +2216,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Badge>
                         )}
                         {occ.payment && (
-                          <Badge colorPalette="teal" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
+                          <Badge bg="green.700" color="white" fontSize="xs" px="2" py="0.5" borderRadius="full">
                             Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                           </Badge>
                         )}
@@ -2124,7 +2229,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const deduction = Math.round(net * pct) / 100;
                           const payout = net - deduction;
                           return pct > 0 ? (
-                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                               Payout: ${payout.toFixed(2)}
                             </Badge>
                           ) : null;
@@ -2217,26 +2322,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
                     )}
                     <HStack gap={1} flexWrap="wrap" alignItems="center">
-                      {isTentative ? (
-                        <StatusBadge status="Tentative" palette="orange" variant="solid" />
-                      ) : occ.status !== "SCHEDULED" ? (
-                        <StatusBadge status={occ.status} palette={occurrenceStatusColor(occ.status)} variant="solid" />
-                      ) : null}
-                      {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
-                      {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
-                      {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
-                          const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
-                          return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="outline" />;
-                      })()}
-                      {(occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                        <StatusBadge status="Estimate" palette="pink" variant="solid" />
-                      )}
-                      {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && (
-                        <StatusBadge status="One-off" palette="cyan" variant="solid" />
-                      )}
-                      {isAdminOnlyOcc && (
-                        <StatusBadge status="Administered" palette="red" variant="outline" />
-                      )}
                       {occ.linkGroupId && (
                         <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
                           <Link2 size={10} style={{ marginRight: 3 }} /> Linked
@@ -2282,10 +2367,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.contactEmail && <Text><strong>Email:</strong> {occ.contactEmail}</Text>}
                       </Box>
                     )}
-                    {(occ as any).jobType && (
-                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                        {jobTypeLabel((occ as any).jobType)}
-                      </Badge>
+                    {(parseJobTags(occ).length > 0 || (occ as any).jobType) && (
+                      <Box display="flex" gap="4px" flexWrap="wrap">
+                        {parseJobTags(occ).map((tag: string) => (
+                          <Badge key={tag} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                            {jobTagLabel(tag)}
+                          </Badge>
+                        ))}
+                        {(occ as any).jobType && (
+                          <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                            {jobTypeLabel((occ as any).jobType)}
+                          </Badge>
+                        )}
+                      </Box>
                     )}
                     {((occ.price || null) ?? (occ.proposalAmount || null)) != null && (
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
@@ -2294,7 +2388,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {occ.payment && (
                       <HStack gap={1}>
-                        <Badge colorPalette="teal" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                        <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
                           Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
                         </Badge>
                         <Button
@@ -2310,7 +2404,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               businessName: "Seedlings Lawn Care",
                               clientName: occ.job?.property?.client?.displayName ?? "Client",
                               propertyAddress: [occ.job?.property?.street1, occ.job?.property?.city, occ.job?.property?.state].filter(Boolean).join(", "),
-                              jobType: (occ as any).jobType ?? occ.kind ?? "Lawn Care",
+                              jobType: [parseJobTags(occ).length > 0 ? parseJobTags(occ).map(jobTagLabel).join(", ") : null, (occ as any).jobType ? `Custom: ${(occ as any).jobType}` : null].filter(Boolean).join(" · ") || occ.kind || "Lawn Care",
                               serviceDate: occ.startAt ? fmtDate(occ.startAt) : "—",
                               completedDate: occ.completedAt ? fmtDate(occ.completedAt) : "—",
                               amount: (occ.payment as any).amountPaid,
@@ -2344,7 +2438,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <>
                               <HStack gap={2}>
                                 <Text>Est. payout:</Text>
-                                <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                                   ${payout.toFixed(2)}
                                 </Badge>
                               </HStack>
@@ -2644,7 +2738,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               >
                                 {lo.startAt ? fmtDate(lo.startAt) : "No date"}
                                 {lo.job?.property?.displayName ? ` · ${lo.job.property.displayName}` : ""}
-                                {(lo as any).jobType ? ` · ${jobTypeLabel((lo as any).jobType)}` : ""}
+                                {parseJobTags(lo).length > 0 && ` · ${parseJobTags(lo).map(jobTagLabel).join(", ")}`}{(lo as any).jobType && ` · Custom`}
                               </Badge>
                             ))}
                           </HStack>
@@ -3855,47 +3949,116 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 <VStack align="stretch" gap={4}>
                   <Box>
                     <Text fontWeight="bold" fontSize="md" mb={1}>Occurrence Types</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>Each job can have multiple occurrences. The type determines the workflow and defaults.</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Each job service can have multiple occurrences. The type determines the workflow.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
-                    <Badge colorPalette="blue" variant="outline" mb={1}>Repeating</Badge>
-                    <Text fontSize="sm">A recurring job on a schedule (e.g. every 14 days). Workers can claim it, or an admin can assign a team. When payment is accepted, the next occurrence is automatically created and left unassigned so it can be claimed again.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim or Assign → Start → Complete → Accept Payment → Next occurrence auto-created</Text>
+                    <Badge colorPalette="blue" variant="subtle" mb={1}>Repeating</Badge>
+                    <Text fontSize="sm">A recurring job on a schedule (e.g., every 14 days). Workers can claim it, or an admin can assign a team. When payment is accepted, the next occurrence is automatically created using the Job Service's default team. If no default team is set, the next occurrence is left unassigned (claimable).</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Next auto-created</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="gray.300">
                     <Badge colorPalette="cyan" variant="solid" mb={1}>One-Off</Badge>
-                    <Text fontSize="sm">A single job that does not repeat. Workers can claim it, or an admin can assign a team. No next occurrence is created after payment.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim or Assign → Start → Complete → Accept Payment → Done</Text>
+                    <Text fontSize="sm">A single job that does not repeat. No next occurrence is created after payment.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Claim/Assign → Start → Complete → Accept Payment → Done</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="pink.300">
+                    <Badge colorPalette="pink" variant="solid" mb={1}>Estimate</Badge>
+                    <Text fontSize="sm">A site visit to assess work. Estimates are administered by default — they must be assigned by an admin. After starting and completing, the claimer or admin can accept or reject with comments. Estimates can be standalone (lightweight) or linked to a Job Service.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Assign → Start → Complete → Accept or Reject</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                    <Badge colorPalette="blue" variant="solid" mb={1}>Task</Badge>
+                    <Text fontSize="sm">A personal to-do item (e.g., "Call client about pricing"). Tasks can be completed directly from Scheduled status — no start/complete workflow. Can be linked to a job occurrence for context.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.300">
-                    <Badge colorPalette="purple" variant="solid" mb={1}>Estimate</Badge>
-                    <Text fontSize="sm">A site visit to assess work before committing. Estimates are administered by default — they cannot be claimed and must be assigned by an admin. The assigned team visits the site, starts the estimate, then completes it with optional comments and photos.</Text>
-                    <Text fontSize="sm" mt={1}>After completion, the assigned team or an admin can accept or reject the estimate. Accepting prompts to update the job defaults (price, frequency, duration) and optionally create a new occurrence of any type.</Text>
-                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Admin Creates & Assigns → Start → Complete → Accept or Reject</Text>
+                    <Badge colorPalette="purple" variant="solid" mb={1}>Reminder</Badge>
+                    <Text fontSize="sm">A standalone reminder not tied to a specific job (e.g., "Pick up supplies"). Appears in the Planning tab when due. Can be dismissed and reopened.</Text>
+                  </Box>
+
+                  <Box mt={2}>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Key Concepts</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="teal.300">
+                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Claimer</Text>
+                    <Text fontSize="sm">The first worker assigned to a job becomes the claimer. Only the claimer can start, complete, and accept payment. Other team members are workers or observers. To change the claimer, use Manage Team.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="teal.300">
+                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Default Team</Text>
+                    <Text fontSize="sm">A Job Service can have a default team. When a new occurrence is auto-created (after payment on a repeating job), the default team is assigned. One-time team swaps on individual occurrences don't affect the defaults.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="blue.300">
+                    <Text fontWeight="semibold" fontSize="sm" mb={1}>Reschedule</Text>
+                    <Text fontSize="sm">The claimer can reschedule a job within 2 days of today. A reason is required and posted as a comment. Admins can reschedule without restrictions from the Job Services tab.</Text>
                   </Box>
 
                   <Box mt={2}>
                     <Text fontWeight="bold" fontSize="md" mb={1}>Flags</Text>
-                    <Text fontSize="xs" color="fg.muted" mb={2}>These flags can be applied to any occurrence type to modify its behavior.</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>These flags modify the behavior of any occurrence type.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="red.300">
                     <Badge colorPalette="red" variant="outline" mb={1}>Administered</Badge>
-                    <Text fontSize="sm">An administered occurrence cannot be claimed by workers — an admin must assign the team. Once assigned, the team can start, complete, and manage it normally. Estimates are administered by default, but any repeating or one-off occurrence can also be marked as administered. When an administered repeating job auto-creates the next occurrence, it keeps the same team assigned.</Text>
+                    <Text fontSize="sm">Cannot be claimed by workers — an admin must assign the team. Once assigned, the claimer can start, complete, and manage it normally. Estimates are administered by default.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
                     <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
-                    <Text fontSize="sm">A tentative occurrence cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain or needs client approval first.</Text>
+                    <Text fontSize="sm">Cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain or needs client approval.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400">
                     <Badge colorPalette="yellow" variant="solid" mb={1}>Insured Only</Badge>
-                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have a valid insurance certificate to claim or be assigned. Employees can always be assigned.</Text>
+                    <Text fontSize="sm">High-value jobs above a configured threshold. Contractors must have valid insurance to claim or be assigned.</Text>
                   </Box>
+
+                  <Box mt={2}>
+                    <Text fontWeight="bold" fontSize="md" mb={1}>Card Colors</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>Card background colors indicate the state at a glance.</Text>
+                  </Box>
+
+                  <VStack align="stretch" gap={1}>
+                    <HStack p={2} bg="teal.50" borderWidth="1px" borderColor="teal.300" rounded="md" gap={2}>
+                      <Badge colorPalette="teal" variant="solid" fontSize="xs" flexShrink={0}>Teal</Badge>
+                      <Text fontSize="xs">Assigned to you, or someone is actively working (in progress)</Text>
+                    </HStack>
+                    <HStack p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md" gap={2}>
+                      <Badge colorPalette="yellow" variant="solid" fontSize="xs" flexShrink={0}>Yellow</Badge>
+                      <Text fontSize="xs">Unassigned — available to claim</Text>
+                    </HStack>
+                    <HStack p={2} bg="green.100" borderWidth="1px" borderColor="green.400" rounded="md" gap={2}>
+                      <Badge colorPalette="green" variant="solid" fontSize="xs" flexShrink={0}>Green</Badge>
+                      <Text fontSize="xs">Pending payment — job complete, awaiting payment</Text>
+                    </HStack>
+                    <HStack p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md" gap={2}>
+                      <Badge colorPalette="orange" variant="solid" fontSize="xs" flexShrink={0}>Orange</Badge>
+                      <Text fontSize="xs">Tentative — not yet confirmed</Text>
+                    </HStack>
+                    <HStack p={2} bg="pink.50" borderWidth="1px" borderColor="pink.300" rounded="md" gap={2}>
+                      <Badge colorPalette="pink" variant="solid" fontSize="xs" flexShrink={0}>Pink</Badge>
+                      <Text fontSize="xs">Estimate</Text>
+                    </HStack>
+                    <HStack p={2} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md" gap={2}>
+                      <Badge colorPalette="blue" variant="solid" fontSize="xs" flexShrink={0}>Blue</Badge>
+                      <Text fontSize="xs">Task</Text>
+                    </HStack>
+                    <HStack p={2} bg="purple.50" borderWidth="1px" borderColor="purple.300" rounded="md" gap={2}>
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Purple</Badge>
+                      <Text fontSize="xs">Reminder</Text>
+                    </HStack>
+                    <HStack p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
+                      <Badge colorPalette="gray" variant="subtle" fontSize="xs" flexShrink={0}>Gray</Badge>
+                      <Text fontSize="xs">Assigned to others, or closed/completed</Text>
+                    </HStack>
+                  </VStack>
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>

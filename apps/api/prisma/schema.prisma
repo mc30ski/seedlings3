@@ -497,7 +497,8 @@ model JobOccurrence {
   source      JobOccurrenceSource @default(GENERATED)
   workflow    OccurrenceWorkflow  @default(STANDARD)
 
-  jobType          String?        // e.g. "MOW_ONLY", "MOW_TRIM_BLOW", etc.
+  jobType          String?        // Legacy/custom free-text job type
+  jobTags          String?        // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
   notes            String?
   price            Float?
   estimatedMinutes Int?
@@ -517,6 +518,7 @@ model JobOccurrence {
   isTentative      Boolean @default(false)
   isEstimate       Boolean @default(false)   // @deprecated — use workflow
   isAdminOnly      Boolean @default(false)
+  isHighPriority   Boolean @default(false)
 
   startedAt   DateTime?
   completedAt DateTime?
