@@ -190,44 +190,52 @@ export default function SharePhotosWorkflow({ active, onDone }: Props) {
     if (selectedPhotos.length === 0) return;
     setSharing(true);
     try {
-      const files: File[] = [];
-      for (const photo of selectedPhotos) {
-        const res = await fetch(photo.url);
-        const blob = await res.blob();
-        const ext = photo.contentType?.includes("png") ? "png" : "jpg";
-        const name = photo.fileName || `seedlings-${photo.id}.${ext}`;
-        files.push(new File([blob], name, { type: photo.contentType || "image/jpeg" }));
-      }
-
       // Copy caption to clipboard
       if (caption) {
         try { await navigator.clipboard.writeText(caption); } catch {}
       }
 
-      // Use Web Share API if available (works on iOS Safari)
-      if (typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files })) {
-        await navigator.share({
-          files,
-          text: caption || undefined,
-        });
-        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length === 1 ? "" : "s"} shared${caption ? " & caption copied" : ""}.` });
+      // Fetch blobs and create object URLs, then open a save page
+      const imageUrls: string[] = [];
+      for (const photo of selectedPhotos) {
+        const res = await fetch(photo.url);
+        const blob = await res.blob();
+        imageUrls.push(URL.createObjectURL(blob));
+      }
+
+      // Open a new window with all images for easy saving
+      const w = window.open("", "_blank");
+      if (w) {
+        w.document.write(`
+          <html><head><title>Save Photos — Seedlings</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body { font-family: -apple-system, sans-serif; padding: 16px; background: #f9f9f9; text-align: center; }
+            h3 { margin: 0 0 4px; }
+            p { color: #666; font-size: 14px; margin: 0 0 16px; }
+            img { max-width: 100%; border-radius: 8px; margin: 8px 0; display: block; margin-left: auto; margin-right: auto; }
+          </style></head><body>
+          <h3>Save Photos</h3>
+          <p>Long-press each image and tap "Save to Photos" or "Add to Photos"</p>
+          ${imageUrls.map((url) => `<img src="${url}" />`).join("")}
+          </body></html>
+        `);
+        w.document.close();
       } else {
-        // Desktop fallback: trigger downloads
-        for (const file of files) {
-          const url = URL.createObjectURL(file);
+        // Popup blocked — fall back to downloading
+        for (const url of imageUrls) {
           const a = document.createElement("a");
           a.href = url;
-          a.download = file.name;
+          a.download = "seedlings-photo.jpg";
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          URL.revokeObjectURL(url);
         }
-        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length === 1 ? "" : "s"} saved${caption ? " & caption copied" : ""}.` });
       }
+
+      publishInlineMessage({ type: "SUCCESS", text: `${selectedPhotos.length} photo${selectedPhotos.length === 1 ? "" : "s"} ready to save${caption ? " & caption copied" : ""}.` });
     } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      publishInlineMessage({ type: "ERROR", text: "Failed to save photos." });
+      publishInlineMessage({ type: "ERROR", text: "Failed to prepare photos." });
     } finally {
       setSharing(false);
     }

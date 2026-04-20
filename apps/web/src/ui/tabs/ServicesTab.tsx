@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -51,6 +51,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
+import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
@@ -68,9 +69,15 @@ function localDate(d: Date): string {
   return bizDateKey(d);
 }
 
+function parseJobTags(occ: any): string[] {
+  if (!occ?.jobTags) return [];
+  if (Array.isArray(occ.jobTags)) return occ.jobTags;
+  try { return JSON.parse(occ.jobTags); } catch { return []; }
+}
+
 const kindStates = ["ALL", ...JOB_KIND] as const;
 const jobStatusStates = ["ALL", ...JOB_STATUS] as const;
-const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED")] as const;
+const occStatusStates = ["ALL", "UNCLAIMED", ...JOB_OCCURRENCE_STATUS.filter((s) => s !== "ARCHIVED" && s !== "CANCELED")] as const;
 
 const quickDateItemsBase = [
   { label: "Now", value: "now" },
@@ -97,7 +104,8 @@ export default function ServicesTab({
   const [occStatusFilter, setOccStatusFilter] = usePersistedState<string[]>("services_occStatus", ["ALL"]);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("services_type", ["ALL"]);
 
-  const [includeArchived, setIncludeArchived] = useState(false);
+  const [showCanceled, setShowCanceled] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
@@ -479,7 +487,7 @@ export default function ServicesTab({
     }
 
     let rows = items;
-    if (!includeArchived) rows = rows.filter((i) => i.status !== "ARCHIVED");
+    if (!showArchived) rows = rows.filter((i) => i.status !== "ARCHIVED");
     const jsf = jobStatusFilter[0];
     if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
@@ -495,7 +503,7 @@ export default function ServicesTab({
       rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
     }
     return rows;
-  }, [items, q, kind, jobStatusFilter, includeArchived]);
+  }, [items, q, kind, jobStatusFilter, showArchived]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
@@ -627,11 +635,26 @@ export default function ServicesTab({
         </Button>
         <Button
           size="sm"
-          variant={includeArchived ? "solid" : "outline"}
+          variant={showCanceled ? "solid" : "outline"}
           px="2"
-          onClick={() => setIncludeArchived(!includeArchived)}
-          title={includeArchived ? "Showing archived" : "Show archived"}
-          css={includeArchived ? {
+          onClick={() => setShowCanceled(!showCanceled)}
+          title={showCanceled ? "Hide canceled" : "Show canceled"}
+          css={showCanceled ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-300)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
+        >
+          <Ban size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant={showArchived ? "solid" : "outline"}
+          px="2"
+          onClick={() => setShowArchived(!showArchived)}
+          title={showArchived ? "Hide archived" : "Show archived"}
+          css={showArchived ? {
             background: "var(--chakra-colors-gray-200)",
             color: "var(--chakra-colors-gray-700)",
             border: "1px solid var(--chakra-colors-gray-400)",
@@ -768,7 +791,7 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || includeArchived || datePreset) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -805,12 +828,17 @@ export default function ServicesTab({
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
-          {includeArchived && (
+          {showCanceled && (
+            <Badge size="sm" colorPalette="red" variant="subtle">
+              + Canceled
+            </Badge>
+          )}
+          {showArchived && (
             <Badge size="sm" colorPalette="gray" variant="solid">
               + Archived
             </Badge>
           )}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !includeArchived) && (
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -823,7 +851,8 @@ export default function ServicesTab({
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
                 setVipOnly(false);
-                setIncludeArchived(false);
+                setShowCanceled(false);
+                setShowArchived(false);
                 setDatePreset("thisMonth");
               }}
             >
@@ -855,7 +884,8 @@ export default function ServicesTab({
             ? detail.occurrences.filter((o: JobOccurrenceFull) => {
                 // Always show the highlighted occurrence
                 if (highlightOccId && o.id === highlightOccId) return true;
-                if (!includeArchived && o.status === "ARCHIVED") return false;
+                if (!showArchived && o.status === "ARCHIVED") return false;
+                if (!showCanceled && o.status === "CANCELED") return false;
                 if (o.startAt) {
                   const d = bizDateKey(o.startAt);
                   if (dateFrom && d < dateFrom) return false;
@@ -1146,8 +1176,11 @@ export default function ServicesTab({
                               {occ.startAt
                                 ? fmtDate(occ.startAt)
                                 : "—"}
+                              {parseJobTags(occ).length > 0 && (
+                                <> · {parseJobTags(occ).map(jobTagLabel).join(", ")}</>
+                              )}
                               {(occ as any).jobType && (
-                                <> · {jobTypeLabel((occ as any).jobType)}</>
+                                <> · Custom</>
                               )}
                             </Text>
                             {occ.assignees.length === 0 ? (
@@ -1190,7 +1223,7 @@ export default function ServicesTab({
                               )}
                             </Text>
                             {occ.payment && (
-                              <Text fontSize="xs" color="teal.600" fontWeight="medium">
+                              <Text fontSize="xs" color="green.700" fontWeight="medium">
                                 Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {prettyStatus((occ.payment as any).method)}
                               </Text>
                             )}
@@ -1208,7 +1241,7 @@ export default function ServicesTab({
                                 <Box fontSize="xs" color="fg.muted" mt={0.5}>
                                   <HStack gap={2}>
                                     <Text>Est. payout:</Text>
-                                    <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                                       ${totalPayout.toFixed(2)}
                                     </Badge>
                                   </HStack>
@@ -1431,7 +1464,8 @@ export default function ServicesTab({
                                         }}
                                       >
                                         {lo.startAt ? fmtDate(lo.startAt) : "No date"} · {prettyStatus(lo.status)}
-                                        {(lo as any).jobType && <> · {jobTypeLabel((lo as any).jobType)}</>}
+                                        {parseJobTags(lo).length > 0 && <> · {parseJobTags(lo).map(jobTagLabel).join(", ")}</>}
+                                        {(lo as any).jobType && <> · Custom</>}
                                       </Badge>
                                     ))}
                                   </HStack>
@@ -1870,6 +1904,7 @@ export default function ServicesTab({
           defaultCompletedAt={editingOccurrence.completedAt}
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
+          defaultJobTags={(() => { const raw = (editingOccurrence as any).jobTags; if (!raw) return null; if (Array.isArray(raw)) return raw; try { return JSON.parse(raw); } catch { return null; } })()}
           defaultWorkflow={editingOccurrence.workflow}
           defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
@@ -2059,7 +2094,8 @@ export default function ServicesTab({
                           <VStack align="start" gap={0}>
                             <Text fontSize="sm" fontWeight="medium">
                               {o.startAt ? fmtDate(o.startAt) : "No date"}
-                              {(o as any).jobType && <> · {jobTypeLabel((o as any).jobType)}</>}
+                              {parseJobTags(o).length > 0 && <> · {parseJobTags(o).map(jobTagLabel).join(", ")}</>}
+                              {(o as any).jobType && <> · Custom</>}
                             </Text>
                             <Text fontSize="xs" color="fg.muted">
                               {prettyStatus(o.status)}

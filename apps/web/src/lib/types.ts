@@ -247,8 +247,10 @@ export type JobStatus = (typeof JOB_STATUS)[number];
 export const JOB_OCCURRENCE_STATUS = [
   "SCHEDULED",
   "IN_PROGRESS",
+  "COMPLETED",
   "PENDING_PAYMENT",
   "CLOSED",
+  "CANCELED",
   "ARCHIVED",
   "PROPOSAL_SUBMITTED",
   "ACCEPTED",

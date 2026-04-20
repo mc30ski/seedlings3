@@ -377,6 +377,7 @@ export const jobs: ServicesJobs = {
           status: JobOccurrenceStatus.SCHEDULED,
           source: JobOccurrenceSource.MANUAL,
           jobType: input.jobType ?? null,
+          jobTags: input.jobTags ?? null,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
@@ -457,7 +458,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async createStandaloneReminder(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string }) {
+  async createStandaloneReminder(currentUserId: string, input: { title: string; notes?: string; startAt: string; linkedOccurrenceId?: string; isHighPriority?: boolean }) {
     return prisma.$transaction(async (tx) => {
       const occ = await tx.jobOccurrence.create({
         data: {
@@ -469,6 +470,7 @@ export const jobs: ServicesJobs = {
           source: JobOccurrenceSource.MANUAL,
           workflow: OccurrenceWorkflow.REMINDER,
           linkedOccurrenceId: input.linkedOccurrenceId ?? null,
+          isHighPriority: input.isHighPriority ?? false,
         } as any,
       });
 
@@ -521,6 +523,7 @@ export const jobs: ServicesJobs = {
           contactEmail: input.contactEmail ?? null,
           estimateAddress: input.estimateAddress ?? null,
           proposalAmount: input.proposalAmount ?? null,
+          jobTags: input.jobTags ?? null,
           proposalNotes: input.proposalNotes ?? null,
         } as any,
       });
@@ -590,6 +593,7 @@ export const jobs: ServicesJobs = {
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
       if ("isAdminOnly" in patch) data.isAdminOnly = !!patch.isAdminOnly;
       if ("jobType" in patch) data.jobType = patch.jobType ?? null;
+      if ("jobTags" in patch) data.jobTags = patch.jobTags ?? null;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
       if ("title" in patch) data.title = patch.title ?? null;

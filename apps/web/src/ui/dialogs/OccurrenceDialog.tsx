@@ -23,7 +23,8 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { JOB_KIND, JOB_OCCURRENCE_STATUS, JOB_TYPE_OPTIONS } from "@/src/lib/types";
+import JobTagPicker from "@/src/ui/components/JobTagPicker";
+import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
 const workflowItems = [
   { label: "Estimate", value: "ESTIMATE" },
@@ -62,6 +63,7 @@ type Props = {
   defaultCompletedAt?: string | null;
   defaultIsAdminOnly?: boolean;
   defaultJobType?: string | null;
+  defaultJobTags?: string[] | null;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -101,6 +103,7 @@ export default function OccurrenceDialog({
   defaultCompletedAt,
   defaultIsAdminOnly,
   defaultJobType,
+  defaultJobTags,
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
@@ -134,6 +137,7 @@ export default function OccurrenceDialog({
   const [occFrequencyDays, setOccFrequencyDays] = useState("");
   const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
+  const [jobTags, setJobTags] = useState<string[]>([]);
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -174,6 +178,7 @@ export default function OccurrenceDialog({
     setIsTentative(false);
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
+    setJobTags(defaultJobTags ?? []);
     setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
     setExpenses([]);
     setNewExpCost("");
@@ -231,6 +236,7 @@ export default function OccurrenceDialog({
         ...(isTentative ? { isTentative: true } : {}),
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
+        ...(jobTags.length > 0 ? { jobTags } : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
       };
 
@@ -283,6 +289,7 @@ export default function OccurrenceDialog({
         }
         body.isAdminOnly = isAdminOnly;
         body.jobType = jobType || null;
+        body.jobTags = jobTags.length > 0 ? jobTags : null;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
@@ -431,24 +438,13 @@ export default function OccurrenceDialog({
                   </div>
                 )}
                 <div>
-                  <Text mb="1">Job Type</Text>
-                  <select
-                    value={jobType}
-                    onChange={(e) => setJobType(e.target.value)}
-                    style={{
-                      width: "100%",
-                      fontSize: "0.875rem",
-                      padding: "0.4rem 0.5rem",
-                      borderRadius: "0.375rem",
-                      border: "1px solid var(--chakra-colors-border)",
-                      background: "var(--chakra-colors-bg)",
-                      color: "var(--chakra-colors-fg)",
-                    }}
-                  >
-                    {JOB_TYPE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  <Text mb="1">Job Tags</Text>
+                  <JobTagPicker
+                    selected={jobTags}
+                    onChange={setJobTags}
+                    customNote={jobType}
+                    onCustomNoteChange={setJobType}
+                  />
                 </div>
                 <div>
                   <Text mb="1">Start date *</Text>
