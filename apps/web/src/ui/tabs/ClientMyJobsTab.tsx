@@ -124,6 +124,24 @@ export default function ClientMyJobsTab() {
   const [viewerPhotos, setViewerPhotos] = useState<Photo[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
 
+  // Global keyboard handler for photo viewer
+  const viewerIdxRef = useRef(viewerIdx);
+  const viewerPhotosRef = useRef(viewerPhotos);
+  viewerIdxRef.current = viewerIdx;
+  viewerPhotosRef.current = viewerPhotos;
+  useEffect(() => {
+    if (!viewerPhoto) return;
+    const handler = (e: KeyboardEvent) => {
+      const photos = viewerPhotosRef.current;
+      const idx = viewerIdxRef.current;
+      if (e.key === "ArrowLeft" && idx > 0) { e.preventDefault(); const next = idx - 1; setViewerIdx(next); setViewerPhoto(photos[next]?.url ?? null); }
+      else if (e.key === "ArrowRight" && idx < photos.length - 1) { e.preventDefault(); const next = idx + 1; setViewerIdx(next); setViewerPhoto(photos[next]?.url ?? null); }
+      else if (e.key === "Escape") { setViewerPhoto(null); setViewerPhotos([]); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [viewerPhoto]);
+
   useEffect(() => {
     async function load() {
       try { await apiPost("/api/client/link"); } catch {}

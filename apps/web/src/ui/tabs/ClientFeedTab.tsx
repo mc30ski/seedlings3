@@ -104,6 +104,24 @@ export default function ClientFeedTab() {
   const [viewerPhotos, setViewerPhotos] = useState<FeedPhoto[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
 
+  // Global keyboard handler for photo viewer
+  const viewerIdxRef = useRef(viewerIdx);
+  const viewerPhotosRef = useRef(viewerPhotos);
+  viewerIdxRef.current = viewerIdx;
+  viewerPhotosRef.current = viewerPhotos;
+  useEffect(() => {
+    if (!viewerPhoto) return;
+    const handler = (e: KeyboardEvent) => {
+      const photos = viewerPhotosRef.current;
+      const idx = viewerIdxRef.current;
+      if (e.key === "ArrowLeft" && idx > 0) { e.preventDefault(); const next = idx - 1; setViewerIdx(next); setViewerPhoto(photos[next]?.url ?? null); }
+      else if (e.key === "ArrowRight" && idx < photos.length - 1) { e.preventDefault(); const next = idx + 1; setViewerIdx(next); setViewerPhoto(photos[next]?.url ?? null); }
+      else if (e.key === "Escape") { setViewerPhoto(null); setViewerPhotos([]); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [viewerPhoto]);
+
   async function loadFeed(days: number, showLoading = true) {
     if (showLoading) setLoadingMore(true);
     try {

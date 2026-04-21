@@ -281,18 +281,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Photo viewer (for compact card thumbnails)
   const [viewerPhotos, setViewerPhotos] = useState<{ id: string; url: string }[]>([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
   // Global keyboard handler for photo viewer
+  const viewerPhotosRef = useRef(viewerPhotos);
+  viewerPhotosRef.current = viewerPhotos;
   useEffect(() => {
     if (viewerPhotos.length === 0) return;
     const handler = (e: KeyboardEvent) => {
+      const len = viewerPhotosRef.current.length;
       if (e.key === "ArrowLeft") { e.preventDefault(); setViewerIndex((i) => Math.max(i - 1, 0)); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); setViewerIndex((i) => Math.min(i + 1, viewerPhotos.length - 1)); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); setViewerIndex((i) => Math.min(i + 1, len - 1)); }
       else if (e.key === "Escape") { setViewerPhotos([]); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [viewerPhotos]);
-  const [viewerIndex, setViewerIndex] = useState(0);
+  }, [viewerPhotos.length > 0]);
 
   // Task dialog
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
