@@ -44,6 +44,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { apiGet, apiDelete } from "@/src/lib/api";
+import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
 
@@ -459,6 +460,24 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             {c.notesInternal && (
               <Card.Body py="3" px="4" pt="1" pb="0">
                 <TruncatedText>{c.notesInternal}</TruncatedText>
+              </Card.Body>
+            )}
+            {forAdmin && parseAdminTags((c as any).adminTags).length > 0 && (
+              <Card.Body py="2" px="4" pt={c.notesInternal ? "1" : "2"} pb="0">
+                <Box display="flex" gap="4px" flexWrap="wrap">
+                  {parseAdminTags((c as any).adminTags).map((tag: string) => (
+                    <Badge
+                      key={tag}
+                      size="sm"
+                      variant="solid"
+                      colorPalette={adminTagColor(tag)}
+                      px="2"
+                      borderRadius="full"
+                    >
+                      ⚠ {adminTagLabel(tag)}
+                    </Badge>
+                  ))}
+                </Box>
               </Card.Body>
             )}
             <Card.Footer py="3" px="4" pt="2">

@@ -2369,6 +2369,166 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  // ── System Audit ──
+  app.post("/admin/system-audit", superGuard, async (req: any) => {
+    const checks = (req.body?.checks ?? []) as string[];
+    const results: { check: string; label: string; issues: { id?: string; description: string }[] }[] = [];
+
+    // 1. Duplicate client names
+    if (checks.includes("duplicate_clients")) {
+      const clients = await prisma.client.findMany({
+        where: { archivedAt: null },
+        select: { id: true, displayName: true, status: true },
+      });
+      const nameMap = new Map<string, typeof clients>();
+      for (const c of clients) {
+        const key = c.displayName.trim().toLowerCase();
+        if (!nameMap.has(key)) nameMap.set(key, []);
+        nameMap.get(key)!.push(c);
+      }
+      const issues: { id: string; description: string }[] = [];
+      for (const [, group] of nameMap) {
+        if (group.length > 1) {
+          issues.push({
+            id: group[0].id,
+            description: `"${group[0].displayName}" appears ${group.length} times (IDs: ${group.map((c) => c.id.slice(0, 8)).join(", ")})`,
+          });
+        }
+      }
+      results.push({ check: "duplicate_clients", label: "Duplicate Client Names", issues });
+    }
+
+    // 2. Duplicate properties
+    if (checks.includes("duplicate_properties")) {
+      const properties = await prisma.property.findMany({
+        where: { archivedAt: null },
+        select: { id: true, displayName: true, street1: true, city: true, state: true },
+      });
+      const addrMap = new Map<string, typeof properties>();
+      for (const p of properties) {
+        const key = [p.street1, p.city, p.state].filter(Boolean).join("|").toLowerCase().trim();
+        if (!key) continue;
+        if (!addrMap.has(key)) addrMap.set(key, []);
+        addrMap.get(key)!.push(p);
+      }
+      const issues: { id: string; description: string }[] = [];
+      for (const [, group] of addrMap) {
+        if (group.length > 1) {
+          issues.push({
+            id: group[0].id,
+            description: `"${group[0].displayName}" at "${group[0].street1}, ${group[0].city}" appears ${group.length} times`,
+          });
+        }
+      }
+      results.push({ check: "duplicate_properties", label: "Duplicate Properties", issues });
+    }
+
+    // 3. Duplicate service jobs (same property + kind)
+    if (checks.includes("duplicate_jobs")) {
+      const jobs = await prisma.job.findMany({
+        where: { status: { not: "ARCHIVED" } },
+        select: { id: true, propertyId: true, kind: true, status: true, property: { select: { displayName: true } } },
+      });
+      const jobMap = new Map<string, typeof jobs>();
+      for (const j of jobs) {
+        const key = `${j.propertyId}|${j.kind}`;
+        if (!jobMap.has(key)) jobMap.set(key, []);
+        jobMap.get(key)!.push(j);
+      }
+      const issues: { id: string; description: string }[] = [];
+      for (const [, group] of jobMap) {
+        if (group.length > 1) {
+          const active = group.filter((j) => j.status === "ACTIVE");
+          if (active.length > 1) {
+            issues.push({
+              id: group[0].id,
+              description: `${group[0].property?.displayName ?? "Unknown"} has ${active.length} active ${group[0].kind} jobs`,
+            });
+          }
+        }
+      }
+      results.push({ check: "duplicate_jobs", label: "Duplicate Service Jobs", issues });
+    }
+
+    // 4. Duplicate repeating occurrences (same job, similar date, both SCHEDULED)
+    if (checks.includes("duplicate_occurrences")) {
+      const occs = await prisma.jobOccurrence.findMany({
+        where: {
+          status: "SCHEDULED",
+          workflow: "STANDARD",
+          jobId: { not: null },
+          startAt: { not: null },
+        },
+        select: { id: true, jobId: true, startAt: true, kind: true, job: { select: { property: { select: { displayName: true } } } } },
+        orderBy: { startAt: "asc" },
+      });
+      const jobOccs = new Map<string, typeof occs>();
+      for (const o of occs) {
+        if (!o.jobId) continue;
+        if (!jobOccs.has(o.jobId)) jobOccs.set(o.jobId, []);
+        jobOccs.get(o.jobId)!.push(o);
+      }
+      const issues: { id: string; description: string }[] = [];
+      for (const [, group] of jobOccs) {
+        for (let i = 0; i < group.length - 1; i++) {
+          const a = group[i];
+          const b = group[i + 1];
+          if (!a.startAt || !b.startAt) continue;
+          const diffDays = Math.abs(b.startAt.getTime() - a.startAt.getTime()) / 86400000;
+          if (diffDays <= 2) {
+            issues.push({
+              id: a.id,
+              description: `${a.job?.property?.displayName ?? "Unknown"}: two SCHEDULED occurrences ${diffDays < 1 ? "same day" : `${Math.round(diffDays)}d apart`} (${a.startAt.toISOString().slice(0, 10)} & ${b.startAt.toISOString().slice(0, 10)})`,
+            });
+          }
+        }
+      }
+      results.push({ check: "duplicate_occurrences", label: "Duplicate Repeating Occurrences", issues });
+    }
+
+    // 5. Missing next repeating occurrence (completed in last 2 months, no SCHEDULED sibling)
+    if (checks.includes("missing_next_occurrence")) {
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      const closed = await prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["CLOSED", "COMPLETED"] },
+          workflow: "STANDARD",
+          jobId: { not: null },
+          completedAt: { gte: twoMonthsAgo },
+        },
+        select: { id: true, jobId: true, startAt: true, completedAt: true, job: { select: { property: { select: { displayName: true } }, frequencyDays: true, status: true } } },
+        orderBy: { completedAt: "desc" },
+      });
+      // For each job, check if there's at least one SCHEDULED occurrence
+      const jobIds = [...new Set(closed.map((o) => o.jobId).filter(Boolean))] as string[];
+      const scheduled = await prisma.jobOccurrence.findMany({
+        where: {
+          jobId: { in: jobIds },
+          status: "SCHEDULED",
+          workflow: "STANDARD",
+        },
+        select: { jobId: true },
+      });
+      const hasScheduled = new Set(scheduled.map((o) => o.jobId));
+      const issues: { id: string; description: string }[] = [];
+      const seen = new Set<string>();
+      for (const o of closed) {
+        if (!o.jobId || hasScheduled.has(o.jobId) || seen.has(o.jobId)) continue;
+        if (o.job?.status === "ARCHIVED" || o.job?.status === "PAUSED") continue;
+        if (!o.job?.frequencyDays || o.job.frequencyDays <= 0) continue;
+        seen.add(o.jobId);
+        issues.push({
+          id: o.id,
+          description: `${o.job?.property?.displayName ?? "Unknown"}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
+        });
+      }
+      results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });
+    }
+
+    return { results };
+  });
+
   // ── Full Data Export ──
 
   app.get("/admin/export", adminGuard, async (_req: any, reply: any) => {

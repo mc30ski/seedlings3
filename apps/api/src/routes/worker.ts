@@ -157,16 +157,21 @@ export default async function workerRoutes(app: FastifyInstance) {
       status?: "ACTIVE" | "PAUSED" | "ARCHIVED" | "ALL";
       limit?: string;
     };
-    return services.clients.list({
+    const list = await services.clients.list({
       q,
       status: status as any,
       limit: limit ? Number(limit) : undefined,
     });
+    // Strip admin-only fields
+    for (const c of list) (c as any).adminTags = undefined;
+    return list;
   });
 
   app.get("/clients/:id", workerGuard, async (req: any) => {
     const id = String(req.params.id);
-    return services.clients.get(id);
+    const client = await services.clients.get(id);
+    if (client) (client as any).adminTags = undefined;
+    return client;
   });
 
   app.get("/properties", workerGuard, async (req: any) => {
@@ -316,6 +321,9 @@ export default async function workerRoutes(app: FastifyInstance) {
           }))
         );
       }
+      // Strip admin-only fields from client data
+      const client = (occ as any).job?.property?.client;
+      if (client) delete client.adminTags;
     }
     return allOccs;
   });

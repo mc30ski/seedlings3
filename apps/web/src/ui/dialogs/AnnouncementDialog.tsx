@@ -6,10 +6,8 @@ import {
   Button,
   Dialog,
   HStack,
-  Input,
   Portal,
   Spinner,
-  Switch,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -26,7 +24,6 @@ type EditAnnouncement = {
   title?: string | null;
   notes?: string | null;
   startAt?: string | null;
-  frequencyDays?: number | null;
 };
 
 type Props = {
@@ -36,30 +33,11 @@ type Props = {
   editAnnouncement?: EditAnnouncement | null;
 };
 
-function freqToMode(days: number | null | undefined): { mode: "weekly" | "monthly" | "yearly" | "custom"; custom: string } {
-  if (!days || days <= 0) return { mode: "weekly", custom: "14" };
-  if (days === 7) return { mode: "weekly", custom: "14" };
-  if (days === 30) return { mode: "monthly", custom: "14" };
-  if (days === 365) return { mode: "yearly", custom: "14" };
-  return { mode: "custom", custom: String(days) };
-}
-
-function modeToDays(mode: "weekly" | "monthly" | "yearly" | "custom", custom: string): number {
-  if (mode === "weekly") return 7;
-  if (mode === "monthly") return 30;
-  if (mode === "yearly") return 365;
-  const n = Number(custom);
-  return isNaN(n) || n < 1 ? 7 : n;
-}
-
 export default function AnnouncementDialog({ open, onOpenChange, onCreated, editAnnouncement }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => bizDateKey(new Date()));
   const [notes, setNotes] = useState("");
-  const [isRepeating, setIsRepeating] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<"weekly" | "monthly" | "yearly" | "custom">("weekly");
-  const [customDays, setCustomDays] = useState("14");
   const [saving, setSaving] = useState(false);
   const isEdit = !!editAnnouncement;
 
@@ -69,11 +47,6 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
       setTitle(editAnnouncement.title ?? "");
       setDate(editAnnouncement.startAt ? bizDateKey(editAnnouncement.startAt) : bizDateKey(new Date()));
       setNotes(editAnnouncement.notes ?? "");
-      const freq = editAnnouncement.frequencyDays;
-      setIsRepeating(freq != null && freq > 0);
-      const parsed = freqToMode(freq);
-      setRepeatMode(parsed.mode);
-      setCustomDays(parsed.custom);
     } else {
       reset();
     }
@@ -83,9 +56,6 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
     setTitle("");
     setDate(bizDateKey(new Date()));
     setNotes("");
-    setIsRepeating(false);
-    setRepeatMode("weekly");
-    setCustomDays("14");
   }
 
   async function handleSave() {
@@ -96,7 +66,6 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
         title: title.trim(),
         startAt: new Date(date + "T09:00").toISOString(),
         notes: notes.trim() || null,
-        frequencyDays: isRepeating ? modeToDays(repeatMode, customDays) : null,
       };
 
       if (isEdit) {
@@ -133,6 +102,11 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box px={3} py={2} bg="#DDD6FE" borderWidth="1px" borderColor="#6D28D9" borderRadius="md">
+                  <Text fontSize="xs" color="#4C1D95" fontWeight="medium">
+                    Everyone — visible to all workers and admins
+                  </Text>
+                </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
                   <input
@@ -158,51 +132,6 @@ export default function AnnouncementDialog({ open, onOpenChange, onCreated, edit
                     style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px", resize: "vertical" }}
                   />
                 </Box>
-                <HStack justify="space-between" align="center">
-                  <Text fontSize="sm" fontWeight="medium">Repeating</Text>
-                  <Switch.Root checked={isRepeating} onCheckedChange={(e) => setIsRepeating(e.checked)} colorPalette="blue" size="sm">
-                    <Switch.HiddenInput />
-                    <Switch.Control>
-                      <Switch.Thumb />
-                    </Switch.Control>
-                  </Switch.Root>
-                </HStack>
-                {isRepeating && (
-                  <Box>
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>Repeat every</Text>
-                    <HStack gap={2} wrap="wrap">
-                      {([
-                        { value: "weekly", label: "Week" },
-                        { value: "monthly", label: "Month" },
-                        { value: "yearly", label: "Year" },
-                        { value: "custom", label: "Custom" },
-                      ] as const).map((opt) => (
-                        <Button
-                          key={opt.value}
-                          size="xs"
-                          variant={repeatMode === opt.value ? "solid" : "outline"}
-                          colorPalette={repeatMode === opt.value ? "blue" : "gray"}
-                          onClick={() => setRepeatMode(opt.value)}
-                        >
-                          {opt.label}
-                        </Button>
-                      ))}
-                    </HStack>
-                    {repeatMode === "custom" && (
-                      <HStack mt={2} gap={2} align="center">
-                        <Input
-                          type="number"
-                          size="sm"
-                          min={1}
-                          w="80px"
-                          value={customDays}
-                          onChange={(e) => setCustomDays(e.target.value)}
-                        />
-                        <Text fontSize="sm" color="fg.muted">days</Text>
-                      </HStack>
-                    )}
-                  </Box>
-                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

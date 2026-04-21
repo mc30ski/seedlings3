@@ -204,6 +204,7 @@ export const clients: ServicesClients = {
       };
       if (payload.isVip !== undefined) data.isVip = !!payload.isVip;
       if (payload.vipReason !== undefined) data.vipReason = payload.isVip ? (payload.vipReason || null) : null;
+      if (payload.adminTags !== undefined) data.adminTags = Array.isArray(payload.adminTags) ? JSON.stringify(payload.adminTags) : null;
       const record = await tx.client.update({
         where: { id },
         data: data,

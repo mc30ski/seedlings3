@@ -14,10 +14,11 @@ import { UserButton, SignInButton, useAuth } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
-import AuditLogTab from "@/src/ui/tabs/AuditLogTab";
+import HistoryTab from "@/src/ui/tabs/HistoryTab";
 import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
+import AuditTab from "@/src/ui/tabs/AuditTab";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -65,6 +66,7 @@ import {
   FiShield,
   FiAlertCircle,
   FiSun,
+  FiSearch,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -572,11 +574,11 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
     },
     {
-      value: "audit",
-      label: "Audit",
+      value: "history",
+      label: "History",
       icon: FiFileText,
 
-      content: wrapWithInlineMessage(<AuditLogTab role="admin" />),
+      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
     },
     {
       value: "settings",
@@ -742,7 +744,7 @@ export default function HomePage() {
           equipment: "Field", routes: "Field",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",
-          profile: "System", activity: "System", audit: "System", settings: "System",
+          profile: "System", activity: "System", history: "System", settings: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
           Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
@@ -762,6 +764,12 @@ export default function HomePage() {
           label: "Operations",
           icon: FiBarChart2,
           content: <OperationsTab />,
+        },
+        {
+          value: "audit",
+          label: "Audit",
+          icon: FiSearch,
+          content: <AuditTab />,
         },
       ],
     },
@@ -1170,32 +1178,51 @@ export default function HomePage() {
   }, [router.query.workflow, me?.isApproved, meLoading]);
 
   // Deep-link to a specific occurrence (e.g., ?occ=OCCURRENCE_ID or ?occ=OCCURRENCE_ID&view=admin)
-  // Persist through login: save to sessionStorage if not logged in, restore after login
+  // Uses localStorage (not sessionStorage) so it survives OAuth redirects and page reloads.
+  // Only strips the URL params after the user is authenticated and the deep link is consumed.
   useEffect(() => {
     const occId = router.query.occ as string | undefined;
     const view = router.query.view as string | undefined;
     if (occId) {
       try {
-        sessionStorage.setItem("seedlings_deeplink_occ", occId);
-        if (view) sessionStorage.setItem("seedlings_deeplink_view", view);
+        localStorage.setItem("seedlings_deeplink_occ", occId);
+        if (view) localStorage.setItem("seedlings_deeplink_view", view);
+        localStorage.setItem("seedlings_deeplink_ts", String(Date.now()));
       } catch {}
-      router.replace("/", undefined, { shallow: true });
+      // Only strip URL if user is already signed in; otherwise leave it
+      // so Clerk can redirect back with the params intact after auth
+      if (isSignedIn) {
+        router.replace("/", undefined, { shallow: true });
+      }
     }
-  }, [router.query.occ]);
+  }, [router.query.occ, isSignedIn]);
 
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
     let occId: string | null = null;
     let view: string | null = null;
     try {
-      occId = sessionStorage.getItem("seedlings_deeplink_occ");
-      view = sessionStorage.getItem("seedlings_deeplink_view");
+      occId = localStorage.getItem("seedlings_deeplink_occ");
+      view = localStorage.getItem("seedlings_deeplink_view");
+      const ts = localStorage.getItem("seedlings_deeplink_ts");
+      // Discard stale deep links (older than 5 minutes)
+      if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
+        occId = null;
+      }
     } catch {}
-    if (!occId) return;
+    if (!occId) {
+      try { localStorage.removeItem("seedlings_deeplink_occ"); localStorage.removeItem("seedlings_deeplink_view"); localStorage.removeItem("seedlings_deeplink_ts"); } catch {}
+      return;
+    }
     try {
-      sessionStorage.removeItem("seedlings_deeplink_occ");
-      sessionStorage.removeItem("seedlings_deeplink_view");
+      localStorage.removeItem("seedlings_deeplink_occ");
+      localStorage.removeItem("seedlings_deeplink_view");
+      localStorage.removeItem("seedlings_deeplink_ts");
     } catch {}
+    // Strip URL params now that we've consumed them
+    if (router.query.occ) {
+      router.replace("/", undefined, { shallow: true });
+    }
     if (view === "admin") {
       setTopTab("admin");
       setAdminInnerTab("admin-jobs");

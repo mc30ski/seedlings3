@@ -235,6 +235,7 @@ model Client {
   vipReason     String?
 
   notesInternal String?
+  adminTags     String?      // JSON string array e.g. ["LATE_PAYER","ARGUMENTATIVE"] — admin-only
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
