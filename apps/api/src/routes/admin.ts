@@ -932,6 +932,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
       if ("isAdminOnly" in body) patch.isAdminOnly = !!body.isAdminOnly;
+      if ("isClientConfirmed" in body) patch.isClientConfirmed = !!body.isClientConfirmed;
       if ("jobType" in body) patch.jobType = body.jobType || null;
       if ("jobTags" in body) patch.jobTags = body.jobTags ? JSON.stringify(body.jobTags) : null;
       if ("startedAt" in body) patch.startedAt = body.startedAt || null;

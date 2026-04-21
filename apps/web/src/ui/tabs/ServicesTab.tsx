@@ -935,6 +935,22 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
+      <HStack mb={2} gap={2} px={1} wrap="wrap">
+        {(() => {
+          const accepted = items.filter((j) => j.status === "ACCEPTED").length;
+          const proposed = items.filter((j) => j.status === "PROPOSED").length;
+          const paused = items.filter((j) => j.status === "PAUSED").length;
+          const archived = items.filter((j) => j.status === "ARCHIVED").length;
+          return (
+            <>
+              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">{accepted} Active</Badge>
+              <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">{proposed} Proposed</Badge>
+              <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">{paused} Paused</Badge>
+              <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">{archived} Archived</Badge>
+            </>
+          );
+        })()}
+      </HStack>
 
       <Box position="relative">
         {loading && items.length > 0 && (<>

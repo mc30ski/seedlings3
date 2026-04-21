@@ -524,6 +524,7 @@ model JobOccurrence {
   isTentative      Boolean @default(false)
   isEstimate       Boolean @default(false)   // @deprecated — use workflow
   isAdminOnly      Boolean @default(false)
+  isClientConfirmed Boolean @default(false)
   isHighPriority   Boolean @default(false)
 
   startedAt   DateTime?

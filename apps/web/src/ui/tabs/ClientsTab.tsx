@@ -17,7 +17,7 @@ import {
   Accordion,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Plus, RefreshCw, Star, X } from "lucide-react";
+import { Filter, LayoutList, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import { determineRoles, prettyStatus, clientStatusColor, clientLabel } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -44,7 +44,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { apiGet, apiDelete } from "@/src/lib/api";
-import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
+import { parseAdminTags, adminTagLabel, adminTagColor, ADMIN_TAGS } from "@/src/ui/components/AdminTagPicker";
 import { MailLink, CallLink, MapLink } from "@/src/ui/helpers/Link";
 import { FiStar, FiMapPin, FiUsers } from "react-icons/fi";
 
@@ -66,6 +66,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [vipOnly, setVipOnly] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string>("ALL");
 
   const [items, setItems] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -210,8 +211,12 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
       rows = rows.filter((r) => (r as any).isVip);
     }
 
+    if (tagFilter !== "ALL") {
+      rows = rows.filter((r) => parseAdminTags((r as any).adminTags).includes(tagFilter));
+    }
+
     return rows;
-  }, [items, q, kind, statusFilter, vipOnly, highlightId, isTrainee, traineeClientIds]);
+  }, [items, q, kind, statusFilter, vipOnly, tagFilter, highlightId, isTrainee, traineeClientIds]);
 
   function openCreate() {
     setEditing(null);
@@ -347,6 +352,32 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {forAdmin && (
+          <Select.Root
+            collection={createListCollection({ items: [{ label: "All Tags", value: "ALL" }, ...ADMIN_TAGS.map((t) => ({ label: t.label, value: t.id }))] })}
+            value={[tagFilter]}
+            onValueChange={(e) => setTagFilter(e.value[0] ?? "ALL")}
+            size="sm"
+            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            css={{ width: "auto", flex: "0 0 auto" }}
+          >
+            <Select.Control>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: tagFilter !== "ALL" ? "var(--chakra-colors-red-200)" : "var(--chakra-colors-red-100)", border: tagFilter !== "ALL" ? "1px solid var(--chakra-colors-red-400)" : "1px solid transparent", borderRadius: "6px" }}>
+                <Tag size={14} />
+                <Select.Indicator display="none" />
+              </Select.Trigger>
+            </Select.Control>
+            <Select.Positioner>
+              <Select.Content>
+                {[{ label: "All Tags", value: "ALL" }, ...ADMIN_TAGS.map((t) => ({ label: t.label, value: t.id }))].map((it) => (
+                  <Select.Item key={it.value} item={it.value}>
+                    <Select.ItemText>{it.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Positioner>
+          </Select.Root>
+        )}
         <Button
           size="sm"
           variant={vipOnly ? "solid" : "outline"}

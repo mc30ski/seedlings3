@@ -1904,6 +1904,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isAcceptedEstimate = isEstimateOcc && occ.status === "ACCEPTED";
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
             const isAdminOnlyOcc = !!occ.isAdminOnly;
+            const needsConfirmation = !!(occ.jobId) && occ.status === "SCHEDULED" && !(occ as any).isClientConfirmed &&
+              (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow);
+            const isConfirmed = !!(occ as any).isClientConfirmed;
             const isTask = occ.workflow === "TASK";
             const isReminder = occ.workflow === "REMINDER";
             const isEvent = occ.workflow === "EVENT";
@@ -2128,6 +2131,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
+                {/* Client confirmation banner — expanded cards only, above title */}
+                {!isCardCompact && needsConfirmation && (
+                  <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                    <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
+                  </Box>
+                )}
                 {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && occ.jobId && (
                   <Box px="4" pt="3" pb="0">
                     <Button
@@ -2250,7 +2259,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
-                          {occ.linkGroupId && (
+                          {needsConfirmation && <Badge colorPalette="orange" variant="solid" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Unconfirmed</Badge>}
+                          {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <Badge colorPalette="green" variant="subtle" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Confirmed</Badge>}
+                                                    {occ.linkGroupId && (
                             <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
                               <Link2 size={10} style={{ marginRight: 3 }} /> Linked
                             </Badge>
@@ -2428,21 +2439,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             return <StatusBadge status={`Followup · ${freqLabel}`} palette="red" variant="solid" />;
                           })()}
                           {isAnnouncement && <StatusBadge status="Announcement" palette="purple" variant="solid" />}
-                          {isTask && (
-                            <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="blue">Personal</Badge>
-                          )}
-                          {isReminder && (
-                            <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="purple">Personal</Badge>
-                          )}
-                          {isEvent && (
-                            <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="yellow">Team</Badge>
-                          )}
-                          {isFollowup && (
-                            <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="red">Team</Badge>
-                          )}
-                          {isAnnouncement && (
-                            <Badge fontSize="xs" px="1.5" borderRadius="full" variant="subtle" colorPalette="purple">Everyone</Badge>
-                          )}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
                             return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
@@ -3196,8 +3192,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <VStack align="start" gap={2} mb="2">
+                    {/* Confirm client — must happen before Start */}
+                    {needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="orange"
+                        disabled={isOffline}
+                        onClick={async () => {
+                          try {
+                            await apiPost(`/api/occurrences/${occ.id}/confirm`);
+                            setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+                            publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+                          } catch (err) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
+                          }
+                        }}
+                      >
+                        Confirm Client
+                      </Button>
+                    )}
                     {/* Primary action — Start / Complete / Accept Payment */}
-                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && (
+                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
                       <Button
                         size="sm"
                         variant="solid"
