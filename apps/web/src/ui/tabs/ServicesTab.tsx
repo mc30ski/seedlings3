@@ -367,9 +367,14 @@ export default function ServicesTab({
       setHighlightId(jobId || null);
       setHighlightOccId(occId || null);
       setFlashOccId(occId || null);
+      // Clear date preset so all occurrences for this job are visible
+      setDatePreset(null);
+      setDateFrom("");
+      setDateTo("");
       if (jobId) {
-        // Auto-expand the job and load its detail
+        // Auto-expand the job, show all occurrences, and load its detail
         setExpandedMap((prev) => ({ ...prev, [jobId]: true }));
+        setShowAllOccs((prev) => { const next = new Set(prev); next.add(jobId); return next; });
         void loadDetail(jobId, true);
       }
     });
@@ -852,7 +857,7 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -899,7 +904,12 @@ export default function ServicesTab({
               + Archived
             </Badge>
           )}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived) && (
+          {highlightId && (
+            <Badge size="sm" colorPalette="teal" variant="subtle">
+              Filtered to 1 job service
+            </Badge>
+          )}
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -914,6 +924,9 @@ export default function ServicesTab({
                 setVipOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
+                setHighlightId(null);
+                setHighlightOccId(null);
+                setFlashOccId(null);
                 setDatePreset("thisMonth");
               }}
             >
@@ -1200,7 +1213,7 @@ export default function ServicesTab({
                 {(detail ? detail.occurrences.length === 0 : (job.occurrenceCount ?? 0) === 0) ? (
                   <Text fontSize="xs" color="fg.muted">No occurrences</Text>
                 ) : (
-                  <HStack gap={1}>
+                  <HStack gap={1} mt={2}>
                     <Button
                       variant="ghost"
                       size="xs"

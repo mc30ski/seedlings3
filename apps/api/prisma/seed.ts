@@ -1282,7 +1282,7 @@ async function seedDatabase() {
   // ── Announcements (universally visible) ────────────────────────────────
   console.log("  Creating announcements...");
 
-  await prisma.jobOccurrence.create({
+  const ann1 = await prisma.jobOccurrence.create({
     data: {
       title: "Office closed — Memorial Day",
       notes: "No scheduled work. Emergency calls only.",
@@ -1292,8 +1292,9 @@ async function seedDatabase() {
       workflow: "ANNOUNCEMENT",
     } as any,
   });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann1.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
-  await prisma.jobOccurrence.create({
+  const ann2 = await prisma.jobOccurrence.create({
     data: {
       title: "Payroll Reminder",
       notes: "Submit all hours and expenses by end of day Friday.",
@@ -1303,8 +1304,9 @@ async function seedDatabase() {
       workflow: "ANNOUNCEMENT",
     } as any,
   });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann2.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
-  await prisma.jobOccurrence.create({
+  const ann3 = await prisma.jobOccurrence.create({
     data: {
       title: "New mulch supplier — effective immediately",
       notes: "We're switching to GreenGrow Mulch. Old stock must be used first. See warehouse board for details.",
@@ -1314,8 +1316,9 @@ async function seedDatabase() {
       workflow: "ANNOUNCEMENT",
     } as any,
   });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann3.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
-  await prisma.jobOccurrence.create({
+  const ann4 = await prisma.jobOccurrence.create({
     data: {
       title: "Spring rate adjustments",
       notes: "New seasonal rates are in effect. Check the pricing sheet on the shared drive.",
@@ -1325,6 +1328,7 @@ async function seedDatabase() {
       workflow: "ANNOUNCEMENT",
     } as any,
   });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann4.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
   console.log("  Seed complete!");
 }

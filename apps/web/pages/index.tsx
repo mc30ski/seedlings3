@@ -825,6 +825,39 @@ export default function HomePage() {
   setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
   setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
 
+  // Services → Admin Jobs (special: targets "admin-jobs" inner tab)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onEvent = (e: Event) => {
+      const { entityId } = (e as CustomEvent).detail || {};
+      if (!entityId) return;
+      setTopTab("admin");
+      setAdminInnerTab("admin-jobs");
+      window.sessionStorage.setItem("servicesTabToJobsNav", entityId);
+    };
+    window.addEventListener("open:servicesTabToJobsTabSearch", onEvent as EventListener);
+    return () => window.removeEventListener("open:servicesTabToJobsTabSearch", onEvent as EventListener);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (adminInnerTab !== "admin-jobs") return;
+    const entityId = window.sessionStorage.getItem("servicesTabToJobsNav");
+    if (!entityId) return;
+    window.sessionStorage.removeItem("servicesTabToJobsNav");
+    // Wait for JobsTab to mount then dispatch highlight
+    const sepIdx = entityId.indexOf("|");
+    const occId = sepIdx >= 0 ? entityId.slice(0, sepIdx) : entityId;
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__jobsTabReady || attempts >= 30) {
+        clearInterval(interval);
+        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [topTab, adminInnerTab]);
+
   // Reminders → Jobs: admin goes to admin-jobs, worker goes to jobs
   useEffect(() => {
     if (typeof window === "undefined") return;
