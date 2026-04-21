@@ -345,6 +345,17 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
+
+    // Block starting unconfirmed job occurrences (applies to STANDARD, ONE_OFF, ESTIMATE workflows)
+    const occCheck = await prisma.jobOccurrence.findUnique({ where: { id: String(req.params.id) } });
+    if (occCheck) {
+      const needsConfirmation = !occCheck.isClientConfirmed && occCheck.jobId &&
+        (occCheck.workflow === "STANDARD" || occCheck.workflow === "ONE_OFF" || occCheck.workflow === "ESTIMATE" || !occCheck.workflow);
+      if (needsConfirmation) {
+        throw app.httpErrors.badRequest("Client confirmation required before starting this job");
+      }
+    }
+
     const location = (body.lat != null && body.lng != null)
       ? { lat: Number(body.lat), lng: Number(body.lng) }
       : undefined;
@@ -1175,6 +1186,27 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // ── Worker Reschedule ──
+
+  app.post("/occurrences/:id/confirm", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: { assignees: true },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.status !== "SCHEDULED") throw app.httpErrors.badRequest("Only scheduled occurrences can be confirmed");
+    // Only claimer or admin can confirm
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can confirm");
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data: { isClientConfirmed: true },
+    });
+    return { confirmed: true };
+  });
 
   app.post("/occurrences/:id/reschedule", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);

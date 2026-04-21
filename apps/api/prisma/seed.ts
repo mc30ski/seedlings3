@@ -513,10 +513,10 @@ async function seedDatabase() {
   }
 
   // ── Helper to create occurrence + assignees ───────────────────────────────
-  type OccData = Parameters<typeof prisma.jobOccurrence.create>[0]["data"];
+  // type OccData — using any for flexibility with new fields
   type Assignee = { userId: string; role?: string };
 
-  async function occ(data: OccData, assignees?: Assignee[]) {
+  async function occ(data: any, assignees?: Assignee[]) {
     const o = await prisma.jobOccurrence.create({ data });
     if (assignees?.length) {
       for (const a of assignees) {
@@ -630,7 +630,7 @@ async function seedDatabase() {
   // ─── TODAY / TOMORROW ─────────────────────────────────────────────────────
   // Assigned today
   const todayHarrington = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45 },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const todayWillowbrook = await occ(
@@ -642,12 +642,12 @@ async function seedDatabase() {
     [{ userId: TRAINEE_ID, role: "primary" }],
   );
   await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150 },
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150, isClientConfirmed: true },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
-  // In progress today
+  // In progress today (must be confirmed to have been started)
   await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysFromNow(0, 8) },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysFromNow(0, 8), isClientConfirmed: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 

@@ -897,6 +897,14 @@ export const jobs: ServicesJobs = {
             );
           }
         }
+        // Block starting unconfirmed job occurrences
+        if (patch.status === "IN_PROGRESS" && original.status === "SCHEDULED") {
+          const needsConfirmation = !(original as any).isClientConfirmed && original.jobId &&
+            ((original as any).workflow === "STANDARD" || (original as any).workflow === "ONE_OFF" || (original as any).workflow === "ESTIMATE" || !(original as any).workflow);
+          if (needsConfirmation) {
+            throw new ServiceError("NOT_CONFIRMED", "Client confirmation required before starting this job.", 409);
+          }
+        }
         data.status = patch.status;
       }
 
@@ -910,6 +918,7 @@ export const jobs: ServicesJobs = {
       if ("isTentative" in patch) data.isTentative = !!patch.isTentative;
       if ("isEstimate" in patch) data.isEstimate = !!patch.isEstimate;
       if ("isAdminOnly" in patch) data.isAdminOnly = !!patch.isAdminOnly;
+      if ("isClientConfirmed" in patch) data.isClientConfirmed = !!patch.isClientConfirmed;
       if ("jobType" in patch) data.jobType = patch.jobType ?? null;
       if ("jobTags" in patch) data.jobTags = patch.jobTags ?? null;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;

@@ -89,6 +89,16 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     saveDismissed(new Set());
   }
 
+  async function confirmClient(occ: WorkerOccurrence) {
+    try {
+      await apiPost(`/api/occurrences/${occ.id}/confirm`);
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+      publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? "Failed to confirm." });
+    }
+  }
+
   async function loadItems() {
     setLoading(true);
     try {
@@ -102,16 +112,32 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
 
   useEffect(() => {
     void loadItems();
-    // Reload when app becomes visible (handles day change, phone wake)
+    // Reload when app becomes visible ONLY if the day changed (handles phone wake, overnight)
+    let lastDay = bizDateKey(new Date());
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        // Re-check dismissed (clears if day changed)
-        setDismissed(loadDismissed());
-        void loadItems();
+        const currentDay = bizDateKey(new Date());
+        if (currentDay !== lastDay) {
+          lastDay = currentDay;
+          setDismissed(loadDismissed());
+          void loadItems();
+        }
       }
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    // Refresh when a specific action happens (claim, confirm, status change)
+    // Use a debounce to avoid rapid re-fetching
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const onJobsChanged = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => void loadItems(), 500);
+    };
+    window.addEventListener("seedlings3:jobs-changed", onJobsChanged);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("seedlings3:jobs-changed", onJobsChanged);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
   }, []);
 
   const today = bizDateKey(new Date());
@@ -364,13 +390,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           toggleCard={toggleCard}
           me={me}
           onDismiss={(occId) => dismissInSection("overdue", occId)}
+          onConfirm={confirmClient}
         />
       )}
 
       {todayJobs.length > 0 && (
         <Section
           title="Today"
-          subtitle="Jobs scheduled for today — confirm with client"
+          subtitle="Jobs scheduled for today"
           color="blue.600"
           items={todayJobs}
           badge={(occ) => <Badge colorPalette={occ.workflow === "TASK" ? "blue" : "blue"} variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Today" : "Today"}</Badge>}
@@ -387,13 +414,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           toggleCard={toggleCard}
           me={me}
           onDismiss={(occId) => dismissInSection("today", occId)}
+          onConfirm={confirmClient}
         />
       )}
 
       {tomorrowJobs.length > 0 && (
         <Section
           title="Tomorrow"
-          subtitle="Jobs scheduled for tomorrow — reach out to confirm"
+          subtitle="Jobs scheduled for tomorrow"
           color="teal.600"
           items={tomorrowJobs}
           badge={(occ) => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Tomorrow" : "Tomorrow"}</Badge>}
@@ -410,6 +438,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           toggleCard={toggleCard}
           me={me}
           onDismiss={(occId) => dismissInSection("tomorrow", occId)}
+          onConfirm={confirmClient}
         />
       )}
 
@@ -486,6 +515,7 @@ function Section({
   expandedCards,
   toggleCard,
   onDismiss,
+  onConfirm,
   dismissLabel = "Dismiss",
   me,
 }: {
@@ -501,6 +531,7 @@ function Section({
   expandedCards: Set<string>;
   toggleCard: (id: string) => void;
   onDismiss?: (id: string) => void;
+  onConfirm?: (occ: WorkerOccurrence) => void;
   dismissLabel?: string;
   me?: Me | null;
 }) {
@@ -521,7 +552,7 @@ function Section({
               onClick={() => { if (compact) toggleCard(occ.id); }}
             >
               {isExpanded && (
-                <Box px="4" pt="3" pb="0">
+                <HStack px="4" pt="3" pb="0" gap={2} flexWrap="wrap">
                   <Button
                     size="xs"
                     variant="solid"
@@ -538,6 +569,17 @@ function Section({
                   >
                     View in Jobs
                   </Button>
+                  {onConfirm && occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
+                    (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (
+                    <Button
+                      size="xs"
+                      variant="solid"
+                      colorPalette="orange"
+                      onClick={(e) => { e.stopPropagation(); onConfirm(occ); }}
+                    >
+                      Confirm Client
+                    </Button>
+                  )}
                   <Button
                     size="xs"
                     variant="ghost"
@@ -546,7 +588,7 @@ function Section({
                   >
                     {dismissLabel}
                   </Button>
-                </Box>
+                </HStack>
               )}
               <Card.Body py="3" px="4" pt={isExpanded ? "2" : "3"}>
                 <HStack justify="space-between" align="start" gap={3}>
@@ -649,6 +691,10 @@ function Section({
                       <HStack gap={2} fontSize="xs" justify="space-between" w="full">
                         <HStack gap={2} flexWrap="wrap" flex="1" minW={0}>
                           {badge(occ)}
+                          {occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
+                            (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (
+                            <Badge colorPalette="orange" variant="solid" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Unconfirmed</Badge>
+                          )}
                           {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
                           {occ.price != null && (
                             <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
