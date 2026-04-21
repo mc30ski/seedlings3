@@ -1740,9 +1740,10 @@ Respond ONLY with valid JSON in this exact format:
       o.status === "SCHEDULED" && o.startAt && o.startAt < todayMidnight
     ).length;
 
+    const nonJobWorkflows = new Set(["ESTIMATE", "TASK", "REMINDER", "EVENT", "FOLLOWUP", "ANNOUNCEMENT"]);
     const jobsUnclaimed = occurrences.filter((o) =>
       o.status === "SCHEDULED" &&
-      o.workflow !== "ESTIMATE" &&
+      !nonJobWorkflows.has(o.workflow ?? "") &&
       !o.isEstimate &&
       o.assignees.filter((a) => a.role !== "observer").length === 0
     ).length;
@@ -1842,7 +1843,7 @@ Respond ONLY with valid JSON in this exact format:
     const unclaimedList = occurrences
       .filter((o) =>
         o.status === "SCHEDULED" &&
-        o.workflow !== "ESTIMATE" &&
+        !nonJobWorkflows.has(o.workflow ?? "") &&
         !o.isEstimate &&
         o.assignees.filter((a) => a.role !== "observer").length === 0
       )

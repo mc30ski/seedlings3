@@ -729,6 +729,15 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
+      // Auto-assign the creator as claimer
+      await tx.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: adminUserId,
+          assignedById: adminUserId,
+        },
+      });
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
         occurrenceId: occ.id,
         type: "ANNOUNCEMENT",
