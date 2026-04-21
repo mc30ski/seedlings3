@@ -54,6 +54,7 @@ import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import LightEstimateDialog from "@/src/ui/dialogs/LightEstimateDialog";
 import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
+import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -148,6 +149,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Reminder", value: "REMINDER" },
       { label: "Event", value: "EVENT" },
       { label: "Followup", value: "FOLLOWUP" },
+      { label: "Announcement", value: "ANNOUNCEMENT" },
     ],
     []
   );
@@ -296,6 +298,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Followup dialog
   const [followupDialogOpen, setFollowupDialogOpen] = useState(false);
   const [editingFollowup, setEditingFollowup] = useState<any>(null);
+
+  // Announcement dialog
+  const [announcementDialogOpen, setAnnouncementDialogOpen] = useState(false);
+  const [editingAnnouncement, setEditingAnnouncement] = useState<any>(null);
 
   // Light estimate & convert dialogs
   const [lightEstDialogOpen, setLightEstDialogOpen] = useState(false);
@@ -734,8 +740,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         // Admin "View as" — show only selected workers' jobs
         const idSet = new Set(viewAsUserIds);
         list = list.filter((occ) => {
+          if (occ.workflow === "ANNOUNCEMENT") return true;
           const assignees = occ.assignees ?? [];
-          // If impersonating a trainee, hide unassigned jobs
+          if (occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP") {
+            return assignees.some((a) => idSet.has(a.userId));
+          }
           if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
           return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
         });
@@ -747,10 +756,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             return assignees.some((a) => a.userId === myId);
           });
         } else {
-          // Worker view — show only my jobs + unassigned (claimable) + highlighted occurrence
+          // Worker view — show only my jobs + unassigned (claimable) + announcements + highlighted occurrence
+          // Events and Followups are team-scoped: only visible to assignees
           list = list.filter((occ) => {
             if (keepOccId && occ.id === keepOccId) return true;
+            // Announcements are universally visible
+            if (occ.workflow === "ANNOUNCEMENT") return true;
             const assignees = occ.assignees ?? [];
+            // Events and Followups: only show if user is an assignee
+            if (occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP") {
+              return assignees.some((a) => a.userId === myId);
+            }
             return assignees.length === 0 || assignees.some((a) => a.userId === myId);
           });
         }
@@ -1034,6 +1050,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "REMINDER") rows = rows.filter((occ) => occ.workflow === "REMINDER");
     else if (tf === "EVENT") rows = rows.filter((occ) => occ.workflow === "EVENT");
     else if (tf === "FOLLOWUP") rows = rows.filter((occ) => occ.workflow === "FOLLOWUP");
+    else if (tf === "ANNOUNCEMENT") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT");
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
@@ -1323,6 +1340,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   onClick={() => { setCreateMenuOpen(false); setEditingFollowup(null); setFollowupDialogOpen(true); }}
                 >
                   Followup
+                </Button>
+              )}
+              {(isAdmin || isSuper) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  w="full"
+                  justifyContent="start"
+                  onClick={() => { setCreateMenuOpen(false); setEditingAnnouncement(null); setAnnouncementDialogOpen(true); }}
+                >
+                  Announcement
                 </Button>
               )}
               {(isAdmin || isSuper) && (
@@ -1803,8 +1831,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const isReminder = occ.workflow === "REMINDER";
             const isEvent = occ.workflow === "EVENT";
             const isFollowup = occ.workflow === "FOLLOWUP";
+            const isAnnouncement = occ.workflow === "ANNOUNCEMENT";
             const isHighPriority = isReminder && !!(occ as any).isHighPriority;
-            const isTaskOrReminder = isTask || isReminder || isEvent || isFollowup;
+            const isTaskOrReminder = isTask || isReminder || isEvent || isFollowup || isAnnouncement;
             const isLightEstimate = isEstimateOcc && !occ.jobId;
             const isGhost = !!occ._isReminderGhost;
             const isVipClient = !!(occ.job?.property?.client as any)?.isVip;
@@ -1932,7 +1961,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // Card color theme — bg and border derive from the same base color
             const isPendingPayment = occ.status === "PENDING_PAYMENT";
             const isInProgressOthers = occ.status === "IN_PROGRESS" && isAssignedToOthers;
-            const cardColorBase = isFollowup ? (isClosed ? "followup-closed" : "followup")
+            const cardColorBase = isAnnouncement ? (isClosed ? "announce-closed" : "announce")
+              : isFollowup ? (isClosed ? "followup-closed" : "followup")
               : isEvent ? (isClosed ? "event-closed" : "event")
               : (isClosed || isAcceptedEstimate) ? "gray"
               : isReminder ? "purple"
@@ -1946,6 +1976,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isUnassigned ? "yellow"
               : null;
             const cardBg = isHighPriority ? "purple.100"
+              : cardColorBase === "announce-closed" ? "#DDD6FE"
+              : cardColorBase === "announce" ? "#C4B5FD"
               : cardColorBase === "followup-closed" ? "#FED7D7"
               : cardColorBase === "followup" ? "#FECACA"
               : cardColorBase === "event-closed" ? "#FEF9C3"
@@ -1956,6 +1988,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = isHighPriority ? "purple.500"
+              : cardColorBase === "announce-closed" ? "#7C3AED"
+              : cardColorBase === "announce" ? "#6D28D9"
               : cardColorBase === "followup-closed" ? "#E11D48"
               : cardColorBase === "followup" ? "#BE123C"
               : cardColorBase === "event-closed" ? "#CA8A04"
@@ -1967,7 +2001,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const cardBorderWidth = isHighPriority ? "2px" : isInProgress ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
-            const commentBadgeBg = (isClosed || isAcceptedEstimate) ? "gray.200"
+            const commentBadgeBg = (isClosed || isAcceptedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
+              : isAnnouncement ? "#DDD6FE"
               : isFollowup ? "#FDA4AF"
               : isEvent ? "#FDE68A"
               : isReminder ? "purple.200"
@@ -1977,7 +2012,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToMe ? "teal.200"
               : isAssignedToOthers ? "gray.300"
               : "gray.200";
-            const commentBadgeColor = (isClosed || isAcceptedEstimate) ? "gray.700"
+            const commentBadgeColor = (isClosed || isAcceptedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.700"
+              : isAnnouncement ? "#4C1D95"
               : isFollowup ? "#881337"
               : isEvent ? "#92400E"
               : isReminder ? "purple.700"
@@ -2008,7 +2044,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
-                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : (isFollowup && !isClosed) ? { borderLeft: "4px solid #BE123C" } : (isFollowup && isClosed) ? { borderLeft: "4px solid #E11D48", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid #D97706" } : (isEvent && isClosed) ? { borderLeft: "4px solid #CA8A04", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: `4px solid ${isClosed ? "#7C3AED" : "#6D28D9"}`, ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid #BE123C" } : (isFollowup && isClosed) ? { borderLeft: "4px solid #E11D48", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid #D97706" } : (isEvent && isClosed) ? { borderLeft: "4px solid #CA8A04", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
@@ -2049,8 +2085,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isReminder ? (
                             <>{occ.title || "Reminder"}</>
-                          ) : isEvent || isFollowup ? (
-                            <>{occ.title || (isFollowup ? "Followup" : "Event")}</>
+                          ) : isEvent || isFollowup || isAnnouncement ? (
+                            <>{occ.title || (isFollowup ? "Followup" : isAnnouncement ? "Announcement" : "Event")}</>
                           ) : isTask ? (
                             <>{occ.title || "Task"}</>
                           ) : isLightEstimate ? (
@@ -2115,6 +2151,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             const freq = (occ as any).frequencyDays;
                             const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
                             return <StatusBadge status={`Followup · ${freqLabel}`} palette="red" variant="solid" />;
+                          })()}
+                          {isAnnouncement && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Announcement · ${freqLabel}`} palette="purple" variant="solid" />;
                           })()}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
@@ -2300,6 +2341,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
                             return <StatusBadge status={`Followup · ${freqLabel}`} palette="red" variant="solid" />;
                           })()}
+                          {isAnnouncement && (() => {
+                            const freq = (occ as any).frequencyDays;
+                            const freqLabel = !freq ? "One-off" : freq === 7 ? "Weekly" : freq === 30 ? "Monthly" : freq === 365 ? "Yearly" : `${freq}d`;
+                            return <StatusBadge status={`Announcement · ${freqLabel}`} palette="purple" variant="solid" />;
+                          })()}
                           {!isTaskOrReminder && (occ.workflow === "STANDARD" || (!occ.workflow && !occ.isEstimate && !occ.isOneOff)) && (() => {
                             const freq = occ.frequencyDays ?? (occ.job as any)?.frequencyDays;
                             return <StatusBadge status={freq ? `Repeating · ${freq}d` : "Repeating"} palette="blue" variant="subtle" />;
@@ -2409,7 +2455,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Text>
                       ) : occ.status !== "ARCHIVED" ? (
                         <Text fontSize="xs" fontWeight="semibold" color="orange.500">
-                          {(isEvent || isFollowup) ? null : isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                          {(isEvent || isFollowup || isAnnouncement) ? null : isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
                         </Text>
                       ) : <Box />}
                       {(occ._count?.comments ?? 0) > 0 && (
@@ -2806,7 +2852,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         })}
                       </VStack>
                     )}
-                    {isUnassigned && !isEvent && !isFollowup && occ.status !== "ARCHIVED" && (
+                    {isUnassigned && !isEvent && !isFollowup && !isAnnouncement && occ.status !== "ARCHIVED" && (
                       <Text fontSize="xs" color="orange.500" fontWeight="medium">
                         {isTentative
                           ? "Unclaimed — tentative, awaiting admin confirmation"
@@ -3430,6 +3476,62 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       </>)}
+                      {/* Announcement complete/edit/delete buttons — admin only */}
+                      {isAnnouncement && occ.status === "SCHEDULED" && (isAdmin || isSuper) && (<>
+                        <Button
+                          size="sm"
+                          variant="solid"
+                          colorPalette="purple"
+                          disabled={isOffline}
+                          onClick={async () => {
+                            try {
+                              await apiPost(`/api/admin/announcements/${occ.id}/complete`);
+                              publishInlineMessage({ type: "SUCCESS", text: "Announcement completed." });
+                              await load(false);
+                            } catch (err) {
+                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete announcement.", err) });
+                            }
+                          }}
+                        >
+                          Complete
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setEditingAnnouncement(occ);
+                            setAnnouncementDialogOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="red"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setConfirmAction({
+                              title: "Delete Announcement?",
+                              message: `Are you sure you want to delete "${occ.title}"?`,
+                              confirmLabel: "Delete",
+                              colorPalette: "red",
+                              onConfirm: async () => {
+                                try {
+                                  await apiDelete(`/api/admin/announcements/${occ.id}`);
+                                  publishInlineMessage({ type: "SUCCESS", text: "Announcement deleted." });
+                                  await load(false);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete announcement.", err) });
+                                }
+                              },
+                            });
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </>)}
                       {/* Light estimate edit/delete */}
                       {isLightEstimate && (isClaimer || isAdmin || isSuper) && (
                         <Button
@@ -3777,6 +3879,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onOpenChange={(o) => { setEventDialogOpen(o); if (!o) setEditingEvent(null); }}
         onCreated={() => void load(false)}
         editEvent={editingEvent}
+      />
+
+      <AnnouncementDialog
+        open={announcementDialogOpen}
+        onOpenChange={(o) => { setAnnouncementDialogOpen(o); if (!o) setEditingAnnouncement(null); }}
+        onCreated={() => void load(false)}
+        editAnnouncement={editingAnnouncement}
       />
 
       <FollowupDialog
@@ -4305,13 +4414,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="#BE123C" bg="#FECACA">
                     <Badge colorPalette="red" variant="solid" mb={1}>Followup</Badge>
-                    <Text fontSize="sm">A shared follow-up visible to all workers and admins. Works like an Event, but can optionally attach one or more clients and/or job services — so the team knows exactly who or what to follow up on. Admin-only to create, edit, and complete. Can be one-off or repeating.</Text>
+                    <Text fontSize="sm">A team-scoped follow-up visible only to assigned team members (and all admins on the Admin Jobs tab). Can optionally attach one or more clients and/or job services — so the team knows exactly who or what to follow up on. Admin-only to create, edit, and complete. Can be one-off or repeating. Use Manage Team to control who sees it.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="#D97706" bg="#FDE68A">
                     <Badge colorPalette="yellow" variant="solid" mb={1}>Event</Badge>
-                    <Text fontSize="sm">A shared occurrence visible to all workers and admins (e.g., "Weekly team meeting", "Equipment inspection"). Created by admins only. Can be one-off or repeating — repeating events auto-create the next instance when completed. Only admins can edit and complete events. Becomes overdue if not completed by its date.</Text>
+                    <Text fontSize="sm">A team-scoped occurrence visible only to assigned team members (and all admins on the Admin Jobs tab). Created by admins only. Can set an optional exact time. Can be one-off or repeating — repeating events auto-create the next instance when completed. Only admins can edit and complete events. Use Manage Team to control who sees it. Becomes overdue if not completed by its date.</Text>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#6D28D9" bg="#C4B5FD">
+                    <Badge colorPalette="purple" variant="solid" mb={1}>Announcement</Badge>
+                    <Text fontSize="sm">A universally visible occurrence seen by all workers and admins. Created by admins only. Used for company-wide notices (e.g., "Office closed Friday", "New policy effective Monday"). Can be one-off or repeating. Only admins can edit and complete. Becomes overdue if not completed by its date.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
                   </Box>
 
@@ -4388,13 +4503,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Purple</Badge>
                       <Text fontSize="xs">Reminder</Text>
                     </HStack>
+                    <HStack p={2} bg="#C4B5FD" borderWidth="1px" borderColor="#6D28D9" rounded="md" gap={2}>
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" flexShrink={0}>Violet</Badge>
+                      <Text fontSize="xs">Announcement — universally visible</Text>
+                    </HStack>
                     <HStack p={2} bg="#FECACA" borderWidth="1px" borderColor="#BE123C" rounded="md" gap={2}>
                       <Badge colorPalette="red" variant="solid" fontSize="xs" flexShrink={0}>Rose</Badge>
-                      <Text fontSize="xs">Followup — shared, with attached clients/jobs</Text>
+                      <Text fontSize="xs">Followup — team-scoped, with attached clients/jobs</Text>
                     </HStack>
                     <HStack p={2} bg="#FDE68A" borderWidth="1px" borderColor="#D97706" rounded="md" gap={2}>
                       <Badge colorPalette="yellow" variant="solid" fontSize="xs" flexShrink={0}>Amber</Badge>
-                      <Text fontSize="xs">Event — shared, admin-managed</Text>
+                      <Text fontSize="xs">Event — team-scoped, admin-managed</Text>
                     </HStack>
                     <HStack p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" rounded="md" gap={2}>
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" flexShrink={0}>Gray</Badge>

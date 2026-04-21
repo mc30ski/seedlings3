@@ -2139,6 +2139,48 @@ Respond ONLY with valid JSON in this exact format:
     return { deleted: true };
   });
 
+  // ── Announcements (admin-only, universally visible) ──
+  app.post("/admin/announcements", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    if (!body.title?.trim()) throw app.httpErrors.badRequest("title is required");
+    if (!body.startAt) throw app.httpErrors.badRequest("startAt is required");
+    return services.jobs.createAnnouncement(uid, {
+      title: String(body.title).trim(),
+      notes: body.notes ? String(body.notes) : undefined,
+      startAt: String(body.startAt),
+      frequencyDays: body.frequencyDays != null ? Number(body.frequencyDays) : null,
+    });
+  });
+
+  app.patch("/admin/announcements/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Announcement not found");
+    if (occ.workflow !== "ANNOUNCEMENT") throw app.httpErrors.badRequest("Not an announcement");
+    const body = req.body || {};
+    const data: any = {};
+    if (body.title !== undefined) data.title = String(body.title).trim();
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.startAt !== undefined) data.startAt = new Date(body.startAt);
+    if (body.frequencyDays !== undefined) data.frequencyDays = body.frequencyDays != null ? Number(body.frequencyDays) : null;
+    return prisma.jobOccurrence.update({ where: { id }, data });
+  });
+
+  app.post("/admin/announcements/:id/complete", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.jobs.completeAnnouncement(uid, String(req.params.id));
+  });
+
+  app.delete("/admin/announcements/:id", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id } });
+    if (!occ) throw app.httpErrors.notFound("Announcement not found");
+    if (occ.workflow !== "ANNOUNCEMENT") throw app.httpErrors.badRequest("Not an announcement");
+    await prisma.jobOccurrence.delete({ where: { id } });
+    return { deleted: true };
+  });
+
   app.post("/admin/occurrences/:id/link-to-job", adminGuard, async (req: any) => {
     const occId = String(req.params.id);
     const jobId = String(req.body?.jobId ?? "");

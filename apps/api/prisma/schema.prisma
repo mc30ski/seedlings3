@@ -394,6 +394,7 @@ enum OccurrenceWorkflow {
   REMINDER
   EVENT
   FOLLOWUP
+  ANNOUNCEMENT
 }
 
 enum JobOccurrenceSource {

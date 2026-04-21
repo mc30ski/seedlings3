@@ -508,6 +508,15 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
+      // Auto-assign the creator as claimer
+      await tx.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: adminUserId,
+          assignedById: adminUserId,
+        },
+      });
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
         occurrenceId: occ.id,
         type: "EVENT",
@@ -608,6 +617,15 @@ export const jobs: ServicesJobs = {
         });
       }
 
+      // Auto-assign the creator as claimer
+      await tx.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: adminUserId,
+          assignedById: adminUserId,
+        },
+      });
+
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
         occurrenceId: occ.id,
         type: "FOLLOWUP",
@@ -688,6 +706,94 @@ export const jobs: ServicesJobs = {
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
         occurrenceId,
         action: "COMPLETE_FOLLOWUP",
+        nextOccurrenceId: nextOccurrence?.id ?? null,
+      });
+
+      return { completed: occ, next: nextOccurrence };
+    });
+  },
+
+  async createAnnouncement(adminUserId: string, input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }) {
+    return prisma.$transaction(async (tx) => {
+      const isRepeating = input.frequencyDays != null && input.frequencyDays > 0;
+      const occ = await tx.jobOccurrence.create({
+        data: {
+          kind: null,
+          title: input.title,
+          notes: input.notes ?? null,
+          startAt: toDate(input.startAt),
+          status: JobOccurrenceStatus.SCHEDULED,
+          source: JobOccurrenceSource.MANUAL,
+          workflow: "ANNOUNCEMENT" as any,
+          frequencyDays: isRepeating ? input.frequencyDays : null,
+        } as any,
+      });
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_CREATED, adminUserId, {
+        occurrenceId: occ.id,
+        type: "ANNOUNCEMENT",
+        title: input.title,
+      });
+
+      return occ;
+    });
+  },
+
+  async completeAnnouncement(adminUserId: string, occurrenceId: string) {
+    return prisma.$transaction(async (tx) => {
+      const occ = await tx.jobOccurrence.findUnique({ where: { id: occurrenceId } });
+      if (!occ) throw new Error("Announcement not found");
+      if (occ.workflow !== "ANNOUNCEMENT") throw new Error("Not an announcement");
+      if (occ.status !== "SCHEDULED") throw new Error("Announcement is not in SCHEDULED status");
+
+      await tx.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status: JobOccurrenceStatus.CLOSED, completedAt: new Date() },
+      });
+
+      let nextOccurrence = null;
+      const freq = (occ as any).frequencyDays;
+      if (freq && freq > 0) {
+        const baseDate = occ.startAt ? new Date(occ.startAt) : new Date();
+        let nextStart: Date;
+        if (freq === 30) {
+          const day = baseDate.getDate();
+          const next = new Date(baseDate);
+          next.setMonth(next.getMonth() + 1, 1);
+          const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+          next.setDate(Math.min(day, lastDay));
+          nextStart = next;
+        } else if (freq === 365) {
+          const month = baseDate.getMonth();
+          const day = baseDate.getDate();
+          const nextYear = baseDate.getFullYear() + 1;
+          const lastDay = new Date(nextYear, month + 1, 0).getDate();
+          nextStart = new Date(baseDate);
+          nextStart.setFullYear(nextYear);
+          nextStart.setMonth(month);
+          nextStart.setDate(Math.min(day, lastDay));
+        } else {
+          nextStart = new Date(baseDate);
+          nextStart.setDate(nextStart.getDate() + freq);
+        }
+
+        nextOccurrence = await tx.jobOccurrence.create({
+          data: {
+            kind: null,
+            title: occ.title,
+            notes: occ.notes,
+            startAt: nextStart,
+            status: JobOccurrenceStatus.SCHEDULED,
+            source: "GENERATED" as any,
+            workflow: "ANNOUNCEMENT" as any,
+            frequencyDays: freq,
+          } as any,
+        });
+      }
+
+      await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, adminUserId, {
+        occurrenceId,
+        action: "COMPLETE_ANNOUNCEMENT",
         nextOccurrenceId: nextOccurrence?.id ?? null,
       });
 

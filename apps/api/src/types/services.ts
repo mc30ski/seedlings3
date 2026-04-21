@@ -570,6 +570,12 @@ export type ServicesJobs = {
   ): Promise<JobOccurrence>;
   completeFollowup(adminUserId: string, occurrenceId: string): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
 
+  createAnnouncement(
+    adminUserId: string,
+    input: { title: string; notes?: string; startAt: string; frequencyDays?: number | null }
+  ): Promise<JobOccurrence>;
+  completeAnnouncement(adminUserId: string, occurrenceId: string): Promise<{ completed: JobOccurrence; next: JobOccurrence | null }>;
+
   deleteJob(jobId: string): Promise<{ deleted: true }>;
   deleteOccurrence(occurrenceId: string): Promise<{ deleted: true }>;
 
