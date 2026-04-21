@@ -2373,7 +2373,8 @@ Respond ONLY with valid JSON in this exact format:
   // ── System Audit ──
   app.post("/admin/system-audit", superGuard, async (req: any) => {
     const checks = (req.body?.checks ?? []) as string[];
-    const results: { check: string; label: string; issues: { id?: string; description: string }[] }[] = [];
+    type AuditIssue = { id?: string; description: string; clientId?: string; jobId?: string; occurrenceId?: string };
+    const results: { check: string; label: string; issues: AuditIssue[] }[] = [];
 
     // 1. Duplicate client names
     if (checks.includes("duplicate_clients")) {
@@ -2387,12 +2388,13 @@ Respond ONLY with valid JSON in this exact format:
         if (!nameMap.has(key)) nameMap.set(key, []);
         nameMap.get(key)!.push(c);
       }
-      const issues: { id: string; description: string }[] = [];
+      const issues: AuditIssue[] = [];
       for (const [, group] of nameMap) {
         if (group.length > 1) {
           issues.push({
             id: group[0].id,
-            description: `"${group[0].displayName}" appears ${group.length} times (IDs: ${group.map((c) => c.id.slice(0, 8)).join(", ")})`,
+            clientId: group[0].id,
+            description: `"${group[0].displayName}" appears ${group.length} times (statuses: ${group.map((c) => c.status).join(", ")})`,
           });
         }
       }
@@ -2403,7 +2405,7 @@ Respond ONLY with valid JSON in this exact format:
     if (checks.includes("duplicate_properties")) {
       const properties = await prisma.property.findMany({
         where: { archivedAt: null },
-        select: { id: true, displayName: true, street1: true, city: true, state: true },
+        select: { id: true, displayName: true, street1: true, city: true, state: true, clientId: true, client: { select: { displayName: true } } },
       });
       const addrMap = new Map<string, typeof properties>();
       for (const p of properties) {
@@ -2412,12 +2414,13 @@ Respond ONLY with valid JSON in this exact format:
         if (!addrMap.has(key)) addrMap.set(key, []);
         addrMap.get(key)!.push(p);
       }
-      const issues: { id: string; description: string }[] = [];
+      const issues: AuditIssue[] = [];
       for (const [, group] of addrMap) {
         if (group.length > 1) {
           issues.push({
             id: group[0].id,
-            description: `"${group[0].displayName}" at "${group[0].street1}, ${group[0].city}" appears ${group.length} times`,
+            clientId: (group[0] as any).clientId,
+            description: `"${group[0].displayName}" (${(group[0] as any).client?.displayName ?? "?"}) at "${group[0].street1}, ${group[0].city}" — ${group.length} duplicates`,
           });
         }
       }
@@ -2428,7 +2431,7 @@ Respond ONLY with valid JSON in this exact format:
     if (checks.includes("duplicate_jobs")) {
       const jobs = await prisma.job.findMany({
         where: { status: { not: "ARCHIVED" } },
-        select: { id: true, propertyId: true, kind: true, status: true, property: { select: { displayName: true } } },
+        select: { id: true, propertyId: true, kind: true, status: true, property: { select: { displayName: true, client: { select: { displayName: true } } } } },
       });
       const jobMap = new Map<string, typeof jobs>();
       for (const j of jobs) {
@@ -2436,14 +2439,16 @@ Respond ONLY with valid JSON in this exact format:
         if (!jobMap.has(key)) jobMap.set(key, []);
         jobMap.get(key)!.push(j);
       }
-      const issues: { id: string; description: string }[] = [];
+      const issues: AuditIssue[] = [];
       for (const [, group] of jobMap) {
         if (group.length > 1) {
           const active = group.filter((j) => j.status === "ACTIVE");
           if (active.length > 1) {
+            const clientName = (group[0].property as any)?.client?.displayName ?? "";
             issues.push({
               id: group[0].id,
-              description: `${group[0].property?.displayName ?? "Unknown"} has ${active.length} active ${group[0].kind} jobs`,
+              jobId: group[0].id,
+              description: `${group[0].property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""} has ${active.length} active ${group[0].kind} jobs`,
             });
           }
         }
@@ -2460,7 +2465,7 @@ Respond ONLY with valid JSON in this exact format:
           jobId: { not: null },
           startAt: { not: null },
         },
-        select: { id: true, jobId: true, startAt: true, kind: true, job: { select: { property: { select: { displayName: true } } } } },
+        select: { id: true, jobId: true, startAt: true, kind: true, job: { select: { property: { select: { displayName: true, client: { select: { displayName: true } } } } } } },
         orderBy: { startAt: "asc" },
       });
       const jobOccs = new Map<string, typeof occs>();
@@ -2469,7 +2474,7 @@ Respond ONLY with valid JSON in this exact format:
         if (!jobOccs.has(o.jobId)) jobOccs.set(o.jobId, []);
         jobOccs.get(o.jobId)!.push(o);
       }
-      const issues: { id: string; description: string }[] = [];
+      const issues: AuditIssue[] = [];
       for (const [, group] of jobOccs) {
         for (let i = 0; i < group.length - 1; i++) {
           const a = group[i];
@@ -2477,9 +2482,12 @@ Respond ONLY with valid JSON in this exact format:
           if (!a.startAt || !b.startAt) continue;
           const diffDays = Math.abs(b.startAt.getTime() - a.startAt.getTime()) / 86400000;
           if (diffDays <= 2) {
+            const clientName = (a.job?.property as any)?.client?.displayName ?? "";
             issues.push({
               id: a.id,
-              description: `${a.job?.property?.displayName ?? "Unknown"}: two SCHEDULED occurrences ${diffDays < 1 ? "same day" : `${Math.round(diffDays)}d apart`} (${a.startAt.toISOString().slice(0, 10)} & ${b.startAt.toISOString().slice(0, 10)})`,
+              jobId: a.jobId!,
+              occurrenceId: a.id,
+              description: `${a.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: two SCHEDULED occurrences ${diffDays < 1 ? "same day" : `${Math.round(diffDays)}d apart`} (${a.startAt.toISOString().slice(0, 10)} & ${b.startAt.toISOString().slice(0, 10)})`,
             });
           }
         }
@@ -2498,7 +2506,7 @@ Respond ONLY with valid JSON in this exact format:
           jobId: { not: null },
           completedAt: { gte: twoMonthsAgo },
         },
-        select: { id: true, jobId: true, startAt: true, completedAt: true, job: { select: { property: { select: { displayName: true } }, frequencyDays: true, status: true } } },
+        select: { id: true, jobId: true, startAt: true, completedAt: true, job: { select: { property: { select: { displayName: true, client: { select: { displayName: true } } } }, frequencyDays: true, status: true } } },
         orderBy: { completedAt: "desc" },
       });
       // For each job, check if there's at least one SCHEDULED occurrence
@@ -2512,16 +2520,19 @@ Respond ONLY with valid JSON in this exact format:
         select: { jobId: true },
       });
       const hasScheduled = new Set(scheduled.map((o) => o.jobId));
-      const issues: { id: string; description: string }[] = [];
+      const issues: AuditIssue[] = [];
       const seen = new Set<string>();
       for (const o of closed) {
         if (!o.jobId || hasScheduled.has(o.jobId) || seen.has(o.jobId)) continue;
         if (o.job?.status === "ARCHIVED" || o.job?.status === "PAUSED") continue;
         if (!o.job?.frequencyDays || o.job.frequencyDays <= 0) continue;
         seen.add(o.jobId);
+        const clientName = (o.job?.property as any)?.client?.displayName ?? "";
         issues.push({
           id: o.id,
-          description: `${o.job?.property?.displayName ?? "Unknown"}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
+          jobId: o.jobId,
+          occurrenceId: o.id,
+          description: `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
         });
       }
       results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });

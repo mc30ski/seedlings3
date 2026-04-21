@@ -281,6 +281,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Photo viewer (for compact card thumbnails)
   const [viewerPhotos, setViewerPhotos] = useState<{ id: string; url: string }[]>([]);
+  // Global keyboard handler for photo viewer
+  useEffect(() => {
+    if (viewerPhotos.length === 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); setViewerIndex((i) => Math.max(i - 1, 0)); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); setViewerIndex((i) => Math.min(i + 1, viewerPhotos.length - 1)); }
+      else if (e.key === "Escape") { setViewerPhotos([]); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [viewerPhotos]);
   const [viewerIndex, setViewerIndex] = useState(0);
 
   // Task dialog
@@ -3851,13 +3862,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           display="flex"
           alignItems="center"
           justifyContent="center"
-          tabIndex={0}
-          ref={(el: HTMLDivElement | null) => { if (el) el.focus(); }}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowLeft") { e.stopPropagation(); setViewerIndex((i) => Math.max(i - 1, 0)); }
-            else if (e.key === "ArrowRight") { e.stopPropagation(); setViewerIndex((i) => Math.min(i + 1, viewerPhotos.length - 1)); }
-            else if (e.key === "Escape") { setViewerPhotos([]); }
-          }}
           onClick={() => setViewerPhotos([])}
           onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
           onTouchEnd={(e) => {

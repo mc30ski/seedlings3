@@ -12,12 +12,13 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, CheckCircle2, Search } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Search } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { openEventSearch } from "@/src/lib/bus";
 
 const AUDIT_CHECKS = [
   {
@@ -47,18 +48,24 @@ const AUDIT_CHECKS = [
   },
 ] as const;
 
+type AuditIssue = { id?: string; description: string; clientId?: string; jobId?: string; occurrenceId?: string };
 type AuditResult = {
   check: string;
   label: string;
-  issues: { id?: string; description: string }[];
+  issues: AuditIssue[];
 };
+
+// Module-level cache so results persist across tab switches
+let cachedResults: AuditResult[] | null = null;
+let cachedTimestamp: number | null = null;
 
 export default function AuditTab() {
   const [selected, setSelected] = useState<Set<string>>(
     new Set(AUDIT_CHECKS.map((c) => c.id))
   );
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<AuditResult[] | null>(null);
+  const [results, setResults] = useState<AuditResult[] | null>(cachedResults);
+  const [ranAt, setRanAt] = useState<number | null>(cachedTimestamp);
 
   function toggleCheck(id: string) {
     setSelected((prev) => {
@@ -81,11 +88,18 @@ export default function AuditTab() {
     if (selected.size === 0) return;
     setRunning(true);
     setResults(null);
+    setRanAt(null);
+    cachedResults = null;
+    cachedTimestamp = null;
     try {
       const res = await apiPost<{ results: AuditResult[] }>("/api/admin/system-audit", {
         checks: [...selected],
       });
+      const now = Date.now();
       setResults(res.results);
+      setRanAt(now);
+      cachedResults = res.results;
+      cachedTimestamp = now;
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to run audit.", err) });
     } finally {
@@ -160,7 +174,7 @@ export default function AuditTab() {
       {/* Results */}
       {results && (
         <Box>
-          <HStack gap={2} mb={3}>
+          <HStack gap={2} mb={1}>
             <Text fontWeight="bold" fontSize="md">Results</Text>
             {totalIssues === 0 ? (
               <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
@@ -172,6 +186,11 @@ export default function AuditTab() {
               </Badge>
             )}
           </HStack>
+          {ranAt && (
+            <Text fontSize="xs" color="fg.muted" mb={3}>
+              Ran {new Date(ranAt).toLocaleString()} — these results may be stale if data has changed since then. Run again to refresh.
+            </Text>
+          )}
 
           <VStack align="stretch" gap={3}>
             {results.map((r) => (
@@ -192,7 +211,50 @@ export default function AuditTab() {
                       {r.issues.map((issue, i) => (
                         <HStack key={i} gap={2} p={2} bg="orange.50" rounded="sm" fontSize="xs">
                           <AlertTriangle size={12} style={{ flexShrink: 0, color: "var(--chakra-colors-orange-500)" }} />
-                          <Text>{issue.description}</Text>
+                          <Text flex="1">{issue.description}</Text>
+                          <HStack gap={1} flexShrink={0}>
+                            {issue.clientId && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="blue"
+                                px="1"
+                                onClick={() => openEventSearch("jobsTabToClientsTabSearch", "", true, issue.clientId)}
+                                title="View Client"
+                              >
+                                Client <ExternalLink size={10} style={{ marginLeft: 2 }} />
+                              </Button>
+                            )}
+                            {issue.jobId && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="blue"
+                                px="1"
+                                onClick={() => openEventSearch("jobsTabToServicesTabSearch", "", true, `${issue.jobId}:${issue.occurrenceId ?? ""}`)}
+                                title="View Job Service"
+                              >
+                                Service <ExternalLink size={10} style={{ marginLeft: 2 }} />
+                              </Button>
+                            )}
+                            {issue.occurrenceId && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="blue"
+                                px="1"
+                                onClick={() => {
+                                  // Navigate to Admin Jobs → specific occurrence
+                                  window.sessionStorage.setItem("servicesTabToJobsNav", `${issue.occurrenceId}|`);
+                                  // Trigger tab switch to admin > admin-jobs
+                                  window.dispatchEvent(new CustomEvent("seedlings:switchTab", { detail: { outer: "admin", inner: "admin-jobs" } }));
+                                }}
+                                title="View Occurrence in Jobs"
+                              >
+                                Occurrence <ExternalLink size={10} style={{ marginLeft: 2 }} />
+                              </Button>
+                            )}
+                          </HStack>
                         </HStack>
                       ))}
                     </VStack>
