@@ -52,6 +52,7 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
@@ -977,6 +978,19 @@ export default function ServicesTab({
                     {(job.property?.client as any)?.isVip && (job.property?.client as any)?.vipReason && (
                       <Text fontSize="xs" color="yellow.700" fontWeight="medium">VIP: {(job.property?.client as any).vipReason}</Text>
                     )}
+                    {forAdmin && (() => {
+                      const tags = parseAdminTags((job.property?.client as any)?.adminTags);
+                      if (tags.length === 0) return null;
+                      return (
+                        <Box display="flex" gap="4px" flexWrap="wrap">
+                          {tags.map((tag: string) => (
+                            <Badge key={tag} colorPalette={adminTagColor(tag)} variant="solid" fontSize="xs" px="2" borderRadius="full">
+                              ⚠ {adminTagLabel(tag)}
+                            </Badge>
+                          ))}
+                        </Box>
+                      );
+                    })()}
                     <HStack gap={3} fontSize="xs">
                       {job.property?.displayName && (
                         <TextLink

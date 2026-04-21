@@ -223,6 +223,11 @@ export default function FollowupDialog({ open, onOpenChange, onCreated, editFoll
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box px={3} py={2} bg="#FEE2E2" borderWidth="1px" borderColor="#BE123C" borderRadius="md">
+                  <Text fontSize="xs" color="#881337" fontWeight="medium">
+                    Team — only visible to people added via Manage Team
+                  </Text>
+                </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
                   <input

@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { apiPost, apiPatch } from "@/src/lib/api";
+import AdminTagPicker, { parseAdminTags } from "@/src/ui/components/AdminTagPicker";
 import {
   Role,
   DialogMode,
@@ -68,6 +69,7 @@ export default function ClientDialog({
   const [notesInternal, setNotesInternal] = useState("");
   const [isVip, setIsVip] = useState(false);
   const [vipReason, setVipReason] = useState("");
+  const [adminTags, setAdminTags] = useState<string[]>([]);
 
   const statusItems = useMemo(
     () =>
@@ -109,6 +111,7 @@ export default function ClientDialog({
       setNotesInternal(initial.notesInternal ?? "");
       setIsVip(initial.isVip ?? false);
       setVipReason(initial.vipReason ?? "");
+      setAdminTags(parseAdminTags((initial as any).adminTags));
     } else {
       setKindValue([initial?.type ?? CLIENT_KIND[0]]);
       setStatusValue([initial?.status ?? CLIENT_STATUS[0]]);
@@ -116,6 +119,7 @@ export default function ClientDialog({
       setNotesInternal(initial?.notesInternal ?? "");
       setIsVip(initial?.isVip ?? false);
       setVipReason(initial?.vipReason ?? "");
+      setAdminTags(parseAdminTags((initial as any)?.adminTags));
     }
   }, [open, mode, initial, defaultDisplayName]);
 
@@ -135,6 +139,7 @@ export default function ClientDialog({
       notesInternal: notesInternal || null,
       isVip,
       vipReason: isVip ? (vipReason.trim() || null) : null,
+      adminTags,
     };
 
     if (deferSave) {
@@ -307,6 +312,7 @@ export default function ClientDialog({
                     </Box>
                   )}
                 </Box>
+                <AdminTagPicker selected={adminTags} onChange={setAdminTags} />
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

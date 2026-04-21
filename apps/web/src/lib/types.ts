@@ -13,11 +13,11 @@ export type AdminTabs =
   | "payments"
   | "routes"
   | "statistics"
-  | "audit"
+  | "history"
   | "settings"
   | "profile";
 
-export type SuperTabs = "operations" | "unclaimed";
+export type SuperTabs = "operations" | "unclaimed" | "audit";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 

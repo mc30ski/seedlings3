@@ -148,6 +148,11 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box px={3} py={2} bg="#FEF9C3" borderWidth="1px" borderColor="#D97706" borderRadius="md">
+                  <Text fontSize="xs" color="#92400E" fontWeight="medium">
+                    Team — only visible to people added via Manage Team
+                  </Text>
+                </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
                   <input

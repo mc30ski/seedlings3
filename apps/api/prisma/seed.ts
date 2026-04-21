@@ -53,6 +53,8 @@ function addMinutes(d: Date, mins: number): Date {
 // ── Clear database ──────────────────────────────────────────────────────────
 async function clearDatabase() {
   console.log("  Clearing leaf tables...");
+  await prisma.followupClient.deleteMany();
+  await prisma.followupJob.deleteMany();
   await prisma.reminder.deleteMany();
   await prisma.pinnedOccurrence.deleteMany();
   await prisma.likedOccurrence.deleteMany();
@@ -120,10 +122,10 @@ async function seedDatabase() {
     data: { type: "PERSON", displayName: "Harrington Estate", isVip: true, vipReason: "Long-time client, premium service tier", notesInternal: "Gate code: 4821" },
   });
   const martinezFamily = await prisma.client.create({
-    data: { type: "PERSON", displayName: "Martinez Family" },
+    data: { type: "PERSON", displayName: "Martinez Family", adminTags: JSON.stringify(["LATE_PAYER"]) },
   });
   const willowbrookHoa = await prisma.client.create({
-    data: { type: "COMMUNITY", displayName: "Willowbrook HOA", notesInternal: "Board contact: Susan Park. Monthly board meeting first Tuesday at 7pm in the clubhouse. Budget approved through December. They compare our pricing annually against two other providers so keep quality high. Previous vendor was let go for inconsistent scheduling. Susan prefers text over email for urgent issues." },
+    data: { type: "COMMUNITY", displayName: "Willowbrook HOA", notesInternal: "Board contact: Susan Park. Monthly board meeting first Tuesday at 7pm in the clubhouse. Budget approved through December. They compare our pricing annually against two other providers so keep quality high. Previous vendor was let go for inconsistent scheduling. Susan prefers text over email for urgent issues.", adminTags: JSON.stringify(["HIGH_MAINTENANCE", "ARGUMENTATIVE"]) },
   });
   const chenResidence = await prisma.client.create({
     data: { type: "PERSON", displayName: "Chen Residence" },
@@ -132,7 +134,7 @@ async function seedDatabase() {
     data: { type: "PERSON", displayName: "Thompson Manor", isVip: true, vipReason: "Referral source - sends 3+ clients/year" },
   });
   const obrienFamily = await prisma.client.create({
-    data: { type: "PERSON", displayName: "O'Brien Family", notesInternal: "Dog in backyard, latch gate before entering" },
+    data: { type: "PERSON", displayName: "O'Brien Family", notesInternal: "Dog in backyard, latch gate before entering", adminTags: JSON.stringify(["DIFFICULT_ACCESS"]) },
   });
   const sunriseHoa = await prisma.client.create({
     data: { type: "COMMUNITY", displayName: "Sunrise Meadows HOA", notesInternal: "Monthly board meeting first Tuesday" },
@@ -1121,6 +1123,208 @@ async function seedDatabase() {
   await prisma.occurrenceComment.create({ data: { occurrenceId: todayHarrington.id, authorId: EMPLOYEE_ID, body: "Got it, thanks. Also the sprinkler heads near the driveway are sticking up — watch the mower." } });
   await prisma.occurrenceComment.create({ data: { occurrenceId: todayWillowbrook.id, authorId: ADMIN_WORKER_ID, body: "HOA board meeting next week — Susan wants the entrance looking sharp. Extra attention on edging please." } });
   await prisma.occurrenceComment.create({ data: { occurrenceId: cThompson7.id, authorId: CONTRACTOR_ID, body: "Dog was loose in the backyard last time. Call ahead to make sure it's inside." } });
+
+  // ── Audit-triggering test data ──────────────────────────────────────────
+  console.log("  Creating audit test data...");
+
+  // 1. Duplicate client name (matches "Patel Residence")
+  await prisma.client.create({
+    data: { type: "PERSON", displayName: "Patel Residence", notesInternal: "Possible duplicate — entered by mistake?" },
+  });
+
+  // 2. Duplicate property address (matches "914 Pecan St" — O'Brien Home)
+  await prisma.property.create({
+    data: { clientId: obrienFamily.id, displayName: "O'Brien Backyard", street1: "914 Pecan St", city: "Pflugerville", state: "TX", postalCode: "78660", country: "US", kind: "SINGLE" },
+  });
+
+  // 3. Duplicate active job (same property+kind as obrienMow)
+  await prisma.job.create({
+    data: { propertyId: obrienHome.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 14, defaultPrice: 50.0, estimatedMinutes: 35, notes: "Duplicate mow job — might be accidental" },
+  });
+
+  // 4. Duplicate repeating occurrences (two SCHEDULED on same job, 1 day apart)
+  await prisma.jobOccurrence.create({
+    data: { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 8), status: "SCHEDULED", source: "GENERATED", workflow: "STANDARD" } as any,
+  });
+  await prisma.jobOccurrence.create({
+    data: { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(4, 8), status: "SCHEDULED", source: "GENERATED", workflow: "STANDARD" } as any,
+  });
+
+  // 5. Missing next occurrence: completed repeating job, no SCHEDULED sibling
+  const orphanJob = await prisma.job.create({
+    data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 180.0, estimatedMinutes: 90, notes: "Weekly common area mow — next occurrence should have been auto-created" },
+  });
+  await prisma.jobOccurrence.create({
+    data: { jobId: orphanJob.id, kind: "ENTIRE_SITE", startAt: daysAgo(10, 8), completedAt: daysAgo(10, 10), status: "CLOSED", source: "GENERATED", workflow: "STANDARD" } as any,
+  });
+  // Intentionally NO scheduled occurrence for this job — simulates a failed auto-create
+
+  // ── Events (team-scoped, admin creates, assigned team sees) ─────────────
+  console.log("  Creating events...");
+
+  const weeklyMeeting = await prisma.jobOccurrence.create({
+    data: {
+      title: "Weekly Team Meeting",
+      notes: "Discuss weekly schedule, assignments, and any issues. Meet at the warehouse.",
+      startAt: daysFromNow(1, 11),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "EVENT",
+      frequencyDays: 7,
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.createMany({
+    data: [
+      { occurrenceId: weeklyMeeting.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: weeklyMeeting.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: weeklyMeeting.id, userId: CONTRACTOR_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: weeklyMeeting.id, userId: EMPLOYEE_ID, assignedById: MICHAEL_ID },
+    ],
+  });
+
+  const equipmentInspection = await prisma.jobOccurrence.create({
+    data: {
+      title: "Monthly Equipment Inspection",
+      notes: "Check all mowers, trimmers, and blowers. Log any maintenance needs.",
+      startAt: daysFromNow(5, 8),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "EVENT",
+      frequencyDays: 30,
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.createMany({
+    data: [
+      { occurrenceId: equipmentInspection.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: equipmentInspection.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+    ],
+  });
+
+  const pastEvent = await prisma.jobOccurrence.create({
+    data: {
+      title: "Safety Training",
+      notes: "Annual safety training — required for all workers.",
+      startAt: daysAgo(3, 9),
+      completedAt: daysAgo(3, 11),
+      status: "CLOSED",
+      source: "MANUAL",
+      workflow: "EVENT",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({
+    data: { occurrenceId: pastEvent.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+  });
+
+  // ── Followups (team-scoped, with attached clients/jobs) ────────────────
+  console.log("  Creating followups...");
+
+  const followupThompson = await prisma.jobOccurrence.create({
+    data: {
+      title: "Follow up on Thompson pricing",
+      notes: "Discuss new pricing for expanded service area. They want a quote for the back lot.",
+      startAt: daysFromNow(2, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "FOLLOWUP",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({
+    data: { occurrenceId: followupThompson.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+  });
+  await prisma.followupClient.create({
+    data: { occurrenceId: followupThompson.id, clientId: vipThompson.id },
+  });
+
+  const followupWillowbrook = await prisma.jobOccurrence.create({
+    data: {
+      title: "Willowbrook HOA contract renewal",
+      notes: "Contract expires end of month. Confirm renewal terms and schedule meeting with board.",
+      startAt: daysFromNow(7, 10),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "FOLLOWUP",
+      frequencyDays: 30,
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.createMany({
+    data: [
+      { occurrenceId: followupWillowbrook.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+      { occurrenceId: followupWillowbrook.id, userId: ADMIN_WORKER_ID, assignedById: MICHAEL_ID },
+    ],
+  });
+  await prisma.followupClient.create({
+    data: { occurrenceId: followupWillowbrook.id, clientId: willowbrookHoa.id },
+  });
+  await prisma.followupJob.create({
+    data: { occurrenceId: followupWillowbrook.id, jobId: willowbrookWeekly.id },
+  });
+
+  const followupChen = await prisma.jobOccurrence.create({
+    data: {
+      title: "Check on Chen tree estimate",
+      notes: "They said they'd decide by this week.",
+      startAt: daysFromNow(0, 14),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "FOLLOWUP",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({
+    data: { occurrenceId: followupChen.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID },
+  });
+  await prisma.followupClient.create({
+    data: { occurrenceId: followupChen.id, clientId: chenResidence.id },
+  });
+  await prisma.followupJob.create({
+    data: { occurrenceId: followupChen.id, jobId: chenTreeEstimate.id },
+  });
+
+  // ── Announcements (universally visible) ────────────────────────────────
+  console.log("  Creating announcements...");
+
+  await prisma.jobOccurrence.create({
+    data: {
+      title: "Office closed — Memorial Day",
+      notes: "No scheduled work. Emergency calls only.",
+      startAt: daysFromNow(10, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+
+  await prisma.jobOccurrence.create({
+    data: {
+      title: "Payroll Reminder",
+      notes: "Submit all hours and expenses by end of day Friday.",
+      startAt: daysFromNow(3, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+
+  await prisma.jobOccurrence.create({
+    data: {
+      title: "New mulch supplier — effective immediately",
+      notes: "We're switching to GreenGrow Mulch. Old stock must be used first. See warehouse board for details.",
+      startAt: daysAgo(1, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+
+  await prisma.jobOccurrence.create({
+    data: {
+      title: "Spring rate adjustments",
+      notes: "New seasonal rates are in effect. Check the pricing sheet on the shared drive.",
+      startAt: daysAgo(5, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
 
   console.log("  Seed complete!");
 }

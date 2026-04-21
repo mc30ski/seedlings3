@@ -205,6 +205,11 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box px={3} py={2} bg={isReminder ? "purple.50" : "blue.50"} borderWidth="1px" borderColor={isReminder ? "purple.200" : "blue.200"} borderRadius="md">
+                  <Text fontSize="xs" color={isReminder ? "purple.700" : "blue.700"} fontWeight="medium">
+                    Personal — only visible to you
+                  </Text>
+                </Box>
                 {isReminder && (
                   <HStack justify="space-between" align="center">
                     <Text fontSize="sm" fontWeight="medium">High Priority</Text>

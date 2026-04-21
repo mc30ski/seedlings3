@@ -68,7 +68,7 @@ function Trunc({
   );
 }
 
-export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
+export default function HistoryTab({ role = "worker" }: TabRolePropType) {
   if (role !== "admin") return <UnavailableNotice />;
 
   const [items, setItems] = useState<AuditItem[]>([]);
@@ -135,7 +135,7 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage("Failed to load audit log", err),
+        text: getErrorMessage("Failed to load history", err),
       });
     } finally {
       setLoading(false);
@@ -270,7 +270,7 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
   return (
     <Box>
       <Heading size="md" mb={4}>
-        Audit
+        History
       </Heading>
 
       {/* Filters */}
@@ -283,7 +283,7 @@ export default function AuditLogTab({ role = "worker" }: TabRolePropType) {
         <SearchWithClear
           value={q}
           onChange={setQ}
-          inputId="audit-search"
+          inputId="history-search"
           placeholder="Search…"
         />
         <Input
