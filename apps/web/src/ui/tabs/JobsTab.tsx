@@ -499,7 +499,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setQ("");
     setHighlightOccId(null);
     setFilterJobId(null);
+    setKind(["ALL"]);
     setStatusFilter(["ALL"]);
+    setTypeFilter(["ALL"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
     setDatePreset(null);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -850,15 +856,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Check for unclaimed badge navigation
   const applyUnclaimed = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setKind(["ALL"]);
+    setTypeFilter(["ALL"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
+    setOverdueActive(false);
+    setStatusFilter(["UNCLAIMED"]);
     const d = computeDatesFromPreset("overdueAndNext3");
     setDatePreset(null);
     setDateFrom(d.from);
     setDateTo(d.to);
-    setStatusFilter(["UNCLAIMED"]);
-    setOverdueActive(false);
-    setHighlightOccId(null);
-    setFilterJobId(null);
-    setQ("");
     void load(true, { from: d.from, to: d.to });
   }, []);
 
@@ -880,8 +892,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setQ("");
     setHighlightOccId(null);
     setFilterJobId(null);
-    setOverdueActive(false);
+    setKind(["ALL"]);
     setStatusFilter(["ALL"]);
+    setOverdueActive(false);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
     setTypeFilter(["ANNOUNCEMENT"]);
     const today = new Date();
     const twoWeeks = new Date(today);

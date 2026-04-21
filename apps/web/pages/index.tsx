@@ -1711,7 +1711,7 @@ export default function HomePage() {
                   <Box>
                     <Text fontSize="sm" fontWeight="medium" mb={1}>How offline mode works</Text>
                     <Text fontSize="xs" color="fg.muted">
-                      When you have no internet (or force offline mode is on), the app serves data from its local cache. You can view your job schedule, property details, notes, and team info — but you cannot perform actions like starting jobs, accepting payments, or editing records.
+                      When you have no internet (or force offline mode is on), the app serves data from its local cache. You can still: pin/unpin, like/unlike, set reminders, post comments, start jobs, complete jobs, and dismiss reminders — these will sync when you reconnect. Other actions like accepting payments or editing records require an internet connection.
                     </Text>
                   </Box>
                   <Box>
