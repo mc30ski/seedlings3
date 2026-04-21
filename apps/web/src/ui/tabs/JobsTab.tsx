@@ -733,6 +733,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
       if (qFrom) qs.set("from", qFrom);
       if (qTo) qs.set("to", qTo);
+      if (keepOccId) qs.set("includeOccId", keepOccId);
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
@@ -859,8 +860,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
   }, [applyUnclaimed]);
 
-  // Deep-link: highlight a specific occurrence (from calendar feed URL)
+  // Deep-link: highlight a specific occurrence (from calendar feed URL or share link)
   useEffect(() => {
+    (window as any).__jobsTabReady = true;
     const handler = (e: Event) => {
       const occId = (e as CustomEvent<{ occId: string }>).detail?.occId;
       if (!occId) return;
@@ -868,17 +870,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       setExpandedCards(new Set([occId]));
       setFilterJobId(null);
       setQ("");
-      // Widen date range to ensure the occurrence is loaded
-      const d = computeDatesFromPreset("thisMonth");
+      setOverdueActive(false);
       setDatePreset(null);
-      const from = new Date(); from.setDate(from.getDate() - 14);
-      const to = new Date(); to.setMonth(to.getMonth() + 2);
-      setDateFrom(bizDateKey(from));
-      setDateTo(bizDateKey(to));
-      void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occId);
+      // Use a very wide date range to ensure we find the occurrence regardless of when it was scheduled
+      // For admin, no clamping. For worker, clampWorkerDates will cap at ~2 months so we also pass keepOccId.
+      const from = new Date(); from.setFullYear(from.getFullYear() - 1);
+      const to = new Date(); to.setFullYear(to.getFullYear() + 1);
+      const fromStr = bizDateKey(from);
+      const toStr = bizDateKey(to);
+      setDateFrom(fromStr);
+      setDateTo(toStr);
+      void load(true, { from: fromStr, to: toStr }, occId);
     };
     window.addEventListener("jobsTab:highlightOcc", handler);
-    return () => window.removeEventListener("jobsTab:highlightOcc", handler);
+    return () => {
+      (window as any).__jobsTabReady = false;
+      window.removeEventListener("jobsTab:highlightOcc", handler);
+    };
   }, []);
 
   async function refreshOverdueCount() {

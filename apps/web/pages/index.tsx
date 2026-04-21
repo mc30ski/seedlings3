@@ -1199,17 +1199,26 @@ export default function HomePage() {
     if (view === "admin") {
       setTopTab("admin");
       setAdminInnerTab("admin-jobs");
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
-      }, 300);
     } else {
       setTopTab("worker");
       setWorkerInnerTab("jobs" as any);
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
-        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
-      }, 200);
     }
+    // Retry dispatching the highlight event until the JobsTab is mounted and listening.
+    // JobsTab sets a flag on window when its listener is ready.
+    const savedOccId = occId;
+    let attempts = 0;
+    const maxAttempts = 30; // 30 x 100ms = 3 seconds max
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__jobsTabReady || attempts >= maxAttempts) {
+        clearInterval(interval);
+        if (view !== "admin") {
+          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
+        }
+        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId: savedOccId } }));
+      }
+    }, 100);
+    return () => clearInterval(interval);
   }, [me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {
