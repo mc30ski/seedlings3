@@ -1330,6 +1330,54 @@ async function seedDatabase() {
   });
   await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann4.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
+  const ann5 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Truck maintenance scheduled Thursday",
+      notes: "Truck #2 going in for brake service. Plan routes accordingly — only Truck #1 and #3 available.",
+      startAt: daysFromNow(4, 7),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann5.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
+
+  const ann6 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Safety vests required on all HOA sites",
+      notes: "Starting next week, all workers must wear high-vis vests on HOA properties. Vests available at the warehouse.",
+      startAt: daysFromNow(6, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann6.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
+
+  const ann7 = await prisma.jobOccurrence.create({
+    data: {
+      title: "Client appreciation BBQ — next Saturday",
+      notes: "Annual client appreciation event at the office. All hands on deck for setup at 10am. Event starts at noon.",
+      startAt: daysFromNow(12, 10),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann7.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
+
+  const ann8 = await prisma.jobOccurrence.create({
+    data: {
+      title: "New edging technique training video",
+      notes: "Check the team group chat for the link. Everyone should watch it before Monday.",
+      startAt: daysFromNow(1, 9),
+      status: "SCHEDULED",
+      source: "MANUAL",
+      workflow: "ANNOUNCEMENT",
+    } as any,
+  });
+  await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann8.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
+
   console.log("  Seed complete!");
 }
 

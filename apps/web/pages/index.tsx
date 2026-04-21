@@ -1016,6 +1016,44 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadUnclaimed]);
 
+  // Announcement count badge (next 2 weeks, visible to all)
+  const [announcementCount, setAnnouncementCount] = useState(0);
+  const loadAnnouncementCount = useCallback(async () => {
+    if (!me?.isApproved) { setAnnouncementCount(0); return; }
+    try {
+      const today = new Date();
+      const twoWeeks = new Date(today);
+      twoWeeks.setDate(twoWeeks.getDate() + 14);
+      const list = await apiGet<any[]>(`/api/occurrences?from=${bizDateKey(today)}&to=${bizDateKey(twoWeeks)}`);
+      const count = (Array.isArray(list) ? list : []).filter(
+        (o) => o.workflow === "ANNOUNCEMENT" && o.status === "SCHEDULED"
+      ).length;
+      setAnnouncementCount(count);
+    } catch {
+      setAnnouncementCount(0);
+    }
+  }, [me?.isApproved]);
+
+  useEffect(() => {
+    void loadAnnouncementCount();
+    const onRefresh = () => void loadAnnouncementCount();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+  }, [loadAnnouncementCount]);
+
+  const goToAnnouncements = useCallback(() => {
+    setTopTab(isAdmin ? "admin" : "worker");
+    if (isAdmin) {
+      setAdminInnerTab("admin-jobs");
+    } else {
+      setWorkerInnerTab("jobs" as any);
+    }
+    try { localStorage.setItem("seedlings_adminJobs_showAnnouncements", "1"); } catch {}
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showAnnouncements"));
+    }, 150);
+  }, [isAdmin]);
+
   const goToUnclaimed = useCallback(() => {
     setTopTab("admin");
     setAdminInnerTab("admin-jobs");
@@ -1339,6 +1377,8 @@ export default function HomePage() {
             alignItems="center"
             gap="8px"
             lineHeight="0"
+            overflow="hidden"
+            minW="0"
             style={{ transform: "translateY(1px)" }}
           >
             <HStack
@@ -1493,6 +1533,29 @@ export default function HomePage() {
                 _active={{ transform: "translateY(1px)" }}
               >
                 {planningCount}
+              </Box>
+            )}
+            {announcementCount > 0 && (
+              <Box
+                as="button"
+                aria-label="Announcements"
+                title={`${announcementCount} announcement${announcementCount !== 1 ? "s" : ""} in the next 2 weeks`}
+                onClick={goToAnnouncements}
+                width="22px"
+                height="22px"
+                minW="22px"
+                borderRadius="9999px"
+                bg="#6D28D9"
+                color="white"
+                fontSize="12px"
+                fontWeight="bold"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                _hover={{ bg: "#5B21B6" }}
+                _active={{ transform: "translateY(1px)" }}
+              >
+                {announcementCount}
               </Box>
             )}
             {me && hasAnyRole && (

@@ -875,6 +875,36 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showUnclaimed", onShowUnclaimed);
   }, [applyUnclaimed]);
 
+  // Show announcements (from header badge click)
+  const applyAnnouncements = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setOverdueActive(false);
+    setStatusFilter(["ALL"]);
+    setTypeFilter(["ANNOUNCEMENT"]);
+    const today = new Date();
+    const twoWeeks = new Date(today);
+    twoWeeks.setDate(twoWeeks.getDate() + 14);
+    setDatePreset(null);
+    setDateFrom(localDate(today));
+    setDateTo(localDate(twoWeeks));
+    void load(true, { from: localDate(today), to: localDate(twoWeeks) });
+  }, []);
+
+  useEffect(() => {
+    try {
+      const flag = localStorage.getItem("seedlings_adminJobs_showAnnouncements");
+      if (flag) {
+        localStorage.removeItem("seedlings_adminJobs_showAnnouncements");
+        applyAnnouncements();
+      }
+    } catch {}
+    const onShow = () => applyAnnouncements();
+    window.addEventListener("adminJobs:showAnnouncements", onShow);
+    return () => window.removeEventListener("adminJobs:showAnnouncements", onShow);
+  }, [applyAnnouncements]);
+
   // Deep-link: highlight a specific occurrence (from calendar feed URL or share link)
   useEffect(() => {
     (window as any).__jobsTabReady = true;
@@ -1716,7 +1746,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {typeFilter[0] !== "ALL" && (
-            <Badge size="sm" colorPalette="orange" variant="subtle">
+            <Badge size="sm" colorPalette={
+              typeFilter[0] === "ANNOUNCEMENT" ? "purple"
+              : typeFilter[0] === "FOLLOWUP" ? "red"
+              : typeFilter[0] === "EVENT" ? "yellow"
+              : typeFilter[0] === "REMINDER" ? "purple"
+              : typeFilter[0] === "TASK" ? "blue"
+              : "orange"
+            } variant="subtle">
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
@@ -3550,7 +3587,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       </>)}
                       {/* Announcement complete/edit/delete buttons — admin only */}
-                      {isAnnouncement && (isAdmin || isSuper) && (<>
+                      {isAnnouncement && forAdmin && (isAdmin || isSuper) && (<>
                         <Button
                           size="sm"
                           variant="outline"

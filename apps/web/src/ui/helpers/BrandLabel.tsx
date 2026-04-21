@@ -53,16 +53,16 @@ export default function BrandLabel({
       minH={`${lineMinH}px`}
     >
       {/* Left: brand */}
-      <HStack gap="2" align="center">
+      <HStack gap="2" align="center" minW="0" overflow="hidden" flexShrink={1}>
         <img
           key={iconSrc}
           src={iconSrc}
           alt="Seedlings"
           height={size}
-          style={{ height: `${size}px`, width: "auto", imageRendering: "auto", display: "block" }}
+          style={{ height: `${size}px`, width: "auto", imageRendering: "auto", display: "block", flexShrink: 0 }}
         />
         {showText && (
-          <Text fontSize="sm" fontWeight="bold" lineHeight="1" whiteSpace="nowrap">
+          <Text fontSize="sm" fontWeight="bold" lineHeight="1" whiteSpace="nowrap" overflow="hidden" textOverflow="clip">
             Seedlings
           </Text>
         )}
