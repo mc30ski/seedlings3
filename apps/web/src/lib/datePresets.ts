@@ -29,7 +29,7 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
   switch (preset) {
     case "now": {
       const d = new Date(today);
-      d.setDate(d.getDate() + 1);
+      d.setDate(d.getDate() + 2);
       return { from: localDate(today), to: localDate(d) };
     }
     case "today":
@@ -108,7 +108,7 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
 }
 
 export const PRESET_LABELS: Record<string, string> = {
-  now: "Now",
+  now: "Now (3 days)",
   today: "Today",
   next3: "Next 3 days",
   overdueOnly: "Overdue only",

@@ -783,7 +783,7 @@ export default function HomePage() {
       if (typeof window === "undefined") return;
       const onEvent = (e: Event) => {
         const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
-        if (!q) return;
+        if (!q && !entityId) return;
         setTopTab(forAdmin ? "admin" : "worker");
         forAdmin ? setAdminInnerTab(tabName) : setWorkerInnerTab(tabName);
         window.sessionStorage.setItem(
@@ -805,12 +805,14 @@ export default function HomePage() {
       if (!raw) return;
       let payload: { q: string; entityId?: string };
       try { payload = JSON.parse(raw); } catch { payload = { q: raw }; }
-      requestAnimationFrame(() => {
+      window.sessionStorage.removeItem(key);
+      // Use setTimeout to allow target tab to mount before dispatching
+      const timer = setTimeout(() => {
         window.dispatchEvent(
           new CustomEvent(`${eventName}:run`, { detail: payload })
         );
-        window.sessionStorage.removeItem(key);
-      });
+      }, 150);
+      return () => clearTimeout(timer);
     }, [topTab, adminInnerTab, workerInnerTab]);
   };
 
@@ -824,6 +826,20 @@ export default function HomePage() {
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
   setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
+
+  // Generic tab switcher (used by Audit tab and others to navigate across top-level tabs)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onSwitch = (e: Event) => {
+      const { outer, inner } = (e as CustomEvent).detail || {};
+      if (outer) setTopTab(outer);
+      if (inner && outer === "admin") setAdminInnerTab(inner);
+      if (inner && outer === "worker") setWorkerInnerTab(inner);
+      if (inner && outer === "super") setSuperInnerTab(inner);
+    };
+    window.addEventListener("seedlings:switchTab", onSwitch as EventListener);
+    return () => window.removeEventListener("seedlings:switchTab", onSwitch as EventListener);
+  }, []);
 
   // Services → Admin Jobs (special: targets "admin-jobs" inner tab)
   useEffect(() => {
