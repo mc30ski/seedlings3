@@ -252,7 +252,7 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
-    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    const { from, to, includeOccId } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string };
     const occs = await services.jobs.listAllOccurrences({ from, to });
 
     // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
@@ -271,6 +271,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     for (const p of pins) if (!loadedIds.has(p.occurrenceId)) extraIds.add(p.occurrenceId);
     for (const l of likes) if (!loadedIds.has(l.occurrenceId)) extraIds.add(l.occurrenceId);
     for (const o of observedAssignments) if (!loadedIds.has(o.occurrenceId)) extraIds.add(o.occurrenceId);
+    // Include a specific occurrence by ID (for deep links / share links)
+    if (includeOccId && !loadedIds.has(includeOccId)) extraIds.add(includeOccId);
 
     if (extraIds.size > 0) {
       const extraOccs = await services.jobs.getOccurrencesByIds([...extraIds]);
