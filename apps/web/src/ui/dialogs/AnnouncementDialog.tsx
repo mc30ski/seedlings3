@@ -21,7 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-type EditEvent = {
+type EditAnnouncement = {
   id: string;
   title?: string | null;
   notes?: string | null;
@@ -33,7 +33,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
-  editEvent?: EditEvent | null;
+  editAnnouncement?: EditAnnouncement | null;
 };
 
 function freqToMode(days: number | null | undefined): { mode: "weekly" | "monthly" | "yearly" | "custom"; custom: string } {
@@ -52,38 +52,24 @@ function modeToDays(mode: "weekly" | "monthly" | "yearly" | "custom", custom: st
   return isNaN(n) || n < 1 ? 7 : n;
 }
 
-export default function EventDialog({ open, onOpenChange, onCreated, editEvent }: Props) {
+export default function AnnouncementDialog({ open, onOpenChange, onCreated, editAnnouncement }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => bizDateKey(new Date()));
   const [notes, setNotes] = useState("");
-  const [eventTime, setEventTime] = useState("");
   const [isRepeating, setIsRepeating] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"weekly" | "monthly" | "yearly" | "custom">("weekly");
   const [customDays, setCustomDays] = useState("14");
   const [saving, setSaving] = useState(false);
-  const isEdit = !!editEvent;
+  const isEdit = !!editAnnouncement;
 
   useEffect(() => {
     if (!open) return;
-    if (editEvent) {
-      setTitle(editEvent.title ?? "");
-      setDate(editEvent.startAt ? bizDateKey(editEvent.startAt) : bizDateKey(new Date()));
-      // Extract time if it's not the default 09:00
-      if (editEvent.startAt) {
-        const d = new Date(editEvent.startAt);
-        const h = d.getHours();
-        const m = d.getMinutes();
-        if (h !== 9 || m !== 0) {
-          setEventTime(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-        } else {
-          setEventTime("");
-        }
-      } else {
-        setEventTime("");
-      }
-      setNotes(editEvent.notes ?? "");
-      const freq = editEvent.frequencyDays;
+    if (editAnnouncement) {
+      setTitle(editAnnouncement.title ?? "");
+      setDate(editAnnouncement.startAt ? bizDateKey(editAnnouncement.startAt) : bizDateKey(new Date()));
+      setNotes(editAnnouncement.notes ?? "");
+      const freq = editAnnouncement.frequencyDays;
       setIsRepeating(freq != null && freq > 0);
       const parsed = freqToMode(freq);
       setRepeatMode(parsed.mode);
@@ -91,13 +77,12 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
     } else {
       reset();
     }
-  }, [open, editEvent]);
+  }, [open, editAnnouncement]);
 
   function reset() {
     setTitle("");
     setDate(bizDateKey(new Date()));
     setNotes("");
-    setEventTime("");
     setIsRepeating(false);
     setRepeatMode("weekly");
     setCustomDays("14");
@@ -109,23 +94,23 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: new Date(date + "T" + (eventTime || "09:00")).toISOString(),
+        startAt: new Date(date + "T09:00").toISOString(),
         notes: notes.trim() || null,
         frequencyDays: isRepeating ? modeToDays(repeatMode, customDays) : null,
       };
 
       if (isEdit) {
-        await apiPatch(`/api/admin/events/${editEvent!.id}`, body);
-        publishInlineMessage({ type: "SUCCESS", text: "Event updated." });
+        await apiPatch(`/api/admin/announcements/${editAnnouncement!.id}`, body);
+        publishInlineMessage({ type: "SUCCESS", text: "Announcement updated." });
       } else {
-        await apiPost("/api/admin/events", body);
-        publishInlineMessage({ type: "SUCCESS", text: "Event created." });
+        await apiPost("/api/admin/announcements", body);
+        publishInlineMessage({ type: "SUCCESS", text: "Announcement created." });
       }
       reset();
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save event.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to save announcement.", err) });
     }
     setSaving(false);
   }
@@ -144,7 +129,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
         <Dialog.Positioner>
           <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.Header>
-              <Dialog.Title>{isEdit ? "Edit Event" : "New Event"}</Dialog.Title>
+              <Dialog.Title>{isEdit ? "Edit Announcement" : "New Announcement"}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
@@ -152,7 +137,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Title *</Text>
                   <input
                     type="text"
-                    placeholder="e.g., Weekly team meeting"
+                    placeholder="e.g., Office closed Friday"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
@@ -162,23 +147,6 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Date *</Text>
                   <DateInput value={date} onChange={setDate} />
-                </Box>
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Time <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional)</Text></Text>
-                  <HStack gap={2}>
-                    <Input
-                      type="time"
-                      size="sm"
-                      value={eventTime}
-                      onChange={(e) => setEventTime(e.target.value)}
-                      w="140px"
-                    />
-                    {eventTime && (
-                      <Button size="xs" variant="ghost" colorPalette="gray" onClick={() => setEventTime("")}>
-                        Clear
-                      </Button>
-                    )}
-                  </HStack>
                 </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Notes</Text>
@@ -241,11 +209,11 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
               <HStack justify="flex-end" gap={2}>
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button
-                  colorPalette="orange"
+                  colorPalette="purple"
                   disabled={!title.trim() || !date || saving}
                   onClick={() => void handleSave()}
                 >
-                  {saving ? <Spinner size="sm" /> : isEdit ? "Save Event" : "Create Event"}
+                  {saving ? <Spinner size="sm" /> : isEdit ? "Save Announcement" : "Create Announcement"}
                 </Button>
               </HStack>
             </Dialog.Footer>
