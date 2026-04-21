@@ -1016,15 +1016,15 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadUnclaimed]);
 
-  // Announcement count badge (next 2 weeks, visible to all)
+  // Announcement count badge (Now — today + next 2 days, visible to all)
   const [announcementCount, setAnnouncementCount] = useState(0);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); return; }
     try {
       const today = new Date();
-      const twoWeeks = new Date(today);
-      twoWeeks.setDate(twoWeeks.getDate() + 14);
-      const list = await apiGet<any[]>(`/api/occurrences?from=${bizDateKey(today)}&to=${bizDateKey(twoWeeks)}`);
+      const nowEnd = new Date(today);
+      nowEnd.setDate(nowEnd.getDate() + 2);
+      const list = await apiGet<any[]>(`/api/occurrences?from=${bizDateKey(today)}&to=${bizDateKey(nowEnd)}`);
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => o.workflow === "ANNOUNCEMENT" && o.status === "SCHEDULED"
       ).length;
@@ -1384,9 +1384,6 @@ export default function HomePage() {
             <HStack
               gap="2"
               align="center"
-              cursor="pointer"
-              onClick={() => setNetworkInfoOpen(true)}
-              _hover={{ opacity: 0.8 }}
             >
               <style>{`
                 @keyframes pulse-dot {
@@ -1400,8 +1397,10 @@ export default function HomePage() {
                 borderRadius="full"
                 bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
                 flexShrink={0}
+                cursor="pointer"
                 _hover={{ transform: "scale(1.3)" }}
                 transition="transform 0.1s"
+                onClick={() => setNetworkInfoOpen(true)}
                 style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
               />
               {queueCount > 0 && (
@@ -1427,7 +1426,20 @@ export default function HomePage() {
                   {queueCount}
                 </Box>
               )}
-              <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
+              <Box
+                cursor="pointer"
+                onClick={() => {
+                  if (isWorker || isAdmin) {
+                    setTopTab("worker");
+                    setWorkerInnerTab("jobs" as any);
+                  } else {
+                    setTopTab("client");
+                  }
+                }}
+                _hover={{ opacity: 0.8 }}
+              >
+                <BrandLabel size={BRAND_ICON_H} showText showUserControls={false} />
+              </Box>
             </HStack>
           </Box>
 
@@ -1539,7 +1551,7 @@ export default function HomePage() {
               <Box
                 as="button"
                 aria-label="Announcements"
-                title={`${announcementCount} announcement${announcementCount !== 1 ? "s" : ""} in the next 2 weeks`}
+                title={`${announcementCount} announcement${announcementCount !== 1 ? "s" : ""} (now)`}
                 onClick={goToAnnouncements}
                 width="22px"
                 height="22px"
