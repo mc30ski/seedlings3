@@ -900,13 +900,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowCanceled(false);
     setShowArchived(false);
     setTypeFilter(["ANNOUNCEMENT"]);
-    const today = new Date();
-    const twoWeeks = new Date(today);
-    twoWeeks.setDate(twoWeeks.getDate() + 14);
-    setDatePreset(null);
-    setDateFrom(localDate(today));
-    setDateTo(localDate(twoWeeks));
-    void load(true, { from: localDate(today), to: localDate(twoWeeks) });
+    const d = computeDatesFromPreset("now");
+    setDatePreset("now");
+    setDateFrom(d.from);
+    setDateTo(d.to);
+    void load(true, { from: d.from, to: d.to });
   }, []);
 
   useEffect(() => {
