@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, Copy, Filter, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -57,6 +57,7 @@ import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
+import WeatherBar from "@/src/ui/components/WeatherBar";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -1325,6 +1326,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
+      <WeatherBar />
       {headerSlot && (
         <HStack mb={{ base: 2, md: 0 }} gap={2} wrap="nowrap" display={{ base: "flex", md: "none" }}>
           {headerSlot}
@@ -1870,7 +1872,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           {isOffline && dayGroups.length > 0 && (
             <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.200" borderRadius="md" mt={2}>
               <Text fontSize="xs" color="orange.800">
-                You're viewing cached data. Some occurrences may not be available offline. You can still: pin/unpin, like/unlike, set reminders, post comments, start jobs, complete jobs, and dismiss reminders — these will sync when you reconnect. Other actions require an internet connection.
+                You're viewing cached data. Some occurrences may not be available offline. You can still: pin/unpin, like/unlike, set reminders, post comments, start jobs, complete jobs, dismiss reminders, and upload photos — these will sync when you reconnect. Other actions require an internet connection.
               </Text>
             </Box>
           )}
@@ -2183,6 +2185,79 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection="column" gap={1}>
                       <HStack gap={1} justifyContent="space-between" alignItems="center">
+                        {/* Quick action icon */}
+                        {!isTrainee && !isTentative && (() => {
+                          if (needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
+                                e.stopPropagation();
+                                setConfirmAction({
+                                  title: "Confirm Client?",
+                                  message: "Have you confirmed with the client that this job is good to go?",
+                                  confirmLabel: "Yes, Confirmed",
+                                  colorPalette: "orange",
+                                  onConfirm: async () => {
+                                    try {
+                                      await apiPost(`/api/occurrences/${occ.id}/confirm`);
+                                      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+                                      publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+                                    } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) }); }
+                                  },
+                                });
+                              }}><CheckCircle2 size={12} /></Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Start Job" onClick={(e: any) => {
+                                e.stopPropagation();
+                                if (isOffline) {
+                                  void (async () => {
+                                    await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+                                    setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+                                    publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                                  })();
+                                  return;
+                                }
+                                const now = new Date();
+                                const pad = (n: number) => String(n).padStart(2, "0");
+                                setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+                                setStartJobOcc(occ);
+                              }}><Play size={12} /></Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || (forAdmin && (isAdmin || isSuper))) && !isEstimateOcc) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Complete Job" onClick={(e: any) => {
+                                e.stopPropagation();
+                                setCompleteDialogOcc(occ);
+                              }}><CheckCircle2 size={12} /></Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept Payment" onClick={(e: any) => {
+                                e.stopPropagation();
+                                setAcceptPaymentOcc(occ);
+                                setAcceptPaymentOpen(true);
+                              }}><CircleDollarSign size={12} /></Box>
+                            );
+                          }
+                          if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
+                            const isContractor = me?.workerType === "CONTRACTOR";
+                            const jobDate = occ.startAt ? new Date(occ.startAt) : null;
+                            const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                            const contractorBlocked = isContractor && daysAhead > 2;
+                            if (contractorBlocked || isTrainee) return null;
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
+                                e.stopPropagation();
+                                void claim(occ.id);
+                              }}><Hand size={12} /></Box>
+                            );
+                          }
+                          return null;
+                        })()}
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isReminder ? (
                             <>{occ.title || "Reminder"}</>
@@ -2276,7 +2351,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
-                          {needsConfirmation && <Badge colorPalette="orange" variant="solid" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Unconfirmed</Badge>}
+                          {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <Badge colorPalette="green" variant="subtle" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Confirmed</Badge>}
                                                     {occ.linkGroupId && (
                             <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
@@ -2633,6 +2708,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         ))}
                       </Box>
                     )}
+                    {/* Quick action buttons removed — now inline icon before title */}
                   </Card.Body>
                 ) : (
                 <Card.Body pt="2" px="4">
@@ -3216,14 +3292,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         variant="solid"
                         colorPalette="orange"
                         disabled={isOffline}
-                        onClick={async () => {
-                          try {
-                            await apiPost(`/api/occurrences/${occ.id}/confirm`);
-                            setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
-                            publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
-                          } catch (err) {
-                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
-                          }
+                        onClick={() => {
+                          setConfirmAction({
+                            title: "Confirm Client?",
+                            message: "Have you confirmed with the client that this job is good to go?",
+                            confirmLabel: "Yes, Confirmed",
+                            colorPalette: "orange",
+                            onConfirm: async () => {
+                              try {
+                                await apiPost(`/api/occurrences/${occ.id}/confirm`);
+                                setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+                                publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+                              } catch (err) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
+                              }
+                            },
+                          });
                         }}
                       >
                         Confirm Client
@@ -3290,7 +3374,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Button
                         size="sm"
                         variant="solid"
-                        colorPalette="blue"
+                        colorPalette="green"
                         disabled={isOffline}
                         onClick={() => { setAcceptPaymentOcc(occ); setAcceptPaymentOpen(true); }}
                       >
@@ -3408,7 +3492,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button
                           size="sm"
                           variant="solid"
-                          colorPalette="blue"
+                          colorPalette="yellow"
                           disabled={isOffline}
                           title={isOffline ? "Requires internet" : undefined}
                           onClick={() => void claim(occ.id)}
@@ -4527,7 +4611,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               title: "Record Location?",
               message: "Are you currently on-site at the job location?",
               confirmLabel: "Yes — record location & complete",
-              colorPalette: "green",
+              colorPalette: "blue",
               onConfirm: () => void completeWithLocation(true),
               cancelLabel: "No — complete without location",
               onCancelAction: () => void completeWithLocation(false),

@@ -13,10 +13,25 @@ export function initOfflineExecutor() {
       case "COMPLETE_JOB":
         await apiPost(`/api/occurrences/${occId}/complete`, payload);
         break;
-      case "ADD_PHOTO":
-        // Photos are special — the payload should contain the base64 data
-        // For now, skip photo upload in offline queue (complex)
-        throw new Error("Photo upload not supported offline yet");
+      case "ADD_PHOTO": {
+        // Photos: payload has { base64, fileName, contentType }
+        const { base64, fileName, contentType } = payload as { base64: string; fileName: string; contentType: string };
+        // Step 1: Get upload URL
+        const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+          `/api/occurrences/${occId}/photos/upload-url`,
+          { fileName, contentType },
+        );
+        // Step 2: Convert base64 back to blob and upload to R2
+        const binaryStr = atob(base64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: contentType });
+        const uploadRes = await fetch(uploadUrl, { method: "PUT", body: blob, headers: { "Content-Type": contentType } });
+        if (!uploadRes.ok) throw new Error(`R2 upload failed: ${uploadRes.status}`);
+        // Step 3: Confirm
+        await apiPost(`/api/occurrences/${occId}/photos/confirm`, { key, fileName, contentType });
+        break;
+      }
       case "ADD_EXPENSE":
         await apiPost(`/api/occurrences/${occId}/expenses`, payload);
         break;

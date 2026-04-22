@@ -156,7 +156,7 @@ export default function ClaimAgreementDialog({
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
                   Cancel
                 </Button>
-                <Button onClick={handleSubmit} loading={busy} disabled={!checked} colorPalette="green">
+                <Button onClick={handleSubmit} loading={busy} disabled={!checked} colorPalette="yellow">
                   Claim Job
                 </Button>
               </HStack>
