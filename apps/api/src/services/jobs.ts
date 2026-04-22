@@ -378,6 +378,8 @@ export const jobs: ServicesJobs = {
           source: JobOccurrenceSource.MANUAL,
           jobType: input.jobType ?? null,
           jobTags: input.jobTags ?? null,
+          pinnedNote: input.pinnedNote ?? null,
+          pinnedNoteRepeats: input.pinnedNoteRepeats ?? true,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
