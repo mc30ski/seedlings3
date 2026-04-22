@@ -532,16 +532,19 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
 
-    // Only the claimer can accept payment
-    const assignee = await prisma.jobOccurrenceAssignee.findFirst({
-      where: { occurrenceId, userId: uid },
-    });
-    if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
-    const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
-    if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can accept payments.");
+    // Only the claimer or an admin can accept payment
+    const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = actUser.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
 
-    const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid } });
-    if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments.");
+    if (!isAdmin) {
+      const assignee = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid },
+      });
+      if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
+      const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
+      if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can accept payments.");
+      if (actUser.workerType === "TRAINEE") throw app.httpErrors.forbidden("Trainees cannot accept payments.");
+    }
     const body = req.body || {};
     return services.payments.createPayment(uid, {
       occurrenceId,
@@ -1186,6 +1189,30 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // ── Worker Reschedule ──
+
+  app.patch("/occurrences/:id/pinned-note", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: { assignees: true },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    // Only claimer or admin can set pinned note
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can set instructions");
+    const body = req.body || {};
+    const pinnedNote = body.pinnedNote != null ? String(body.pinnedNote).trim() || null : null;
+    const data: any = { pinnedNote };
+    if (body.pinnedNoteRepeats !== undefined) data.pinnedNoteRepeats = !!body.pinnedNoteRepeats;
+    await prisma.jobOccurrence.update({
+      where: { id: occurrenceId },
+      data,
+    });
+    return { ok: true, pinnedNote, pinnedNoteRepeats: data.pinnedNoteRepeats };
+  });
 
   app.post("/occurrences/:id/confirm", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);

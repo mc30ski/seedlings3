@@ -526,6 +526,8 @@ model JobOccurrence {
   isAdminOnly      Boolean @default(false)
   isClientConfirmed Boolean @default(false)
   isHighPriority   Boolean @default(false)
+  pinnedNote          String?
+  pinnedNoteRepeats   Boolean @default(true)
 
   startedAt   DateTime?
   completedAt DateTime?

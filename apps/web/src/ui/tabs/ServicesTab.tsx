@@ -2106,6 +2106,7 @@ export default function ServicesTab({
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
           defaultJobTags={(() => { const raw = (editingOccurrence as any).jobTags; if (!raw) return null; if (Array.isArray(raw)) return raw; try { return JSON.parse(raw); } catch { return null; } })()}
+          defaultPinnedNote={(editingOccurrence as any).pinnedNote}
           defaultWorkflow={editingOccurrence.workflow}
           defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}

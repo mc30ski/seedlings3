@@ -879,7 +879,7 @@ export default function HomePage() {
     if (typeof window === "undefined") return;
     const onEvent = (e: Event) => {
       const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
-      if (!q) return;
+      if (!q && !entityId) return;
       if (forAdmin) {
         setTopTab("admin");
         setAdminInnerTab("admin-jobs");
@@ -889,7 +889,7 @@ export default function HomePage() {
       }
       window.sessionStorage.setItem(
         "open:remindersToJobsTabSearchOnce",
-        JSON.stringify({ q, entityId }),
+        JSON.stringify({ q: q || "", entityId }),
       );
     };
     window.addEventListener("open:remindersToJobsTabSearch", onEvent as EventListener);
@@ -902,12 +902,13 @@ export default function HomePage() {
     if (!raw) return;
     let payload: { q: string; entityId?: string };
     try { payload = JSON.parse(raw); } catch { payload = { q: raw }; }
-    requestAnimationFrame(() => {
+    window.sessionStorage.removeItem(key);
+    const timer = setTimeout(() => {
       window.dispatchEvent(
         new CustomEvent("remindersToJobsTabSearch:run", { detail: payload })
       );
-      window.sessionStorage.removeItem(key);
-    });
+    }, 150);
+    return () => clearTimeout(timer);
   }, [topTab, adminInnerTab, workerInnerTab]);
 
   useEffect(() => {

@@ -56,6 +56,7 @@ import LightEstimateDialog from "@/src/ui/dialogs/LightEstimateDialog";
 import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
+import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -317,6 +318,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Announcement dialog
   const [announcementDialogOpen, setAnnouncementDialogOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<any>(null);
+
+  // Pinned note dialog
+  const [pinnedNoteDialogOpen, setPinnedNoteDialogOpen] = useState(false);
+  const [pinnedNoteOcc, setPinnedNoteOcc] = useState<any>(null);
 
   // Light estimate & convert dialogs
   const [lightEstDialogOpen, setLightEstDialogOpen] = useState(false);
@@ -759,16 +764,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
       if (viewAsUserIds?.length) {
-        // Admin "View as" — show only selected workers' jobs
+        // Admin "View as" — show selected workers' jobs + unassigned + admin's own
         const idSet = new Set(viewAsUserIds);
+        const adminId = me?.id || "";
         list = list.filter((occ) => {
           if (occ.workflow === "ANNOUNCEMENT") return true;
           const assignees = occ.assignees ?? [];
           if (occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP") {
-            return assignees.some((a) => idSet.has(a.userId));
+            return assignees.some((a) => idSet.has(a.userId) || a.userId === adminId);
           }
           if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
-          return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId));
+          return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId) || a.userId === adminId);
         });
       } else if (!forAdmin && myId) {
         if (isTrainee) {
@@ -2131,6 +2137,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
+                {/* Pinned instruction banner — both collapsed and expanded */}
+                {(occ as any).pinnedNote && (
+                  <Box mx="4" mt={isCardCompact ? "2" : "3"} px="3" py="1.5" bg="#FEF9C3" borderWidth="1px" borderColor="#D97706" borderRadius="md">
+                    <Text fontSize="xs" fontWeight="semibold" color="#92400E">
+                      📌 {(occ as any).pinnedNote}
+                      {!(occ as any).pinnedNoteRepeats && <Text as="span" fontWeight="normal" fontStyle="italic"> (this time only)</Text>}
+                    </Text>
+                  </Box>
+                )}
                 {/* Client confirmation banner — expanded cards only, above title */}
                 {!isCardCompact && needsConfirmation && (
                   <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
@@ -3752,6 +3767,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
+                      {!isTaskOrReminder && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={isOffline}
+                          onClick={() => {
+                            setPinnedNoteOcc(occ);
+                            setPinnedNoteDialogOpen(true);
+                          }}
+                        >
+                          📌 {(occ as any).pinnedNote ? "Edit Instruction" : "Add Instruction"}
+                        </Button>
+                      )}
                       {isClaimer && !isTaskOrReminder && (
                         <StatusButton
                           id="occ-add-expense"
@@ -3911,7 +3939,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             if (!open) void load(false);
           }}
           occurrenceId={manageOccurrence.id}
-          myId={myId}
+          myId={me?.id || ""}
           currentAssignees={(manageOccurrence.assignees ?? []).map((a) => ({
             userId: a.userId,
             role: a.role,
@@ -3997,6 +4025,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCreated={() => void load(false)}
         editEvent={editingEvent}
       />
+
+      {pinnedNoteOcc && (
+        <PinnedNoteDialog
+          open={pinnedNoteDialogOpen}
+          onOpenChange={(o) => { setPinnedNoteDialogOpen(o); if (!o) setPinnedNoteOcc(null); }}
+          occurrenceId={pinnedNoteOcc.id}
+          currentNote={(pinnedNoteOcc as any).pinnedNote}
+          currentRepeats={(pinnedNoteOcc as any).pinnedNoteRepeats ?? true}
+          onSaved={(note, repeats) => {
+            setItems((prev) => prev.map((o) => o.id === pinnedNoteOcc.id ? { ...o, pinnedNote: note, pinnedNoteRepeats: repeats } as any : o));
+          }}
+        />
+      )}
 
       <AnnouncementDialog
         open={announcementDialogOpen}
