@@ -1175,6 +1175,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           occ.job?.property?.city,
           occ.job?.property?.state,
           occ.job?.property?.client?.displayName,
+          (occ.job?.property as any)?.pointOfContact?.firstName,
+          (occ.job?.property as any)?.pointOfContact?.lastName,
+          (occ.job?.property as any)?.pointOfContact?.nickname,
           occ.status,
           occ.notes,
           occ.contactName ?? "",
@@ -1908,6 +1911,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             const isEstimateOcc = occ.workflow === "ESTIMATE" || occ.isEstimate;
             const isAcceptedEstimate = isEstimateOcc && occ.status === "ACCEPTED";
+            const isRejectedEstimate = isEstimateOcc && occ.status === "REJECTED";
             const isClosed = occ.status === "CLOSED" || occ.status === "ARCHIVED";
             const isAdminOnlyOcc = !!occ.isAdminOnly;
             const needsConfirmation = !!(occ.jobId) && occ.status === "SCHEDULED" && !(occ as any).isClientConfirmed &&
@@ -2050,7 +2054,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const cardColorBase = isAnnouncement ? "announce"
               : isFollowup ? (isClosed ? "followup-closed" : "followup")
               : isEvent ? (isClosed ? "event-closed" : "event")
-              : (isClosed || isAcceptedEstimate) ? "gray"
+              : (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "gray"
               : isReminder ? "purple"
               : isTask ? "blue"
               : isTentative ? "orange"
@@ -2078,14 +2082,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : cardColorBase === "followup" ? "#BE123C"
               : cardColorBase === "event-closed" ? "#CA8A04"
               : cardColorBase === "event" ? "#D97706"
-              : !cardColorBase || (isClosed || isAcceptedEstimate) ? "gray.200"
+              : !cardColorBase || (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "gray.200"
               : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
             const isInProgress = occ.status === "IN_PROGRESS";
             const cardBorderWidth = isHighPriority ? "2px" : isInProgress ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
-            const commentBadgeBg = (isClosed || isAcceptedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
+            const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
               : isAnnouncement ? "#DDD6FE"
               : isFollowup ? "#FDA4AF"
               : isEvent ? "#FDE68A"
@@ -2096,7 +2100,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToMe ? "teal.200"
               : isAssignedToOthers ? "gray.300"
               : "gray.200";
-            const commentBadgeColor = (isClosed || isAcceptedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.700"
+            const commentBadgeColor = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.700"
               : isAnnouncement ? "#4C1D95"
               : isFollowup ? "#881337"
               : isEvent ? "#92400E"

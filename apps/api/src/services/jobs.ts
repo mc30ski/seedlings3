@@ -1063,7 +1063,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
-                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
           },
@@ -1115,7 +1115,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
-                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
           },
@@ -1162,7 +1162,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
-                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
           },
@@ -1200,7 +1200,7 @@ export const jobs: ServicesJobs = {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
-                pointOfContact: { select: { firstName: true, lastName: true, phone: true, email: true } },
+                pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
           },
