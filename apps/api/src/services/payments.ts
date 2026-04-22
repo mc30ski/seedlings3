@@ -163,6 +163,8 @@ export const payments: ServicesPayments = {
             isAdminOnly,
             jobType: fullOcc.jobType ?? null,
             jobTags: (fullOcc as any).jobTags ?? null,
+            pinnedNote: (fullOcc as any).pinnedNoteRepeats ? ((fullOcc as any).pinnedNote ?? null) : null,
+            pinnedNoteRepeats: (fullOcc as any).pinnedNoteRepeats ?? true,
             notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
             price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
             estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,

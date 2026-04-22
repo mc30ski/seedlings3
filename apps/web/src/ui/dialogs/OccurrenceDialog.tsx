@@ -64,6 +64,7 @@ type Props = {
   defaultIsAdminOnly?: boolean;
   defaultJobType?: string | null;
   defaultJobTags?: string[] | null;
+  defaultPinnedNote?: string | null;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -104,6 +105,7 @@ export default function OccurrenceDialog({
   defaultIsAdminOnly,
   defaultJobType,
   defaultJobTags,
+  defaultPinnedNote,
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
@@ -138,6 +140,7 @@ export default function OccurrenceDialog({
   const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
   const [jobTags, setJobTags] = useState<string[]>([]);
+  const [pinnedNote, setPinnedNote] = useState("");
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -179,6 +182,7 @@ export default function OccurrenceDialog({
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
     setJobTags(defaultJobTags ?? []);
+    setPinnedNote(defaultPinnedNote ?? "");
     setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
     setExpenses([]);
     setNewExpCost("");
@@ -237,6 +241,7 @@ export default function OccurrenceDialog({
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
+        ...(pinnedNote.trim() ? { pinnedNote: pinnedNote.trim() } : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
       };
 
@@ -290,6 +295,7 @@ export default function OccurrenceDialog({
         body.isAdminOnly = isAdminOnly;
         body.jobType = jobType || null;
         body.jobTags = jobTags.length > 0 ? jobTags : null;
+        body.pinnedNote = pinnedNote.trim() || null;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
@@ -444,6 +450,15 @@ export default function OccurrenceDialog({
                     onChange={setJobTags}
                     customNote={jobType}
                     onCustomNoteChange={setJobType}
+                  />
+                </div>
+                <div>
+                  <Text mb="1">📌 Pinned Instruction <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional — shows on card)</Text></Text>
+                  <Input
+                    size="sm"
+                    placeholder="e.g., Cut shorter, bag clippings"
+                    value={pinnedNote}
+                    onChange={(e) => setPinnedNote(e.target.value)}
                   />
                 </div>
                 <div>
