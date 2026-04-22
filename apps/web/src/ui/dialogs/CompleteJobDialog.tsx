@@ -272,7 +272,7 @@ export default function CompleteJobDialog({
                 <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
                   Cancel
                 </Button>
-                <Button colorPalette="green" onClick={handleComplete} loading={busy} disabled={!completedAtTime || (!!minCompletedAt && completedAtTime < minCompletedAt)}>
+                <Button colorPalette="blue" onClick={handleComplete} loading={busy} disabled={!completedAtTime || (!!minCompletedAt && completedAtTime < minCompletedAt)}>
                   Complete Job
                 </Button>
               </HStack>

@@ -22,6 +22,8 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import { useOffline } from "@/src/lib/offline";
+import { enqueueAction } from "@/src/lib/offlineQueue";
 
 type Props = {
   occurrenceId: string;
@@ -69,6 +71,7 @@ function useFileUpload(onFiles: (files: FileList) => void) {
 }
 
 export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, photoCount }: Props) {
+  const { isOffline } = useOffline();
   const [photos, setPhotos] = useState<OccurrencePhoto[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -106,6 +109,26 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
       for (const file of Array.from(files)) {
         const compressed = await compressAndRedact(file);
 
+        if (isOffline) {
+          // Queue for offline sync — convert blob to base64
+          const reader = new FileReader();
+          const base64 = await new Promise<string>((resolve, reject) => {
+            reader.onload = () => {
+              const result = reader.result as string;
+              // Strip data URL prefix to get raw base64
+              resolve(result.includes(",") ? result.split(",")[1] : result);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(compressed);
+          });
+          await enqueueAction("ADD_PHOTO", occurrenceId, `Photo: ${file.name}`, {
+            base64,
+            fileName: file.name,
+            contentType: "image/jpeg",
+          });
+          continue;
+        }
+
         const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
           `/api/occurrences/${occurrenceId}/photos/upload-url`,
           { fileName: file.name, contentType: "image/jpeg" },
@@ -126,16 +149,20 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
           contentType: "image/jpeg",
         });
       }
-      publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length > 1 ? "s" : ""} uploaded.` });
-      setExpanded(true);
-      await loadPhotos(true);
+      if (isOffline) {
+        publishInlineMessage({ type: "INFO", text: `${files.length} photo${files.length > 1 ? "s" : ""} queued for upload when online.` });
+      } else {
+        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length > 1 ? "s" : ""} uploaded.` });
+        setExpanded(true);
+        await loadPhotos(true);
+      }
     } catch (err) {
       console.error("Photo upload error:", err);
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
     } finally {
       setUploading(false);
     }
-  }, [occurrenceId]);
+  }, [occurrenceId, isOffline]);
 
   const openPicker = useFileUpload(handleFiles);
 

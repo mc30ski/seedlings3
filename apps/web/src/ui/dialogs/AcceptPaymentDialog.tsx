@@ -170,7 +170,17 @@ export default function AcceptPaymentDialog({
                   <Text mb="1">Amount Paid *</Text>
                   <CurrencyInput
                     value={amountPaid}
-                    onChange={(v) => setAmountPaid(v)}
+                    onChange={(v) => {
+                      setAmountPaid(v);
+                      const amt = parseFloat(v);
+                      if (!isNaN(amt) && amt > 0 && assignees.length > 0) {
+                        const payout = calcPayout(amt);
+                        const even = (payout / assignees.length).toFixed(2);
+                        const map: Record<string, string> = {};
+                        assignees.forEach((a) => { map[a.userId] = even; });
+                        setSplits(map);
+                      }
+                    }}
                     size="sm"
                   />
                 </div>
@@ -288,7 +298,7 @@ export default function AcceptPaymentDialog({
                   Cancel
                 </Button>
                 <Button
-                  colorPalette="blue"
+                  colorPalette="green"
                   onClick={handleSubmit}
                   loading={busy}
                   disabled={!amountPaid || !method[0] || (() => {

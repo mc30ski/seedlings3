@@ -1183,6 +1183,93 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // List of approved workers (for co-worker selection)
+  // Weather proxy — uses OpenWeatherMap forecast, returns 3 days
+  app.get("/weather", workerGuard, async (req: any) => {
+    const { lat, lng } = (req.query || {}) as { lat?: string; lng?: string };
+    if (!lat || !lng) throw app.httpErrors.badRequest("lat and lng are required");
+
+    const apiKey = process.env.OPENWEATHER_API_KEY;
+    if (!apiKey) throw app.httpErrors.serviceUnavailable("Weather API key not configured");
+
+    try {
+      // Fetch both current weather and 5-day forecast
+      const [currentRes, forecastRes] = await Promise.all([
+        fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
+        fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lng}&units=imperial&appid=${apiKey}`),
+      ]);
+      if (!currentRes.ok) throw new Error(`Weather API returned ${currentRes.status}`);
+      if (!forecastRes.ok) throw new Error(`Forecast API returned ${forecastRes.status}`);
+      const current = await currentRes.json();
+      const forecast = await forecastRes.json();
+
+      // Group forecast by day and pick midday (12:00) or closest entry
+      const days: Record<string, any[]> = {};
+      for (const entry of (forecast.list ?? [])) {
+        const date = entry.dt_txt?.split(" ")[0];
+        if (!date) continue;
+        if (!days[date]) days[date] = [];
+        days[date].push(entry);
+      }
+
+      // Use local date for "today" key (not UTC)
+      const now = new Date();
+      const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+      // Always include today using current weather, then next 2 forecast days
+      const todayForecastEntries = days[todayKey] ?? [];
+      const todayRainChances = todayForecastEntries.map((e) => Math.round((e.pop ?? 0) * 100));
+      const todayEntry = {
+        date: todayKey,
+        label: "Today",
+        high: Math.round(current.main?.temp_max ?? current.main?.temp ?? 0),
+        low: Math.round(current.main?.temp_min ?? current.main?.temp ?? 0),
+        description: current.weather?.[0]?.description ?? "",
+        icon: current.weather?.[0]?.icon ?? "",
+        rainChance: todayRainChances.length > 0 ? Math.max(...todayRainChances) : 0,
+        windSpeed: Math.round(current.wind?.speed ?? 0),
+        humidity: current.main?.humidity ?? 0,
+      };
+
+      // Get next days (skip today since we built it from current weather)
+      const futureDays = Object.entries(days)
+        .filter(([date]) => date > todayKey)
+        .slice(0, 3)
+        .map(([date, entries]) => {
+          const midday = entries.find((e) => e.dt_txt?.includes("12:00")) ?? entries[Math.floor(entries.length / 2)];
+          const temps = entries.map((e) => e.main?.temp ?? 0);
+          const rainChances = entries.map((e) => Math.round((e.pop ?? 0) * 100));
+          return {
+            date,
+            high: Math.round(Math.max(...temps)),
+            low: Math.round(Math.min(...temps)),
+            description: midday.weather?.[0]?.description ?? "",
+            icon: midday.weather?.[0]?.icon ?? "",
+            rainChance: Math.max(...rainChances),
+            windSpeed: Math.round(midday.wind?.speed ?? 0),
+            humidity: midday.main?.humidity ?? 0,
+          };
+        });
+
+      const dailyForecasts = [todayEntry, ...futureDays];
+
+      return {
+        current: {
+          temp: Math.round(current.main?.temp ?? 0),
+          feelsLike: Math.round(current.main?.feels_like ?? 0),
+          description: current.weather?.[0]?.description ?? "",
+          icon: current.weather?.[0]?.icon ?? "",
+          humidity: current.main?.humidity ?? 0,
+          windSpeed: Math.round(current.wind?.speed ?? 0),
+        },
+        forecast: dailyForecasts,
+        lat: Number(lat),
+        lng: Number(lng),
+      };
+    } catch (err: any) {
+      throw app.httpErrors.serviceUnavailable(err.message || "Weather unavailable");
+    }
+  });
+
   app.get("/workers", workerGuard, async () => {
     const list = await services.users.list({ approved: true, role: "WORKER" });
     return list.map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, workerType: u.workerType }));
