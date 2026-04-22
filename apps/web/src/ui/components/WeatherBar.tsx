@@ -57,7 +57,7 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function WeatherBar() {
   const [data, setData] = useState<WeatherResponse | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [activeDay, setActiveDay] = useState(0);
   const [userPaused, setUserPaused] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,9 +72,19 @@ export default function WeatherBar() {
         const { latitude, longitude } = pos.coords;
         const result = await apiGet<WeatherResponse>(`/api/weather?lat=${latitude}&lng=${longitude}`);
         if (!cancelled) setData(result);
-      } catch (err) {
+      } catch (err: any) {
         console.error("[WeatherBar] Failed to load weather:", err);
-        if (!cancelled) setError(true);
+        if (!cancelled) {
+          if (err?.code === 1) {
+            setError("Location access denied — enable location in your browser settings to see weather.");
+          } else if (err?.code === 2) {
+            setError("Unable to determine your location.");
+          } else if (err?.code === 3) {
+            setError("Location request timed out.");
+          } else {
+            setError("Weather unavailable.");
+          }
+        }
       }
     }
     void load();
@@ -92,7 +102,12 @@ export default function WeatherBar() {
     return () => clearInterval(interval);
   }, [data, userPaused]);
 
-  if (error || !data) return null;
+  if (error) return (
+    <Box px={2} py={1} bg="gray.50" borderRadius="md" mb={1}>
+      <Text fontSize="xs" color="fg.muted">{error}</Text>
+    </Box>
+  );
+  if (!data) return null;
 
   const { current, forecast } = data;
   const weatherUrl = `https://openweathermap.org/weathermap?basemap=map&cities=false&layer=precipitation&lat=${data.lat}&lon=${data.lng}&zoom=10`;
