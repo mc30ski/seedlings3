@@ -764,17 +764,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       let list = await apiGet<WorkerOccurrence[]>(url);
       if (!Array.isArray(list)) list = [];
       if (viewAsUserIds?.length) {
-        // Admin "View as" — show selected workers' jobs + unassigned + admin's own
+        // Admin "View as" — show ONLY jobs the selected worker(s) are assigned to
         const idSet = new Set(viewAsUserIds);
-        const adminId = me?.id || "";
         list = list.filter((occ) => {
           if (occ.workflow === "ANNOUNCEMENT") return true;
           const assignees = occ.assignees ?? [];
-          if (occ.workflow === "EVENT" || occ.workflow === "FOLLOWUP") {
-            return assignees.some((a) => idSet.has(a.userId) || a.userId === adminId);
-          }
-          if (isTrainee) return assignees.some((a) => idSet.has(a.userId));
-          return assignees.length === 0 || assignees.some((a) => idSet.has(a.userId) || a.userId === adminId);
+          return assignees.some((a) => idSet.has(a.userId));
         });
       } else if (!forAdmin && myId) {
         if (isTrainee) {
@@ -1851,6 +1846,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
         </>)}
         <VStack align="stretch" gap={3}>
+          {forAdmin && !viewAsUserIds?.length && (
+            <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+              <Text fontSize="xs" color="yellow.800">Showing all jobs for all workers, including unclaimed.</Text>
+            </Box>
+          )}
+          {forAdmin && viewAsUserIds && viewAsUserIds.length > 0 && (
+            <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+              <Text fontSize="xs" color="yellow.800">
+                Filtered to jobs assigned to the selected worker{viewAsUserIds.length > 1 ? "s" : ""}. Unclaimed and unrelated jobs are hidden.
+              </Text>
+            </Box>
+          )}
           {dayGroups.length === 0 && (
             <Box p="8" color="fg.muted">
               {isOffline
@@ -2141,15 +2148,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
-                {/* Pinned instruction banner — both collapsed and expanded */}
-                {(occ as any).pinnedNote && (
-                  <Box mx="4" mt={isCardCompact ? "2" : "3"} px="3" py="1.5" bg="#FEF9C3" borderWidth="1px" borderColor="#D97706" borderRadius="md">
-                    <Text fontSize="xs" fontWeight="semibold" color="#92400E">
-                      📌 {(occ as any).pinnedNote}
-                      {!(occ as any).pinnedNoteRepeats && <Text as="span" fontWeight="normal" fontStyle="italic"> (this time only)</Text>}
-                    </Text>
-                  </Box>
-                )}
                 {/* Client confirmation banner — expanded cards only, above title */}
                 {!isCardCompact && needsConfirmation && (
                   <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
@@ -3925,6 +3923,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       )}
                     </HStack>
                   </Card.Footer>
+                )}
+                {/* Pinned instruction banner — bottom of card */}
+                {(occ as any).pinnedNote && (
+                  <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="#FEF9C3" borderWidth="1px" borderColor="#D97706" borderRadius="md">
+                    <Text fontSize="xs" fontWeight="semibold" color="#92400E">
+                      📌 {(occ as any).pinnedNote}
+                      {!(occ as any).pinnedNoteRepeats && <Text as="span" fontWeight="normal" fontStyle="italic"> (this time only)</Text>}
+                    </Text>
+                  </Box>
                 )}
               </Card.Root>
             );
