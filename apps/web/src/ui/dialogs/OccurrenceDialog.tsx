@@ -454,9 +454,27 @@ export default function OccurrenceDialog({
                 </div>
                 <div>
                   <Text mb="1">📌 Pinned Instruction <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional — shows on card)</Text></Text>
+                  <Box display="flex" gap="6px" flexWrap="wrap" mb={2}>
+                    {["Cut shorter", "Cut longer", "Skip backyard", "Skip front yard", "Bag clippings", "Double cut", "Edge only", "Blow only", "Watch for pet", "Gate code changed", "Client home — knock first", "Client not home — proceed"].map((p) => (
+                      <Badge
+                        key={p}
+                        size="sm"
+                        variant={pinnedNote === p ? "solid" : "outline"}
+                        colorPalette={pinnedNote === p ? "yellow" : "gray"}
+                        cursor="pointer"
+                        px="2"
+                        py="0.5"
+                        borderRadius="full"
+                        onClick={() => setPinnedNote(pinnedNote === p ? "" : p)}
+                        userSelect="none"
+                      >
+                        {p}
+                      </Badge>
+                    ))}
+                  </Box>
                   <Input
                     size="sm"
-                    placeholder="e.g., Cut shorter, bag clippings"
+                    placeholder="e.g., Trim hedges extra short near driveway"
                     value={pinnedNote}
                     onChange={(e) => setPinnedNote(e.target.value)}
                   />
