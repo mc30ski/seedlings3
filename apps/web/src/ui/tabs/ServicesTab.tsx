@@ -1090,7 +1090,7 @@ export default function ServicesTab({
                   {job.notes && (
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
-                  {detail?.defaultAssignees && detail.defaultAssignees.length > 0 && (
+                  {detail?.defaultAssignees && detail.defaultAssignees.length > 0 ? (
                     <Text fontSize="xs" color="teal.600">
                       Default team: {detail.defaultAssignees.map((a, i) => (
                         <span key={a.userId}>
@@ -1104,6 +1104,8 @@ export default function ServicesTab({
                         </span>
                       ))}
                     </Text>
+                  ) : (
+                    <Text fontSize="xs" color="fg.muted">Default team: not set</Text>
                   )}
                   {((job as any).assigneeCount > 0 || (detail?.defaultAssignees && detail.defaultAssignees.length > 0)) && (
                     <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
@@ -1333,7 +1335,7 @@ export default function ServicesTab({
                                       >
                                         {a.user.displayName ?? a.user.email ?? a.userId}
                                       </span>
-                                      {isClaimer ? " · Claimer" : ""}
+                                      {isClaimer ? " · Claimer" : a.role === "observer" ? " · Observer" : " · Worker"}
                                     </Text>
                                   );
                                 })}
