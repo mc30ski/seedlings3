@@ -12,6 +12,7 @@ import {
   NativeSelect,
   Portal,
   Select,
+  Switch,
   Text,
   Textarea,
   VStack,
@@ -65,6 +66,7 @@ type Props = {
   defaultJobType?: string | null;
   defaultJobTags?: string[] | null;
   defaultPinnedNote?: string | null;
+  defaultPinnedNoteRepeats?: boolean;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -106,6 +108,7 @@ export default function OccurrenceDialog({
   defaultJobType,
   defaultJobTags,
   defaultPinnedNote,
+  defaultPinnedNoteRepeats,
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
@@ -141,6 +144,7 @@ export default function OccurrenceDialog({
   const [jobType, setJobType] = useState("");
   const [jobTags, setJobTags] = useState<string[]>([]);
   const [pinnedNote, setPinnedNote] = useState("");
+  const [pinnedNoteRepeats, setPinnedNoteRepeats] = useState(true);
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -183,6 +187,7 @@ export default function OccurrenceDialog({
     setJobType(defaultJobType ?? "");
     setJobTags(defaultJobTags ?? []);
     setPinnedNote(defaultPinnedNote ?? "");
+    setPinnedNoteRepeats(defaultPinnedNoteRepeats ?? true);
     setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
     setExpenses([]);
     setNewExpCost("");
@@ -241,7 +246,7 @@ export default function OccurrenceDialog({
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
-        ...(pinnedNote.trim() ? { pinnedNote: pinnedNote.trim() } : {}),
+        ...(pinnedNote.trim() ? { pinnedNote: pinnedNote.trim(), pinnedNoteRepeats } : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
       };
 
@@ -296,6 +301,7 @@ export default function OccurrenceDialog({
         body.jobType = jobType || null;
         body.jobTags = jobTags.length > 0 ? jobTags : null;
         body.pinnedNote = pinnedNote.trim() || null;
+        body.pinnedNoteRepeats = pinnedNoteRepeats;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
@@ -478,6 +484,20 @@ export default function OccurrenceDialog({
                     value={pinnedNote}
                     onChange={(e) => setPinnedNote(e.target.value)}
                   />
+                  {pinnedNote.trim() && (
+                    <HStack justify="space-between" align="center" mt={2}>
+                      <Box>
+                        <Text fontSize="xs" fontWeight="medium">Carry forward</Text>
+                        <Text fontSize="xs" color="fg.muted">Keep on future repeating occurrences</Text>
+                      </Box>
+                      <Switch.Root checked={pinnedNoteRepeats} onCheckedChange={(e) => setPinnedNoteRepeats(e.checked)} colorPalette="blue" size="sm">
+                        <Switch.HiddenInput />
+                        <Switch.Control>
+                          <Switch.Thumb />
+                        </Switch.Control>
+                      </Switch.Root>
+                    </HStack>
+                  )}
                 </div>
                 <div>
                   <Text mb="1">Start date *</Text>

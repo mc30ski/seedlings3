@@ -690,6 +690,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (body.isAdminOnly != null) input.isAdminOnly = !!body.isAdminOnly;
     if ("jobType" in body) input.jobType = body.jobType || null;
     if ("jobTags" in body) input.jobTags = body.jobTags ? JSON.stringify(body.jobTags) : null;
+    if ("pinnedNote" in body) input.pinnedNote = body.pinnedNote ? String(body.pinnedNote).trim() : null;
+    if ("pinnedNoteRepeats" in body) input.pinnedNoteRepeats = !!body.pinnedNoteRepeats;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
