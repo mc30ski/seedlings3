@@ -294,7 +294,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear

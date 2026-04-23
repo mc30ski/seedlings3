@@ -936,9 +936,10 @@ export default function HomePage() {
 
   const BRAND_ICON_H = 34; // px
   const [currentTemp, setCurrentTemp] = useState<number | null>(null);
-  const [weatherBarVisible, setWeatherBarVisible] = useState(() => {
-    try { return localStorage.getItem("seedlings_hideWeatherBar") !== "1"; } catch { return true; }
-  });
+  const [weatherBarVisible, setWeatherBarVisible] = useState(true);
+  useEffect(() => {
+    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setWeatherBarVisible(false); } catch {}
+  }, []);
   useEffect(() => {
     const handler = (e: Event) => {
       const { temp } = (e as CustomEvent).detail || {};
@@ -1483,10 +1484,14 @@ export default function HomePage() {
               <Text
                 fontSize="sm"
                 fontWeight="semibold"
-                color="fg.muted"
+                color={weatherBarVisible ? "fg.default" : "fg.muted"}
                 lineHeight="1"
                 whiteSpace="nowrap"
                 cursor="pointer"
+                px="2"
+                py="1"
+                borderRadius="md"
+                bg={weatherBarVisible ? "#c4d1b3" : "transparent"}
                 _hover={{ color: "blue.500" }}
                 onClick={() => {
                   const next = !weatherBarVisible;

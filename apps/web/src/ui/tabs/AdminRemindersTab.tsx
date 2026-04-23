@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, HStack, Input, Text } from "@chakra-ui/react";
-import { X } from "lucide-react";
+import { Badge, Box, HStack, Input, Text } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import { type Me } from "@/src/lib/types";
@@ -16,7 +15,6 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
   const [searchText, setSearchText] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
-  // No default selection — admin must pick a worker (or All Workers)
 
   useEffect(() => {
     apiGet<Worker[]>("/api/workers")
@@ -51,14 +49,14 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
 
   return (
     <Box w="full">
-      <HStack mb={2} gap={2} align="center" wrap="wrap">
-        <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
-          Worker:
+      <HStack mb={2} gap={2} align="center" wrap="nowrap">
+        <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap" flexShrink={0}>
+          View as:
         </Text>
-        <Box ref={dropRef} position="relative">
+        <Box ref={dropRef} position="relative" flex="1">
           <Input
             size="sm"
-            w="200px"
+            w="full"
             placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "Select a worker..."}
             value={searchText}
             onChange={(e) => {
@@ -85,7 +83,8 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
                 if (el && dropRef.current) {
                   const rect = dropRef.current.getBoundingClientRect();
                   el.style.top = `${rect.bottom + 4}px`;
-                  el.style.left = `${rect.left}px`;
+                  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 248));
+                  el.style.left = `${left}px`;
                 }
               }}
             >
@@ -124,22 +123,23 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
             </Box>
           )}
         </Box>
-        {selectedWorker && (
-          <Button
-            variant="outline"
-            size="xs"
-            colorPalette="red"
-            onClick={() => { setSelectedWorker(null); setSearchText(""); }}
-          >
-            Clear
-          </Button>
-        )}
-        {selectedWorker && (
+      </HStack>
+      {selectedWorker && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="1">
           <Badge size="sm" colorPalette="blue" variant="solid">
             {workerNameMap[selectedWorker] || "Loading…"}
           </Badge>
-        )}
-      </HStack>
+          <Badge
+            size="sm"
+            colorPalette="red"
+            variant="outline"
+            cursor="pointer"
+            onClick={() => { setSelectedWorker(null); setSearchText(""); }}
+          >
+            ✕ Clear
+          </Badge>
+        </HStack>
+      )}
 
       {selectedWorker ? (
         <RemindersTab myId={selectedWorker} me={me} showAll={false} forAdmin />

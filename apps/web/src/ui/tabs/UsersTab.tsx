@@ -131,6 +131,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     return () => window.removeEventListener("admin:openUsers", onOpen as EventListener);
   }, []);
   const [showInfoOverlay, setShowInfoOverlay] = useState(() => {
+    if (typeof window === "undefined") return false;
     try {
       return !localStorage.getItem("seedlings_users_infoDismissed");
     } catch { return false; }
@@ -388,7 +389,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     <Box w="full">
       {/* Filters */}
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear

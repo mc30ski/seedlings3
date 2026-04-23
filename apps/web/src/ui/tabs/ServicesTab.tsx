@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, CalendarRange, Filter, Layers, LayoutList, Link2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -97,6 +97,7 @@ export default function ServicesTab({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
   const [flashOccId, setFlashOccId] = useState<string | null>(null);
@@ -577,7 +578,7 @@ export default function ServicesTab({
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -587,7 +588,107 @@ export default function ServicesTab({
           inputId="services-search"
           placeholder="Search…"
         />
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => setFiltersOpen((v) => !v)}
+          title={filtersOpen ? "Collapse filters" : "Expand filters"}
+          css={{
+            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            borderRadius: "6px",
+          }}
+        >
+          <Filter size={14} />
+          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </Button>
+        {forAdmin && (
+          <Button
+            size="sm"
+            px="2"
+            minW="0"
+            variant="solid"
+            bg="black"
+            color="white"
+            flexShrink={0}
+            onClick={() => {
+              setEditingJob(null);
+              setJobDialogOpen(true);
+            }}
+          >
+            <Plus size={16} strokeWidth={2.5} />
+          </Button>
+        )}
       </HStack>
+      {!filtersOpen && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="1">
+          {datePreset && (
+            <Badge size="sm" colorPalette="green" variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!datePreset && !overdueActive && (dateFrom || dateTo) && (
+            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
+              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
+            </Badge>
+          )}
+          {overdueActive && (
+            <Badge size="sm" colorPalette="red" variant="solid">Overdue</Badge>
+          )}
+          {kind[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {jobStatusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="solid">
+              {jobStatusItems.find((i) => i.value === jobStatusFilter[0])?.label}
+            </Badge>
+          )}
+          {occStatusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="teal" variant="solid">
+              {occStatusItems.find((i) => i.value === occStatusFilter[0])?.label}
+            </Badge>
+          )}
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="orange" variant="solid">
+              {typeItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
+          {showCanceled && <Badge size="sm" colorPalette="red" variant="subtle">+ Canceled</Badge>}
+          {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
+          {highlightId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 job service</Badge>}
+          {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId && !q && datePreset) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setKind(["ALL"]);
+                setJobStatusFilter(["ALL"]);
+                setOccStatusFilter(["ALL"]);
+                setTypeFilter(["ALL"]);
+                setOverdueActive(false);
+                setVipOnly(false);
+                setShowCanceled(false);
+                setShowArchived(false);
+                setHighlightId(null);
+                setHighlightOccId(null);
+                setFlashOccId(null);
+                setDatePreset("thisMonth");
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
+        </HStack>
+      )}
+      {filtersOpen && <>
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -729,23 +830,6 @@ export default function ServicesTab({
         >
           <Archive size={14} />
         </Button>
-        <Box flex="1" />
-        {forAdmin && (
-          <Button
-            size="sm"
-            px="2"
-            minW="0"
-            variant="solid"
-            bg="black"
-            color="white"
-            onClick={() => {
-              setEditingJob(null);
-              setJobDialogOpen(true);
-            }}
-          >
-            <Plus size={16} strokeWidth={2.5} />
-          </Button>
-        )}
       </HStack>
 
       <HStack mb={2} gap={2} align="center">
@@ -857,7 +941,7 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || highlightId) && (
+      {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || dateFrom || dateTo || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -894,6 +978,7 @@ export default function ServicesTab({
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
+          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
           {showCanceled && (
             <Badge size="sm" colorPalette="red" variant="subtle">
               + Canceled
@@ -909,7 +994,7 @@ export default function ServicesTab({
               Filtered to 1 job service
             </Badge>
           )}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId) && (
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -935,6 +1020,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
+      </>}
       <HStack mb={2} gap={2} px={1} wrap="wrap">
         {(() => {
           const accepted = items.filter((j) => j.status === "ACCEPTED").length;

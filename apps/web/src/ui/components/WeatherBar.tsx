@@ -76,9 +76,10 @@ export default function WeatherBar() {
   const [prevDay, setPrevDay] = useState(0);
   const [sliding, setSliding] = useState(false);
   const slideTimer = useRef<ReturnType<typeof setTimeout>>();
-  const [visible, setVisible] = useState(() => {
-    try { return localStorage.getItem("seedlings_hideWeatherBar") !== "1"; } catch { return true; }
-  });
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setVisible(false); } catch {}
+  }, []);
 
   useEffect(() => {
     const handler = (e: Event) => {
