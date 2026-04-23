@@ -14,7 +14,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { CheckCircle, MapPin, Wrench } from "lucide-react";
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPost } from "@/src/lib/api";
+import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -38,8 +39,10 @@ type Props = {
 export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
   const today = bizDateKey(new Date());
 
-  const [step, setStep] = useState<"idle" | "loading" | "overview" | "route" | "equipment" | "ready" | "no-jobs">("idle");
+  const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "ready" | "no-jobs">("idle");
   const [occurrences, setOccurrences] = useState<WorkerOccurrence[]>([]);
+  const [confirmIndex, setConfirmIndex] = useState(0);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [equipment, setEquipment] = useState<any[]>([]);
   const [equipmentLoaded, setEquipmentLoaded] = useState(false);
 
@@ -281,8 +284,19 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                     </Button>
                     <HStack gap={2} wrap="wrap">
                       <Button variant="ghost" size="sm" onClick={() => { setStep("idle"); onDone(); }}>Cancel</Button>
-                      <Button size="sm" colorPalette="green" onClick={() => setStep("route")}>
-                        Route
+                      <Button size="sm" colorPalette="green" onClick={() => {
+                        const unconfirmed = occurrences.filter((o) =>
+                          o.jobId && !(o as any).isClientConfirmed && o.status === "SCHEDULED" &&
+                          (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE" || !o.workflow)
+                        );
+                        if (unconfirmed.length > 0) {
+                          setConfirmIndex(0);
+                          setStep("confirm");
+                        } else {
+                          setStep("route");
+                        }
+                      }}>
+                        Next
                       </Button>
                     </HStack>
                   </HStack>
@@ -290,7 +304,106 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
               </>
             )}
 
-            {/* Step 2: Route */}
+            {/* Step 2: Client Confirmation */}
+            {step === "confirm" && (() => {
+              const unconfirmed = occurrences.filter((o) =>
+                o.jobId && !(o as any).isClientConfirmed && o.status === "SCHEDULED" &&
+                (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE" || !o.workflow)
+              );
+              const current = unconfirmed[confirmIndex];
+              if (!current) {
+                // All done or no more — move to route
+                return (
+                  <>
+                    <Dialog.Header><Dialog.Title>All Confirmed</Dialog.Title></Dialog.Header>
+                    <Dialog.Body>
+                      <Box py={6} textAlign="center">
+                        <CheckCircle size={48} style={{ margin: "0 auto", color: "var(--chakra-colors-green-500)" }} />
+                        <Text fontSize="md" fontWeight="semibold" mt={3} color="green.600">All clients confirmed</Text>
+                      </Box>
+                    </Dialog.Body>
+                    <Dialog.Footer>
+                      <HStack justify="flex-end" w="full">
+                        <Button size="sm" colorPalette="green" onClick={() => setStep("route")}>Continue to Route</Button>
+                      </HStack>
+                    </Dialog.Footer>
+                  </>
+                );
+              }
+              const address = [current.job?.property?.street1, current.job?.property?.city, current.job?.property?.state].filter(Boolean).join(", ");
+              const poc = (current.job?.property as any)?.pointOfContact;
+              const contactName = poc ? [poc.firstName, poc.lastName].filter(Boolean).join(" ") : null;
+              return (
+                <>
+                  <Dialog.Header>
+                    <Dialog.Title>Confirm Clients ({confirmIndex + 1} of {unconfirmed.length})</Dialog.Title>
+                  </Dialog.Header>
+                  <Dialog.Body>
+                    <VStack align="stretch" gap={3}>
+                      <Card.Root variant="outline" borderColor="orange.300" bg="orange.50">
+                        <Card.Body py="3" px="4">
+                          <VStack align="start" gap={1}>
+                            <Text fontSize="sm" fontWeight="semibold">
+                              {current.job?.property?.displayName}
+                              {current.job?.property?.client?.displayName && (
+                                <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(current.job.property.client.displayName)}</Text>
+                              )}
+                            </Text>
+                            {address && <Text fontSize="xs" color="fg.muted">{address}</Text>}
+                            {contactName && <Text fontSize="xs" color="fg.muted">Contact: {contactName}{poc?.phone ? ` · ${poc.phone}` : ""}</Text>}
+                            {(current as any).pinnedNote && (
+                              <Box px={2} py={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md" w="full">
+                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {(current as any).pinnedNote}</Text>
+                              </Box>
+                            )}
+                            <HStack gap={2} fontSize="xs" wrap="wrap" mt={1}>
+                              {current.estimatedMinutes && <Text color="fg.muted">~{formatDuration(current.estimatedMinutes)}</Text>}
+                              {current.price != null && <Text color="green.600">${current.price.toFixed(2)}</Text>}
+                            </HStack>
+                          </VStack>
+                        </Card.Body>
+                      </Card.Root>
+                      <Text fontSize="sm" color="fg.muted">
+                        Have you contacted the client to confirm this job?
+                      </Text>
+                      {poc?.phone && (
+                        <Button size="sm" variant="outline" colorPalette="green" onClick={() => window.open(`tel:${poc.phone}`, "_self")}>
+                          Call {contactName || poc.phone}
+                        </Button>
+                      )}
+                    </VStack>
+                  </Dialog.Body>
+                  <Dialog.Footer>
+                    <HStack justify="space-between" w="full" wrap="wrap" gap={2}>
+                      <Button variant="ghost" size="sm" onClick={() => setStep("overview")}>Back</Button>
+                      <HStack gap={2}>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          if (confirmIndex + 1 < unconfirmed.length) setConfirmIndex(confirmIndex + 1);
+                          else setStep("route");
+                        }}>
+                          Skip
+                        </Button>
+                        <Button size="sm" colorPalette="orange" disabled={confirmBusy} onClick={async () => {
+                          setConfirmBusy(true);
+                          try {
+                            await apiPost(`/api/occurrences/${current.id}/confirm`);
+                            setOccurrences((prev) => prev.map((o) => o.id === current.id ? { ...o, isClientConfirmed: true } as any : o));
+                            if (confirmIndex + 1 < unconfirmed.length) setConfirmIndex(confirmIndex + 1);
+                            else setStep("route");
+                          } catch (err) {
+                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
+                          } finally { setConfirmBusy(false); }
+                        }}>
+                          Confirm Client
+                        </Button>
+                      </HStack>
+                    </HStack>
+                  </Dialog.Footer>
+                </>
+              );
+            })()}
+
+            {/* Step 3: Route */}
             {step === "route" && (
               <>
                 <Dialog.Header><Dialog.Title>Today's Route</Dialog.Title></Dialog.Header>

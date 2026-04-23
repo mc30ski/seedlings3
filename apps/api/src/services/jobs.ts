@@ -1104,6 +1104,8 @@ export const jobs: ServicesJobs = {
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
+
+    return occs;
   },
 
   async getOccurrencesByIds(ids: string[]) {
