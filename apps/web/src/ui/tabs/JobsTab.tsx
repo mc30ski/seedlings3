@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -615,6 +615,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
+  const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -1290,10 +1291,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       dayMap.get(key)!.push(occ);
     }
     for (const key of dayOrder) {
+      const items = dayMap.get(key)!;
+      // Sort within day: high priority reminders first, then by startAt
+      items.sort((a, b) => {
+        const aHigh = a.workflow === "REMINDER" && (a as any).isHighPriority ? 0 : 1;
+        const bHigh = b.workflow === "REMINDER" && (b as any).isHighPriority ? 0 : 1;
+        if (aHigh !== bHigh) return aHigh - bHigh;
+        return (a.startAt ?? "").localeCompare(b.startAt ?? "");
+      });
       groups.push({
         key,
         label: key === "no-date" ? "Unscheduled" : dayLabel(key),
-        items: dayMap.get(key)!,
+        items,
       });
     }
 
@@ -2075,22 +2084,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isUnassigned ? "yellow"
               : null;
             const cardBg = isHighPriority ? "purple.100"
-              : cardColorBase === "announce" ? "#C4B5FD"
-              : cardColorBase === "followup-closed" ? "#FED7D7"
-              : cardColorBase === "followup" ? "#FECACA"
-              : cardColorBase === "event-closed" ? "#FEF9C3"
-              : cardColorBase === "event" ? "#FDE68A"
+              : cardColorBase === "announce" ? "purple.200"
+              : cardColorBase === "followup-closed" ? "red.100"
+              : cardColorBase === "followup" ? "red.200"
+              : cardColorBase === "event-closed" ? "yellow.100"
+              : cardColorBase === "event" ? "yellow.200"
               : cardColorBase === "gray" && (isAssignedToOthers || isClosed || isAcceptedEstimate) ? "gray.50"
               : cardColorBase === "yellow" ? "yellow.50"
               : cardColorBase === "green" ? "green.100"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = isHighPriority ? "purple.500"
-              : cardColorBase === "announce" ? "#6D28D9"
-              : cardColorBase === "followup-closed" ? "#E11D48"
-              : cardColorBase === "followup" ? "#BE123C"
-              : cardColorBase === "event-closed" ? "#CA8A04"
-              : cardColorBase === "event" ? "#D97706"
+              : cardColorBase === "announce" ? "purple.400"
+              : cardColorBase === "followup-closed" ? "red.300"
+              : cardColorBase === "followup" ? "red.400"
+              : cardColorBase === "event-closed" ? "yellow.300"
+              : cardColorBase === "event" ? "yellow.400"
               : !cardColorBase || (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "gray.200"
               : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
@@ -2099,9 +2108,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
-              : isAnnouncement ? "#DDD6FE"
-              : isFollowup ? "#FDA4AF"
-              : isEvent ? "#FDE68A"
+              : isAnnouncement ? "purple.200"
+              : isFollowup ? "red.200"
+              : isEvent ? "yellow.200"
               : isReminder ? "purple.200"
               : isTask ? "blue.200"
               : isTentative ? "orange.200"
@@ -2110,9 +2119,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers ? "gray.300"
               : "gray.200";
             const commentBadgeColor = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.700"
-              : isAnnouncement ? "#4C1D95"
-              : isFollowup ? "#881337"
-              : isEvent ? "#92400E"
+              : isAnnouncement ? "purple.700"
+              : isFollowup ? "red.700"
+              : isEvent ? "yellow.700"
               : isReminder ? "purple.700"
               : isTask ? "blue.700"
               : isTentative ? "orange.700"
@@ -2141,7 +2150,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
-                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: `4px solid ${isClosed ? "#7C3AED" : "#6D28D9"}`, ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid #BE123C" } : (isFollowup && isClosed) ? { borderLeft: "4px solid #E11D48", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid #D97706" } : (isEvent && isClosed) ? { borderLeft: "4px solid #CA8A04", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
+                  ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
                   if (!toggleCard) return;
@@ -2286,6 +2295,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           )}
                         </Text>
                         <HStack gap={1} flexShrink={0}>
+                          {/* Quick contact */}
+                          {(() => {
+                            const poc = (occ.job?.property as any)?.pointOfContact;
+                            const phone = poc?.phone;
+                            const email = poc?.email;
+                            if (phone) return (
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`tel:${phone}`, "_self"); }} title={`Call ${phone}`}>
+                                <Phone size={14} color="var(--chakra-colors-green-500)" />
+                              </Button>
+                            );
+                            if (email) return (
+                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${email}`, "_self"); }} title={`Email ${email}`}>
+                                <Mail size={14} color="var(--chakra-colors-blue-500)" />
+                              </Button>
+                            );
+                            return null;
+                          })()}
                           {isWorkerView && (
                             <>
                               <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
@@ -2407,6 +2433,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             )}
                           </Text>
                           <HStack gap={1} flexShrink={0}>
+                            {/* Quick contact */}
+                            {(() => {
+                              const poc = (occ.job?.property as any)?.pointOfContact;
+                              const phone = poc?.phone;
+                              const email = poc?.email;
+                              if (phone) return (
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`tel:${phone}`, "_self"); }} title={`Call ${phone}`}>
+                                  <Phone size={14} color="var(--chakra-colors-green-500)" />
+                                </Button>
+                              );
+                              if (email) return (
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${email}`, "_self"); }} title={`Email ${email}`}>
+                                  <Mail size={14} color="var(--chakra-colors-blue-500)" />
+                                </Button>
+                              );
+                              return null;
+                            })()}
                             {isWorkerView && (
                               <>
                                 <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
@@ -2546,6 +2589,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
+                      {/* Elapsed time for IN_PROGRESS */}
+                      {occ.status === "IN_PROGRESS" && occ.startedAt && (() => {
+                        const elapsed = Math.round((Date.now() - new Date(occ.startedAt).getTime()) / 60000);
+                        const h = Math.floor(elapsed / 60);
+                        const m = elapsed % 60;
+                        const elapsedStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                        const est = occ.estimatedMinutes;
+                        const over = est && elapsed > est;
+                        return (
+                          <Text fontSize="xs" fontWeight="semibold" color={over ? "red.500" : "blue.600"}>
+                            Started {elapsedStr} ago{est ? ` / ${est >= 60 ? `${Math.floor(est / 60)}h ${est % 60}m` : `${est}m`} est.` : ""}{over ? " — over estimate" : ""}
+                          </Text>
+                        );
+                      })()}
                       {/* Event time */}
                       {isEvent && occ.startAt && (() => {
                         const d = new Date(occ.startAt);
@@ -2708,11 +2765,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         ))}
                       </Box>
                     )}
-                    {/* Quick action buttons removed — now inline icon before title */}
                   </Card.Body>
                 ) : (
                 <Card.Body pt="2" px="4">
                   <VStack align="start" gap={2} w="full">
+                    {/* Elapsed time for IN_PROGRESS (expanded) */}
+                    {occ.status === "IN_PROGRESS" && occ.startedAt && (() => {
+                      const elapsed = Math.round((Date.now() - new Date(occ.startedAt).getTime()) / 60000);
+                      const h = Math.floor(elapsed / 60);
+                      const m = elapsed % 60;
+                      const elapsedStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                      const est = occ.estimatedMinutes;
+                      const over = est && elapsed > est;
+                      return (
+                        <Text fontSize="sm" fontWeight="semibold" color={over ? "red.500" : "blue.600"}>
+                          Started {elapsedStr} ago{est ? ` / ${est >= 60 ? `${Math.floor(est / 60)}h ${est % 60}m` : `${est}m`} est.` : ""}{over ? " — over estimate" : ""}
+                        </Text>
+                      );
+                    })()}
                     {/* Event time — prominent */}
                     {isEvent && occ.startAt && (() => {
                       const d = new Date(occ.startAt);
@@ -4010,8 +4080,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
                 {/* Pinned instruction banner — bottom of card */}
                 {(occ as any).pinnedNote && (
-                  <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="#FEF9C3" borderWidth="1px" borderColor="#D97706" borderRadius="md">
-                    <Text fontSize="xs" fontWeight="semibold" color="#92400E">
+                  <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                    <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
                       📌 {(occ as any).pinnedNote}
                       {!(occ as any).pinnedNoteRepeats && <Text as="span" fontWeight="normal" fontStyle="italic"> (this time only)</Text>}
                     </Text>
@@ -4603,6 +4673,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 await apiPost(`/api/occurrences/${occToComplete.id}/complete`, body);
                 publishInlineMessage({ type: "SUCCESS", text: "Job completed." });
                 await load(false);
+                // Prompt for photos after completion
+                setPhotoPromptOccId(occToComplete.id);
               } catch (err) {
                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete failed.", err) });
               }
@@ -4619,6 +4691,42 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
         />
       )}
+
+      {/* Photo prompt after job completion */}
+      <Dialog.Root open={!!photoPromptOccId} onOpenChange={(e) => { if (!e.open) setPhotoPromptOccId(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>Add Photos?</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm" color="fg.muted" mb={3}>
+                  Job completed! Want to upload any photos of the work?
+                </Text>
+                {photoPromptOccId && (
+                  <OccurrencePhotos
+                    occurrenceId={photoPromptOccId}
+                    canUpload
+                    isAdmin={forAdmin && (isAdmin || isSuper)}
+                  />
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setPhotoPromptOccId(null)}>
+                    Skip
+                  </Button>
+                  <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
+                    Done
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={showInfoDialog} onOpenChange={(e) => { if (!e.open) setShowInfoDialog(false); }}>
         <Portal>
@@ -4687,13 +4795,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="xs" color="fg.muted" mb={1}>Visible on the Worker Jobs tab only to people added via Manage Team. Admins always see them on the Admin Jobs tab.</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#D97706" bg="#FDE68A">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400" bg="yellow.200">
                     <Badge colorPalette="yellow" variant="solid" mb={1}>Event</Badge>
                     <Text fontSize="sm">A team-scoped occurrence (e.g., "Weekly team meeting", "Equipment inspection"). Created by admins only. Can set an optional exact time. Can be one-off or repeating — repeating events auto-create the next instance when completed. Only admins can edit and complete. Becomes overdue if not completed by its date.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#BE123C" bg="#FECACA">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="red.400" bg="red.200">
                     <Badge colorPalette="red" variant="solid" mb={1}>Followup</Badge>
                     <Text fontSize="sm">A team-scoped follow-up (e.g., "Follow up on Thompson pricing"). Created by admins only. Can optionally attach one or more clients and/or job services — clicking them navigates to the relevant tab. Can be one-off or repeating. Only admins can edit and complete. Becomes overdue if not completed by its date.</Text>
                     <Text fontSize="xs" color="fg.muted" mt={1}>Flow: Scheduled → Complete (admin) → Next auto-created (if repeating)</Text>
@@ -4707,7 +4815,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </HStack>
                   </Box>
 
-                  <Box p={3} borderWidth="1px" rounded="md" borderColor="#6D28D9" bg="#C4B5FD">
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="purple.400" bg="purple.200">
                     <Badge colorPalette="purple" variant="solid" mb={1}>Announcement</Badge>
                     <Text fontSize="sm">A company-wide notice visible to all workers and admins (e.g., "Office closed Friday", "New mulch supplier"). Created by admins only. Announcements are never completed — they remain in the timeline and naturally fall back over time. Only admins can edit or delete them. No Manage Team or overdue tracking.</Text>
                   </Box>

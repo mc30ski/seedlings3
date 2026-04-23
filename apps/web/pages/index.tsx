@@ -1355,10 +1355,10 @@ export default function HomePage() {
       <AppSplash show={!authLoaded || (isSignedIn && meLoading)} />
       <Box
         as="header"
-        bg="#f4f7f0"
-        bgGradient="linear(to-b, #f4f7f0, #f9faf7)"
+        bg="#dce5d0"
+        bgGradient="linear(to-b, #dce5d0, #e8eedf)"
         borderWidth="1px"
-        borderColor="#b5c4a3"
+        borderColor="#8a9e72"
         px={{ base: 3, md: 4 }}
         py={{ base: 2, md: 3 }}
         borderRadius="md"

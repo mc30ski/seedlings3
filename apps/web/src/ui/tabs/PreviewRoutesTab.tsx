@@ -652,6 +652,28 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                 </VStack>
               </HStack>
 
+              {(day.route ?? []).length > 0 && (
+                <Button
+                  size="sm"
+                  variant="solid"
+                  colorPalette="blue"
+                  mb={2}
+                  onClick={() => {
+                    const stops = (day.route ?? []).map((s) => s.address).filter(Boolean);
+                    if (stops.length === 0) return;
+                    if (stops.length === 1) {
+                      window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(stops[0])}`, "_blank");
+                    } else {
+                      const origin = encodeURIComponent(stops[0]);
+                      const destination = encodeURIComponent(stops[stops.length - 1]);
+                      const waypoints = stops.slice(1, -1).map(encodeURIComponent).join("|");
+                      window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints ? `&waypoints=${waypoints}` : ""}`, "_blank");
+                    }
+                  }}
+                >
+                  Launch Route in Maps ({(day.route ?? []).length} stop{(day.route ?? []).length !== 1 ? "s" : ""})
+                </Button>
+              )}
               <VStack align="stretch" gap={2}>
                 {(day.route ?? []).map((stop, idx) => {
                   const job = jobMap.get(stop.occurrenceId);

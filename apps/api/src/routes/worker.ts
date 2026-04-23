@@ -1183,6 +1183,20 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   // List of approved workers (for co-worker selection)
+  // IP-based location fallback for weather
+  app.get("/weather/location", workerGuard, async (req: any) => {
+    try {
+      // Use ip-api.com (free, no key needed, 45 req/min)
+      const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+      const res = await fetch(`http://ip-api.com/json/${ip === "127.0.0.1" || ip === "::1" ? "" : ip}?fields=lat,lon`);
+      const data = await res.json();
+      if (data.lat && data.lon) return { lat: data.lat, lng: data.lon };
+      throw new Error("No location data");
+    } catch {
+      throw app.httpErrors.serviceUnavailable("Could not determine location");
+    }
+  });
+
   // Weather proxy — uses OpenWeatherMap forecast, returns 3 days
   app.get("/weather", workerGuard, async (req: any) => {
     const { lat, lng } = (req.query || {}) as { lat?: string; lng?: string };
