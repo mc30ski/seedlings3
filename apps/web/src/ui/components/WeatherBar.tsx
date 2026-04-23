@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Cloud, CloudRain, Droplets, Sun, CloudSun, Snowflake, CloudLightning, Wind } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
@@ -71,8 +71,8 @@ export default function WeatherBar() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeDay, setActiveDay] = useState(0);
-  const [userPaused, setUserPaused] = useState(false);
-  const touchStartX = useRef(0);
+  const [userPaused] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,9 +109,9 @@ export default function WeatherBar() {
     return () => { cancelled = true; };
   }, []);
 
-  // Auto-scroll every 4 seconds unless user swiped
+  // Auto-scroll every 4 seconds unless user paused or expanded
   useEffect(() => {
-    if (!data || userPaused) return;
+    if (!data || userPaused || expanded) return;
     const count = data.forecast.length;
     if (count <= 1) return;
     const interval = setInterval(() => {
@@ -154,53 +154,54 @@ export default function WeatherBar() {
   const day = forecast[activeDay];
   const label = day ? dayLabel(day.date, day.label) : "Today";
 
+  function renderDayRow(icon: string, dayLabel_: string, temp: string, desc: string, rain: number, wind: number, rowTheme: ReturnType<typeof getTheme>) {
+    return (
+      <HStack gap={1.5} fontSize="xs" color={rowTheme.text} whiteSpace="nowrap" overflow="hidden">
+        <Text fontWeight="bold" flexShrink={0} w="65px">{dayLabel_}</Text>
+        <WeatherIcon icon={icon} size={14} />
+        <Text fontWeight="semibold" flexShrink={0}>{temp}</Text>
+        <Text flexShrink={0}>·</Text>
+        <Text overflow="hidden" textOverflow="ellipsis">{capitalize(desc)}</Text>
+        {rain > 0 && <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={rain >= 50 ? rowTheme.text : rowTheme.sub}><Droplets size={11} /><Text fontWeight={rain >= 50 ? "bold" : "normal"}>{rain}%</Text></HStack></>}
+        {wind > 0 && <><Text flexShrink={0}>·</Text><Text color={rowTheme.sub} flexShrink={0}>{wind}mph</Text></>}
+      </HStack>
+    );
+  }
+
+  if (expanded) {
+    return (
+      <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => setExpanded(false)}>
+        {forecast.map((d, i) => {
+          const dIcon = i === 0 ? current.icon : d.icon;
+          const dRain = d.rainChance;
+          const dTheme = getTheme(dIcon, dRain);
+          const dLabel = dayLabel(d.date, d.label);
+          const dTemp = i === 0 ? `${current.temp}°F` : `${d.high}°/${d.low}°`;
+          const dDesc = i === 0 ? current.description : d.description;
+          const dWind = i === 0 ? current.windSpeed : d.windSpeed;
+          return (
+            <Box key={d.date} px={2} py={1.5} bg={dTheme.bg} borderBottom={i < forecast.length - 1 ? "1px solid" : undefined} borderColor={dTheme.border}>
+              {renderDayRow(dIcon, dLabel, dTemp, dDesc, dRain, dWind, dTheme)}
+            </Box>
+          );
+        })}
+        <HStack px={2} py={1.5} bg="gray.100" justify="center">
+          <Text fontSize="xs" color="blue.600" cursor="pointer" _hover={{ textDecoration: "underline" }} onClick={(e) => { e.stopPropagation(); window.open(weatherUrl, "_blank"); }}>
+            View full forecast →
+          </Text>
+        </HStack>
+      </Box>
+    );
+  }
+
   return (
     <Box
       px={2} py={1.5} borderRadius="md" mb={1} cursor="pointer"
       bg={theme.bg} borderWidth="1px" borderColor={theme.border}
       transition="background 0.3s ease, border-color 0.3s ease"
-      onClick={() => window.open(weatherUrl, "_blank")}
-      onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-      onTouchEnd={(e) => {
-        const dx = e.changedTouches[0].clientX - touchStartX.current;
-        if (Math.abs(dx) > 40) {
-          e.stopPropagation();
-          setUserPaused(true);
-          const count = forecast.length;
-          if (dx < 0) setActiveDay((prev) => Math.min(prev + 1, count - 1));
-          else setActiveDay((prev) => Math.max(prev - 1, 0));
-        }
-      }}
+      onClick={() => setExpanded(true)}
     >
-      <HStack gap={1.5} fontSize="xs" color={theme.text} whiteSpace="nowrap" overflow="hidden">
-        <Text fontWeight="bold" flexShrink={0}>{label}</Text>
-        <Text flexShrink={0}>·</Text>
-        <WeatherIcon icon={activeIcon} size={14} />
-        {activeDay === 0 ? (
-          <>
-            <Text fontWeight="semibold" flexShrink={0}>{current.temp}°F</Text>
-            <Text flexShrink={0}>·</Text>
-            <Text overflow="hidden" textOverflow="ellipsis">{capitalize(current.description)}</Text>
-            {current.feelsLike !== current.temp && <><Text flexShrink={0}>·</Text><Text color={theme.sub} flexShrink={0}>Feels {current.feelsLike}°</Text></>}
-          </>
-        ) : day ? (
-          <>
-            <Text fontWeight="semibold" flexShrink={0}>{day.high}°/{day.low}°</Text>
-            <Text flexShrink={0}>·</Text>
-            <Text overflow="hidden" textOverflow="ellipsis">{capitalize(day.description)}</Text>
-          </>
-        ) : null}
-        {(() => {
-          const rain = activeDay === 0 ? (forecast[0]?.rainChance ?? 0) : (day?.rainChance ?? 0);
-          if (rain <= 0) return null;
-          return <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={rain >= 50 ? theme.text : theme.sub}><Droplets size={11} /><Text fontWeight={rain >= 50 ? "bold" : "normal"}>{rain}%</Text></HStack></>;
-        })()}
-        {(() => {
-          const wind = activeDay === 0 ? current.windSpeed : (day?.windSpeed ?? 0);
-          if (wind <= 0) return null;
-          return <><Text flexShrink={0}>·</Text><Text color={theme.sub} flexShrink={0}>{wind}mph</Text></>;
-        })()}
-      </HStack>
+      {renderDayRow(activeIcon, label, activeDay === 0 ? `${current.temp}°F` : day ? `${day.high}°/${day.low}°` : "", activeDay === 0 ? current.description : (day?.description ?? ""), activeDay === 0 ? (forecast[0]?.rainChance ?? 0) : (day?.rainChance ?? 0), activeDay === 0 ? current.windSpeed : (day?.windSpeed ?? 0), theme)}
     </Box>
   );
 }
