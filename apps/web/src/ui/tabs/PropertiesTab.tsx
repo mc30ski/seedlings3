@@ -417,12 +417,12 @@ export default function PropertiesTab({
               )}
             <Card.Root variant="outline" borderColor={p.status === "ARCHIVED" ? "gray.200" : (p.client as any)?.isVip ? "yellow.300" : undefined} bg={p.status === "ARCHIVED" ? "gray.50" : undefined}>
               <Card.Header py="3" px="4" pb="0">
-                <HStack gap={3} justify="space-between" align="center">
-                  <HStack gap={1} flex="1" minW={0}>
+                <VStack align="start" gap={1.5}>
+                  <HStack gap={1} minW={0}>
                     {(p.client as any)?.isVip && <Text title={(p.client as any)?.vipReason || "VIP Client"} cursor="help">⭐</Text>}
                     <Text fontSize="md" fontWeight="semibold">{p.displayName}</Text>
                   </HStack>
-                  <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
+                  <HStack gap={1} wrap="wrap">
                     <StatusBadge
                       status={p.status}
                       palette={propertyStatusColor(p.status)}
@@ -438,8 +438,8 @@ export default function PropertiesTab({
                         {(p as any).lotSize.toLocaleString()} {(p as any).lotSizeUnit ?? "sqft"}
                       </Badge>
                     )}
-                  </Box>
-                </HStack>
+                  </HStack>
+                </VStack>
               </Card.Header>
 
               <Card.Body py="3" px="4" pt="1">

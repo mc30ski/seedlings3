@@ -865,8 +865,8 @@ export default function ServicesTab({
             </Badge>
           )}
           {!datePreset && !overdueActive && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette="gray" variant="subtle">
-              Custom dates
+            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
+              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
             </Badge>
           )}
           {overdueActive && (

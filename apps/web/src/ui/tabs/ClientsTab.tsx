@@ -652,6 +652,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                             .map((ct: any) => {
                               return forAdmin || ct.status === "ACTIVE" ? (
                                 <VStack
+                                  key={ct.id}
                                   align="start"
                                   w="100%"
                                   borderWidth="1px"
@@ -869,6 +870,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
                             return forAdmin || p.status === "ACTIVE" ? (
                               <VStack
+                                key={p.id}
                                 opacity={p.status === "ACTIVE" ? 1.0 : 0.5}
                                 align="start"
                                 w="100%"

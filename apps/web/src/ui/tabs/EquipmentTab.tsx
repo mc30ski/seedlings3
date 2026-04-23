@@ -783,7 +783,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </HStack>
                   </VStack>
                 ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                  <HStack gap={2} mt={0.5}>
+                  <HStack gap={2} mt={0.5} wrap="wrap">
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                       No charge — employees use equipment at no cost
                     </Badge>

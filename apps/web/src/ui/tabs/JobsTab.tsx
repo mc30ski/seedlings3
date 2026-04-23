@@ -57,7 +57,6 @@ import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
-import WeatherBar from "@/src/ui/components/WeatherBar";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -903,11 +902,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowCanceled(false);
     setShowArchived(false);
     setTypeFilter(["ANNOUNCEMENT"]);
-    const d = computeDatesFromPreset("now");
-    setDatePreset("now");
-    setDateFrom(d.from);
-    setDateTo(d.to);
-    void load(true, { from: d.from, to: d.to });
+    const todayStr = localDate(new Date());
+    setDatePreset(null);
+    setDateFrom(todayStr);
+    setDateTo(todayStr);
+    void load(true, { from: todayStr, to: todayStr });
   }, []);
 
   useEffect(() => {
@@ -1335,7 +1334,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
-      <WeatherBar />
       {headerSlot && (
         <HStack mb={{ base: 2, md: 0 }} gap={2} wrap="nowrap" display={{ base: "flex", md: "none" }}>
           {headerSlot}
@@ -1756,8 +1754,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette="gray" variant="subtle">
-              Custom dates
+            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
+              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
             </Badge>
           )}
           {overdueActive && (
