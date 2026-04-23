@@ -122,10 +122,12 @@ export default function ClientFeedTab() {
     return () => window.removeEventListener("keydown", handler);
   }, [viewerPhoto]);
 
-  async function loadFeed(days: number, showLoading = true) {
+  async function loadFeed(days: number, showLoading = true): Promise<FeedItem[]> {
     if (showLoading) setLoadingMore(true);
+    let result: FeedItem[] = [];
     try {
       const feed = await apiGet<{ items: FeedItem[] }>(`/api/public/feed?limit=50&days=${days}`);
+      result = feed.items;
       setItems(feed.items);
       setDaysShown(days);
     } catch (err: any) {
@@ -133,10 +135,13 @@ export default function ClientFeedTab() {
     }
     setLoading(false);
     setLoadingMore(false);
+    return result;
   }
 
   useEffect(() => {
-    void loadFeed(3, false);
+    loadFeed(3, false).then((items) => {
+      if (items.length === 0) void loadFeed(7, false);
+    });
   }, []);
 
   function openViewer(photos: FeedPhoto[], idx: number) {

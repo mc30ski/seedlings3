@@ -17,7 +17,8 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
+import { CalendarRange, ChevronDown, ChevronUp, CreditCard, Download, Filter, List, Maximize2, RefreshCw, User, X } from "lucide-react";
+import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
@@ -139,8 +140,22 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
+          css={{
+            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
+            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+          }}
+          title={compact ? "Expand all cards" : "Collapse all cards"}
+        >
+          <Maximize2 size={14} />
         </Button>
         <SearchWithClear
           value={q}
@@ -172,15 +187,6 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
-        >
-          {compact ? <Maximize2 size={14} /> : <List size={14} />}
-        </Button>
       </HStack>
       <HStack mb={2} gap={2} align="center">
         <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
@@ -507,8 +513,40 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", defaultDateFrom);
-  const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", todayStr);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", presetDates.to);
+  const [quickDate, setQuickDate] = useState<string[]>([]);
+
+  function applyPreset(preset: DatePreset) {
+    setDatePreset(preset);
+    if (preset) {
+      const d = computeDatesFromPreset(preset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+      void load({ from: d.from, to: d.to });
+    }
+  }
+
+  // Recompute dates from preset on each mount (so "last month" stays current)
+  useEffect(() => {
+    if (datePreset) {
+      const d = computeDatesFromPreset(datePreset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+    }
+  }, []);
+
+  const quickDateItems = useMemo(() => [
+    { label: "This week", value: "thisWeek" },
+    { label: "This month", value: "thisMonth" },
+    { label: "Last week", value: "lastWeek" },
+    { label: "Last month", value: "lastMonth" },
+    { label: "All time", value: "all" },
+  ], []);
+  const quickDateCollection = useMemo(() => createListCollection({ items: quickDateItems }), [quickDateItems]);
   const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
   const [personFilter, setPersonFilter] = usePersistedState<string[]>("pay_a_persons", []);
   const [personDropOpen, setPersonDropOpen] = useState(false);
@@ -569,16 +607,18 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     return map;
   }, [allWorkers]);
 
-  async function load() {
+  async function load(overrides?: { from?: string; to?: string }) {
+    const from = overrides?.from ?? dateFrom;
+    const to = overrides?.to ?? dateTo;
     setLoading(true);
     try {
       const qs = new URLSearchParams();
-      if (dateFrom) qs.set("from", dateFrom);
-      if (dateTo) qs.set("to", dateTo);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
       if (methodFilter[0] && methodFilter[0] !== "ALL") qs.set("method", methodFilter[0]);
       const eqs = new URLSearchParams();
-      if (dateFrom) eqs.set("from", dateFrom);
-      if (dateTo) eqs.set("to", dateTo);
+      if (from) eqs.set("from", from);
+      if (to) eqs.set("to", to);
       const [res, charges] = await Promise.all([
         apiGet<{
           items: PaymentListItem[];
@@ -718,8 +758,22 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
+          css={{
+            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
+            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+          }}
+          title={compact ? "Expand all cards" : "Collapse all cards"}
+        >
+          <Maximize2 size={14} />
         </Button>
         <SearchWithClear
           value={q}
@@ -727,6 +781,115 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           inputId="admin-payments-search"
           placeholder="Search…"
         />
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => setFiltersOpen((v) => !v)}
+          title={filtersOpen ? "Collapse filters" : "Expand filters"}
+          css={{
+            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            borderRadius: "6px",
+          }}
+        >
+          <Filter size={14} />
+          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          px="2"
+          minW="0"
+          flexShrink={0}
+          title="Export payment data (CSV)"
+          css={{ background: "var(--chakra-colors-gray-100)" }}
+          onClick={() => {
+            const rows: string[] = [];
+            rows.push("Worker,Type,Job,Date,Amount,Expenses,Commission,Margin,Payout,Method");
+            for (const p of filteredItems) {
+              const prop = p.occurrence?.job?.property;
+              const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+              const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
+              const fee = p.platformFeeAmount ?? 0;
+              const bMargin = (p as any).businessMarginAmount ?? 0;
+              const feeableSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
+              const empSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
+              for (const sp of p.splits) {
+                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
+                const expShare = expTotal * ratio;
+                const isEmp = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
+                const feeShare = !isEmp && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
+                const marginShare = isEmp && empSplitTotal > 0 ? bMargin * (sp.amount / empSplitTotal) : 0;
+                const payout = sp.amount - expShare - feeShare - marginShare;
+                const name = (sp.user?.displayName ?? sp.user?.email ?? sp.userId).replace(/,/g, "");
+                const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
+                const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
+                const date = p.createdAt ? fmtDate(p.createdAt) : "";
+                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${expShare.toFixed(2)},${feeShare.toFixed(2)},${marginShare.toFixed(2)},${payout.toFixed(2)},${prettyStatus(p.method)}`);
+              }
+            }
+            const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `payments-${dateFrom || "all"}-to-${dateTo || "all"}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          <Download size={14} />
+        </Button>
+      </HStack>
+      {!filtersOpen && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="1">
+          {datePreset && (
+            <Badge size="sm" colorPalette="green" variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!datePreset && (dateFrom || dateTo) && (
+            <Badge size="sm" colorPalette="gray" variant="subtle">Custom dates</Badge>
+          )}
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="purple" variant="subtle">
+              {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {methodFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {methodFilterItems.find((i) => i.value === methodFilter[0])?.label}
+            </Badge>
+          )}
+          {personFilter.map((id) => (
+            <Badge key={id} size="sm" colorPalette="teal" variant="solid">
+              {personNameMap[id] || "Loading…"}
+            </Badge>
+          ))}
+          {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
+          {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0 && !q && datePreset) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setTypeFilter(["ALL"]);
+                setMethodFilter(["ALL"]);
+                setPersonFilter([]);
+                setPersonSearch("");
+                setQ("");
+                applyPreset("lastMonth");
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
+        </HStack>
+      )}
+      {filtersOpen && <>
+      <HStack mb={2} gap={2} wrap="nowrap">
         <Select.Root
           collection={typeFilterCollection}
           value={typeFilter}
@@ -856,65 +1019,52 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
             );
           })()}
         </Box>
-        <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          onClick={() => { setCompact((p) => !p); setExpandedCards(new Set()); }}
-        >
-          {compact ? <Maximize2 size={14} /> : <List size={14} />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          px="2"
-          minW="0"
-          title="Export payment data (CSV)"
-          onClick={() => {
-            const rows: string[] = [];
-            rows.push("Worker,Type,Job,Date,Amount,Expenses,Commission,Margin,Payout,Method");
-            for (const p of filteredItems) {
-              const prop = p.occurrence?.job?.property;
-              const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-              const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
-              const fee = p.platformFeeAmount ?? 0;
-              const bMargin = (p as any).businessMarginAmount ?? 0;
-              const feeableSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
-              const empSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
-              for (const sp of p.splits) {
-                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-                const expShare = expTotal * ratio;
-                const isEmp = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
-                const feeShare = !isEmp && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                const marginShare = isEmp && empSplitTotal > 0 ? bMargin * (sp.amount / empSplitTotal) : 0;
-                const payout = sp.amount - expShare - feeShare - marginShare;
-                const name = (sp.user?.displayName ?? sp.user?.email ?? sp.userId).replace(/,/g, "");
-                const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
-                const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
-                const date = p.createdAt ? fmtDate(p.createdAt) : "";
-                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${expShare.toFixed(2)},${feeShare.toFixed(2)},${marginShare.toFixed(2)},${payout.toFixed(2)},${prettyStatus(p.method)}`);
-              }
-            }
-            const blob = new Blob([rows.join("\n")], { type: "text/csv" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `payments-${dateFrom || "all"}-to-${dateTo || "all"}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          <Download size={14} />
-        </Button>
       </HStack>
       <HStack mb={2} gap={2} align="center">
-        <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
+        <DateInput value={dateFrom} onChange={(val) => { setDateFrom(val); setDatePreset(null); if (dateTo && val && val > dateTo) setDateTo(val); }} />
         <Text fontSize="sm">–</Text>
-        <DateInput value={dateTo} onChange={(val) => setDateTo(val)} />
+        <DateInput value={dateTo} onChange={(val) => { setDateTo(val); setDatePreset(null); if (dateFrom && val && val < dateFrom) setDateFrom(val); }} />
+        <Select.Root
+          collection={quickDateCollection}
+          value={quickDate}
+          onValueChange={(e) => {
+            setQuickDate(e.value);
+            const val = e.value[0] as DatePreset;
+            if (!val) return;
+            applyPreset(val);
+            requestAnimationFrame(() => setQuickDate([]));
+          }}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <CalendarRange size={14} />
+              <Select.Indicator display="none" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {quickDateItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
       </HStack>
-      {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter.length > 0) && (
+      {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter.length > 0 || datePreset || dateFrom || dateTo) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {datePreset && (
+            <Badge size="sm" colorPalette="green" variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!datePreset && (dateFrom || dateTo) && (
+            <Badge size="sm" colorPalette="gray" variant="subtle">Custom dates</Badge>
+          )}
           {typeFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="subtle">
               {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
@@ -930,7 +1080,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
               {personNameMap[id] || "Loading…"}
             </Badge>
           ))}
-          {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0) && (
+          {!(typeFilter[0] === "ALL" && methodFilter[0] === "ALL" && personFilter.length === 0 && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -941,6 +1091,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 setMethodFilter(["ALL"]);
                 setPersonFilter([]);
                 setPersonSearch("");
+                applyPreset("lastMonth");
               }}
             >
               ✕ Clear
@@ -948,6 +1099,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
         </HStack>
       )}
+      </>}
 
       {(() => {
         const showJobs = typeFilter[0] === "ALL" || typeFilter[0] === "JOBS";

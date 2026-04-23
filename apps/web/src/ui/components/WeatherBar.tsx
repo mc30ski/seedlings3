@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, HStack, Text } from "@chakra-ui/react";
 import { Cloud, CloudRain, Droplets, Sun, CloudSun, Snowflake, CloudLightning, Wind } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
@@ -73,6 +73,22 @@ export default function WeatherBar() {
   const [activeDay, setActiveDay] = useState(0);
   const [userPaused] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [prevDay, setPrevDay] = useState(0);
+  const [sliding, setSliding] = useState(false);
+  const slideTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setVisible(false); } catch {}
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { visible: v } = (e as CustomEvent).detail || {};
+      setVisible(v);
+    };
+    window.addEventListener("seedlings:weatherBarToggle", handler);
+    return () => window.removeEventListener("seedlings:weatherBarToggle", handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,8 +110,12 @@ export default function WeatherBar() {
           longitude = ipLoc.lng;
         }
         const result = await apiGet<WeatherResponse>(`/api/weather?lat=${latitude}&lng=${longitude}`);
-        console.log("[WeatherBar] Got weather data:", result);
-        if (!cancelled) { setData(result); setLoading(false); }
+        if (!cancelled) {
+          setData(result);
+          setLoading(false);
+          // Broadcast current temp for title bar
+          window.dispatchEvent(new CustomEvent("seedlings:weather", { detail: { temp: result.current.temp, icon: result.current.icon } }));
+        }
       } catch (err: any) {
         console.error("[WeatherBar] Failed to load weather:", err);
         if (!cancelled) {
@@ -109,6 +129,18 @@ export default function WeatherBar() {
     return () => { cancelled = true; };
   }, []);
 
+  // Ticker: when activeDay changes, slide up then reset
+  useEffect(() => {
+    if (activeDay === prevDay) return;
+    setSliding(true);
+    clearTimeout(slideTimer.current);
+    slideTimer.current = setTimeout(() => {
+      setSliding(false);
+      setPrevDay(activeDay);
+    }, 400);
+    return () => clearTimeout(slideTimer.current);
+  }, [activeDay, prevDay]);
+
   // Auto-scroll every 4 seconds unless user paused or expanded
   useEffect(() => {
     if (!data || userPaused || expanded) return;
@@ -119,6 +151,8 @@ export default function WeatherBar() {
     }, 4000);
     return () => clearInterval(interval);
   }, [data, userPaused]);
+
+  if (!visible) return null;
 
   if (loading && !data) return (
     <Box px={2} py={1.5} bg="gray.200" borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" position="relative">
@@ -147,23 +181,32 @@ export default function WeatherBar() {
   const { current, forecast } = data;
   const weatherUrl = `https://openweathermap.org/weathermap?basemap=map&cities=false&layer=precipitation&lat=${data.lat}&lon=${data.lng}&zoom=10`;
 
-  const activeIcon = activeDay === 0 ? current.icon : (forecast[activeDay]?.icon ?? "");
-  const activeRain = activeDay === 0 ? (forecast[0]?.rainChance ?? 0) : (forecast[activeDay]?.rainChance ?? 0);
-  const theme = getTheme(activeIcon, activeRain);
+  function dayProps(i: number) {
+    const d = forecast[i];
+    const icon = i === 0 ? current.icon : (d?.icon ?? "");
+    const rain = d?.rainChance ?? 0;
+    const t = getTheme(icon, rain);
+    return {
+      icon, rain, theme: t,
+      label: d ? dayLabel(d.date, d.label) : "Today",
+      temp: `${d?.high ?? current.temp}°/${d?.low ?? current.temp}°`,
+      desc: i === 0 ? current.description : (d?.description ?? ""),
+      wind: i === 0 ? current.windSpeed : (d?.windSpeed ?? 0),
+    };
+  }
 
-  const day = forecast[activeDay];
-  const label = day ? dayLabel(day.date, day.label) : "Today";
+  const theme = dayProps(prevDay).theme;
 
-  function renderDayRow(icon: string, dayLabel_: string, temp: string, desc: string, rain: number, wind: number, rowTheme: ReturnType<typeof getTheme>) {
+  function renderDayRow(p: ReturnType<typeof dayProps>) {
     return (
-      <HStack gap={1.5} fontSize="xs" color={rowTheme.text} whiteSpace="nowrap" overflow="hidden">
-        <Text fontWeight="bold" flexShrink={0} w="65px">{dayLabel_}</Text>
-        <WeatherIcon icon={icon} size={14} />
-        <Text fontWeight="semibold" flexShrink={0}>{temp}</Text>
+      <HStack gap={1.5} fontSize="xs" color={p.theme.text} whiteSpace="nowrap" overflow="hidden">
+        <Text fontWeight="bold" flexShrink={0} w="65px">{p.label}</Text>
+        <WeatherIcon icon={p.icon} size={14} />
+        <Text fontWeight="semibold" flexShrink={0}>{p.temp}</Text>
         <Text flexShrink={0}>·</Text>
-        <Text overflow="hidden" textOverflow="ellipsis">{capitalize(desc)}</Text>
-        {rain > 0 && <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={rain >= 50 ? rowTheme.text : rowTheme.sub}><Droplets size={11} /><Text fontWeight={rain >= 50 ? "bold" : "normal"}>{rain}%</Text></HStack></>}
-        {wind > 0 && <><Text flexShrink={0}>·</Text><Text color={rowTheme.sub} flexShrink={0}>{wind}mph</Text></>}
+        <Text overflow="hidden" textOverflow="ellipsis">{capitalize(p.desc)}</Text>
+        {p.rain > 0 && <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={p.rain >= 50 ? p.theme.text : p.theme.sub}><Droplets size={11} /><Text fontWeight={p.rain >= 50 ? "bold" : "normal"}>{p.rain}%</Text></HStack></>}
+        {p.wind > 0 && <><Text flexShrink={0}>·</Text><Text color={p.theme.sub} flexShrink={0}>{p.wind}mph</Text></>}
       </HStack>
     );
   }
@@ -171,17 +214,11 @@ export default function WeatherBar() {
   if (expanded) {
     return (
       <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => setExpanded(false)}>
-        {forecast.map((d, i) => {
-          const dIcon = i === 0 ? current.icon : d.icon;
-          const dRain = d.rainChance;
-          const dTheme = getTheme(dIcon, dRain);
-          const dLabel = dayLabel(d.date, d.label);
-          const dTemp = i === 0 ? `${current.temp}°F` : `${d.high}°/${d.low}°`;
-          const dDesc = i === 0 ? current.description : d.description;
-          const dWind = i === 0 ? current.windSpeed : d.windSpeed;
+        {forecast.map((_, i) => {
+          const p = dayProps(i);
           return (
-            <Box key={d.date} px={2} py={1.5} bg={dTheme.bg} borderBottom={i < forecast.length - 1 ? "1px solid" : undefined} borderColor={dTheme.border}>
-              {renderDayRow(dIcon, dLabel, dTemp, dDesc, dRain, dWind, dTheme)}
+            <Box key={i} px={2} py={1.5} bg={p.theme.bg} borderBottom={i < forecast.length - 1 ? "1px solid" : undefined} borderColor={p.theme.border}>
+              {renderDayRow(p)}
             </Box>
           );
         })}
@@ -194,14 +231,29 @@ export default function WeatherBar() {
     );
   }
 
+  const ROW_H = 20;
+  const prev = dayProps(prevDay);
+  const next = dayProps(activeDay);
+
   return (
     <Box
-      px={2} py={1.5} borderRadius="md" mb={1} cursor="pointer"
+      borderRadius="md" mb={1} cursor="pointer"
       bg={theme.bg} borderWidth="1px" borderColor={theme.border}
       transition="background 0.3s ease, border-color 0.3s ease"
+      overflow="hidden"
+      style={{ height: ROW_H + 12 }}
       onClick={() => setExpanded(true)}
     >
-      {renderDayRow(activeIcon, label, activeDay === 0 ? `${current.temp}°F` : day ? `${day.high}°/${day.low}°` : "", activeDay === 0 ? current.description : (day?.description ?? ""), activeDay === 0 ? (forecast[0]?.rainChance ?? 0) : (day?.rainChance ?? 0), activeDay === 0 ? current.windSpeed : (day?.windSpeed ?? 0), theme)}
+      <Box
+        px={2} py={1.5}
+        style={{
+          transform: sliding ? `translateY(-${ROW_H + 12}px)` : "translateY(0)",
+          transition: sliding ? "transform 0.4s ease-in-out" : "none",
+        }}
+      >
+        {renderDayRow(prev)}
+        <Box mt={1.5}>{renderDayRow(next)}</Box>
+      </Box>
     </Box>
   );
 }

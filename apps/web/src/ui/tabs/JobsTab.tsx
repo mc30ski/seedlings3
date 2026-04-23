@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -57,7 +57,6 @@ import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
-import WeatherBar from "@/src/ui/components/WeatherBar";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -110,9 +109,11 @@ type JobsTabProps = TabPropsType & {
   headerSlot?: React.ReactNode;
   /** Extra UI rendered below the search bar row (e.g. selected worker badges) */
   headerBelowSlot?: React.ReactNode;
+  /** Called when the "Clear" badge is clicked, to reset external filters (e.g. View as) */
+  onClearAll?: () => void;
 };
 
-export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot }: JobsTabProps) {
+export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const { isOffline } = useOffline();
 
@@ -131,6 +132,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [compact, setCompact] = usePersistedState(`${pfx}_compact`, true);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
 
   const kindItems = useMemo(
@@ -176,6 +178,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [loading, setLoading] = useState(false);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [showInfoDialog, setShowInfoDialog] = useState(() => {
+    if (typeof window === "undefined") return false;
     try {
       return !localStorage.getItem("seedlings_jobs_infoDismissed");
     } catch { return false; }
@@ -903,11 +906,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowCanceled(false);
     setShowArchived(false);
     setTypeFilter(["ANNOUNCEMENT"]);
-    const d = computeDatesFromPreset("now");
-    setDatePreset("now");
-    setDateFrom(d.from);
-    setDateTo(d.to);
-    void load(true, { from: d.from, to: d.to });
+    const todayStr = localDate(new Date());
+    setDatePreset(null);
+    setDateFrom(todayStr);
+    setDateTo(todayStr);
+    void load(true, { from: todayStr, to: todayStr });
   }, []);
 
   useEffect(() => {
@@ -1335,20 +1338,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
-      <WeatherBar />
-      {headerSlot && (
-        <HStack mb={{ base: 2, md: 0 }} gap={2} wrap="nowrap" display={{ base: "flex", md: "none" }}>
-          {headerSlot}
-        </HStack>
-      )}
       <HStack mb={2} gap={2} wrap="nowrap">
-        {headerSlot && (
-          <HStack gap={2} wrap="nowrap" display={{ base: "none", md: "flex" }} flexShrink={0}>
-            {headerSlot}
-          </HStack>
-        )}
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
+          css={{
+            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
+            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+          }}
+          title={compact ? "Expand all cards" : "Collapse all cards"}
+        >
+          <Maximize2 size={14} />
         </Button>
         <SearchWithClear
           value={q}
@@ -1356,6 +1362,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           inputId="jobs-search"
           placeholder="Search…"
         />
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => setFiltersOpen((v) => !v)}
+          title={filtersOpen ? "Collapse filters" : "Expand filters"}
+          css={{
+            background: filtersOpen ? "var(--chakra-colors-blue-100)" : "var(--chakra-colors-gray-100)",
+            border: filtersOpen ? "1px solid var(--chakra-colors-blue-300)" : "1px solid var(--chakra-colors-gray-300)",
+            borderRadius: "6px",
+          }}
+        >
+          <Filter size={14} />
+          {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </Button>
         <Box position="relative" flexShrink={0} ref={createMenuRef}>
           <Button
             size="sm"
@@ -1453,7 +1475,89 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </Box>
       </HStack>
-      {headerBelowSlot}
+      {!filtersOpen && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
+          {datePreset && (
+            <Badge size="sm" colorPalette="green" variant="subtle">
+              {PRESET_LABELS[datePreset] ?? datePreset}
+            </Badge>
+          )}
+          {!datePreset && (dateFrom || dateTo) && (
+            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
+              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
+            </Badge>
+          )}
+          {headerBelowSlot}
+          {overdueActive && (
+            <Badge size="sm" colorPalette="red" variant="subtle">Overdue</Badge>
+          )}
+          {kind[0] !== "ALL" && (
+            <Badge size="sm" colorPalette="blue" variant="subtle">
+              {kindItems.find((i) => i.value === kind[0])?.label}
+            </Badge>
+          )}
+          {statusFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette={statusFilter[0] === "UNCLAIMED" ? "yellow" : "purple"} variant="subtle">
+              {statusItems.find((i) => i.value === statusFilter[0])?.label}
+            </Badge>
+          )}
+          {typeFilter[0] !== "ALL" && (
+            <Badge size="sm" colorPalette={
+              typeFilter[0] === "ANNOUNCEMENT" ? "purple"
+              : typeFilter[0] === "FOLLOWUP" ? "red"
+              : typeFilter[0] === "EVENT" ? "yellow"
+              : typeFilter[0] === "REMINDER" ? "purple"
+              : typeFilter[0] === "TASK" ? "blue"
+              : "orange"
+            } variant="subtle">
+              {typeItems.find((i) => i.value === typeFilter[0])?.label}
+            </Badge>
+          )}
+          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
+          {likedOnly && <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>}
+          {showCanceled && <Badge size="sm" colorPalette="red" variant="subtle">+ Canceled</Badge>}
+          {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
+          {highlightOccId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 occurrence</Badge>}
+          {!highlightOccId && filterJobId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to job</Badge>}
+          {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
+            <Badge
+              size="sm"
+              colorPalette="red"
+              variant="outline"
+              cursor="pointer"
+              onClick={() => {
+                setKind(["ALL"]);
+                setStatusFilter(["ALL"]);
+                setTypeFilter(["ALL"]);
+                setOverdueActive(false);
+                setVipOnly(false);
+                setLikedOnly(false);
+                setShowCanceled(false);
+                setShowArchived(false);
+                setQ("");
+                setHighlightOccId(null);
+                setFilterJobId(null);
+                const defaultPreset = forAdmin ? "thisWeek" : "now";
+                const d = computeDatesFromPreset(defaultPreset);
+                setDatePreset(defaultPreset);
+                setDateFrom(d.from);
+                setDateTo(d.to);
+                void load(true, { from: d.from, to: d.to });
+                onClearAll?.();
+              }}
+            >
+              ✕ Clear
+            </Badge>
+          )}
+        </HStack>
+      )}
+      {filtersOpen && <>
+      {headerSlot && (
+        <HStack mb={2} gap={2} wrap="nowrap">
+          {headerSlot}
+        </HStack>
+      )}
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -1593,19 +1697,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           </Button>
         )}
         <Box flex="1" />
-        <Button
-          size="sm"
-          variant={!compact ? "solid" : "ghost"}
-          px="2"
-          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
-          css={!compact ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-          } : undefined}
-          title={compact ? "Expand all cards" : "Collapse all cards"}
-        >
-          {compact ? <Maximize2 size={14} /> : <Maximize2 size={14} />}
-        </Button>
         {isWorkerView && (
           <Button
             size="sm"
@@ -1711,7 +1802,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           onClick={() => {
             if (overdueActive) {
               setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisMonth" : "now"));
+              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
             } else {
               presetBeforeOverdueRef.current = datePreset;
               const yesterday = new Date();
@@ -1747,8 +1838,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </Button>
       </HStack>
-
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {datePreset && (
             <Badge size="sm" colorPalette="green" variant="subtle">
@@ -1756,10 +1846,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Badge>
           )}
           {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette="gray" variant="subtle">
-              Custom dates
+            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
+              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
             </Badge>
           )}
+          {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">
               Overdue
@@ -1817,7 +1908,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               Filtered to job
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q) && (
+          {!(kind[0] === "ALL" && statusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !likedOnly && !showCanceled && !showArchived && !highlightOccId && !filterJobId && !q && !viewAsUserIds?.length && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -1835,12 +1926,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setQ("");
                 setHighlightOccId(null);
                 setFilterJobId(null);
-                const defaultPreset = forAdmin ? "thisMonth" : "now";
+                const defaultPreset = forAdmin ? "thisWeek" : "now";
                 const d = computeDatesFromPreset(defaultPreset);
                 setDatePreset(defaultPreset);
                 setDateFrom(d.from);
                 setDateTo(d.to);
                 void load(true, { from: d.from, to: d.to });
+                onClearAll?.();
               }}
             >
               ✕ Clear
@@ -1848,6 +1940,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
+      </>}
 
       {loading && items.length === 0 && <LoadingCenter />}
 
@@ -1870,7 +1963,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Box>
           )}
           {dayGroups.length === 0 && (
-            <Box p="8" color="fg.muted">
+            <Box p="4" color="fg.muted" fontSize="sm">
               {isOffline
                 ? "You're offline. No cached data available for this date range. Adjust your dates or reconnect to load more."
                 : highlightOccId

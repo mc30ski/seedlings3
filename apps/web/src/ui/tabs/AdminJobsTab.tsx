@@ -78,10 +78,10 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap" flexShrink={0}>
         View as:
       </Text>
-      <Box ref={dropRef} position="relative" flexShrink={0}>
+      <Box ref={dropRef} position="relative" flex="1">
         <Input
           size="sm"
-          w="130px"
+          w="full"
           placeholder={selectedWorkers.length > 0
             ? selectedWorkers.map((id) => workerNameMap[id] || "Loading…").join(", ")
             : "All Workers"
@@ -111,7 +111,9 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               if (el && dropRef.current) {
                 const rect = dropRef.current.getBoundingClientRect();
                 el.style.top = `${rect.bottom + 4}px`;
-                el.style.left = `${rect.left}px`;
+                // Clamp so dropdown doesn't go off-screen left
+                const left = Math.max(8, Math.min(rect.left, window.innerWidth - 248));
+                el.style.left = `${left}px`;
               }
             }}
           >
@@ -152,28 +154,17 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           </Box>
         )}
       </Box>
-      {selectedWorkers.length > 0 && (
-        <Button
-          variant="outline"
-          size="xs"
-          colorPalette="red"
-          flexShrink={0}
-          onClick={() => { setSelectedWorkers([]); setSearchText(""); }}
-        >
-          Clear
-        </Button>
-      )}
     </>
   );
 
   const headerBadges = selectedWorkers.length > 0 ? (
-    <HStack gap={1} wrap="wrap" mb={1} px={1}>
+    <>
       {selectedWorkers.map((id) => (
         <Badge key={id} size="sm" colorPalette="blue" variant="solid">
           {workerNameMap[id] || "Loading…"}
         </Badge>
       ))}
-    </HStack>
+    </>
   ) : null;
 
   return (
@@ -184,6 +175,7 @@ export default function AdminJobsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       viewAsWorkerType={viewAsWorkerType}
       headerSlot={header}
       headerBelowSlot={headerBadges}
+      onClearAll={() => { setSelectedWorkers([]); setSearchText(""); }}
     />
   );
 }

@@ -25,17 +25,9 @@ export function usePersistedState<T>(
   const fullKey = PREFIX + key;
 
   const [value, setValueRaw] = useState<T>(() => {
-    const fallback = typeof defaultValue === "function"
+    return typeof defaultValue === "function"
       ? (defaultValue as () => T)()
       : defaultValue;
-    if (typeof window === "undefined") return fallback;
-    try {
-      const stored = localStorage.getItem(fullKey);
-      if (stored === null) return fallback;
-      return JSON.parse(stored) as T;
-    } catch {
-      return fallback;
-    }
   });
 
   // On client mount, re-read from localStorage in case SSR returned default

@@ -19,6 +19,7 @@ import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
+import WeatherBar from "@/src/ui/components/WeatherBar";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
 import ClientsTab from "@/src/ui/tabs/ClientsTab";
@@ -934,6 +935,19 @@ export default function HomePage() {
   }, [topTab, adminInnerTab]);
 
   const BRAND_ICON_H = 34; // px
+  const [currentTemp, setCurrentTemp] = useState<number | null>(null);
+  const [weatherBarVisible, setWeatherBarVisible] = useState(true);
+  useEffect(() => {
+    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setWeatherBarVisible(false); } catch {}
+  }, []);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { temp } = (e as CustomEvent).detail || {};
+      if (typeof temp === "number") setCurrentTemp(temp);
+    };
+    window.addEventListener("seedlings:weather", handler);
+    return () => window.removeEventListener("seedlings:weather", handler);
+  }, []);
 
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -1019,13 +1033,33 @@ export default function HomePage() {
 
   // Announcement count badge (Now — today + next 2 days, visible to all)
   const [announcementCount, setAnnouncementCount] = useState(0);
+  const [alertDropdownOpen, setAlertDropdownOpen] = useState(false);
+  useEffect(() => {
+    if (!alertDropdownOpen) return;
+    const close = (e: MouseEvent) => {
+      // Don't close if clicking inside the dropdown
+      const dropdown = document.querySelector("[data-alert-dropdown]");
+      if (dropdown && dropdown.contains(e.target as Node)) return;
+      setAlertDropdownOpen(false);
+    };
+    const timer = setTimeout(() => document.addEventListener("click", close), 100);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [alertDropdownOpen]);
+  const [alertsReady, setAlertsReady] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setAlertsReady(true), 2500);
+    return () => clearTimeout(timer);
+  }, []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); return; }
+    // Check if user already dismissed announcements today
     try {
-      const today = new Date();
-      const nowEnd = new Date(today);
-      nowEnd.setDate(nowEnd.getDate() + 2);
-      const list = await apiGet<any[]>(`/api/occurrences?from=${bizDateKey(today)}&to=${bizDateKey(nowEnd)}`);
+      const dismissedDate = localStorage.getItem("seedlings_announcements_dismissed");
+      if (dismissedDate === bizDateKey(new Date())) { setAnnouncementCount(0); return; }
+    } catch {}
+    try {
+      const todayStr = bizDateKey(new Date());
+      const list = await apiGet<any[]>(`/api/occurrences?from=${todayStr}&to=${todayStr}`);
       const count = (Array.isArray(list) ? list : []).filter(
         (o) => o.workflow === "ANNOUNCEMENT" && o.status === "SCHEDULED"
       ).length;
@@ -1043,17 +1077,16 @@ export default function HomePage() {
   }, [loadAnnouncementCount]);
 
   const goToAnnouncements = useCallback(() => {
-    setTopTab(isAdmin ? "admin" : "worker");
-    if (isAdmin) {
-      setAdminInnerTab("admin-jobs");
-    } else {
-      setWorkerInnerTab("jobs" as any);
-    }
+    // Mark announcements as seen for today
+    try { localStorage.setItem("seedlings_announcements_dismissed", bizDateKey(new Date())); } catch {}
+    setAnnouncementCount(0);
+    setTopTab("worker");
+    setWorkerInnerTab("jobs" as any);
     try { localStorage.setItem("seedlings_adminJobs_showAnnouncements", "1"); } catch {}
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showAnnouncements"));
     }, 150);
-  }, [isAdmin]);
+  }, []);
 
   const goToUnclaimed = useCallback(() => {
     setTopTab("admin");
@@ -1364,13 +1397,14 @@ export default function HomePage() {
         borderRadius="md"
         mb={1}
       >
-        {/* GRID header: left brand, right controls */}
+        {/* GRID header: left brand, center temp, right controls */}
         <Box
           display="grid"
-          gridTemplateColumns="1fr auto"
+          gridTemplateColumns="1fr 1fr"
           alignItems="center"
           columnGap={3}
           minH={`${BRAND_ICON_H}px`}
+          position="relative"
         >
           {/* Left: brand + alert badges */}
           <Box
@@ -1444,6 +1478,33 @@ export default function HomePage() {
             </HStack>
           </Box>
 
+          {/* Center: current temperature — click to toggle weather bar */}
+          <Box textAlign="center" justifySelf="center" position="absolute" left="50%" transform="translateX(-50%)">
+            {currentTemp != null && (
+              <Text
+                fontSize="sm"
+                fontWeight="semibold"
+                color={weatherBarVisible ? "fg.default" : "fg.muted"}
+                lineHeight="1"
+                whiteSpace="nowrap"
+                cursor="pointer"
+                px="2"
+                py="1"
+                borderRadius="md"
+                bg={weatherBarVisible ? "#c4d1b3" : "transparent"}
+                _hover={{ color: "blue.500" }}
+                onClick={() => {
+                  const next = !weatherBarVisible;
+                  setWeatherBarVisible(next);
+                  try { localStorage.setItem("seedlings_hideWeatherBar", next ? "0" : "1"); } catch {}
+                  window.dispatchEvent(new CustomEvent("seedlings:weatherBarToggle", { detail: { visible: next } }));
+                }}
+              >
+                {currentTemp}°F
+              </Text>
+            )}
+          </Box>
+
           {/* Right: badges + worker type + Clerk */}
           <div
             ref={headerBtnRef as any}
@@ -1456,121 +1517,98 @@ export default function HomePage() {
               minHeight: `${BRAND_ICON_H}px`,
             }}
           >
-            {isAdmin && pending > 0 && (
+            {/* Combined alert badge */}
+            {!alertsReady && (
               <Box
-                as="button"
-                aria-label="Pending approvals"
-                title={`${pending} pending approval${pending !== 1 ? "s" : ""}`}
-                onClick={goToApprovals}
-                width="22px"
-                height="22px"
-                minW="22px"
+                width="24px"
+                height="24px"
+                minW="24px"
                 borderRadius="9999px"
-                bg="orange.400"
-                color="white"
-                fontSize="12px"
-                fontWeight="bold"
+                bg="#EF4444"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"
-                _hover={{ bg: "orange.500" }}
-                _active={{ transform: "translateY(1px)" }}
+                style={{ animation: "alert-pulse 1.2s ease-in-out infinite" }}
               >
-                {pending}
+                <style>{`@keyframes alert-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.9); } }`}</style>
+                <Box w="6px" h="6px" borderRadius="full" bg="white" />
               </Box>
             )}
-            {isAdmin && unclaimedCount > 0 && (
-              <Box
-                as="button"
-                aria-label="Unclaimed jobs"
-                title={`${unclaimedCount} unclaimed job${unclaimedCount !== 1 ? "s" : ""} (last 60 days + next 3 days)`}
-                onClick={goToUnclaimed}
-                width="22px"
-                height="22px"
-                minW="22px"
-                borderRadius="9999px"
-                bg="yellow.400"
-                color="yellow.900"
-                fontSize="12px"
-                fontWeight="bold"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                _hover={{ bg: "yellow.500" }}
-                _active={{ transform: "translateY(1px)" }}
-              >
-                {unclaimedCount}
-              </Box>
-            )}
-            {isAdmin && overdueCount > 0 && (
-              <Box
-                as="button"
-                aria-label="Overdue jobs"
-                title={`${overdueCount} overdue job${overdueCount !== 1 ? "s" : ""} (last 60 days)`}
-                onClick={goToOverdue}
-                width="22px"
-                height="22px"
-                minW="22px"
-                borderRadius="9999px"
-                bg="red.500"
-                color="white"
-                fontSize="12px"
-                fontWeight="bold"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                _hover={{ bg: "red.600" }}
-                _active={{ transform: "translateY(1px)" }}
-              >
-                {overdueCount}
-              </Box>
-            )}
-            {planningCount > 0 && (
-              <Box
-                as="button"
-                aria-label="Planning items"
-                title={`${planningCount} planning item${planningCount !== 1 ? "s" : ""}`}
-                onClick={goToPlanning}
-                width="22px"
-                height="22px"
-                minW="22px"
-                borderRadius="9999px"
-                bg="cyan.500"
-                color="white"
-                fontSize="12px"
-                fontWeight="bold"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                _hover={{ bg: "cyan.600" }}
-                _active={{ transform: "translateY(1px)" }}
-              >
-                {planningCount}
-              </Box>
-            )}
-            {announcementCount > 0 && (
-              <Box
-                as="button"
-                aria-label="Announcements"
-                title={`${announcementCount} announcement${announcementCount !== 1 ? "s" : ""} (now)`}
-                onClick={goToAnnouncements}
-                width="22px"
-                height="22px"
-                minW="22px"
-                borderRadius="9999px"
-                bg="#6D28D9"
-                color="white"
-                fontSize="12px"
-                fontWeight="bold"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                _hover={{ bg: "#5B21B6" }}
-                _active={{ transform: "translateY(1px)" }}
-              >
-                {announcementCount}
-              </Box>
-            )}
+            {alertsReady && (() => {
+              const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
+              if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
+              if (isAdmin && pending > 0) alerts.push({ label: "Pending Approvals", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
+              if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
+              if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
+              if (alerts.length === 0) return null;
+              const total = alerts.reduce((s, a) => s + a.count, 0);
+              const topAlert = alerts[0]; // highest priority for badge color
+              return (
+                <Box position="relative">
+                  <Box
+                    as="button"
+                    data-alert-badge
+                    aria-label={`${total} alert${total !== 1 ? "s" : ""}`}
+                    onClick={() => setAlertDropdownOpen((p: boolean) => !p)}
+                    width="24px"
+                    height="24px"
+                    minW="24px"
+                    borderRadius="9999px"
+                    style={{ background: "#EF4444", color: "#fff" }}
+                    fontSize="12px"
+                    fontWeight="bold"
+                    display="flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    _hover={{ opacity: 0.9 }}
+                    _active={{ transform: "translateY(1px)" }}
+                  >
+                    {total}
+                  </Box>
+                  {alertDropdownOpen && (
+                    <div data-alert-dropdown style={{
+                      position: "absolute",
+                      top: "100%",
+                      right: 0,
+                      marginTop: "6px",
+                      zIndex: 10001,
+                      background: "white",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "8px",
+                      boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
+                      minWidth: "200px",
+                      overflow: "hidden",
+                      lineHeight: "normal",
+                    }}>
+                      {alerts.map((a) => (
+                        <div
+                          key={a.label}
+                          role="button"
+                          tabIndex={0}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            width: "100%",
+                            padding: "10px 12px",
+                            fontSize: "14px",
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                          onClick={() => { setAlertDropdownOpen(false); a.onClick(); }}
+                        >
+                          <span style={{ width: "22px", height: "22px", minWidth: "22px", borderRadius: "9999px", fontSize: "12px", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: a.dotColor, color: a.dotColor === "#FACC15" ? "#713F12" : "#fff" }}>
+                            {a.count}
+                          </span>
+                          <span style={{ flex: 1 }}>{a.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Box>
+              );
+            })()}
             {me && hasAnyRole && (
               <Badge
                 size="sm"
@@ -1632,6 +1670,7 @@ export default function HomePage() {
           </div>
         </Box>
       </Box>
+      <WeatherBar />
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {authLoaded && (!isSignedIn || me) && (

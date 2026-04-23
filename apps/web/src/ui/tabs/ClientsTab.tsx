@@ -294,7 +294,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
         </Button>
         <SearchWithClear
@@ -652,6 +652,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                             .map((ct: any) => {
                               return forAdmin || ct.status === "ACTIVE" ? (
                                 <VStack
+                                  key={ct.id}
                                   align="start"
                                   w="100%"
                                   borderWidth="1px"
@@ -869,6 +870,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
                             return forAdmin || p.status === "ACTIVE" ? (
                               <VStack
+                                key={p.id}
                                 opacity={p.status === "ACTIVE" ? 1.0 : 0.5}
                                 align="start"
                                 w="100%"

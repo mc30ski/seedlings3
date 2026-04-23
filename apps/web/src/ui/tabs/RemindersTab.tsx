@@ -240,7 +240,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           placeholder="Search planning…"
           inputId="planning-search"
         />
-        {hasReminders && (
+        {hasReminders && !forAdmin && (
           <Button
             size="sm"
             variant="ghost"
@@ -283,7 +283,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           <Text fontSize="sm" color="fg.muted" mt={1}>
             {hasDismissed ? `Nothing to plan — ${dismissed.size} dismissed today.` : "Nothing to plan right now."}
           </Text>
-          {hasDismissed && (
+          {hasDismissed && !forAdmin && (
             <Button size="sm" variant="ghost" mt={2} onClick={undismissAll}>
               Show dismissed
             </Button>
@@ -358,7 +358,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => {
+          onDismiss={forAdmin ? undefined : (occId) => {
             void apiPost(`/api/occurrences/${occId}/reminder/clear`);
             dismissInSection("followups", occId);
           }}
@@ -389,8 +389,8 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => dismissInSection("overdue", occId)}
-          onConfirm={confirmClient}
+          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("overdue", occId)}
+          onConfirm={forAdmin ? undefined : confirmClient}
         />
       )}
 
@@ -413,8 +413,8 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => dismissInSection("today", occId)}
-          onConfirm={confirmClient}
+          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("today", occId)}
+          onConfirm={forAdmin ? undefined : confirmClient}
         />
       )}
 
@@ -437,8 +437,8 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => dismissInSection("tomorrow", occId)}
-          onConfirm={confirmClient}
+          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("tomorrow", occId)}
+          onConfirm={forAdmin ? undefined : confirmClient}
         />
       )}
 
@@ -461,7 +461,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => dismissInSection("pending", occId)}
+          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("pending", occId)}
         />
       )}
 
@@ -479,11 +479,11 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
           expandedCards={expandedCards}
           toggleCard={toggleCard}
           me={me}
-          onDismiss={(occId) => dismissInSection("estimates", occId)}
+          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("estimates", occId)}
         />
       )}
 
-      {hasDismissed && hasReminders && (
+      {hasDismissed && hasReminders && !forAdmin && (
         <Box textAlign="center" py={3}>
           <Button size="sm" variant="ghost" colorPalette="gray" onClick={undismissAll}>
             Show {dismissed.size} dismissed
@@ -580,14 +580,16 @@ function Section({
                       Confirm Client
                     </Button>
                   )}
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    colorPalette="gray"
-                    onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
-                  >
-                    {dismissLabel}
-                  </Button>
+                  {onDismiss && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      colorPalette="gray"
+                      onClick={(e) => { e.stopPropagation(); onDismiss(occ.id); }}
+                    >
+                      {dismissLabel}
+                    </Button>
+                  )}
                 </HStack>
               )}
               <Card.Body py="3" px="4" pt={isExpanded ? "2" : "3"}>
@@ -693,7 +695,7 @@ function Section({
                           {badge(occ)}
                           {occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
                             (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (
-                            <Badge colorPalette="orange" variant="solid" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Unconfirmed</Badge>
+                            <Badge colorPalette="orange" variant="solid" fontSize="xs" px="2" borderRadius="full">Unconfirmed</Badge>
                           )}
                           {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
                           {occ.price != null && (
@@ -707,15 +709,17 @@ function Section({
                             </Text>
                           )}
                         </HStack>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          colorPalette="gray"
-                          flexShrink={0}
-                          onClick={(e) => { e.stopPropagation(); onDismiss?.(occ.id); }}
-                        >
-                          {dismissLabel}
-                        </Button>
+                        {onDismiss && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette="gray"
+                            flexShrink={0}
+                            onClick={(e) => { e.stopPropagation(); onDismiss(occ.id); }}
+                          >
+                            {dismissLabel}
+                          </Button>
+                        )}
                       </HStack>
                     )}
                   </VStack>

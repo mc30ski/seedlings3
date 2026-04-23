@@ -543,8 +543,22 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   return (
     <Box w="full">
       <HStack mb={2} gap={2}>
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
+          css={{
+            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
+            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+          }}
+          title={compact ? "Expand all cards" : "Collapse all cards"}
+        >
+          <Maximize2 size={14} />
         </Button>
         <SearchWithClear
           ref={inputRef}
@@ -601,19 +615,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Button
-          variant={compact ? "solid" : "ghost"}
-          size="sm"
-          px="2"
-          minW="0"
-          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
-          css={compact ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-          } : undefined}
-        >
-          {compact ? <Maximize2 size={14} /> : <List size={14} />}
-        </Button>
         {forAdmin && (
           <Button
             variant="solid"
@@ -783,7 +784,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </HStack>
                   </VStack>
                 ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                  <HStack gap={2} mt={0.5}>
+                  <HStack gap={2} mt={0.5} wrap="wrap">
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                       No charge — employees use equipment at no cost
                     </Badge>
