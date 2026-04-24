@@ -494,6 +494,26 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   );
 }
 
+function confirmDateLabel(occ: WorkerOccurrence): string {
+  if (!occ.startAt) return "soon";
+  const occDate = bizDateKey(occ.startAt);
+  const today = bizDateKey(new Date());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowKey = bizDateKey(tomorrow);
+  if (occDate === today) return "today";
+  if (occDate === tomorrowKey) return "tomorrow";
+  if (occDate < today) return `on ${fmtDate(occ.startAt)} (overdue)`;
+  return `on ${fmtDate(occ.startAt)}`;
+}
+
+function confirmMessage(occ: WorkerOccurrence): string {
+  const name = contactName(occ);
+  const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+  const when = confirmDateLabel(occ);
+  return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service ${when} at ${address}. Please let us know if anything has changed. Thank you!`;
+}
+
 function getContactInfo(occ: WorkerOccurrence): { phone?: string; email?: string } | null {
   // Check the occurrence's own property contact, then fall back to linked occurrence's contact
   const poc = occ.job?.property?.pointOfContact
@@ -570,16 +590,43 @@ function Section({
                     View in Jobs
                   </Button>
                   {onConfirm && occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
-                    (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (
-                    <Button
-                      size="xs"
-                      variant="solid"
-                      colorPalette="orange"
-                      onClick={(e) => { e.stopPropagation(); onConfirm(occ); }}
-                    >
-                      Confirm Client
-                    </Button>
-                  )}
+                    (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (() => {
+                    const contact = getContactInfo(occ);
+                    const msg = confirmMessage(occ);
+                    return (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="solid"
+                          colorPalette="orange"
+                          onClick={(e) => { e.stopPropagation(); onConfirm(occ); }}
+                        >
+                          Confirm Client
+                        </Button>
+                        {contact?.phone ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="green"
+                            onClick={(e) => { e.stopPropagation(); window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self"); }}
+                            title={`Text ${contact.phone}`}
+                          >
+                            <MessageCircle size={12} /> Text
+                          </Button>
+                        ) : contact?.email ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="blue"
+                            onClick={(e) => { e.stopPropagation(); window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self"); }}
+                            title={`Email ${contact.email}`}
+                          >
+                            <Mail size={12} /> Email
+                          </Button>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                   {onDismiss && (
                     <Button
                       size="xs"

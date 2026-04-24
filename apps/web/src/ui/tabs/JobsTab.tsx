@@ -636,6 +636,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
   const [busyOccId, setBusyOccId] = useState<string | null>(null);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
@@ -647,6 +648,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const timer = setTimeout(() => document.addEventListener("click", close), 50);
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [quickActionMenuOcc]);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -1554,16 +1562,62 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       </HStack>
       {!filtersOpen && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge
+              size="sm"
+              colorPalette="green"
+              variant="subtle"
+              cursor="pointer"
+              onClick={() => setQuickDateMenuOpen((v) => !v)}
+            >
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
+                : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
+                : "Now"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
-              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
-            </Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack
+                position="fixed"
+                bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => {
+                  if (el && el.parentElement) {
+                    const rect = el.parentElement.getBoundingClientRect();
+                    el.style.top = `${rect.bottom + 4}px`;
+                    el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`;
+                  }
+                }}
+              >
+                {quickDateItems.map((it) => (
+                  <Button
+                    key={it.value}
+                    size="xs"
+                    variant={datePreset === it.value ? "solid" : "ghost"}
+                    colorPalette={datePreset === it.value ? "green" : undefined}
+                    w="full"
+                    justifyContent="start"
+                    onClick={() => {
+                      setQuickDateMenuOpen(false);
+                      const val = it.value as DatePreset;
+                      if (val === "all") {
+                        setConfirmAction({
+                          title: "Load All Data",
+                          message: "This will load all occurrences for all time. This may be slow. Are you sure?",
+                          confirmLabel: "Load All",
+                          colorPalette: "orange",
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); },
+                        });
+                        return;
+                      }
+                      setDatePreset(val);
+                      setOverdueActive(false);
+                    }}
+                  >
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">Overdue</Badge>
@@ -1620,6 +1674,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setDatePreset(defaultPreset);
                 setDateFrom(d.from);
                 setDateTo(d.to);
+                setFiltersOpen(false);
                 void load(true, { from: d.from, to: d.to });
                 onClearAll?.();
               }}
@@ -1917,16 +1972,62 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       </HStack>
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge
+              size="sm"
+              colorPalette="green"
+              variant="subtle"
+              cursor="pointer"
+              onClick={() => setQuickDateMenuOpen((v) => !v)}
+            >
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset)
+                : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates")
+                : "Now"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
-              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
-            </Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack
+                position="fixed"
+                bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => {
+                  if (el && el.parentElement) {
+                    const rect = el.parentElement.getBoundingClientRect();
+                    el.style.top = `${rect.bottom + 4}px`;
+                    el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`;
+                  }
+                }}
+              >
+                {quickDateItems.map((it) => (
+                  <Button
+                    key={it.value}
+                    size="xs"
+                    variant={datePreset === it.value ? "solid" : "ghost"}
+                    colorPalette={datePreset === it.value ? "green" : undefined}
+                    w="full"
+                    justifyContent="start"
+                    onClick={() => {
+                      setQuickDateMenuOpen(false);
+                      const val = it.value as DatePreset;
+                      if (val === "all") {
+                        setConfirmAction({
+                          title: "Load All Data",
+                          message: "This will load all occurrences for all time. This may be slow. Are you sure?",
+                          confirmLabel: "Load All",
+                          colorPalette: "orange",
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); },
+                        });
+                        return;
+                      }
+                      setDatePreset(val);
+                      setOverdueActive(false);
+                    }}
+                  >
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {headerBelowSlot}
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="subtle">
@@ -2008,6 +2109,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setDatePreset(defaultPreset);
                 setDateFrom(d.from);
                 setDateTo(d.to);
+                setFiltersOpen(false);
                 void load(true, { from: d.from, to: d.to });
                 onClearAll?.();
               }}
@@ -4227,7 +4329,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {isWorkerView && !occ.reminder && (
+                      {(isWorkerView || forAdmin) && !occ.reminder && (
                         <Button
                           size="xs"
                           variant="outline"
@@ -4241,7 +4343,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <Bell size={12} /> Set Reminder
                         </Button>
                       )}
-                      {isWorkerView && occ.reminder && (
+                      {(isWorkerView || forAdmin) && occ.reminder && (
                         <Button
                           size="xs"
                           variant="outline"
@@ -4268,9 +4370,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
 
                 {/* Secondary footer: task/reminder reopen + reminder buttons when the regular footer doesn't show */}
-                {(isWorkerView || ((isAdmin || isSuper) && isTaskOrReminder)) && !isCardCompact && !(
+                {(isWorkerView || forAdmin || ((isAdmin || isSuper) && isTaskOrReminder)) && !isCardCompact && !(
                   !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative &&
-                  (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED")
+                  (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
                   <Card.Footer py="3" px="4" pt="0">
                     <HStack gap={2} wrap="wrap">

@@ -2,6 +2,11 @@ import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import type { ServicesExpenses } from "../types/services";
 
+async function isAdminUser(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { roles: true } });
+  return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+}
+
 export const expenses: ServicesExpenses = {
   async addExpense(currentUserId, occurrenceId, input) {
     const { cost, description } = input;
@@ -23,8 +28,8 @@ export const expenses: ServicesExpenses = {
     const isClaimer = occ.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId
     );
-    if (!isClaimer) {
-      throw new ServiceError("FORBIDDEN", "Only the claimer can add expenses.", 403);
+    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+      throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can add expenses.", 403);
     }
 
     return prisma.expense.create({
@@ -52,8 +57,8 @@ export const expenses: ServicesExpenses = {
     const isClaimer = expense.occurrence.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId
     );
-    if (!isClaimer) {
-      throw new ServiceError("FORBIDDEN", "Only the claimer can edit expenses.", 403);
+    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+      throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can edit expenses.", 403);
     }
 
     const data: any = {};
@@ -91,8 +96,8 @@ export const expenses: ServicesExpenses = {
     const isClaimer = expense.occurrence.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId
     );
-    if (!isClaimer) {
-      throw new ServiceError("FORBIDDEN", "Only the claimer can delete expenses.", 403);
+    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+      throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can delete expenses.", 403);
     }
 
     await prisma.expense.delete({ where: { id: expenseId } });

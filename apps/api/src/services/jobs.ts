@@ -86,15 +86,15 @@ const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
     IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PAUSED: ["IN_PROGRESS", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
-    PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
-    CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
+    PENDING_PAYMENT: ["IN_PROGRESS", "SCHEDULED", "CLOSED", "CANCELED"],
+    CLOSED: ["SCHEDULED", "PENDING_PAYMENT", "ARCHIVED"],
   },
   ONE_OFF: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
     IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PAUSED: ["IN_PROGRESS", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
-    PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
-    CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
+    PENDING_PAYMENT: ["IN_PROGRESS", "SCHEDULED", "CLOSED", "CANCELED"],
+    CLOSED: ["SCHEDULED", "PENDING_PAYMENT", "ARCHIVED"],
   },
   ESTIMATE: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
@@ -1253,12 +1253,14 @@ export const jobs: ServicesJobs = {
 
   async removeOccurrenceAssignee(currentUserId, occurrenceId, targetUserId) {
     return prisma.$transaction(async (tx) => {
-      // Only the claimer (self-assigned) can remove team members
+      // Only the claimer (self-assigned) or admin can remove team members
+      const callerUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
+      const callerIsAdmin = callerUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
       });
-      if (!callerAssignee || callerAssignee.assignedById !== currentUserId) {
-        throw new ServiceError("FORBIDDEN", "Only the person who claimed this job can remove team members.", 403);
+      if (!callerIsAdmin && (!callerAssignee || callerAssignee.assignedById !== currentUserId)) {
+        throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can remove team members.", 403);
       }
       // Cannot remove yourself via this endpoint — use unclaim instead
       if (targetUserId === currentUserId) {
@@ -1422,12 +1424,14 @@ export const jobs: ServicesJobs = {
 
   async unclaimOccurrence(currentUserId, occurrenceId) {
     return prisma.$transaction(async (tx) => {
-      // Only the claimer can unclaim
+      // Only the claimer or admin can unclaim
+      const callerUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
+      const callerIsAdmin = callerUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
       const callerAssignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
       });
-      if (!callerAssignee || callerAssignee.assignedById !== currentUserId) {
-        throw new ServiceError("FORBIDDEN", "Only the person who claimed this job can unclaim it.", 403);
+      if (!callerIsAdmin && (!callerAssignee || callerAssignee.assignedById !== currentUserId)) {
+        throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can unclaim this job.", 403);
       }
       // Can only unclaim if not yet started
       const occ = await tx.jobOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
@@ -1524,21 +1528,23 @@ export const jobs: ServicesJobs = {
 
   async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string }) {
     return prisma.$transaction(async (tx) => {
+      const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
+      const isAdmin = actionUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+
       const assignee = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: currentUserId },
       });
-      if (!assignee) {
+      if (!assignee && !isAdmin) {
         throw new ServiceError("FORBIDDEN", "You are not assigned to this occurrence.", 403);
       }
 
-      // Only the claimer can start, complete, or manage jobs
-      const isClaimer = assignee.assignedById === currentUserId && assignee.role !== "observer";
-      if (!isClaimer) {
+      // Only the claimer (or admin) can start, complete, or manage jobs
+      const isClaimer = assignee?.assignedById === currentUserId && assignee?.role !== "observer";
+      if (!isClaimer && !isAdmin) {
         throw new ServiceError("NOT_CLAIMER", "Only the claimer can perform this action.", 403);
       }
 
       // Trainees cannot take actions
-      const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
       if (actionUser.workerType === "TRAINEE") {
         throw new ServiceError("TRAINEE_CANNOT_ACT", "Trainees cannot start, complete, or manage jobs. The team lead must take this action.", 403);
       }
@@ -1557,8 +1563,11 @@ export const jobs: ServicesJobs = {
         finalStatus = JobOccurrenceStatus.PROPOSAL_SUBMITTED;
       }
 
-      // Validate transition
-      if (!isValidTransition(workflow, occ.status, finalStatus)) {
+      // Validate transition — admins get expanded reversal options
+      const validTransition = isAdmin
+        ? isValidAdminTransition(workflow, occ.status, finalStatus)
+        : isValidTransition(workflow, occ.status, finalStatus);
+      if (!validTransition) {
         throw new ServiceError(
           "INVALID_TRANSITION",
           `Cannot transition from ${occ.status} to ${finalStatus} in ${workflow} workflow.`,
@@ -1620,6 +1629,25 @@ export const jobs: ServicesJobs = {
         } else {
           data.completeLat = location.lat;
           data.completeLng = location.lng;
+        }
+      }
+
+      // Reverting to SCHEDULED: reset all time tracking and delete payment
+      if (finalStatus === JobOccurrenceStatus.SCHEDULED) {
+        data.startedAt = null;
+        data.completedAt = null;
+        data.pausedAt = null;
+        data.totalPausedMs = 0;
+        data.manualDurationMinutes = null;
+        data.startLat = null;
+        data.startLng = null;
+        data.completeLat = null;
+        data.completeLng = null;
+        // Delete payment and splits if they exist
+        const existingPayment = await tx.payment.findFirst({ where: { occurrenceId } });
+        if (existingPayment) {
+          await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
+          await tx.payment.delete({ where: { id: existingPayment.id } });
         }
       }
 
