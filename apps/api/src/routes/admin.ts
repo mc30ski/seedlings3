@@ -2527,6 +2527,12 @@ Respond ONLY with valid JSON in this exact format:
         select: { jobId: true },
       });
       const hasScheduled = new Set(scheduled.map((o) => o.jobId));
+      // Check which jobs have a PENDING_PAYMENT occurrence (next will auto-create on payment)
+      const pendingPayment = await prisma.jobOccurrence.findMany({
+        where: { jobId: { in: jobIds }, status: "PENDING_PAYMENT" },
+        select: { jobId: true },
+      });
+      const hasPending = new Set(pendingPayment.map((o) => o.jobId));
       const issues: AuditIssue[] = [];
       const seen = new Set<string>();
       for (const o of closed) {
@@ -2535,11 +2541,14 @@ Respond ONLY with valid JSON in this exact format:
         if (!o.job?.frequencyDays || o.job.frequencyDays <= 0) continue;
         seen.add(o.jobId);
         const clientName = (o.job?.property as any)?.client?.displayName ?? "";
+        const isPending = hasPending.has(o.jobId);
         issues.push({
           id: o.id,
           jobId: o.jobId,
           occurrenceId: o.id,
-          description: `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
+          description: isPending
+            ? `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: awaiting payment — next occurrence will auto-create when payment is accepted (freq: ${o.job?.frequencyDays}d). Not a problem yet.`
+            : `${o.job?.property?.displayName ?? "Unknown"}${clientName ? ` (${clientName})` : ""}: completed ${o.completedAt?.toISOString().slice(0, 10) ?? "?"} but no next SCHEDULED occurrence found (freq: ${o.job?.frequencyDays}d)`,
         });
       }
       results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });

@@ -905,7 +905,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
         </HStack>
       )}
-      {filtersOpen && <>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
       <HStack mb={2} gap={2} wrap="nowrap">
         <Select.Root
           collection={typeFilterCollection}
@@ -1125,7 +1125,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
         </HStack>
       )}
-      </>}
+      </Box>}
 
       {(() => {
         const showJobs = typeFilter[0] === "ALL" || typeFilter[0] === "JOBS";

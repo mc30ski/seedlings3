@@ -182,6 +182,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const overdue = myItems.filter((occ) => {
     if (!occ.startAt) return false;
     if (overdueExclude.has(occ.status)) return false;
+    if (occ.workflow === "ANNOUNCEMENT") return false;
     return bizDateKey(occ.startAt) < today;
   }).filter(ndIn("overdue"));
 
@@ -191,12 +192,14 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const todayJobs = myItems.filter((occ) => {
     if (!activeStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
+    if (occ.workflow === "ANNOUNCEMENT") return false;
     return bizDateKey(occ.startAt) === today;
   }).filter(ndIn("today"));
 
   const tomorrowJobs = myItems.filter((occ) => {
     if (!upcomingStatuses.has(occ.status)) return false;
     if (!occ.startAt) return false;
+    if (occ.workflow === "ANNOUNCEMENT") return false;
     return bizDateKey(occ.startAt) === tomorrow;
   }).filter(ndIn("tomorrow"));
 
