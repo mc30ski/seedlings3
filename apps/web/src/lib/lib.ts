@@ -186,6 +186,7 @@ export function occurrenceStatusColor(value: string): string {
   if (t === "PENDING_PAYMENT") return "orange";
   if (t === "CLOSED") return "gray";
   if (t === "IN_PROGRESS") return "cyan";
+  if (t === "PAUSED") return "orange";
   if (t === "SCHEDULED") return "blue";
   if (t === "PROPOSAL_SUBMITTED") return "teal";
   if (t === "ACCEPTED") return "green";

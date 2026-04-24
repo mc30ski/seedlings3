@@ -13,6 +13,12 @@ export function initOfflineExecutor() {
       case "COMPLETE_JOB":
         await apiPost(`/api/occurrences/${occId}/complete`, payload);
         break;
+      case "PAUSE_JOB":
+        await apiPost(`/api/occurrences/${occId}/pause`, payload);
+        break;
+      case "RESUME_JOB":
+        await apiPost(`/api/occurrences/${occId}/resume`, payload);
+        break;
       case "ADD_PHOTO": {
         // Photos: payload has { base64, fileName, contentType }
         const { base64, fileName, contentType } = payload as { base64: string; fileName: string; contentType: string };

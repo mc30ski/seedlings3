@@ -4,6 +4,7 @@ import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
+import { ServiceError } from "../lib/errors";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -404,6 +405,58 @@ export default async function workerRoutes(app: FastifyInstance) {
       location,
       body.completedAt ? { completedAt: String(body.completedAt) } : undefined
     );
+  });
+
+  // Pause job
+  app.post("/occurrences/:id/pause", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const location = (body.lat != null && body.lng != null)
+      ? { lat: Number(body.lat), lng: Number(body.lng) }
+      : undefined;
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.PAUSED,
+      undefined,
+      location
+    );
+  });
+
+  // Resume job
+  app.post("/occurrences/:id/resume", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const location = (body.lat != null && body.lng != null)
+      ? { lat: Number(body.lat), lng: Number(body.lng) }
+      : undefined;
+    return services.jobs.updateOccurrenceStatus(
+      uid,
+      String(req.params.id),
+      JobOccurrenceStatus.IN_PROGRESS,
+      undefined,
+      location
+    );
+  });
+
+  // Manual duration override
+  app.patch("/occurrences/:id/manual-duration", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occId = String(req.params.id);
+    const body = req.body || {};
+    const minutes = body.minutes != null ? Number(body.minutes) : null;
+
+    // Verify claimer or admin
+    const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occId }, include: { assignees: true } });
+    const isClaimer = occ.assignees?.some((a: any) => a.userId === uid && a.role === "CLAIMER");
+    const user = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can edit time.", 403);
+
+    return prisma.jobOccurrence.update({
+      where: { id: occId },
+      data: { manualDurationMinutes: minutes },
+    });
   });
 
   // Estimate workflow: submit proposal

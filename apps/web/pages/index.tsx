@@ -959,6 +959,7 @@ export default function HomePage() {
   const loadPending = useCallback(async () => {
     if (!isAdmin) {
       setPending(0);
+      if (me) markAlertLoaded("pending");
       return;
     }
     try {
@@ -969,6 +970,7 @@ export default function HomePage() {
     } catch {
       setPending(0);
     }
+    markAlertLoaded("pending");
   }, [isAdmin]);
 
   useEffect(() => {
@@ -978,7 +980,7 @@ export default function HomePage() {
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
-    if (!isAdmin) { setOverdueCount(0); return; }
+    if (!isAdmin) { setOverdueCount(0); if (me) markAlertLoaded("overdue"); return; }
     try {
       const today = bizDateKey(new Date());
       const yesterday = new Date();
@@ -998,6 +1000,7 @@ export default function HomePage() {
     } catch {
       setOverdueCount(0);
     }
+    markAlertLoaded("overdue");
   }, [isAdmin]);
 
   useEffect(() => {
@@ -1011,7 +1014,7 @@ export default function HomePage() {
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
-    if (!isAdmin) { setUnclaimedCount(0); return; }
+    if (!isAdmin) { setUnclaimedCount(0); if (me) markAlertLoaded("unclaimed"); return; }
     try {
       const d = computeDatesFromPreset("overdueAndNext3");
       const qs = new URLSearchParams();
@@ -1022,6 +1025,7 @@ export default function HomePage() {
     } catch {
       setUnclaimedCount(0);
     }
+    markAlertLoaded("unclaimed");
   }, [isAdmin]);
 
   useEffect(() => {
@@ -1045,17 +1049,15 @@ export default function HomePage() {
     const timer = setTimeout(() => document.addEventListener("click", close), 100);
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
-  const [alertsReady, setAlertsReady] = useState(false);
-  useEffect(() => {
-    const timer = setTimeout(() => setAlertsReady(true), 2500);
-    return () => clearTimeout(timer);
-  }, []);
+  const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning);
+  const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
-    if (!me?.isApproved) { setAnnouncementCount(0); return; }
+    if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
     // Check if user already dismissed announcements today
     try {
       const dismissedDate = localStorage.getItem("seedlings_announcements_dismissed");
-      if (dismissedDate === bizDateKey(new Date())) { setAnnouncementCount(0); return; }
+      if (dismissedDate === bizDateKey(new Date())) { setAnnouncementCount(0); markAlertLoaded("announcements"); return; }
     } catch {}
     try {
       const todayStr = bizDateKey(new Date());
@@ -1067,6 +1069,7 @@ export default function HomePage() {
     } catch {
       setAnnouncementCount(0);
     }
+    markAlertLoaded("announcements");
   }, [me?.isApproved]);
 
   useEffect(() => {
@@ -1117,7 +1120,7 @@ export default function HomePage() {
   const [planningCount, setPlanningCount] = useState(0);
   // Single dashboard summary replaces multiple separate API calls for badge counts
   const loadDashboardSummary = useCallback(async () => {
-    if (!me?.id) { setPlanningCount(0); return; }
+    if (!me?.id) { setPlanningCount(0); if (me) markAlertLoaded("planning"); return; }
     try {
       const list = await apiGet<any[]>("/api/occurrences");
       if (!Array.isArray(list)) { setPlanningCount(0); return; }
@@ -1163,6 +1166,7 @@ export default function HomePage() {
     } catch {
       setPlanningCount(0);
     }
+    markAlertLoaded("planning");
   }, [me?.id]);
 
   useEffect(() => {
