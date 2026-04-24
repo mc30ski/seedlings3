@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -68,9 +68,26 @@ function formatDuration(minutes: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function actualMinutes(occ: { startedAt?: string | null; completedAt?: string | null }): number | null {
-  if (!occ.startedAt || !occ.completedAt) return null;
-  return (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000;
+function effectiveMinutes(occ: {
+  startedAt?: string | null;
+  completedAt?: string | null;
+  pausedAt?: string | null;
+  totalPausedMs?: number | null;
+  manualDurationMinutes?: number | null;
+  status?: string;
+}): number | null {
+  if (occ.manualDurationMinutes != null) return occ.manualDurationMinutes;
+  if (!occ.startedAt) return null;
+  const startMs = new Date(occ.startedAt).getTime();
+  const paused = occ.totalPausedMs ?? 0;
+  if (occ.status === "PAUSED" && occ.pausedAt) {
+    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000;
+  }
+  if (occ.completedAt) {
+    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000;
+  }
+  // IN_PROGRESS
+  return (Date.now() - startMs - paused) / 60000;
 }
 
 function parseJobTags(occ: any): string[] {
@@ -618,7 +635,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
+  const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
+  const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
+  const [busyOccId, setBusyOccId] = useState<string | null>(null);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
+
+  // Close quick action menu on outside click
+  useEffect(() => {
+    if (!quickActionMenuOcc) return;
+    const close = () => setQuickActionMenuOcc(null);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickActionMenuOcc]);
 
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
@@ -1007,6 +1035,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return;
     }
 
+    setBusyOccId(occurrenceId);
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Job claimed." });
@@ -1034,9 +1063,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         });
       }
     }
+    setBusyOccId(null);
   }
 
   async function unclaim(occurrenceId: string) {
+    setBusyOccId(occurrenceId);
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/unclaim`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Job unclaimed." });
@@ -1047,9 +1078,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         text: getErrorMessage("Unclaim failed.", err),
       });
     }
+    setBusyOccId(null);
   }
 
   async function completeEstimate(occurrenceId: string, comments: string) {
+    setBusyOccId(occurrenceId);
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/submit-proposal`, {
         proposalNotes: comments || undefined,
@@ -1059,9 +1092,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete estimate failed.", err) });
     }
+    setBusyOccId(null);
   }
 
   async function updateStatus(occ: WorkerOccurrence, action: "start" | "complete", notes?: string, recordLocation = true) {
+    setBusyOccId(occ.id);
     if (isOffline) {
       const label = queueLabel(occ, action === "start" ? "Start job" : "Complete job");
       const body: Record<string, unknown> = {};
@@ -1077,6 +1112,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "COMPLETED" as any, completedAt: new Date().toISOString() } : o));
         publishInlineMessage({ type: "INFO", text: "Job completed (queued for sync)." });
       }
+      setBusyOccId(null);
       return;
     }
     try {
@@ -1097,6 +1133,47 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         text: getErrorMessage("Action failed.", err),
       });
     }
+    setBusyOccId(null);
+  }
+
+  async function pauseJob(occ: WorkerOccurrence) {
+    setBusyOccId(occ.id);
+    if (isOffline) {
+      await enqueueAction("PAUSE_JOB" as any, occ.id, queueLabel(occ, "Pause job"), {});
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "PAUSED" as any, pausedAt: new Date().toISOString() } : o));
+      publishInlineMessage({ type: "INFO", text: "Job paused (queued for sync)." });
+      setBusyOccId(null);
+      return;
+    }
+    try {
+      await apiPost(`/api/occurrences/${occ.id}/pause`);
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "PAUSED" as any, pausedAt: new Date().toISOString() } : o));
+      publishInlineMessage({ type: "SUCCESS", text: "Job paused." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to pause.", err) });
+    }
+    setBusyOccId(null);
+  }
+
+  async function resumeJob(occ: WorkerOccurrence) {
+    setBusyOccId(occ.id);
+    if (isOffline) {
+      await enqueueAction("RESUME_JOB" as any, occ.id, queueLabel(occ, "Resume job"), {});
+      const addedPause = occ.pausedAt ? Date.now() - new Date(occ.pausedAt).getTime() : 0;
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, pausedAt: null, totalPausedMs: (o.totalPausedMs ?? 0) + addedPause } : o));
+      publishInlineMessage({ type: "INFO", text: "Job resumed (queued for sync)." });
+      setBusyOccId(null);
+      return;
+    }
+    try {
+      await apiPost(`/api/occurrences/${occ.id}/resume`);
+      const addedPause = occ.pausedAt ? Date.now() - new Date(occ.pausedAt).getTime() : 0;
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, pausedAt: null, totalPausedMs: (o.totalPausedMs ?? 0) + addedPause } : o));
+      publishInlineMessage({ type: "SUCCESS", text: "Job resumed." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to resume.", err) });
+    }
+    setBusyOccId(null);
   }
 
   const filtered = useMemo(() => {
@@ -2161,11 +2238,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
             // Card color theme — bg and border derive from the same base color
             const isPendingPayment = occ.status === "PENDING_PAYMENT";
+            const isPaused = occ.status === "PAUSED";
             const isInProgressOthers = occ.status === "IN_PROGRESS" && isAssignedToOthers;
             const cardColorBase = isAnnouncement ? "announce"
               : isFollowup ? (isClosed ? "followup-closed" : "followup")
               : isEvent ? (isClosed ? "event-closed" : "event")
               : (isClosed || isAcceptedEstimate || isRejectedEstimate) ? "gray"
+              : isPaused ? "paused"
               : isReminder ? "purple"
               : isTask ? "blue"
               : isTentative ? "orange"
@@ -2177,6 +2256,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isUnassigned ? "yellow"
               : null;
             const cardBg = isHighPriority ? "purple.100"
+              : cardColorBase === "paused" ? "orange.100"
               : cardColorBase === "announce" ? "purple.200"
               : cardColorBase === "followup-closed" ? "red.100"
               : cardColorBase === "followup" ? "red.200"
@@ -2188,6 +2268,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
               : undefined;
             const cardBorderColor = isHighPriority ? "purple.500"
+              : cardColorBase === "paused" ? "orange.400"
               : cardColorBase === "announce" ? "purple.400"
               : cardColorBase === "followup-closed" ? "red.300"
               : cardColorBase === "followup" ? "red.400"
@@ -2197,7 +2278,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : cardColorBase === "green" ? "green.400"
               : `${cardColorBase}.300`;
             const isInProgress = occ.status === "IN_PROGRESS";
-            const cardBorderWidth = isHighPriority ? "2px" : isInProgress ? "2px" : "1px";
+            const cardBorderWidth = isHighPriority ? "2px" : (isInProgress || isPaused) ? "2px" : "1px";
 
             // Comment badge color: darker shade of card bg
             const commentBadgeBg = (isClosed || isAcceptedEstimate || isRejectedEstimate) && !isAnnouncement && !isEvent && !isFollowup ? "gray.200"
@@ -2241,6 +2322,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 borderWidth={cardBorderWidth}
                 bg={cardBg}
                 overflow="hidden"
+                position="relative"
                 css={{
                   ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
                   ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
@@ -2252,6 +2334,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   toggleCard();
                 }}
               >
+                {/* Loading overlay */}
+                {busyOccId === occ.id && (
+                  <Box position="absolute" inset="0" bg="whiteAlpha.700" zIndex="1" display="flex" alignItems="center" justifyContent="center" borderRadius="inherit">
+                    <Spinner size="sm" />
+                  </Box>
+                )}
                 {/* Client confirmation banner — expanded cards only, above title */}
                 {!isCardCompact && needsConfirmation && (
                   <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
@@ -2299,11 +2387,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   confirmLabel: "Yes, Confirmed",
                                   colorPalette: "orange",
                                   onConfirm: async () => {
+                                    setBusyOccId(occ.id);
                                     try {
                                       await apiPost(`/api/occurrences/${occ.id}/confirm`);
                                       setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
                                       publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
                                     } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) }); }
+                                    setBusyOccId(null);
                                   },
                                 });
                               }}><CheckCircle2 size={12} /></Box>
@@ -2330,10 +2420,42 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           }
                           if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || (forAdmin && (isAdmin || isSuper))) && !isEstimateOcc) {
                             return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Complete Job" onClick={(e: any) => {
+                              <Box position="relative" flexShrink={0}>
+                                <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
+                                  e.stopPropagation();
+                                  setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
+                                }}><CheckCircle2 size={12} /></Box>
+                                {quickActionMenuOcc === occ.id && (
+                                  <VStack
+                                    position="fixed"
+                                    bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="120px"
+                                    onClick={(e: any) => e.stopPropagation()}
+                                    ref={(el: HTMLDivElement | null) => {
+                                      if (el && el.parentElement) {
+                                        const rect = el.parentElement.getBoundingClientRect();
+                                        el.style.top = `${rect.bottom + 4}px`;
+                                        const right = window.innerWidth - rect.right;
+                                        el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+                                      }
+                                    }}
+                                  >
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); void pauseJob(occ); }}>
+                                      <Pause size={12} /> Pause
+                                    </Button>
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
+                                      <CheckCircle2 size={12} /> Complete
+                                    </Button>
+                                  </VStack>
+                                )}
+                              </Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
                                 e.stopPropagation();
-                                setCompleteDialogOcc(occ);
-                              }}><CheckCircle2 size={12} /></Box>
+                                void resumeJob(occ);
+                              }}><Play size={12} /></Box>
                             );
                           }
                           if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
@@ -2682,17 +2804,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
-                      {/* Elapsed time for IN_PROGRESS */}
-                      {occ.status === "IN_PROGRESS" && occ.startedAt && (() => {
-                        const elapsed = Math.round((Date.now() - new Date(occ.startedAt).getTime()) / 60000);
-                        const h = Math.floor(elapsed / 60);
-                        const m = elapsed % 60;
-                        const elapsedStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                      {/* Elapsed time for IN_PROGRESS / PAUSED */}
+                      {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
+                        const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
+                        const elapsedStr = formatDuration(elapsed);
                         const est = occ.estimatedMinutes;
                         const over = est && elapsed > est;
+                        const isPaused = occ.status === "PAUSED";
                         return (
-                          <Text fontSize="xs" fontWeight="semibold" color={over ? "red.500" : "blue.600"}>
-                            Started {elapsedStr} ago{est ? ` / ${est >= 60 ? `${Math.floor(est / 60)}h ${est % 60}m` : `${est}m`} est.` : ""}{over ? " — over estimate" : ""}
+                          <Text fontSize="xs" fontWeight="semibold" color={over ? "red.500" : isPaused ? "orange.600" : "blue.600"}>
+                            {isPaused ? `Paused at ${elapsedStr}` : `Worked ${elapsedStr}`}{est ? ` / ${formatDuration(est)} est.` : ""}{over ? " — over estimate" : ""}
                           </Text>
                         );
                       })()}
@@ -2779,12 +2900,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ) : null;
                         })()}
                         {(() => {
-                          const actual = actualMinutes(occ);
+                          const actual = effectiveMinutes(occ);
                           const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
+                          const canEdit = (isClaimer || forAdmin) && occ.startedAt;
                           if (actual != null && adjEst) {
                             const color = actual <= adjEst ? "green.600" : "red.600";
-                            return <Text color={color} fontWeight="medium">{formatDuration(actual)}</Text>;
+                            return <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>{formatDuration(actual)}{occ.manualDurationMinutes != null ? " ✎" : ""}</Text>;
                           }
                           if (adjEst != null) return <Text color="fg.muted">{formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>;
                           return null;
@@ -2862,17 +2984,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 ) : (
                 <Card.Body pt="2" px="4">
                   <VStack align="start" gap={2} w="full">
-                    {/* Elapsed time for IN_PROGRESS (expanded) */}
-                    {occ.status === "IN_PROGRESS" && occ.startedAt && (() => {
-                      const elapsed = Math.round((Date.now() - new Date(occ.startedAt).getTime()) / 60000);
-                      const h = Math.floor(elapsed / 60);
-                      const m = elapsed % 60;
-                      const elapsedStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                    {/* Elapsed time for IN_PROGRESS / PAUSED (expanded) */}
+                    {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
+                      const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
+                      const elapsedStr = formatDuration(elapsed);
                       const est = occ.estimatedMinutes;
                       const over = est && elapsed > est;
+                      const isPaused = occ.status === "PAUSED";
                       return (
-                        <Text fontSize="sm" fontWeight="semibold" color={over ? "red.500" : "blue.600"}>
-                          Started {elapsedStr} ago{est ? ` / ${est >= 60 ? `${Math.floor(est / 60)}h ${est % 60}m` : `${est}m`} est.` : ""}{over ? " — over estimate" : ""}
+                        <Text fontSize="sm" fontWeight="semibold" color={over ? "red.500" : isPaused ? "orange.600" : "blue.600"}>
+                          {isPaused ? `Paused at ${elapsedStr}` : `Worked ${elapsedStr}`}{est ? ` / ${formatDuration(est)} est.` : ""}{over ? " — over estimate" : ""}
                         </Text>
                       );
                     })()}
@@ -3033,12 +3154,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <Text color="fg.muted">Est: {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>
                         )}
                         {(() => {
-                          const actual = actualMinutes(occ);
+                          const actual = effectiveMinutes(occ);
                           if (actual == null) return null;
                           const color = adjEst
                             ? actual <= adjEst ? "green.600" : "red.600"
                             : "fg.muted";
-                          return <Text color={color} fontWeight="medium">Actual: {formatDuration(actual)}</Text>;
+                          return <Text color={color} fontWeight="medium">Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}</Text>;
+                        })()}
+                        {(() => {
+                          const actual = effectiveMinutes(occ);
+                          if (actual == null || !adjEst) return null;
+                          const discrepancy = Math.abs(actual - adjEst) / adjEst;
+                          if (discrepancy <= 0.3) return null;
+                          return (
+                            <Text fontSize="xs" color="orange.600" fontWeight="medium">
+                              ⚠ {Math.round(discrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
+                              <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>
+                                Edit time
+                              </Box>
+                            </Text>
+                          );
                         })()}
                       </HStack>
                       );
@@ -3445,7 +3580,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </Card.Body>
                 )}
 
-                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || occ.status === "PENDING_PAYMENT" || occ.status === "PROPOSAL_SUBMITTED") && (
+                {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="3" px="4" pt="0">
                     <VStack align="start" gap={2} mb="2">
                     {/* Confirm client — must happen before Start */}
@@ -3462,6 +3597,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             confirmLabel: "Yes, Confirmed",
                             colorPalette: "orange",
                             onConfirm: async () => {
+                              setBusyOccId(occ.id);
                               try {
                                 await apiPost(`/api/occurrences/${occ.id}/confirm`);
                                 setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
@@ -3469,6 +3605,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               } catch (err) {
                                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
                               }
+                              setBusyOccId(null);
                             },
                           });
                         }}
@@ -3482,12 +3619,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         size="sm"
                         variant="solid"
                         colorPalette="blue"
+                        loading={busyOccId === occ.id}
                         onClick={() => {
                           if (isOffline) {
                             void (async () => {
+                              setBusyOccId(occ.id);
                               await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
                               setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
                               publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                              setBusyOccId(null);
                             })();
                             return;
                           }
@@ -3501,9 +3641,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Button>
                     )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
-                      <Button size="sm" variant="solid" colorPalette="blue" onClick={() => setCompleteDialogOcc(occ)}>
-                        Complete Job
-                      </Button>
+                      <HStack gap={2}>
+                        <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
+                          Complete Job
+                        </Button>
+                        <Button size="sm" variant="outline" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void pauseJob(occ)}>
+                          Pause
+                        </Button>
+                      </HStack>
+                    )}
+                    {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                      <HStack gap={2}>
+                        <Button size="sm" variant="solid" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void resumeJob(occ)}>
+                          Resume
+                        </Button>
+                        <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
+                          Complete Job
+                        </Button>
+                      </HStack>
                     )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <Button
@@ -3625,7 +3780,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         colorPalette="blue"
                         disabled={isOffline}
                         title={isOffline ? "Requires internet" : undefined}
+                        loading={busyOccId === occ.id}
                         onClick={async () => {
+                          setBusyOccId(occ.id);
                           try {
                             await apiPost(`/api/tasks/${occ.id}/close`);
                             publishInlineMessage({ type: "SUCCESS", text: "Task completed." });
@@ -3633,6 +3790,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           } catch (err) {
                             publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete task.", err) });
                           }
+                          setBusyOccId(null);
                         }}
                       >
                         Complete
@@ -3776,7 +3934,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           variant="solid"
                           colorPalette="yellow"
                           disabled={isOffline}
+                          loading={busyOccId === occ.id}
                           onClick={async () => {
+                            setBusyOccId(occ.id);
                             try {
                               await apiPost(`/api/admin/events/${occ.id}/complete`);
                               publishInlineMessage({ type: "SUCCESS", text: "Event completed." });
@@ -3784,6 +3944,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             } catch (err) {
                               publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete event.", err) });
                             }
+                            setBusyOccId(null);
                           }}
                         >
                           Complete
@@ -3832,7 +3993,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           variant="solid"
                           colorPalette="red"
                           disabled={isOffline}
+                          loading={busyOccId === occ.id}
                           onClick={async () => {
+                            setBusyOccId(occ.id);
                             try {
                               await apiPost(`/api/admin/followups/${occ.id}/complete`);
                               publishInlineMessage({ type: "SUCCESS", text: "Followup completed." });
@@ -3840,6 +4003,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             } catch (err) {
                               publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to complete followup.", err) });
                             }
+                            setBusyOccId(null);
                           }}
                         >
                           Complete
@@ -4089,6 +4253,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           <BellOff size={12} /> Clear Reminder
                         </Button>
                       )}
+                      {(isClaimer || forAdmin || isAdmin || isSuper) && occ.startedAt && !isTaskOrReminder && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}
+                        >
+                          <Clock size={12} /> Edit Time
+                        </Button>
+                      )}
                     </HStack>
                     </VStack>
                   </Card.Footer>
@@ -4108,8 +4281,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           variant="outline"
                           colorPalette="blue"
                           disabled={isOffline}
+                          loading={busyOccId === occ.id}
                           title={isOffline ? "Requires internet" : undefined}
                           onClick={async () => {
+                            setBusyOccId(occ.id);
                             try {
                               await apiPost(`/api/tasks/${occ.id}/reopen`);
                               publishInlineMessage({ type: "SUCCESS", text: "Task reopened." });
@@ -4117,6 +4292,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             } catch (err) {
                               publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to reopen task.", err) });
                             }
+                            setBusyOccId(null);
                           }}
                         >
                           Reopen Task
@@ -4465,6 +4641,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     disabled={!startJobTime}
                     onClick={async () => {
                       if (!startJobOcc) return;
+                      setBusyOccId(startJobOcc.id);
+                      setStartJobOcc(null);
                       try {
                         const startedAt = new Date(startJobTime).toISOString();
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
@@ -4478,11 +4656,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         } catch {}
                         await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
                         publishInlineMessage({ type: "SUCCESS", text: "Job started with location recorded." });
-                        setStartJobOcc(null);
                         await load(false);
                       } catch (err) {
                         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
                       }
+                      setBusyOccId(null);
                     }}
                   >
                     Yes — record location & start
@@ -4493,6 +4671,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     disabled={!startJobTime}
                     onClick={async () => {
                       if (!startJobOcc) return;
+                      setBusyOccId(startJobOcc.id);
+                      setStartJobOcc(null);
                       try {
                         const startedAt = new Date(startJobTime).toISOString();
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
@@ -4502,11 +4682,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         if (isEarly) body.updateStartAt = true;
                         await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
                         publishInlineMessage({ type: "SUCCESS", text: "Job started." });
-                        setStartJobOcc(null);
                         await load(false);
                       } catch (err) {
                         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
                       }
+                      setBusyOccId(null);
                     }}
                   >
                     No — start without location
@@ -4699,8 +4879,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
           }))}
-          onAccepted={(result: any) => {
-            void load(false);
+          onAccepted={async (result: any) => {
+            if (acceptPaymentOcc) setBusyOccId(acceptPaymentOcc.id);
+            await load(false);
+            setBusyOccId(null);
             if (result?.nextOccurrence) {
               const nextDate = result.nextOccurrence.startAt
                 ? fmtDate(result.nextOccurrence.startAt)
@@ -4756,6 +4938,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
             const completeWithLocation = async (recordLoc: boolean) => {
+              setBusyOccId(occToComplete.id);
               try {
                 const body: Record<string, unknown> = {};
                 if (completedAt) body.completedAt = completedAt;
@@ -4771,6 +4954,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               } catch (err) {
                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete failed.", err) });
               }
+              setBusyOccId(null);
             };
             setConfirmAction({
               title: "Record Location?",
@@ -4814,6 +4998,86 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
                     Done
                   </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Edit Time Dialog */}
+      <Dialog.Root open={!!editTimeOcc} onOpenChange={(e) => { if (!e.open) setEditTimeOcc(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Edit Work Time</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {editTimeOcc && (() => {
+                  const current = Math.max(0, Math.round(effectiveMinutes(editTimeOcc) ?? 0));
+                  const defaultH = Math.floor(current / 60);
+                  const defaultM = current % 60;
+                  return (
+                    <VStack align="stretch" gap={3}>
+                      <Text fontSize="sm" color="fg.muted">
+                        {editTimeOcc.manualDurationMinutes != null ? "Currently using manual time." : `Tracked time: ${formatDuration(current)}`}
+                      </Text>
+                      <HStack gap={2}>
+                        <Box flex="1">
+                          <Text fontSize="xs" fontWeight="medium" mb={1}>Hours</Text>
+                          <input
+                            type="number"
+                            min={0}
+                            defaultValue={defaultH}
+                            id="edit-time-hours"
+                            style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                          />
+                        </Box>
+                        <Box flex="1">
+                          <Text fontSize="xs" fontWeight="medium" mb={1}>Minutes</Text>
+                          <input
+                            type="number"
+                            min={0}
+                            max={59}
+                            defaultValue={defaultM}
+                            id="edit-time-minutes"
+                            style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                          />
+                        </Box>
+                      </HStack>
+                    </VStack>
+                  );
+                })()}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="space-between" w="full">
+                  {editTimeOcc?.manualDurationMinutes != null ? (
+                    <Button variant="ghost" size="sm" onClick={async () => {
+                      try {
+                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/manual-duration`, { minutes: null });
+                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, manualDurationMinutes: undefined } as any : o));
+                        publishInlineMessage({ type: "SUCCESS", text: "Reset to tracked time." });
+                      } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) }); }
+                      setEditTimeOcc(null);
+                    }}>Reset to tracked</Button>
+                  ) : <Box />}
+                  <HStack gap={2}>
+                    <Button variant="ghost" onClick={() => setEditTimeOcc(null)}>Cancel</Button>
+                    <Button colorPalette="blue" onClick={async () => {
+                      const h = parseInt((document.getElementById("edit-time-hours") as HTMLInputElement)?.value || "0", 10);
+                      const m = parseInt((document.getElementById("edit-time-minutes") as HTMLInputElement)?.value || "0", 10);
+                      const total = h * 60 + m;
+                      try {
+                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/manual-duration`, { minutes: total });
+                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, manualDurationMinutes: total } as any : o));
+                        publishInlineMessage({ type: "SUCCESS", text: `Time set to ${formatDuration(total)}.` });
+                      } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) }); }
+                      setEditTimeOcc(null);
+                    }}>Save</Button>
+                  </HStack>
                 </HStack>
               </Dialog.Footer>
             </Dialog.Content>

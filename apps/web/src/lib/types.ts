@@ -248,6 +248,7 @@ export type JobStatus = (typeof JOB_STATUS)[number];
 export const JOB_OCCURRENCE_STATUS = [
   "SCHEDULED",
   "IN_PROGRESS",
+  "PAUSED",
   "COMPLETED",
   "PENDING_PAYMENT",
   "CLOSED",
@@ -352,6 +353,9 @@ export type JobOccurrenceFull = {
   generatedEstimateBreakdown?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  pausedAt?: string | null;
+  totalPausedMs?: number | null;
+  manualDurationMinutes?: number | null;
   startLat?: number | null;
   startLng?: number | null;
   completeLat?: number | null;
@@ -533,6 +537,9 @@ export type WorkerOccurrence = {
   linkGroupId?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  pausedAt?: string | null;
+  totalPausedMs?: number | null;
+  manualDurationMinutes?: number | null;
   startLat?: number | null;
   startLng?: number | null;
   completeLat?: number | null;

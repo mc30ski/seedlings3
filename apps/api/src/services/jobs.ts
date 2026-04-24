@@ -50,13 +50,15 @@ function toDate(x: any): Date | null {
 const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
   STANDARD: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
-    IN_PROGRESS: ["PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    IN_PROGRESS: ["PAUSED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PAUSED: ["IN_PROGRESS", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PENDING_PAYMENT: ["CLOSED", "CANCELED"],
     CLOSED: ["ARCHIVED"],
   },
   ONE_OFF: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
-    IN_PROGRESS: ["PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    IN_PROGRESS: ["PAUSED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PAUSED: ["IN_PROGRESS", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PENDING_PAYMENT: ["CLOSED", "CANCELED"],
     CLOSED: ["ARCHIVED"],
   },
@@ -82,13 +84,15 @@ const VALID_TRANSITIONS: Record<string, Record<string, string[]>> = {
 const ADMIN_TRANSITIONS: Record<string, Record<string, string[]>> = {
   STANDARD: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
-    IN_PROGRESS: ["SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PAUSED: ["IN_PROGRESS", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
     CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
   },
   ONE_OFF: {
     SCHEDULED: ["IN_PROGRESS", "CANCELED"],
-    IN_PROGRESS: ["SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    IN_PROGRESS: ["PAUSED", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
+    PAUSED: ["IN_PROGRESS", "SCHEDULED", "PENDING_PAYMENT", "CLOSED", "CANCELED"],
     PENDING_PAYMENT: ["IN_PROGRESS", "CLOSED", "CANCELED"],
     CLOSED: ["PENDING_PAYMENT", "ARCHIVED"],
   },
@@ -1566,6 +1570,40 @@ export const jobs: ServicesJobs = {
       if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
         data.startedAt = timestamps?.startedAt ? new Date(timestamps.startedAt) : new Date();
       }
+
+      // Pausing: record when paused
+      if (finalStatus === JobOccurrenceStatus.PAUSED) {
+        data.pausedAt = new Date();
+      }
+
+      // Resuming from paused: accumulate pause duration, clear pausedAt
+      if (occ.status === JobOccurrenceStatus.PAUSED && finalStatus === JobOccurrenceStatus.IN_PROGRESS) {
+        if (occ.pausedAt) {
+          data.totalPausedMs = (occ.totalPausedMs ?? 0) + (Date.now() - new Date(occ.pausedAt).getTime());
+        }
+        data.pausedAt = null;
+      }
+
+      // Reverting from completed/pending back to IN_PROGRESS: treat gap as pause time, clear completedAt
+      if ((occ.status === JobOccurrenceStatus.PENDING_PAYMENT || occ.status === JobOccurrenceStatus.CLOSED) &&
+        finalStatus === JobOccurrenceStatus.IN_PROGRESS) {
+        if (occ.completedAt) {
+          data.totalPausedMs = (occ.totalPausedMs ?? 0) + (Date.now() - new Date(occ.completedAt).getTime());
+          data.completedAt = null;
+        }
+      }
+
+      // Completing from paused: finalize last pause segment
+      if (occ.status === JobOccurrenceStatus.PAUSED &&
+        (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
+         finalStatus === JobOccurrenceStatus.CLOSED ||
+         finalStatus === JobOccurrenceStatus.PROPOSAL_SUBMITTED)) {
+        if (occ.pausedAt) {
+          data.totalPausedMs = (occ.totalPausedMs ?? 0) + (Date.now() - new Date(occ.pausedAt).getTime());
+        }
+        data.pausedAt = null;
+      }
+
       if (
         (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
          finalStatus === JobOccurrenceStatus.CLOSED ||

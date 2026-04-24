@@ -377,6 +377,7 @@ enum Cadence {
 enum JobOccurrenceStatus {
   SCHEDULED
   IN_PROGRESS
+  PAUSED
   COMPLETED
   PENDING_PAYMENT
   CLOSED
@@ -529,8 +530,11 @@ model JobOccurrence {
   pinnedNote          String?
   pinnedNoteRepeats   Boolean @default(true)
 
-  startedAt   DateTime?
-  completedAt DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  pausedAt              DateTime?
+  totalPausedMs         Int          @default(0)
+  manualDurationMinutes Int?
 
   startLat    Float?
   startLng    Float?

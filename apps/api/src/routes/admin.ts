@@ -921,7 +921,8 @@ export default async function adminRoutes(app: FastifyInstance) {
           st === "REJECTED" ||
           st === "CLOSED" ||
           st === "CANCELED" ||
-          st === "ARCHIVED";
+          st === "ARCHIVED" ||
+          st === "PAUSED";
         if (!ok) throw app.httpErrors.badRequest("Invalid occurrence status");
         patch.status = st as JobOccurrenceStatus;
       }
@@ -931,6 +932,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("notes" in body) patch.notes = body.notes;
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
       if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
+      if ("manualDurationMinutes" in body) patch.manualDurationMinutes = body.manualDurationMinutes != null ? Math.round(Number(body.manualDurationMinutes)) : null;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
       if ("isAdminOnly" in body) patch.isAdminOnly = !!body.isAdminOnly;

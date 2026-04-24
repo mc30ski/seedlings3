@@ -18,6 +18,8 @@ const RETRY_DELAYS = [2000, 5000, 10000]; // ms
 export type QueuedActionType =
   | "START_JOB"
   | "COMPLETE_JOB"
+  | "PAUSE_JOB"
+  | "RESUME_JOB"
   | "ADD_PHOTO"
   | "ADD_EXPENSE"
   | "POST_COMMENT"

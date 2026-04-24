@@ -1,2 +1,2 @@
--- AlterEnum
-ALTER TYPE "ClientType" ADD VALUE 'PERSON';
+-- No-op: PERSON was already added in 20260325020000_remove_individual_household_client_types
+-- Original: ALTER TYPE "ClientType" ADD VALUE 'PERSON';
