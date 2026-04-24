@@ -470,23 +470,23 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         {filtered.map((c: Client) => (
           <Card.Root key={c.id} variant="outline">
             <Card.Header py="3" px="4" pb="0">
-              <HStack gap={3} justify="space-between" align="center">
-                <Text fontSize="md" fontWeight="semibold" flex="1" minW={0}>
-                  {(c as any).isVip && <span title={(c as any).vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}
-                  {clientLabel(c.displayName)}
-                </Text>
-                <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
+              <VStack align="start" gap={1.5}>
+                <HStack gap={1} minW={0}>
+                  {(c as any).isVip && <Text title={(c as any).vipReason || "VIP Client"} cursor="help">⭐</Text>}
+                  <Text fontSize="md" fontWeight="semibold">{clientLabel(c.displayName)}</Text>
+                </HStack>
+                <HStack gap={1} wrap="wrap">
                   {(c.contacts ?? []).some((ct: any) => !ct.email && !ct.phone && !ct.normalizedPhone) && (
                     <Badge size="xs" colorPalette="red" variant="subtle">Missing contact info</Badge>
                   )}
+                  <StatusBadge status={c.type} palette="gray" variant="outline" />
                   <StatusBadge
                     status={c.status}
                     palette={clientStatusColor(c.status)}
                     variant="subtle"
                   />
-                  <StatusBadge status={c.type} palette="gray" variant="outline" />
-                </Box>
-              </HStack>
+                </HStack>
+              </VStack>
             </Card.Header>
             {c.notesInternal && (
               <Card.Body py="3" px="4" pt="1" pb="0">
