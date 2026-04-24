@@ -703,7 +703,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -1042,7 +1042,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      </>}
+      </Box>}
       <HStack mb={2} gap={2} px={1} wrap="wrap">
         {(() => {
           const accepted = items.filter((j) => j.status === "ACCEPTED").length;

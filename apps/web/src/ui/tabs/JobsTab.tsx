@@ -1684,7 +1684,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
-      {filtersOpen && <>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
       {headerSlot && (
         <HStack mb={2} gap={2} wrap="nowrap">
           {headerSlot}
@@ -2119,7 +2119,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
-      </>}
+      </Box>}
 
       {loading && items.length === 0 && <LoadingCenter />}
 

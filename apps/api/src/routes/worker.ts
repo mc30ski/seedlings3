@@ -449,7 +449,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     // Verify claimer or admin
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occId }, include: { assignees: true } });
     const isClaimer = occ.assignees?.some((a: any) => a.userId === uid && a.role === "CLAIMER");
-    const user = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!isClaimer && !isAdmin) throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can edit time.", 403);
 
@@ -501,7 +501,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
 
     // Must be assigned or admin
-    const acceptUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const acceptUser = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const acceptIsAdmin = acceptUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!occ.assignees.some((a) => a.userId === uid) && !acceptIsAdmin) {
       throw app.httpErrors.forbidden("You are not assigned to this estimate.");
@@ -546,7 +546,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       include: { assignees: true },
     });
 
-    const rejectUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const rejectUser = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const rejectIsAdmin = rejectUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!occ.assignees.some((a) => a.userId === uid) && !rejectIsAdmin) {
       throw app.httpErrors.forbidden("You are not assigned to this estimate.");
@@ -1421,19 +1421,21 @@ export default async function workerRoutes(app: FastifyInstance) {
     }
 
     // Only the claimer or admin can reschedule
-    const reschedUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const reschedUser = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
     const reschedIsAdmin = reschedUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
     if (!isClaimer && !reschedIsAdmin) {
       throw app.httpErrors.forbidden("Only the claimer or an admin can reschedule this job");
     }
 
-    // Enforce 2-day window using ET dates (consistent with the rest of the app)
-    const newDateET = etMidnight(startAt.slice(0, 10));
-    const todayET = etMidnight(new Date().toISOString().slice(0, 10));
-    const diffDays = Math.round(Math.abs(newDateET.getTime() - todayET.getTime()) / 86400000);
-    if (diffDays > 2) {
-      throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");
+    // Enforce 2-day window for non-admins
+    if (!reschedIsAdmin) {
+      const newDateET = etMidnight(startAt.slice(0, 10));
+      const todayET = etMidnight(new Date().toISOString().slice(0, 10));
+      const diffDays = Math.round(Math.abs(newDateET.getTime() - todayET.getTime()) / 86400000);
+      if (diffDays > 2) {
+        throw app.httpErrors.badRequest("Workers can only reschedule within 2 days of today");
+      }
     }
 
     // Update occurrence dates
