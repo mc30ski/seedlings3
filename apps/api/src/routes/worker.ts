@@ -500,8 +500,10 @@ export default async function workerRoutes(app: FastifyInstance) {
       include: { assignees: true, job: { select: { id: true } } },
     });
 
-    // Must be assigned
-    if (!occ.assignees.some((a) => a.userId === uid)) {
+    // Must be assigned or admin
+    const acceptUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const acceptIsAdmin = acceptUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!occ.assignees.some((a) => a.userId === uid) && !acceptIsAdmin) {
       throw app.httpErrors.forbidden("You are not assigned to this estimate.");
     }
     if ((occ as any).workflow !== "ESTIMATE" && !(occ as any).isEstimate) {
@@ -544,7 +546,9 @@ export default async function workerRoutes(app: FastifyInstance) {
       include: { assignees: true },
     });
 
-    if (!occ.assignees.some((a) => a.userId === uid)) {
+    const rejectUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const rejectIsAdmin = rejectUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!occ.assignees.some((a) => a.userId === uid) && !rejectIsAdmin) {
       throw app.httpErrors.forbidden("You are not assigned to this estimate.");
     }
     if ((occ as any).workflow !== "ESTIMATE" && !(occ as any).isEstimate) {
@@ -1416,10 +1420,12 @@ export default async function workerRoutes(app: FastifyInstance) {
       throw app.httpErrors.badRequest("Tasks and reminders cannot be rescheduled");
     }
 
-    // Only the claimer can reschedule (assignedById === self)
+    // Only the claimer or admin can reschedule
+    const reschedUser = await prisma.user.findUnique({ where: { clerkId: uid }, include: { roles: true } });
+    const reschedIsAdmin = reschedUser?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
-    if (!isClaimer) {
-      throw app.httpErrors.forbidden("Only the claimer can reschedule this job");
+    if (!isClaimer && !reschedIsAdmin) {
+      throw app.httpErrors.forbidden("Only the claimer or an admin can reschedule this job");
     }
 
     // Enforce 2-day window using ET dates (consistent with the rest of the app)

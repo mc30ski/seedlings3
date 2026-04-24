@@ -1571,44 +1571,49 @@ export default function HomePage() {
                     {total}
                   </Box>
                   {alertDropdownOpen && (
-                    <div data-alert-dropdown style={{
-                      position: "absolute",
-                      top: "100%",
-                      right: 0,
-                      marginTop: "6px",
-                      zIndex: 10001,
-                      background: "white",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: "8px",
-                      boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
-                      minWidth: "200px",
-                      overflow: "hidden",
-                      lineHeight: "normal",
-                    }}>
+                    <VStack
+                      data-alert-dropdown
+                      position="fixed"
+                      bg="white"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      rounded="md"
+                      shadow="lg"
+                      zIndex={10001}
+                      p={1}
+                      gap={0}
+                      minW="200px"
+                      ref={(el: HTMLDivElement | null) => {
+                        if (el && el.parentElement) {
+                          const rect = el.parentElement.getBoundingClientRect();
+                          el.style.top = `${rect.bottom + 6}px`;
+                          el.style.right = `${window.innerWidth - rect.right}px`;
+                        }
+                      }}
+                    >
                       {alerts.map((a) => (
-                        <div
+                        <Button
                           key={a.label}
-                          role="button"
-                          tabIndex={0}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            width: "100%",
-                            padding: "10px 12px",
-                            fontSize: "14px",
-                            cursor: "pointer",
-                            textAlign: "left",
-                          }}
+                          size="sm"
+                          variant="ghost"
+                          w="full"
+                          justifyContent="start"
+                          gap={2}
                           onClick={() => { setAlertDropdownOpen(false); a.onClick(); }}
                         >
-                          <span style={{ width: "22px", height: "22px", minWidth: "22px", borderRadius: "9999px", fontSize: "12px", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: a.dotColor, color: a.dotColor === "#FACC15" ? "#713F12" : "#fff" }}>
+                          <Box
+                            w="22px" h="22px" minW="22px" borderRadius="full"
+                            fontSize="12px" fontWeight="bold"
+                            display="flex" alignItems="center" justifyContent="center"
+                            flexShrink={0}
+                            style={{ background: a.dotColor, color: a.dotColor === "#FACC15" ? "#713F12" : "#fff" }}
+                          >
                             {a.count}
-                          </span>
-                          <span style={{ flex: 1 }}>{a.label}</span>
-                        </div>
+                          </Box>
+                          <Text flex="1" textAlign="left">{a.label}</Text>
+                        </Button>
                       ))}
-                    </div>
+                    </VStack>
                   )}
                 </Box>
               );

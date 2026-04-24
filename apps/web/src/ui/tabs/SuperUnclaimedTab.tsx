@@ -14,7 +14,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CalendarRange, RefreshCw, X } from "lucide-react";
+import { CalendarRange, ChevronDown, RefreshCw, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet } from "@/src/lib/api";
 import { type WorkerOccurrence } from "@/src/lib/types";
@@ -42,6 +42,7 @@ export default function SuperUnclaimedTab() {
   const [q, setQ] = useState("");
 
   // Date preset (default: next week)
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("super_unclaimed_datePreset", "overdueAndNext3");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = usePersistedState("super_unclaimed_dateFrom", presetDates.from);
@@ -63,6 +64,13 @@ export default function SuperUnclaimedTab() {
       setDateTo(d.to);
     }
   }, [datePreset, overdueActive]);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
 
   async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }) {
     if (displayLoading) setLoading(true);
@@ -193,13 +201,24 @@ export default function SuperUnclaimedTab() {
         </Select.Root>
       </HStack>
 
-      {(datePreset || !(datePreset === "overdueAndNext3" && !q)) && (
-        <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {datePreset && (
-            <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
-            </Badge>
+      <HStack mb={2} gap={1} wrap="wrap" pl="2">
+        <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+          <Badge size="sm" colorPalette={datePreset === "overdueOnly" ? "red" : "yellow"} variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+            {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : "Select"}
+            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg={datePreset === "overdueOnly" ? "red.500" : "yellow.500"} color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+          </Badge>
+          {quickDateMenuOpen && (
+            <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="160px"
+              ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 168))}px`; } }}>
+              {superPresetItems.map((it) => (
+                <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? (it.value === "overdueOnly" ? "red" : "yellow") : undefined} w="full" justifyContent="start"
+                  onClick={() => { setQuickDateMenuOpen(false); setDatePreset(it.value as DatePreset); setOverdueActive(false); }}>
+                  {it.label}
+                </Button>
+              ))}
+            </VStack>
           )}
+        </Box>
           {!(datePreset === "overdueAndNext3" && !q) && (
             <Badge
               size="sm"
@@ -215,8 +234,7 @@ export default function SuperUnclaimedTab() {
               ✕ Clear
             </Badge>
           )}
-        </HStack>
-      )}
+      </HStack>
 
       <Text fontSize="xs" color="fg.muted" mb={2}>
         {filtered.length} unclaimed job{filtered.length !== 1 ? "s" : ""}

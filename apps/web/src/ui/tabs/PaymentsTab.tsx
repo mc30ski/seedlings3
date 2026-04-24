@@ -514,6 +514,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
   const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
   const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
@@ -538,6 +539,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       setDateTo(d.to);
     }
   }, []);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
 
   const quickDateItems = useMemo(() => [
     { label: "This week", value: "thisWeek" },
@@ -844,14 +852,23 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       </HStack>
       {!filtersOpen && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette="gray" variant="subtle">Custom dates</Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
+                {quickDateItems.map((it) => (
+                  <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
+                    onClick={() => { setQuickDateMenuOpen(false); applyPreset(it.value as DatePreset); }}>
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {typeFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="subtle">
               {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
@@ -1057,14 +1074,23 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       </HStack>
       {(typeFilter[0] !== "ALL" || methodFilter[0] !== "ALL" || personFilter.length > 0 || datePreset || dateFrom || dateTo) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette="gray" variant="subtle">Custom dates</Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
+                {quickDateItems.map((it) => (
+                  <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
+                    onClick={() => { setQuickDateMenuOpen(false); applyPreset(it.value as DatePreset); }}>
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {typeFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="subtle">
               {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}

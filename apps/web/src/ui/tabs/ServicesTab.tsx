@@ -98,6 +98,7 @@ export default function ServicesTab({
 
   const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [highlightOccId, setHighlightOccId] = useState<string | null>(null);
   const [flashOccId, setFlashOccId] = useState<string | null>(null);
@@ -130,6 +131,13 @@ export default function ServicesTab({
       setDateTo(d.to);
     }
   }, [datePreset, overdueActive]);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
 
   const quickDateItems = useMemo(
     () =>
@@ -624,16 +632,23 @@ export default function ServicesTab({
       </HStack>
       {!filtersOpen && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates") : "Now"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && !overdueActive && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
-              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
-            </Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
+                {quickDateItems.map((it) => (
+                  <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
+                    onClick={() => { setQuickDateMenuOpen(false); const val = it.value as DatePreset; if (val === "all") { setConfirmAction({ title: "Load All Data", message: "This will load all occurrences for all time. This may be slow. Are you sure?", confirmLabel: "Load All", colorPalette: "orange", onConfirm: () => { setDatePreset("all"); setOverdueActive(false); } }); return; } setDatePreset(val); setOverdueActive(false); }}>
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="solid">Overdue</Badge>
           )}
@@ -943,16 +958,23 @@ export default function ServicesTab({
 
       {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || dateFrom || dateTo || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {datePreset && (
-            <Badge size="sm" colorPalette="green" variant="subtle">
-              {PRESET_LABELS[datePreset] ?? datePreset}
+          <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+            <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? (dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates") : "Now"}
+              {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
-          )}
-          {!datePreset && !overdueActive && (dateFrom || dateTo) && (
-            <Badge size="sm" colorPalette={dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "green" : "gray"} variant="subtle">
-              {dateFrom === dateTo && dateFrom === bizDateKey(new Date()) ? "Today" : "Custom dates"}
-            </Badge>
-          )}
+            {quickDateMenuOpen && (
+              <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
+                {quickDateItems.map((it) => (
+                  <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
+                    onClick={() => { setQuickDateMenuOpen(false); const val = it.value as DatePreset; if (val === "all") { setConfirmAction({ title: "Load All Data", message: "This will load all occurrences for all time. This may be slow. Are you sure?", confirmLabel: "Load All", colorPalette: "orange", onConfirm: () => { setDatePreset("all"); setOverdueActive(false); } }); return; } setDatePreset(val); setOverdueActive(false); }}>
+                    {it.label}
+                  </Button>
+                ))}
+              </VStack>
+            )}
+          </Box>
           {overdueActive && (
             <Badge size="sm" colorPalette="red" variant="solid">
               Overdue
