@@ -1733,8 +1733,8 @@ export default function HomePage() {
               px="0"
               py="0"
               flexShrink={0}
-              color={canGoBack ? "blue.600" : "gray.300"}
-              opacity={canGoBack ? 1 : 0.4}
+              color={canGoBack ? "blue.600" : "gray.400"}
+              opacity={canGoBack ? 1 : 0.6}
               cursor={canGoBack ? "pointer" : "default"}
               _hover={canGoBack ? { color: "blue.700" } : {}}
               transition="all 0.1s"

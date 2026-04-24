@@ -1684,7 +1684,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
       {headerSlot && (
         <HStack mb={2} gap={2} wrap="nowrap">
           {headerSlot}
@@ -1794,6 +1794,49 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
           </Button>
         )}
+        <Button
+          size="sm"
+          variant={overdueActive ? "solid" : "outline"}
+          px="2"
+          onClick={() => {
+            if (overdueActive) {
+              setOverdueActive(false);
+              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
+            } else {
+              presetBeforeOverdueRef.current = datePreset;
+              const yesterday = new Date();
+              yesterday.setDate(yesterday.getDate() - 1);
+              setDatePreset(null);
+              setDateFrom("");
+              setDateTo(localDate(yesterday));
+              setStatusFilter(["ALL"]);
+              setOverdueActive(true);
+            }
+          }}
+          css={overdueActive ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-400)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
+          title="Show overdue"
+        >
+          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+          {overdueCount > 0 && (
+            <Badge
+              size="xs"
+              colorPalette="red"
+              variant="solid"
+              borderRadius="full"
+              px="1.5"
+              fontSize="2xs"
+              lineHeight="1"
+              minW="0"
+            >
+              {overdueCount}
+            </Badge>
+          )}
+        </Button>
         {forAdmin && (
           <Button
             size="sm"
@@ -1927,48 +1970,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Button
-          size="sm"
-          variant={overdueActive ? "solid" : "ghost"}
-          px="2"
-          onClick={() => {
-            if (overdueActive) {
-              setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? (forAdmin ? "thisWeek" : "now"));
-            } else {
-              presetBeforeOverdueRef.current = datePreset;
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
-              setDatePreset(null);
-              setDateFrom("");
-              setDateTo(localDate(yesterday));
-              setStatusFilter(["ALL"]);
-              setOverdueActive(true);
-            }
-          }}
-          css={overdueActive ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
-          } : undefined}
-        >
-          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
-          {overdueCount > 0 && (
-            <Badge
-              size="xs"
-              colorPalette="red"
-              variant="solid"
-              borderRadius="full"
-              px="1.5"
-              fontSize="2xs"
-              lineHeight="1"
-              minW="0"
-            >
-              {overdueCount}
-            </Badge>
-          )}
-        </Button>
       </HStack>
       {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || likedOnly || showCanceled || showArchived || highlightOccId || filterJobId || datePreset || dateFrom || dateTo) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
@@ -2695,7 +2696,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
-                          {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <Badge colorPalette="green" variant="subtle" fontSize="2xs" px="1.5" py="0" borderRadius="full" lineHeight="1.4">Confirmed</Badge>}
+                          {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
                                                     {occ.linkGroupId && (
                             <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
                               <Link2 size={10} style={{ marginRight: 3 }} /> Linked

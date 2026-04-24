@@ -905,7 +905,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
       <HStack mb={2} gap={2} wrap="nowrap">
         <Select.Root
           collection={typeFilterCollection}

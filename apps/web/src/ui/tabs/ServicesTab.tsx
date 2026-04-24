@@ -703,7 +703,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -845,6 +845,49 @@ export default function ServicesTab({
         >
           <Archive size={14} />
         </Button>
+        <Button
+          size="sm"
+          variant={overdueActive ? "solid" : "outline"}
+          px="2"
+          onClick={() => {
+            if (overdueActive) {
+              setOverdueActive(false);
+              setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
+            } else {
+              presetBeforeOverdueRef.current = datePreset;
+              const yesterday = new Date();
+              yesterday.setDate(yesterday.getDate() - 1);
+              setDatePreset(null);
+              setDateFrom("");
+              setDateTo(localDate(yesterday));
+              setOccStatusFilter(["ALL"]);
+              setOverdueActive(true);
+            }
+          }}
+          css={overdueActive ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-400)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
+          title="Show overdue"
+        >
+          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
+          {!overdueActive && overdueCount > 0 && (
+            <Badge
+              size="xs"
+              colorPalette="red"
+              variant="solid"
+              borderRadius="full"
+              px="1.5"
+              fontSize="2xs"
+              lineHeight="1"
+              minW="0"
+            >
+              {overdueCount}
+            </Badge>
+          )}
+        </Button>
       </HStack>
 
       <HStack mb={2} gap={2} align="center">
@@ -912,48 +955,6 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
-        <Button
-          size="sm"
-          variant={overdueActive ? "solid" : "ghost"}
-          px="2"
-          onClick={() => {
-            if (overdueActive) {
-              setOverdueActive(false);
-              setDatePreset(presetBeforeOverdueRef.current ?? "thisMonth");
-            } else {
-              presetBeforeOverdueRef.current = datePreset;
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
-              setDatePreset(null);
-              setDateFrom("");
-              setDateTo(localDate(yesterday));
-              setOccStatusFilter(["ALL"]);
-              setOverdueActive(true);
-            }
-          }}
-          css={overdueActive ? {
-            background: "var(--chakra-colors-red-100)",
-            color: "var(--chakra-colors-red-700)",
-            border: "1px solid var(--chakra-colors-red-400)",
-            "&:hover": { background: "var(--chakra-colors-red-200)" },
-          } : undefined}
-        >
-          <AlertTriangle size={14} color="var(--chakra-colors-red-500)" />
-          {!overdueActive && overdueCount > 0 && (
-            <Badge
-              size="xs"
-              colorPalette="red"
-              variant="solid"
-              borderRadius="full"
-              px="1.5"
-              fontSize="2xs"
-              lineHeight="1"
-              minW="0"
-            >
-              {overdueCount}
-            </Badge>
-          )}
-        </Button>
       </HStack>
 
       {(kind[0] !== "ALL" || jobStatusFilter[0] !== "ALL" || occStatusFilter[0] !== "ALL" || typeFilter[0] !== "ALL" || overdueActive || vipOnly || showCanceled || showArchived || datePreset || dateFrom || dateTo || highlightId) && (
@@ -1157,14 +1158,14 @@ export default function ServicesTab({
                       )}
                     </HStack>
                   </VStack>
-                  <Box display="flex" gap={1} flexShrink={0} flexDirection={{ base: "column", md: "row" }} alignItems="flex-end">
-                    <StatusBadge
-                      status={job.status}
-                      palette={jobStatusColor(job.status)}
-                      variant="subtle"
-                    />
-                    <StatusBadge status={job.kind} palette="gray" variant="outline" />
-                  </Box>
+                </HStack>
+                <HStack gap={1} wrap="wrap" mt={1.5}>
+                  <StatusBadge status={job.kind} palette="gray" variant="outline" />
+                  <StatusBadge
+                    status={job.status}
+                    palette={jobStatusColor(job.status)}
+                    variant="subtle"
+                  />
                 </HStack>
                 {(job.property?.street1 || job.property?.city) && (
                   <Box mt="1" fontSize="sm">
