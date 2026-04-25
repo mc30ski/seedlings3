@@ -1123,46 +1123,26 @@ export default function HomePage() {
     if (!me?.id) { setPlanningCount(0); if (me) markAlertLoaded("planning"); return; }
     try {
       const list = await apiGet<any[]>("/api/occurrences");
-      if (!Array.isArray(list)) { setPlanningCount(0); return; }
+      if (!Array.isArray(list)) { setPlanningCount(0); markAlertLoaded("planning"); return; }
 
-      // Filter to my assigned items, exclude ghosts
       const myId = me.id;
       const myItems = list
         .filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost)
         .filter((occ: any) => (occ.assignees ?? []).some((a: any) => a.userId === myId));
 
-      // Load dismissed IDs (same logic as RemindersTab)
-      let dismissedIds = new Set<string>();
-      try {
-        const raw = localStorage.getItem("seedlings_reminders_dismissed");
-        if (raw) {
-          const data = JSON.parse(raw);
-          if (data.date === new Date().toISOString().slice(0, 10)) {
-            dismissedIds = new Set(data.ids ?? []);
-          }
-        }
-      } catch {}
-      const notDismissed = (occ: any) => !dismissedIds.has(occ.id);
-
-      const todayKey = bizDateKey(new Date());
       const tomorrowD = new Date(); tomorrowD.setDate(tomorrowD.getDate() + 1);
       const tomorrowKey = bizDateKey(tomorrowD);
 
-      // Exact same filters as RemindersTab — sum of all sections (items CAN appear in multiple sections)
-      // Scoped dismissals — section:occId keys match RemindersTab exactly
-      const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-      const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
-      const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
+      // Count tomorrow's items that need client confirmation
+      const tomorrowNeedsConfirm = myItems.filter((occ: any) =>
+        (occ.status === "SCHEDULED" || occ.status === "ACCEPTED") &&
+        occ.startAt && bizDateKey(occ.startAt) === tomorrowKey &&
+        occ.workflow !== "ANNOUNCEMENT" &&
+        occ.workflow !== "EVENT" &&
+        occ.jobId && !occ.isClientConfirmed
+      ).length;
 
-      const followUps = myItems.filter((occ: any) => occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey && !dismissedIds.has(`followups:${occ.id}`)).length;
-      const overdueCount = myItems.filter((occ: any) => occ.startAt && !overdueExclude.has(occ.status) && bizDateKey(occ.startAt) < todayKey && !dismissedIds.has(`overdue:${occ.id}`)).length;
-      const todayCount = myItems.filter((occ: any) => activeStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === todayKey && !dismissedIds.has(`today:${occ.id}`)).length;
-      const tomorrowCount = myItems.filter((occ: any) => upcomingStatuses.has(occ.status) && occ.startAt && bizDateKey(occ.startAt) === tomorrowKey && !dismissedIds.has(`tomorrow:${occ.id}`)).length;
-      const pendingCount = myItems.filter((occ: any) => occ.status === "PENDING_PAYMENT" && !dismissedIds.has(`pending:${occ.id}`)).length;
-      const estimatesCount = myItems.filter((occ: any) => occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && !dismissedIds.has(`estimates:${occ.id}`)).length;
-      const routePlan = dismissedIds.has("__route_plan__") ? 0 : 1;
-
-      setPlanningCount(followUps + overdueCount + todayCount + tomorrowCount + pendingCount + estimatesCount + routePlan);
+      setPlanningCount(tomorrowNeedsConfirm);
     } catch {
       setPlanningCount(0);
     }

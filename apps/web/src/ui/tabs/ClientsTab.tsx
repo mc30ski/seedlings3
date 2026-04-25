@@ -17,7 +17,7 @@ import {
   Accordion,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, LayoutList, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { Filter, LayoutList, Mail, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import { determineRoles, prettyStatus, clientStatusColor, clientLabel } from "@/src/lib/lib";
 import {
   type TabPropsType,
@@ -701,11 +701,22 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                     </Text>
                                   )}
                                   {(ct.normalizedPhone || ct.phone) && (
-                                    <Text fontSize="xs" color="fg.muted">
+                                    <HStack gap={2} fontSize="xs" color="fg.muted">
                                       <CallLink
                                         to={ct.normalizedPhone ?? ct.phone ?? ""}
                                       />
-                                    </Text>
+                                      <Button
+                                        size="xs"
+                                        variant="ghost"
+                                        colorPalette="green"
+                                        px="1"
+                                        minW="0"
+                                        onClick={() => window.open(`sms:${ct.normalizedPhone ?? ct.phone}`, "_self")}
+                                        title={`Text ${ct.normalizedPhone ?? ct.phone}`}
+                                      >
+                                        <MessageCircle size={12} />
+                                      </Button>
+                                    </HStack>
                                   )}
                                   {forAdmin && (
                                     <HStack gap={2} mt={3}>

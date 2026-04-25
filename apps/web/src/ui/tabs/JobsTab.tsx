@@ -90,6 +90,13 @@ function effectiveMinutes(occ: {
   return (Date.now() - startMs - paused) / 60000;
 }
 
+function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {
+  const isClaimer = a.assignedById === a.userId && a.role !== "observer";
+  if (isClaimer) return 0;
+  if (a.role === "observer") return 2;
+  return 1;
+}
+
 function parseJobTags(occ: any): string[] {
   if (!occ.jobTags) return [];
   if (Array.isArray(occ.jobTags)) return occ.jobTags;
@@ -3020,7 +3027,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <HStack mt={1} justify="space-between" align="center">
                       {!isUnassigned ? (
                         <Text fontSize="xs" fontWeight="semibold" color="teal.700">
-                          {assignees.map((a) => {
+                          {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
                             const name = a.user?.displayName ?? a.user?.email ?? a.userId;
                             const isCl = a.assignedById === a.userId && a.role !== "observer";
                             const role = isCl ? "Claimer - Lead Worker" : a.role === "observer" ? "Observer" : "Worker";
@@ -3443,7 +3450,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
                     {!isUnassigned && (
                       <VStack align="start" gap={0}>
-                        {assignees.map((a) => {
+                        {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
                           const isClaimer = a.assignedById === a.userId;
                           const isMe = a.userId === myId;
                           return (
