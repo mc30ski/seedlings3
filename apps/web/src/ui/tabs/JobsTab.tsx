@@ -3809,7 +3809,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         Accept Payment
                       </Button>
                     </>)}
-                    {(isClaimer || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <HStack gap={2}>
                         <Button
                           size="sm"
