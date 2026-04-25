@@ -26,6 +26,7 @@ type RouteJob = {
   jobId?: string;
   type: "claimable" | "claimed";
   property: string;
+  client?: string | null;
   address: string;
   city: string;
   price: number | null;
@@ -705,7 +706,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                           </Box>
                           <VStack align="start" gap={1} flex="1" minW={0}>
                             <HStack gap={2} wrap="wrap">
-                              <Text fontSize="sm" fontWeight="medium">{stop.property}</Text>
+                              <Text fontSize="sm" fontWeight="medium">{stop.property}{job?.client ? ` — ${job.client}` : ""}</Text>
                               {isClaimed || claimedIds.has(stop.occurrenceId) ? (
                                 <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">Claimed</Badge>
                               ) : (
@@ -813,7 +814,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   if (!job) return null;
                   return (
                     <HStack key={id} fontSize="xs" px={2} py={1} bg="gray.50" rounded="md" gap={2} wrap="wrap">
-                      <Text fontWeight="medium">{job.property}</Text>
+                      <Text fontWeight="medium">{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
                       <Text color="fg.muted">{job.city}</Text>
                       {job.currentDate && <Text color="fg.muted">{fmtDate(job.currentDate + "T12:00:00Z")}</Text>}
                       {job.price != null && <Badge colorPalette="green" variant="solid" fontSize="xs" px="1.5" borderRadius="full">${job.price.toFixed(2)}</Badge>}
@@ -865,7 +866,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                   >
                     {job.type === "claimed" ? "Claimed" : "Open"}
                   </Badge>
-                  <Text fontWeight="medium" truncate>{job.property}</Text>
+                  <Text fontWeight="medium" truncate>{job.property}{job.client ? ` — ${job.client}` : ""}</Text>
                   <Text color="fg.muted" truncate>{job.city}</Text>
                 </HStack>
                 <HStack gap={2} flexShrink={0}>
