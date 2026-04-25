@@ -69,7 +69,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         job: {
           include: {
             property: {
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true, client: { select: { displayName: true } } },
             },
           },
         },
@@ -90,7 +90,7 @@ export default async function previewRoutes(app: FastifyInstance) {
         job: {
           include: {
             property: {
-              select: { id: true, displayName: true, street1: true, city: true, state: true },
+              select: { id: true, displayName: true, street1: true, city: true, state: true, client: { select: { displayName: true } } },
             },
           },
         },
@@ -142,11 +142,13 @@ export default async function previewRoutes(app: FastifyInstance) {
     const formatOcc = (occ: any, type: "claimable" | "claimed") => {
       const prop = occ.job?.property;
       const address = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
+      const clientName = prop?.client?.displayName ?? null;
       return {
         id: occ.id,
         jobId: occ.jobId,
         type,
         property: prop?.displayName ?? "Unknown",
+        client: clientName,
         address: address || "No address",
         city: prop?.city ?? "Unknown",
         price: occ.price ?? occ.job?.defaultPrice ?? null,

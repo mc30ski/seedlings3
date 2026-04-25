@@ -157,6 +157,8 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
 
   function goToRoutes() {
     setRouteViewed(true);
+    // Set the routes tab date to tomorrow before navigating
+    try { localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(tomorrowKey)); } catch {}
     window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
   }
 
