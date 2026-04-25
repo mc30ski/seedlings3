@@ -5,20 +5,16 @@ import {
   Badge,
   Box,
   Button,
-  Card,
   HStack,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Bell, Copy, List, Mail, Maximize2, MessageCircle } from "lucide-react";
+import { Check, CheckCircle2, Circle, Copy, Mail, MessageCircle, Navigation } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { type Me, type WorkerOccurrence } from "@/src/lib/types";
-import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
-import { MapLink } from "@/src/ui/helpers/Link";
+import { bizDateKey, clientLabel } from "@/src/lib/lib";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
-import { openEventSearch } from "@/src/lib/bus";
-import SearchWithClear from "@/src/ui/components/SearchWithClear";
 
 type Props = {
   myId?: string;
@@ -27,30 +23,12 @@ type Props = {
   forAdmin?: boolean;
 };
 
-const DISMISSED_KEY = "seedlings_reminders_dismissed";
-
-function loadDismissed(): Set<string> {
-  try {
-    const raw = localStorage.getItem(DISMISSED_KEY);
-    if (!raw) return new Set();
-    const data = JSON.parse(raw);
-    const today = new Date().toISOString().slice(0, 10);
-    // Clean out old days — only keep today's dismissals
-    if (data.date !== today) {
-      localStorage.removeItem(DISMISSED_KEY);
-      return new Set();
-    }
-    return new Set(data.ids ?? []);
-  } catch { return new Set(); }
-}
-
-function saveDismissed(ids: Set<string>) {
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify({ date: today, ids: Array.from(ids) }));
-  } catch {}
-  // Notify the planning badge in the title bar
-  window.dispatchEvent(new CustomEvent("seedlings3:planning-changed"));
+function tomorrowDate(): { key: string; label: string } {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const key = bizDateKey(d);
+  const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  return { key, label };
 }
 
 function contactName(occ: WorkerOccurrence): string {
@@ -63,44 +41,45 @@ function contactName(occ: WorkerOccurrence): string {
   return "there";
 }
 
+function getContactInfo(occ: WorkerOccurrence): { phone?: string; email?: string } | null {
+  const poc = occ.job?.property?.pointOfContact
+    ?? occ.linkedOccurrence?.job?.property?.pointOfContact;
+  if (!poc) return null;
+  return { phone: poc.phone ?? undefined, email: poc.email ?? undefined };
+}
+
+function confirmMessage(occ: WorkerOccurrence): string {
+  const name = contactName(occ);
+  const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
+  return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service tomorrow at ${address}. Please let us know if anything has changed. Thank you!`;
+}
+
+function assigneeSummary(assignees: WorkerOccurrence["assignees"]): string {
+  if (!assignees || assignees.length === 0) return "Unassigned";
+  const sorted = [...assignees].sort((a, b) => {
+    const aIsClaimer = a.assignedById === a.userId && a.role !== "observer" ? 0 : a.role === "observer" ? 2 : 1;
+    const bIsClaimer = b.assignedById === b.userId && b.role !== "observer" ? 0 : b.role === "observer" ? 2 : 1;
+    return aIsClaimer - bIsClaimer;
+  });
+  return sorted.map((a) => a.user?.displayName ?? a.user?.email ?? "").filter(Boolean).join(", ");
+}
+
+/** Does this occurrence need client confirmation? */
+function needsConfirm(occ: WorkerOccurrence): boolean {
+  if (!occ.jobId) return false;
+  if ((occ as any).isClientConfirmed) return false;
+  if (occ.status !== "SCHEDULED") return false;
+  const w = occ.workflow;
+  return w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+}
+
 export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState("");
-  const [compact, setCompact] = useState(true);
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
-
-  function dismissReminder(key: string) {
-    setDismissed((prev) => {
-      const next = new Set(prev);
-      next.add(key);
-      saveDismissed(next);
-      return next;
-    });
-  }
-
-  function dismissInSection(section: string, occId: string) {
-    dismissReminder(`${section}:${occId}`);
-  }
-
-  function undismissAll() {
-    setDismissed(new Set());
-    saveDismissed(new Set());
-  }
-
-  async function confirmClient(occ: WorkerOccurrence) {
-    try {
-      await apiPost(`/api/occurrences/${occ.id}/confirm`);
-      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
-      publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
-    } catch (err: any) {
-      publishInlineMessage({ type: "ERROR", text: err?.message ?? "Failed to confirm." });
-    }
-  }
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [routeViewed, setRouteViewed] = useState(false);
 
   async function loadItems() {
-    setLoading(true);
     try {
       const list = await apiGet<WorkerOccurrence[]>("/api/occurrences");
       setItems(Array.isArray(list) ? list : []);
@@ -112,686 +91,312 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
 
   useEffect(() => {
     void loadItems();
-    // Reload when app becomes visible ONLY if the day changed (handles phone wake, overnight)
-    let lastDay = bizDateKey(new Date());
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        const currentDay = bizDateKey(new Date());
-        if (currentDay !== lastDay) {
-          lastDay = currentDay;
-          setDismissed(loadDismissed());
-          void loadItems();
-        }
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    // Refresh when a specific action happens (claim, confirm, status change)
-    // Use a debounce to avoid rapid re-fetching
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const onJobsChanged = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => void loadItems(), 500);
-    };
-    window.addEventListener("seedlings3:jobs-changed", onJobsChanged);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("seedlings3:jobs-changed", onJobsChanged);
-      if (debounceTimer) clearTimeout(debounceTimer);
-    };
   }, []);
 
-  const today = bizDateKey(new Date());
-  const tomorrowDate = new Date();
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrow = bizDateKey(tomorrowDate);
+  // Listen for jobs-changed events to refresh
+  useEffect(() => {
+    const handler = () => void loadItems();
+    window.addEventListener("seedlings3:jobs-changed", handler);
+    return () => window.removeEventListener("seedlings3:jobs-changed", handler);
+  }, []);
 
-  const myItems = useMemo(() => {
-    // Filter out ghost cards (pinned/reminder ghosts from the API) — they're for the Jobs tab
-    let rows = items.filter((occ: any) => !occ._isReminderGhost && !occ._isPinnedGhost);
+  const { key: tomorrowKey, label: tomorrowLabel } = useMemo(() => tomorrowDate(), []);
 
-    rows = showAll
-      ? rows.filter((occ) => (occ.assignees ?? []).length > 0)
-      : myId
-      ? rows.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId))
-      : rows;
+  // Filter to tomorrow's items assigned to me
+  const tomorrowItems = useMemo(() => {
+    let rows = items.filter((occ) => !occ._isReminderGhost && !occ._isPinnedGhost);
 
-    // Text search
-    const qlc = q.trim().toLowerCase();
-    if (qlc) {
-      rows = rows.filter((occ) =>
-        [
-          occ.job?.property?.displayName,
-          occ.job?.property?.street1,
-          occ.job?.property?.city,
-          occ.job?.property?.state,
-          occ.job?.property?.client?.displayName,
-          occ.status,
-          occ.notes,
-          ...(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email),
-        ]
-          .filter(Boolean)
-          .some((s) => (s as string).toLowerCase().includes(qlc))
-      );
+    // Filter to my assignments (or all if showAll)
+    if (!showAll && myId) {
+      rows = rows.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
+    } else if (showAll) {
+      rows = rows.filter((occ) => (occ.assignees ?? []).length > 0);
     }
+
+    // Tomorrow + SCHEDULED/ACCEPTED only
+    rows = rows.filter((occ) => {
+      if (!occ.startAt) return false;
+      if (bizDateKey(occ.startAt) !== tomorrowKey) return false;
+      return occ.status === "SCHEDULED" || occ.status === "ACCEPTED";
+    });
+
+    // Exclude announcements
+    rows = rows.filter((occ) => occ.workflow !== "ANNOUNCEMENT");
+
     return rows;
-  }, [items, myId, showAll, q]);
+  }, [items, myId, showAll, tomorrowKey]);
 
-  const ndIn = (section: string) => (occ: WorkerOccurrence) => !dismissed.has(`${section}:${occ.id}`);
+  // Group by type
+  const jobs = tomorrowItems.filter((occ) => occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || !occ.workflow);
+  const estimates = tomorrowItems.filter((occ) => occ.workflow === "ESTIMATE" || occ.isEstimate);
+  const events = tomorrowItems.filter((occ) => occ.workflow === "EVENT");
 
-  const overdueExclude = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
-  const overdue = myItems.filter((occ) => {
-    if (!occ.startAt) return false;
-    if (overdueExclude.has(occ.status)) return false;
-    if (occ.workflow === "ANNOUNCEMENT") return false;
-    return bizDateKey(occ.startAt) < today;
-  }).filter(ndIn("overdue"));
+  const hasItems = jobs.length > 0 || estimates.length > 0 || events.length > 0;
 
-  const activeStatuses = new Set(["SCHEDULED", "IN_PROGRESS", "ACCEPTED"]);
-  const upcomingStatuses = new Set(["SCHEDULED", "ACCEPTED"]);
+  // Progress tracking
+  const totalItems = jobs.length + estimates.length + events.length + (hasItems ? 1 : 0); // +1 for route
+  const checkedJobs = jobs.filter((occ) => !needsConfirm(occ)).length;
+  const checkedEstimates = estimates.filter((occ) => !needsConfirm(occ)).length;
+  const checkedEvents = events.length; // always checked
+  const checkedRoute = routeViewed ? 1 : 0;
+  const checkedCount = checkedJobs + checkedEstimates + checkedEvents + (hasItems ? checkedRoute : 0);
+  const allDone = hasItems && checkedCount === totalItems;
 
-  const todayJobs = myItems.filter((occ) => {
-    if (!activeStatuses.has(occ.status)) return false;
-    if (!occ.startAt) return false;
-    if (occ.workflow === "ANNOUNCEMENT") return false;
-    return bizDateKey(occ.startAt) === today;
-  }).filter(ndIn("today"));
-
-  const tomorrowJobs = myItems.filter((occ) => {
-    if (!upcomingStatuses.has(occ.status)) return false;
-    if (!occ.startAt) return false;
-    if (occ.workflow === "ANNOUNCEMENT") return false;
-    return bizDateKey(occ.startAt) === tomorrow;
-  }).filter(ndIn("tomorrow"));
-
-  const pendingPayment = myItems.filter((occ) => occ.status === "PENDING_PAYMENT").filter(ndIn("pending"));
-
-  const estimatesReady = myItems.filter((occ) =>
-    occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate)
-  ).filter(ndIn("estimates"));
-
-  // Follow-ups — occurrences with reminders due today or earlier (filtered to current worker)
-  const followUps = useMemo(() => {
-    if (forAdmin) return [];
-    return myItems.filter((occ) => {
-      if (!occ.reminder) return false;
-      return bizDateKey(occ.reminder.remindAt) <= today;
-    }).filter(ndIn("followups"));
-  }, [myItems, forAdmin, today, dismissed]);
-
-  const showRoutePlanReminder = !dismissed.has("__route_plan__") && !forAdmin;
-  const hasReminders = showRoutePlanReminder || followUps.length > 0 || overdue.length > 0 || todayJobs.length > 0 || tomorrowJobs.length > 0 || pendingPayment.length > 0 || estimatesReady.length > 0;
-  const hasDismissed = dismissed.size > 0;
-
-  if (loading) {
-    return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
+  async function handleConfirm(occ: WorkerOccurrence) {
+    setBusyId(occ.id);
+    try {
+      await apiPost(`/api/occurrences/${occ.id}/confirm`);
+      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+      publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+      window.dispatchEvent(new CustomEvent("seedlings3:planning-changed"));
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: err?.message ?? "Failed to confirm." });
+    }
+    setBusyId(null);
   }
 
-  function toggleCard(id: string) {
-    setExpandedCards((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  function goToRoutes() {
+    setRouteViewed(true);
+    window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
+  }
+
+  if (loading) {
+    return (
+      <Box py={10} textAlign="center">
+        <Spinner size="lg" />
+      </Box>
+    );
   }
 
   return (
     <Box w="full" pb={8}>
-      <HStack mb={2} gap={2}>
-        <SearchWithClear
-          value={q}
-          onChange={setQ}
-          placeholder="Search planning…"
-          inputId="planning-search"
-        />
-        {hasReminders && !forAdmin && (
-          <Button
-            size="sm"
-            variant="ghost"
-            colorPalette="gray"
-            px="2"
-            flexShrink={0}
-            onClick={() => {
-              const allIds = new Set(dismissed);
-              allIds.add("__route_plan__");
-              for (const occ of overdue) allIds.add(`overdue:${occ.id}`);
-              for (const occ of todayJobs) allIds.add(`today:${occ.id}`);
-              for (const occ of tomorrowJobs) allIds.add(`tomorrow:${occ.id}`);
-              for (const occ of pendingPayment) allIds.add(`pending:${occ.id}`);
-              for (const occ of estimatesReady) allIds.add(`estimates:${occ.id}`);
-              for (const occ of followUps) allIds.add(`followups:${occ.id}`);
-              setDismissed(allIds);
-              saveDismissed(allIds);
-            }}
-          >
-            Dismiss all
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant={compact ? "solid" : "ghost"}
-          px="2"
-          onClick={() => { setCompact(!compact); setExpandedCards(new Set()); }}
-          css={compact ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-          } : undefined}
-        >
-          {compact ? <Maximize2 size={14} /> : <List size={14} />}
-        </Button>
-      </HStack>
-
-      {!hasReminders && (
-        <Box textAlign="center" py={10}>
-          <Text fontSize="lg" fontWeight="semibold" color="green.600">All caught up!</Text>
-          <Text fontSize="sm" color="fg.muted" mt={1}>
-            {hasDismissed ? `Nothing to plan — ${dismissed.size} dismissed today.` : "Nothing to plan right now."}
+      {/* Header */}
+      <Box mb={4}>
+        <Text fontSize="lg" fontWeight="bold" color="fg.default">
+          Tomorrow's Plan
+        </Text>
+        <Text fontSize="sm" color="fg.muted">
+          {tomorrowLabel}
+        </Text>
+        {hasItems && (
+          <Text fontSize="xs" color={allDone ? "green.600" : "fg.muted"} mt={1} fontWeight={allDone ? "semibold" : "normal"}>
+            {allDone ? "All set for tomorrow!" : `${checkedCount} of ${totalItems} ready`}
           </Text>
-          {hasDismissed && !forAdmin && (
-            <Button size="sm" variant="ghost" mt={2} onClick={undismissAll}>
-              Show dismissed
-            </Button>
-          )}
+        )}
+      </Box>
+
+      {/* All set banner */}
+      {allDone && (
+        <Box p={4} bg="green.50" borderWidth="1px" borderColor="green.300" borderRadius="md" mb={4} textAlign="center">
+          <CheckCircle2 size={32} color="var(--chakra-colors-green-500)" style={{ margin: "0 auto 8px" }} />
+          <Text fontSize="md" fontWeight="semibold" color="green.700">You're all set for tomorrow!</Text>
+          <Text fontSize="sm" color="green.600" mt={1}>All clients confirmed and route planned.</Text>
         </Box>
       )}
 
-      {/* Route planning reminder — always at top */}
-      {showRoutePlanReminder && (
+      {/* No items */}
+      {!hasItems && (
+        <Box p={6} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md" textAlign="center">
+          <Text fontSize="md" fontWeight="semibold" color="fg.muted">All clear for tomorrow</Text>
+          <Text fontSize="sm" color="fg.muted" mt={1}>No jobs, estimates, or events scheduled.</Text>
+        </Box>
+      )}
+
+      {/* Jobs section */}
+      {jobs.length > 0 && (
         <Box mb={4}>
-          <Card.Root variant="outline" borderColor="blue.300" bg="blue.50">
-            <Card.Body py="3" px="4">
-              <HStack justify="space-between" align="center">
-                <VStack align="start" gap={0.5} flex="1">
-                  <Text fontSize="sm" fontWeight="semibold" color="blue.700">
-                    Plan tomorrow's route
-                  </Text>
-                  <Text fontSize="xs" color="blue.600">
-                    Review and optimize your route for tomorrow to make the most of your day.
-                  </Text>
-                </VStack>
-                <HStack gap={2} flexShrink={0}>
-                  <Button
-                    size="sm"
-                    colorPalette="blue"
-                    variant="solid"
-                    onClick={() => {
-                      // Set date to tomorrow and navigate to Routes tab
-                      const tomorrow = new Date(Date.now() + 86400000);
-                      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
-                      try { localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(tomorrowStr)); } catch {}
-                      window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
-                    }}
-                  >
-                    Plan Route
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    colorPalette="gray"
-                    onClick={() => dismissReminder("__route_plan__")}
-                  >
-                    Dismiss
-                  </Button>
-                </HStack>
-              </HStack>
-            </Card.Body>
-          </Card.Root>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.600" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Jobs ({jobs.length})
+          </Text>
+          <VStack align="stretch" gap={1}>
+            {jobs.map((occ) => (
+              <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
+            ))}
+          </VStack>
         </Box>
       )}
 
-
-      {followUps.length > 0 && (
-        <Section
-          title="Follow-ups"
-          subtitle="Reminders you set that are now due"
-          color="orange.600"
-          items={followUps}
-          badge={(occ) => {
-            const note = occ.reminder?.note;
-            return (
-              <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                <Bell size={10} style={{ marginRight: 3 }} />
-                {note || "Follow up"}
-              </Badge>
-            );
-          }}
-          message="Follow up on this job"
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => {
-            void apiPost(`/api/occurrences/${occId}/reminder/clear`);
-            dismissInSection("followups", occId);
-          }}
-          dismissLabel="Clear Reminder"
-        />
+      {/* Estimates section */}
+      {estimates.length > 0 && (
+        <Box mb={4}>
+          <Text fontSize="xs" fontWeight="semibold" color="pink.600" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Estimates ({estimates.length})
+          </Text>
+          <VStack align="stretch" gap={1}>
+            {estimates.map((occ) => (
+              <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
+            ))}
+          </VStack>
+        </Box>
       )}
 
-      {overdue.length > 0 && (
-        <Section
-          title="Overdue"
-          subtitle="These jobs are past their scheduled date"
-          color="red.600"
-          items={overdue}
-          badge={(occ) => {
-            const d = occ.startAt ? bizDateKey(occ.startAt) : null;
-            const daysLate = d ? Math.round((new Date(today + "T12:00:00Z").getTime() - new Date(d + "T12:00:00Z").getTime()) / 86400000) : 0;
-            return <Badge colorPalette="red" variant="solid" fontSize="xs" borderRadius="full" px="2">{daysLate} day{daysLate !== 1 ? "s" : ""} overdue</Badge>;
-          }}
-          message={(occ) => {
-            if (occ.workflow === "TASK") return occ.notes ?? "Overdue task";
-            const name = contactName(occ);
-            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
-            return `Hi ${name}, this is Seedlings Lawn Care. We had a service scheduled at ${address} that we weren't able to complete. Would you like us to reschedule? Please let us know a good time. Thank you!`;
-          }}
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("overdue", occId)}
-          onConfirm={forAdmin ? undefined : confirmClient}
-        />
+      {/* Events section */}
+      {events.length > 0 && (
+        <Box mb={4}>
+          <Text fontSize="xs" fontWeight="semibold" color="yellow.700" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Events ({events.length})
+          </Text>
+          <VStack align="stretch" gap={1}>
+            {events.map((occ) => (
+              <HStack
+                key={occ.id}
+                gap={2}
+                px={3}
+                py={2}
+                bg="green.50"
+                borderWidth="1px"
+                borderColor="green.200"
+                borderRadius="md"
+                align="center"
+              >
+                <CheckCircle2 size={16} color="var(--chakra-colors-green-500)" />
+                <VStack align="start" gap={0} flex="1" minW={0}>
+                  <Text fontSize="sm" fontWeight="medium">{occ.title || "Event"}</Text>
+                </VStack>
+              </HStack>
+            ))}
+          </VStack>
+        </Box>
       )}
 
-      {todayJobs.length > 0 && (
-        <Section
-          title="Today"
-          subtitle="Jobs scheduled for today"
-          color="blue.600"
-          items={todayJobs}
-          badge={(occ) => <Badge colorPalette={occ.workflow === "TASK" ? "blue" : "blue"} variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Today" : "Today"}</Badge>}
-          message={(occ) => {
-            if (occ.workflow === "TASK") return occ.notes ?? "Task for today";
-            const name = contactName(occ);
-            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
-            return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service today at ${address}. Please let us know if anything has changed. Thank you!`;
-          }}
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("today", occId)}
-          onConfirm={forAdmin ? undefined : confirmClient}
-        />
-      )}
-
-      {tomorrowJobs.length > 0 && (
-        <Section
-          title="Tomorrow"
-          subtitle="Jobs scheduled for tomorrow"
-          color="teal.600"
-          items={tomorrowJobs}
-          badge={(occ) => <Badge colorPalette="teal" variant="solid" fontSize="xs" borderRadius="full" px="2">{occ.workflow === "TASK" ? "Task — Tomorrow" : "Tomorrow"}</Badge>}
-          message={(occ) => {
-            if (occ.workflow === "TASK") return occ.notes ?? "Task for tomorrow";
-            const name = contactName(occ);
-            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
-            return `Hi ${name}, this is Seedlings Lawn Care. We have you scheduled for service tomorrow at ${address}. Please let us know if you need to make any changes. Thank you!`;
-          }}
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("tomorrow", occId)}
-          onConfirm={forAdmin ? undefined : confirmClient}
-        />
-      )}
-
-      {pendingPayment.length > 0 && (
-        <Section
-          title="Pending Payment"
-          subtitle="These jobs are complete but payment hasn't been collected"
-          color="orange.600"
-          items={pendingPayment}
-          badge={() => <Badge colorPalette="orange" variant="solid" fontSize="xs" borderRadius="full" px="2">Awaiting payment</Badge>}
-          message={(occ) => {
-            const name = contactName(occ);
-            const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
-            const amount = occ.price != null ? ` The total is $${occ.price.toFixed(2)}.` : "";
-            return `Hi ${name}, this is Seedlings Lawn Care. We've completed the service at ${address}.${amount} Please let us know how you'd like to handle payment. Thank you!`;
-          }}
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("pending", occId)}
-        />
-      )}
-
-      {estimatesReady.length > 0 && (
-        <Section
-          title="Estimates Ready"
-          subtitle="Completed estimates awaiting your review"
-          color="purple.600"
-          items={estimatesReady}
-          badge={() => <Badge colorPalette="purple" variant="solid" fontSize="xs" borderRadius="full" px="2">Review needed</Badge>}
-          message="Accept or reject this estimate"
-          showAssignees={showAll}
-          forAdmin={forAdmin}
-          compact={compact}
-          expandedCards={expandedCards}
-          toggleCard={toggleCard}
-          me={me}
-          onDismiss={forAdmin ? undefined : (occId) => dismissInSection("estimates", occId)}
-        />
-      )}
-
-      {hasDismissed && hasReminders && !forAdmin && (
-        <Box textAlign="center" py={3}>
-          <Button size="sm" variant="ghost" colorPalette="gray" onClick={undismissAll}>
-            Show {dismissed.size} dismissed
-          </Button>
+      {/* Route section */}
+      {hasItems && (
+        <Box mb={4}>
+          <Text fontSize="xs" fontWeight="semibold" color="cyan.700" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Route
+          </Text>
+          <HStack
+            gap={2}
+            px={3}
+            py={2}
+            bg={routeViewed ? "green.50" : "gray.50"}
+            borderWidth="1px"
+            borderColor={routeViewed ? "green.200" : "gray.200"}
+            borderRadius="md"
+            align="center"
+          >
+            {routeViewed ? (
+              <CheckCircle2 size={16} color="var(--chakra-colors-green-500)" />
+            ) : (
+              <Circle size={16} color="var(--chakra-colors-gray-400)" />
+            )}
+            <Text fontSize="sm" fontWeight="medium" flex="1">Plan tomorrow's route</Text>
+            {!forAdmin && (
+              <Button
+                size="xs"
+                variant={routeViewed ? "ghost" : "solid"}
+                colorPalette="cyan"
+                onClick={goToRoutes}
+              >
+                <Navigation size={12} /> {routeViewed ? "View Again" : "Plan Route"}
+              </Button>
+            )}
+          </HStack>
         </Box>
       )}
     </Box>
   );
 }
 
-function confirmDateLabel(occ: WorkerOccurrence): string {
-  if (!occ.startAt) return "soon";
-  const occDate = bizDateKey(occ.startAt);
-  const today = bizDateKey(new Date());
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowKey = bizDateKey(tomorrow);
-  if (occDate === today) return "today";
-  if (occDate === tomorrowKey) return "tomorrow";
-  if (occDate < today) return `on ${fmtDate(occ.startAt)} (overdue)`;
-  return `on ${fmtDate(occ.startAt)}`;
-}
-
-function confirmMessage(occ: WorkerOccurrence): string {
-  const name = contactName(occ);
-  const address = occ.job?.property?.street1 ?? occ.job?.property?.displayName ?? "";
-  const when = confirmDateLabel(occ);
-  return `Hi ${name}, this is Seedlings Lawn Care. Just confirming we're scheduled for service ${when} at ${address}. Please let us know if anything has changed. Thank you!`;
-}
-
-function getContactInfo(occ: WorkerOccurrence): { phone?: string; email?: string } | null {
-  // Check the occurrence's own property contact, then fall back to linked occurrence's contact
-  const poc = occ.job?.property?.pointOfContact
-    ?? occ.linkedOccurrence?.job?.property?.pointOfContact;
-  if (!poc) return null;
-  return { phone: poc.phone ?? undefined, email: poc.email ?? undefined };
-}
-
-function Section({
-  title,
-  subtitle,
-  color,
-  items,
-  badge,
-  message,
-  showAssignees,
+function ChecklistItem({
+  occ,
   forAdmin,
-  compact,
-  expandedCards,
-  toggleCard,
-  onDismiss,
   onConfirm,
-  dismissLabel = "Dismiss",
-  me,
+  busy,
 }: {
-  title: string;
-  subtitle: string;
-  color: string;
-  items: WorkerOccurrence[];
-  badge: (occ: WorkerOccurrence) => React.ReactNode;
-  message: string | ((occ: WorkerOccurrence) => string);
-  showAssignees?: boolean;
+  occ: WorkerOccurrence;
   forAdmin?: boolean;
-  compact: boolean;
-  expandedCards: Set<string>;
-  toggleCard: (id: string) => void;
-  onDismiss?: (id: string) => void;
-  onConfirm?: (occ: WorkerOccurrence) => void;
-  dismissLabel?: string;
-  me?: Me | null;
+  onConfirm: (occ: WorkerOccurrence) => void;
+  busy?: boolean;
 }) {
+  const confirmed = !needsConfirm(occ);
+  const contact = getContactInfo(occ);
+  const msg = confirmMessage(occ);
+  const propertyName = occ.job?.property?.displayName ?? occ.title ?? "Job";
+  const clientName = occ.job?.property?.client?.displayName;
+  const team = assigneeSummary(occ.assignees);
+
   return (
-    <Box mb={5}>
-      <Text fontSize="xs" fontWeight="semibold" color={color} mb={1} px={1} textTransform="uppercase" letterSpacing="wide">
-        {title} ({items.length})
-      </Text>
-      <Text fontSize="xs" color="fg.muted" mb={2} px={1}>{subtitle}</Text>
-      <VStack align="stretch" gap={2}>
-        {items.map((occ) => {
-          const isExpanded = !compact || expandedCards.has(occ.id);
-          return (
-            <Card.Root
-              key={occ.id}
-              variant="outline"
-              css={compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : undefined}
-              onClick={() => { if (compact) toggleCard(occ.id); }}
-            >
-              {isExpanded && (
-                <HStack px="4" pt="3" pb="0" gap={2} flexWrap="wrap">
-                  <Button
-                    size="xs"
-                    variant="solid"
-                    colorPalette="blue"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEventSearch(
-                        "remindersToJobsTabSearch",
-                        occ.workflow === "TASK" ? (occ.title ?? "") : (occ.job?.property?.displayName ?? ""),
-                        !!forAdmin,
-                        `${occ.id}|${occ.startAt ?? ""}`,
-                      );
-                    }}
-                  >
-                    View in Jobs
-                  </Button>
-                  {onConfirm && occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
-                    (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (() => {
-                    const contact = getContactInfo(occ);
-                    const msg = confirmMessage(occ);
-                    return (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="solid"
-                          colorPalette="orange"
-                          onClick={(e) => { e.stopPropagation(); onConfirm(occ); }}
-                        >
-                          Confirm Client
-                        </Button>
-                        {contact?.phone ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            colorPalette="green"
-                            onClick={(e) => { e.stopPropagation(); window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self"); }}
-                            title={`Text ${contact.phone}`}
-                          >
-                            <MessageCircle size={12} /> Text
-                          </Button>
-                        ) : contact?.email ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            colorPalette="blue"
-                            onClick={(e) => { e.stopPropagation(); window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self"); }}
-                            title={`Email ${contact.email}`}
-                          >
-                            <Mail size={12} /> Email
-                          </Button>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                  {onDismiss && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      colorPalette="gray"
-                      onClick={(e) => { e.stopPropagation(); onDismiss(occ.id); }}
-                    >
-                      {dismissLabel}
-                    </Button>
-                  )}
-                </HStack>
-              )}
-              <Card.Body py="3" px="4" pt={isExpanded ? "2" : "3"}>
-                <HStack justify="space-between" align="start" gap={3}>
-                  <VStack align="start" gap={1} flex="1" minW={0}>
-                    <Text fontSize={isExpanded ? "sm" : "sm"} fontWeight="medium">
-                      {occ.workflow === "TASK" || occ.workflow === "REMINDER" ? (occ.title || (occ.workflow === "TASK" ? "Task" : "Reminder")) : occ.job?.property?.displayName ? (
-                        <>
-                          {occ.job.property.displayName}
-                          {occ.job.property.client?.displayName && (
-                            <> — {clientLabel(occ.job.property.client.displayName)}</>
-                          )}
-                        </>
-                      ) : (occ.title || "Job")}
-                    </Text>
-                    {isExpanded && (
-                      <>
-                        <Box fontSize="xs">
-                          <MapLink address={[
-                            occ.job?.property?.street1,
-                            occ.job?.property?.city,
-                            occ.job?.property?.state,
-                          ].filter(Boolean).join(", ")} />
-                        </Box>
-                        {showAssignees && (occ.assignees ?? []).length > 0 && (
-                          <Text fontSize="xs" color="teal.600">
-                            {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                          </Text>
-                        )}
-                        {(() => {
-                          const msg = typeof message === "function" ? message(occ) : message;
-                          const contact = getContactInfo(occ);
-                          const contactPhone = contact?.phone;
-                          const contactEmail = contact?.email;
-                          return (
-                            <VStack align="stretch" gap={1}>
-                              <Text fontSize="xs" color="fg.muted" fontStyle="italic">{msg}</Text>
-                              <HStack gap={1} flexWrap="wrap">
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  colorPalette="gray"
-                                  px="1"
-                                  minW="0"
-                                  flexShrink={0}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigator.clipboard.writeText(msg);
-                                    publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
-                                  }}
-                                  title="Copy to clipboard"
-                                >
-                                  <Copy size={12} style={{ display: "block" }} />
-                                  <Text fontSize="xs">Copy</Text>
-                                </Button>
-                                {contactPhone && (
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    colorPalette="green"
-                                    px="1"
-                                    minW="0"
-                                    flexShrink={0}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.open(`sms:${contactPhone}?body=${encodeURIComponent(msg)}`, "_self");
-                                    }}
-                                    title={`Text ${contactPhone}`}
-                                  >
-                                    <MessageCircle size={12} style={{ display: "block" }} />
-                                    <Text fontSize="xs">Text</Text>
-                                  </Button>
-                                )}
-                                {!contactPhone && contactEmail && (
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    colorPalette="blue"
-                                    px="1"
-                                    minW="0"
-                                    flexShrink={0}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const fromName = me?.displayName || "Seedlings Lawn Care";
-                                      const subject = encodeURIComponent(`Message from ${fromName}`);
-                                      window.open(`mailto:${contactEmail}?subject=${subject}&body=${encodeURIComponent(msg)}`, "_self");
-                                    }}
-                                    title={`Email ${contactEmail}`}
-                                  >
-                                    <Mail size={12} style={{ display: "block" }} />
-                                    <Text fontSize="xs">Email</Text>
-                                  </Button>
-                                )}
-                              </HStack>
-                            </VStack>
-                          );
-                        })()}
-                      </>
-                    )}
-                    {!isExpanded && (
-                      <HStack gap={2} fontSize="xs" justify="space-between" w="full">
-                        <HStack gap={2} flexWrap="wrap" flex="1" minW={0}>
-                          {badge(occ)}
-                          {occ.jobId && !(occ as any).isClientConfirmed && occ.status === "SCHEDULED" &&
-                            (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || occ.workflow === "ESTIMATE" || !occ.workflow) && (
-                            <Badge colorPalette="orange" variant="solid" fontSize="xs" px="2" borderRadius="full">Unconfirmed</Badge>
-                          )}
-                          {occ.startAt && <Text color="fg.muted">{fmtDate(occ.startAt)}</Text>}
-                          {occ.price != null && (
-                            <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                              ${occ.price.toFixed(2)}
-                            </Badge>
-                          )}
-                          {showAssignees && (occ.assignees ?? []).length > 0 && (
-                            <Text color="teal.600">
-                              {(occ.assignees ?? []).map((a) => a.user?.displayName ?? a.user?.email ?? a.userId).join(", ")}
-                            </Text>
-                          )}
-                        </HStack>
-                        {onDismiss && (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorPalette="gray"
-                            flexShrink={0}
-                            onClick={(e) => { e.stopPropagation(); onDismiss(occ.id); }}
-                          >
-                            {dismissLabel}
-                          </Button>
-                        )}
-                      </HStack>
-                    )}
-                  </VStack>
-                  {isExpanded && (
-                    <VStack align="end" gap={1} flexShrink={0}>
-                      {badge(occ)}
-                      {occ.startAt && (
-                        <Text fontSize="xs" color="fg.muted">{fmtDate(occ.startAt)}</Text>
-                      )}
-                      {occ.price != null && (
-                        <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px="2">
-                          ${occ.price.toFixed(2)}
-                        </Badge>
-                      )}
-                    </VStack>
-                  )}
-                </HStack>
-              </Card.Body>
-            </Card.Root>
-          );
-        })}
+    <HStack
+      gap={2}
+      px={3}
+      py={2}
+      bg={confirmed ? "green.50" : "orange.50"}
+      borderWidth="1px"
+      borderColor={confirmed ? "green.200" : "orange.300"}
+      borderRadius="md"
+      align="start"
+    >
+      {/* Check icon */}
+      <Box mt="2px" flexShrink={0}>
+        {confirmed ? (
+          <CheckCircle2 size={16} color="var(--chakra-colors-green-500)" />
+        ) : (
+          <Circle size={16} color="var(--chakra-colors-orange-400)" />
+        )}
+      </Box>
+
+      {/* Content */}
+      <VStack align="start" gap={0.5} flex="1" minW={0}>
+        <Text fontSize="sm" fontWeight="medium">
+          {propertyName}
+          {clientName && <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(clientName)}</Text>}
+        </Text>
+        <Text fontSize="xs" color="fg.muted">{team}</Text>
+        {confirmed ? (
+          <Badge size="xs" colorPalette="green" variant="subtle">Confirmed</Badge>
+        ) : (
+          <Badge size="xs" colorPalette="orange" variant="solid">Needs confirmation</Badge>
+        )}
       </VStack>
-    </Box>
+
+      {/* Actions */}
+      {!confirmed && !forAdmin && (
+        <VStack gap={1} flexShrink={0} align="end">
+          <Button
+            size="xs"
+            variant="solid"
+            colorPalette="orange"
+            loading={busy}
+            onClick={() => onConfirm(occ)}
+          >
+            <Check size={12} /> Confirm
+          </Button>
+          <HStack gap={1}>
+            <Button
+              size="xs"
+              variant="ghost"
+              px="1"
+              minW="0"
+              title="Copy message"
+              onClick={() => { navigator.clipboard.writeText(msg); publishInlineMessage({ type: "SUCCESS", text: "Message copied." }); }}
+            >
+              <Copy size={12} />
+            </Button>
+            {contact?.phone ? (
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="green"
+                onClick={() => window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self")}
+                title={`Text ${contact.phone}`}
+              >
+                <MessageCircle size={12} /> Message
+              </Button>
+            ) : contact?.email ? (
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="blue"
+                onClick={() => window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self")}
+                title={`Email ${contact.email}`}
+              >
+                <Mail size={12} /> Message
+              </Button>
+            ) : null}
+          </HStack>
+        </VStack>
+      )}
+    </HStack>
   );
 }

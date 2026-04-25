@@ -665,6 +665,24 @@ async function seedDatabase() {
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
 
+  // Admin-assigned tomorrow (diverse: confirmed, unconfirmed, estimate, event)
+  await occ(
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 8), endAt: addMinutes(daysFromNow(1, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+  );
+  await occ(
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 250.0, estimatedMinutes: 120 },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
+  );
+  await occ(
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 14), endAt: addMinutes(daysFromNow(1, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 30 },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+  );
+  await occ(
+    { jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 11), endAt: addMinutes(daysFromNow(1, 11), 60), status: "SCHEDULED", workflow: "ESTIMATE", price: null, estimatedMinutes: 60, isEstimate: true },
+    [{ userId: ADMIN_WORKER_ID, role: "primary" }],
+  );
+
   // Unclaimed tomorrow
   await occ({ jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 13), endAt: addMinutes(daysFromNow(1, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35 });
   await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 7), endAt: addMinutes(daysFromNow(1, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180 });
