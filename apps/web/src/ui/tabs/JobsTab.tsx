@@ -2511,7 +2511,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           }
                           if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
                             return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Start Job" onClick={(e: any) => {
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
                                 e.stopPropagation();
                                 if (isOffline) {
                                   void (async () => {
@@ -3013,7 +3013,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const actual = effectiveMinutes(occ);
                           const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
-                          const canEdit = (isClaimer || forAdmin) && occ.startedAt;
+                          const canEdit = (isClaimer || isActiveAssignee || forAdmin) && occ.startedAt;
                           if (actual != null && adjEst) {
                             const color = actual <= adjEst ? "green.600" : "red.600";
                             return <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>{formatDuration(actual)}{occ.manualDurationMinutes != null ? " ✎" : ""}</Text>;
@@ -3724,7 +3724,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Button>
                     )}
                     {/* Primary action — Start / Complete / Accept Payment */}
-                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
+                    {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -3747,10 +3747,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setStartJobOcc(occ);
                         }}
                       >
-                        Start Job
+                        {isEstimateOcc ? "Start Estimate" : "Start Job"}
                       </Button>
                     )}
-                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2}>
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
@@ -3760,7 +3760,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || isActiveAssignee || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2}>
                         <Button size="sm" variant="solid" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void resumeJob(occ)}>
                           Resume
@@ -3770,7 +3770,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -3791,7 +3791,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         Complete Estimate
                       </Button>
                     )}
-                    {(isClaimer || forAdmin) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
+                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PENDING_PAYMENT" && occ.workflow !== "ESTIMATE" && !occ.isEstimate && (<>
                       {occ.workflow === "STANDARD" && !occ.isOneOff && !occ.frequencyDays && !(occ.job as any)?.frequencyDays && (
                         <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
                           <Text fontSize="xs" color="yellow.800">
@@ -4237,7 +4237,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Delete
                         </Button>
                       )}
-                      {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !isOffline && (
+                      {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !isOffline && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -4720,7 +4720,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           <Dialog.Positioner>
             <Dialog.Content maxW="sm">
               <Dialog.Header>
-                <Dialog.Title>Start Job</Dialog.Title>
+                <Dialog.Title>{startJobOcc?.workflow === "ESTIMATE" || startJobOcc?.isEstimate ? "Start Estimate" : "Start Job"}</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
