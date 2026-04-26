@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
-import { getDownloadUrl, deleteObject } from "../lib/r2";
+import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
@@ -396,6 +396,124 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // ── Property Photos ──────────────────────────────────────────────────────
+
+  app.post("/admin/properties/:id/photos/upload-url", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const propertyId = String(req.params.id);
+    const { fileName, contentType } = (req.body || {}) as { fileName?: string; contentType?: string };
+    const name = fileName || `photo-${Date.now()}.jpg`;
+    const ct = contentType || "image/jpeg";
+    const key = `properties/${propertyId}/${Date.now()}-${name}`;
+    const uploadUrl = await getUploadUrl(key, ct, 300, "property-photos");
+    return { uploadUrl, key, contentType: ct };
+  });
+
+  app.post("/admin/properties/:id/photos/confirm", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const propertyId = String(req.params.id);
+    const { key, fileName, contentType, description } = (req.body || {}) as {
+      key: string; fileName?: string; contentType?: string; description?: string;
+    };
+    if (!key) throw app.httpErrors.badRequest("key is required");
+    const count = await prisma.propertyPhoto.count({ where: { propertyId } });
+    if (count >= 20) throw app.httpErrors.badRequest("Maximum 20 photos per property");
+    return prisma.propertyPhoto.create({
+      data: {
+        propertyId,
+        r2Key: key,
+        fileName: fileName ?? null,
+        contentType: contentType ?? null,
+        description: description?.trim() || null,
+        sortOrder: count,
+        uploadedById: uid,
+      },
+    });
+  });
+
+  app.get("/admin/properties/:id/photos", adminGuard, async (req: any) => {
+    const propertyId = String(req.params.id);
+    const photos = await prisma.propertyPhoto.findMany({
+      where: { propertyId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const withUrls = await Promise.all(
+      photos.map(async (p) => ({
+        ...p,
+        url: await getDownloadUrl(p.r2Key, 3600, "property-photos"),
+      }))
+    );
+    return withUrls;
+  });
+
+  app.patch("/admin/properties/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const photoId = String(req.params.photoId);
+    const body = req.body || {};
+    const data: any = {};
+    if ("description" in body) data.description = body.description?.trim() || null;
+    if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
+    return prisma.propertyPhoto.update({ where: { id: photoId }, data });
+  });
+
+  app.delete("/admin/properties/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const photoId = String(req.params.photoId);
+    const photo = await prisma.propertyPhoto.findUnique({ where: { id: photoId } });
+    if (!photo) throw app.httpErrors.notFound("Photo not found");
+    await deleteObject(photo.r2Key, "property-photos");
+    await prisma.propertyPhoto.delete({ where: { id: photoId } });
+    return { deleted: true };
+  });
+
+  // ── Job Service Default Property Photos ─────────────────────────────────
+
+  app.get("/admin/jobs/:id/property-photos", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const links = await prisma.jobPropertyPhoto.findMany({
+      where: { jobId },
+      include: { propertyPhoto: true },
+    });
+    const withUrls = await Promise.all(
+      links.map(async (l) => ({
+        ...l,
+        propertyPhoto: {
+          ...l.propertyPhoto,
+          url: await getDownloadUrl(l.propertyPhoto.r2Key, 3600, "property-photos"),
+        },
+      }))
+    );
+    return withUrls;
+  });
+
+  app.put("/admin/jobs/:id/property-photos", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const { propertyPhotoIds } = (req.body || {}) as { propertyPhotoIds: string[] };
+    if (!Array.isArray(propertyPhotoIds)) throw app.httpErrors.badRequest("propertyPhotoIds must be an array");
+    await prisma.jobPropertyPhoto.deleteMany({ where: { jobId } });
+    if (propertyPhotoIds.length > 0) {
+      await prisma.jobPropertyPhoto.createMany({
+        data: propertyPhotoIds.map((propertyPhotoId) => ({ jobId, propertyPhotoId })),
+        skipDuplicates: true,
+      });
+    }
+    return { ok: true, count: propertyPhotoIds.length };
+  });
+
+  // ── Occurrence Property Photos (admin override) ─────────────────────────
+
+  app.put("/admin/occurrences/:id/property-photos", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const { propertyPhotoIds } = (req.body || {}) as { propertyPhotoIds: string[] };
+    if (!Array.isArray(propertyPhotoIds)) throw app.httpErrors.badRequest("propertyPhotoIds must be an array");
+    await prisma.occurrencePropertyPhoto.deleteMany({ where: { occurrenceId } });
+    if (propertyPhotoIds.length > 0) {
+      await prisma.occurrencePropertyPhoto.createMany({
+        data: propertyPhotoIds.map((propertyPhotoId) => ({ occurrenceId, propertyPhotoId })),
+        skipDuplicates: true,
+      });
+    }
+    return { ok: true, count: propertyPhotoIds.length };
+  });
+
   // Jobs: list / get / create / update
 
   app.get("/admin/jobs", adminGuard, async (req: any) => {
@@ -451,6 +569,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       kind: kind as JobKind,
       status: (status as JobStatus) || undefined,
       frequencyDays,
+      description: body.description != null ? String(body.description) : null,
       notes: body.notes != null ? String(body.notes) : null,
       defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
       estimatedMinutes: body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null,
@@ -489,6 +608,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         patch.frequencyDays = null;
       }
     }
+    if ("description" in body) patch.description = body.description != null ? String(body.description) : null;
     if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
     if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
     if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;

@@ -156,6 +156,34 @@ export async function compressAndRedact(file: File): Promise<Blob> {
   });
 }
 
+/**
+ * Compress an image WITHOUT redacting sensitive text.
+ * Used for property reference photos where text visibility is needed.
+ */
+export async function compressOnly(file: File): Promise<Blob> {
+  const img = await loadImage(file);
+  const MAX = 1200;
+  let w = img.width;
+  let h = img.height;
+  if (w > MAX || h > MAX) {
+    const ratio = Math.min(MAX / w, MAX / h);
+    w = Math.round(w * ratio);
+    h = Math.round(h * ratio);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, w, h);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Compression failed"))),
+      "image/jpeg",
+      0.8,
+    );
+  });
+}
+
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();

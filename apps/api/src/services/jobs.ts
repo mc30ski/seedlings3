@@ -265,6 +265,7 @@ export const jobs: ServicesJobs = {
           kind: payload.kind,
           status: payload.status ?? JobStatus.PROPOSED,
           frequencyDays: (payload as any).frequencyDays ?? null,
+          description: (payload as any).description ?? null,
           notes: payload.notes ?? null,
           defaultPrice: payload.defaultPrice ?? null,
           estimatedMinutes: (payload as any).estimatedMinutes ?? null,
@@ -289,6 +290,7 @@ export const jobs: ServicesJobs = {
           status: payload.status,
           propertyId: payload.propertyId,
           frequencyDays: "frequencyDays" in (payload as any) ? ((payload as any).frequencyDays ?? null) : undefined,
+          description: "description" in (payload as any) ? ((payload as any).description ?? null) : undefined,
           notes: payload.notes ?? undefined,
           defaultPrice: payload.defaultPrice ?? undefined,
           estimatedMinutes: "estimatedMinutes" in (payload as any) ? ((payload as any).estimatedMinutes ?? null) : undefined,
@@ -416,6 +418,15 @@ export const jobs: ServicesJobs = {
             role: a.role,
             assignedById: i === 0 ? a.userId : claimerId,
           })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Copy job's default property photo instructions to the new occurrence
+      const jobPhotos = await tx.jobPropertyPhoto.findMany({ where: { jobId }, select: { propertyPhotoId: true } });
+      if (jobPhotos.length > 0) {
+        await tx.occurrencePropertyPhoto.createMany({
+          data: jobPhotos.map((jp) => ({ occurrenceId: occ.id, propertyPhotoId: jp.propertyPhotoId })),
           skipDuplicates: true,
         });
       }
@@ -1087,6 +1098,9 @@ export const jobs: ServicesJobs = {
           include: { createdBy: { select: { id: true, displayName: true } } },
           orderBy: { createdAt: "asc" as const },
         },
+        propertyPhotos: {
+          include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
+        },
         linkedOccurrence: {
           select: {
             id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
@@ -1140,6 +1154,9 @@ export const jobs: ServicesJobs = {
         expenses: {
           include: { createdBy: { select: { id: true, displayName: true } } },
           orderBy: { createdAt: "asc" as const },
+        },
+        propertyPhotos: {
+          include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
         },
         linkedOccurrence: {
           select: {

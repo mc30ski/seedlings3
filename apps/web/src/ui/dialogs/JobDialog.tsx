@@ -14,7 +14,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import {
   type DialogMode,
   type JobKind,
@@ -29,6 +29,7 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 
 type PropertyLite = {
   id: string;
@@ -42,7 +43,7 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: DialogMode;
-  initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "frequencyDays" | "notes" | "defaultPrice"> | null;
+  initial?: Pick<JobListItem, "id" | "propertyId" | "kind" | "status" | "frequencyDays" | "description" | "notes" | "defaultPrice"> | null;
   onSaved?: (created?: { id: string; defaultPrice?: number | null; notes?: string | null; frequencyDays?: number | null; estimatedMinutes?: number | null }) => void;
   defaultPropertyId?: string;
   preventOutsideClose?: boolean;
@@ -71,9 +72,11 @@ export default function JobDialog({
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
   const [statusValue, setStatusValue] = useState<string[]>([JOB_STATUS[0]]);
   const [frequencyDays, setFrequencyDays] = useState("");
+  const [description, setDescription] = useState("");
   const [notes, setNotes] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
+  const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
 
   // Load active properties when dialog opens
   useEffect(() => {
@@ -103,14 +106,17 @@ export default function JobDialog({
       setKindValue([initial.kind]);
       setStatusValue([initial.status]);
       setFrequencyDays(initial.frequencyDays != null ? String(initial.frequencyDays) : "");
+      setDescription(initial.description ?? "");
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
       setEstimatedMinutes((initial as any).estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
+      setPropertyPhotoIds(null);
     } else {
       setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
       setKindValue([initial?.kind ?? JOB_KIND[0]]);
       setStatusValue([initial?.status ?? JOB_STATUS[0]]);
       setFrequencyDays(initial?.frequencyDays != null ? String(initial.frequencyDays) : "");
+      setDescription(initial?.description ?? "");
       setNotes(initial?.notes ?? "");
       setDefaultPrice(initial?.defaultPrice != null ? String(initial.defaultPrice) : "");
       setEstimatedMinutes((initial as any)?.estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
@@ -165,6 +171,7 @@ export default function JobDialog({
       kind: kindValue[0] as JobKind,
       status: statusValue[0] as JobStatus,
       frequencyDays: frequencyDays !== "" ? Number(frequencyDays) : null,
+      description: description.trim() || null,
       notes: notes.trim() || null,
       defaultPrice: defaultPrice !== "" ? Number(defaultPrice) : null,
       estimatedMinutes: estimatedMinutes !== "" ? Number(estimatedMinutes) : null,
@@ -191,6 +198,10 @@ export default function JobDialog({
       } else {
         if (!initial?.id) throw new Error("Missing job id");
         await apiPatch(`/api/admin/jobs/${initial.id}`, payload);
+        // Save property photo selections if changed
+        if (propertyPhotoIds !== null) {
+          await apiPut(`/api/admin/jobs/${initial.id}/property-photos`, { propertyPhotoIds });
+        }
         publishInlineMessage({ type: "SUCCESS", text: "Job updated." });
         onOpenChange(false);
         onSaved?.();
@@ -309,6 +320,16 @@ export default function JobDialog({
                 </HStack>
 
                 <div>
+                  <Text mb="1">Description</Text>
+                  <Textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Description of this job service (visible to workers)…"
+                    rows={2}
+                  />
+                </div>
+
+                <div>
                   <Text mb="1">Default price</Text>
                   <CurrencyInput
                     value={defaultPrice}
@@ -348,12 +369,18 @@ export default function JobDialog({
                   </Box>
                 </div>
 
+                {mode === "UPDATE" && initial?.id && initial?.propertyId && (
+                  <div>
+                    <JobPropertyPhotosPicker jobId={initial.id} propertyId={initial.propertyId} onSelectionChange={setPropertyPhotoIds} />
+                  </div>
+                )}
+
                 <div>
-                  <Text mb="1">Notes</Text>
+                  <Text mb="1">Internal Notes</Text>
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Internal notes for this job…"
+                    placeholder="Internal notes (admin only)…"
                     rows={3}
                   />
                 </div>

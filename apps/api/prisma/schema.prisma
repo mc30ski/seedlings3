@@ -109,6 +109,7 @@ model User {
   reminders                 Reminder[]
   calendarFeedTokens        CalendarFeedToken[]
   occurrenceComments        OccurrenceComment[]
+  propertyPhotosUploaded    PropertyPhoto[]
 }
 
 model UserRole {
@@ -328,8 +329,6 @@ model Property {
 
   // Light ops
   accessNotes        String?
-  //photos             Json?
-
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   archivedAt         DateTime?
@@ -337,6 +336,7 @@ model Property {
   status            PropertyStatus @default(ACTIVE)
 
   jobs              Job[]
+  photos            PropertyPhoto[]
 
   @@index([clientId])
   @@index([kind])
@@ -414,6 +414,7 @@ model Job {
   status      JobStatus @default(PROPOSED)
 
   frequencyDays    Int?
+  description      String?
   notes            String?
   defaultPrice     Float?
   estimatedMinutes Int?
@@ -424,10 +425,11 @@ model Job {
   contacts    JobContact[]
   clients     JobClient[]
 
-  schedule          JobSchedule?
-  occurrences       JobOccurrence[]
-  defaultAssignees  JobAssigneeDefault[]
-  followups         FollowupJob[]
+  schedule              JobSchedule?
+  occurrences           JobOccurrence[]
+  defaultAssignees      JobAssigneeDefault[]
+  defaultPropertyPhotos JobPropertyPhoto[]
+  followups             FollowupJob[]
 }
 
 model JobContact {
@@ -555,7 +557,8 @@ model JobOccurrence {
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]
-  photos      JobOccurrencePhoto[]
+  photos           JobOccurrencePhoto[]
+  propertyPhotos   OccurrencePropertyPhoto[]
   pins             PinnedOccurrence[]
   likes            LikedOccurrence[]
   reminders        Reminder[]
@@ -811,4 +814,45 @@ model FollowupJob {
   createdAt     DateTime      @default(now())
 
   @@unique([occurrenceId, jobId])
+}
+
+// ── Property Photos & Instructions ──────────────────────────────────────────
+
+model PropertyPhoto {
+  id           String   @id @default(cuid())
+  propertyId   String
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  r2Key        String
+  fileName     String?
+  contentType  String?
+  description  String?
+  sortOrder    Int      @default(0)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+
+  jobDefaults    JobPropertyPhoto[]
+  occurrenceRefs OccurrencePropertyPhoto[]
+
+  @@index([propertyId])
+}
+
+model JobPropertyPhoto {
+  id              String        @id @default(cuid())
+  jobId           String
+  job             Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  propertyPhotoId String
+  propertyPhoto   PropertyPhoto @relation(fields: [propertyPhotoId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, propertyPhotoId])
+}
+
+model OccurrencePropertyPhoto {
+  id              String         @id @default(cuid())
+  occurrenceId    String
+  occurrence      JobOccurrence  @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  propertyPhotoId String
+  propertyPhoto   PropertyPhoto  @relation(fields: [propertyPhotoId], references: [id], onDelete: Cascade)
+
+  @@unique([occurrenceId, propertyPhotoId])
 }
