@@ -245,105 +245,152 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
         </SimpleGrid>
       )}
 
-      {/* Full-size photo viewer — dark overlay like Client tab */}
-      {viewPhoto && typeof document !== "undefined" && ReactDOM.createPortal(
-        <Box
-          position="fixed"
-          inset="0"
-          zIndex="9999"
-          bg="blackAlpha.800"
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          onMouseDown={() => setViewPhoto(null)}
-          onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => { (e.currentTarget as any)._touchX = e.touches[0].clientX; }}
-          onTouchEnd={(e) => {
-            const dx = e.changedTouches[0].clientX - ((e.currentTarget as any)._touchX ?? 0);
-            if (Math.abs(dx) > 50) {
-              e.stopPropagation();
-              const vi = photos.findIndex((p) => p.id === viewPhoto?.id);
-              if (dx < 0 && vi < photos.length - 1) setViewPhoto(photos[vi + 1]);
-              else if (dx > 0 && vi > 0) setViewPhoto(photos[vi - 1]);
-            }
-          }}
-        >
-          {/* Navigation: prev */}
-          {hasPrev && (
-            <Box
-              position="absolute"
-              left="3"
-              top="50%"
-              transform="translateY(-50%)"
-              color="white"
-              fontSize="2xl"
-              cursor="pointer"
-              p={2}
-              zIndex={1}
-              onMouseDown={(e) => { e.stopPropagation(); setViewPhoto(photos[viewIndex - 1]); }}
-              userSelect="none"
-            >
-              <ChevronLeft size={28} />
-            </Box>
-          )}
-
-          {/* Image */}
-          <img
-            src={viewPhoto.url}
-            alt={viewPhoto.fileName ?? "Photo"}
-            style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: "8px" }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-
-          {/* Navigation: next */}
-          {hasNext && (
-            <Box
-              position="absolute"
-              right="3"
-              top="50%"
-              transform="translateY(-50%)"
-              color="white"
-              fontSize="2xl"
-              cursor="pointer"
-              p={2}
-              zIndex={1}
-              onMouseDown={(e) => { e.stopPropagation(); setViewPhoto(photos[viewIndex + 1]); }}
-              userSelect="none"
-            >
-              <ChevronRight size={28} />
-            </Box>
-          )}
-
-          {/* Bottom bar: info + delete */}
-          <HStack
-            position="absolute"
-            bottom="4"
-            left="0"
-            right="0"
-            justify="center"
-            gap={4}
-            px={4}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <Text color="whiteAlpha.700" fontSize="sm">
-              {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {fmtDateTime(viewPhoto.createdAt)}
-            </Text>
-            <Button
-              size="xs"
-              variant="ghost"
-              color="red.300"
-              _hover={{ color: "red.200", bg: "whiteAlpha.200" }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => viewPhoto && handleDelete(viewPhoto)}
-            >
-              <Trash2 size={14} />
-              Delete
-            </Button>
-          </HStack>
-        </Box>,
-        document.body
-      )}
+      {/* Full-size photo viewer — dark overlay */}
+      {viewPhoto && <PhotoViewer
+        photos={photos}
+        viewPhoto={viewPhoto}
+        viewIndex={viewIndex}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        onClose={() => setViewPhoto(null)}
+        onPrev={() => hasPrev && setViewPhoto(photos[viewIndex - 1])}
+        onNext={() => hasNext && setViewPhoto(photos[viewIndex + 1])}
+        onDelete={handleDelete}
+      />}
     </VStack>
+  );
+}
+
+/** Fullscreen photo viewer with keyboard arrows + swipe */
+function PhotoViewer({
+  photos,
+  viewPhoto,
+  viewIndex,
+  hasPrev,
+  hasNext,
+  onClose,
+  onPrev,
+  onNext,
+  onDelete,
+}: {
+  photos: OccurrencePhoto[];
+  viewPhoto: OccurrencePhoto;
+  viewIndex: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onDelete: (photo: OccurrencePhoto) => void;
+}) {
+  const touchXRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "ArrowLeft") { e.preventDefault(); onPrev(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); onNext(); }
+      else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onPrev, onNext, onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  return ReactDOM.createPortal(
+    <Box
+      position="fixed"
+      inset="0"
+      zIndex="9999"
+      bg="blackAlpha.800"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onTouchStart={(e) => { touchXRef.current = e.touches[0].clientX; }}
+      onTouchEnd={(e) => {
+        if (touchXRef.current === null) return;
+        const dx = e.changedTouches[0].clientX - touchXRef.current;
+        touchXRef.current = null;
+        if (Math.abs(dx) > 50) {
+          if (dx < 0) onNext();
+          else onPrev();
+        }
+      }}
+    >
+      {/* Navigation: prev */}
+      {hasPrev && (
+        <Box
+          position="absolute"
+          left="3"
+          top="50%"
+          transform="translateY(-50%)"
+          color="white"
+          fontSize="2xl"
+          cursor="pointer"
+          p={2}
+          zIndex={1}
+          onClick={(e) => { e.stopPropagation(); onPrev(); }}
+          userSelect="none"
+        >
+          <ChevronLeft size={28} />
+        </Box>
+      )}
+
+      {/* Image */}
+      <img
+        src={viewPhoto.url}
+        alt={viewPhoto.fileName ?? "Photo"}
+        style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: "8px" }}
+        onClick={(e) => e.stopPropagation()}
+        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+      />
+
+      {/* Navigation: next */}
+      {hasNext && (
+        <Box
+          position="absolute"
+          right="3"
+          top="50%"
+          transform="translateY(-50%)"
+          color="white"
+          fontSize="2xl"
+          cursor="pointer"
+          p={2}
+          zIndex={1}
+          onClick={(e) => { e.stopPropagation(); onNext(); }}
+          userSelect="none"
+        >
+          <ChevronRight size={28} />
+        </Box>
+      )}
+
+      {/* Bottom bar: info + delete */}
+      <HStack
+        position="absolute"
+        bottom="4"
+        left="0"
+        right="0"
+        justify="center"
+        gap={4}
+        px={4}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Text color="whiteAlpha.700" fontSize="sm">
+          {viewIndex + 1} / {photos.length} · {viewPhoto.uploadedBy?.displayName ?? "Unknown"} · {fmtDateTime(viewPhoto.createdAt)}
+        </Text>
+        <Button
+          size="xs"
+          variant="ghost"
+          color="red.300"
+          _hover={{ color: "red.200", bg: "whiteAlpha.200" }}
+          onClick={() => onDelete(viewPhoto)}
+        >
+          <Trash2 size={14} />
+          Delete
+        </Button>
+      </HStack>
+    </Box>,
+    document.body
   );
 }

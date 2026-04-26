@@ -136,7 +136,20 @@ export default function AcceptPaymentDialog({
         note: note.trim() || null,
         splits: splitArr,
       });
-      publishInlineMessage({ type: "SUCCESS", text: "Payment accepted." });
+      if (result.nextOccurrenceSkipReason && result.nextOccurrenceSkipReason !== "one_off") {
+        const reasons: Record<string, string> = {
+          no_frequency_set: "No repeat frequency is set on the job or occurrence.",
+          job_paused: "The job service is paused.",
+          duplicate_exists: "A scheduled occurrence already exists on the next date.",
+          occurrence_or_job_not_found: "Could not find the job service.",
+        };
+        const msg = reasons[result.nextOccurrenceSkipReason] ?? result.nextOccurrenceSkipReason;
+        publishInlineMessage({ type: "WARNING", text: `⚠️ Next occurrence was NOT auto-created: ${msg}` });
+      } else if (!result.nextOccurrenceSkipReason) {
+        publishInlineMessage({ type: "SUCCESS", text: "Payment accepted." });
+      } else {
+        publishInlineMessage({ type: "SUCCESS", text: "Payment accepted." });
+      }
       onOpenChange(false);
       onAccepted(result);
     } catch (err) {
