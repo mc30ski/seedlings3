@@ -2986,7 +2986,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
-                      <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       {/* Elapsed time for IN_PROGRESS / PAUSED */}
                       {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
                         const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
@@ -4531,6 +4530,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Card.Footer>
                 )}
                 {/* Property photo instructions */}
+                {/* Guidance indicator — collapsed cards only, above pinned instruction */}
+                {isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
+                  <Box mx="4" mb="1" mt="0">
+                    <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
+                  </Box>
+                )}
                 {/* Pinned instruction banner — bottom of card */}
                 {(occ as any).pinnedNote && (
                   <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
