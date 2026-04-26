@@ -57,6 +57,7 @@ import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/component
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
+import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
 import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -112,6 +113,7 @@ export default function ServicesTab({
 
   const [showCanceled, setShowCanceled] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [skippedNextOnly, setSkippedNextOnly] = useState(false);
   const [overdueActive, setOverdueActive] = usePersistedState("services_overdue", false);
   const [vipOnly, setVipOnly] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
@@ -203,6 +205,9 @@ export default function ServicesTab({
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
   const [guidanceOcc, setGuidanceOcc] = useState<{ occId: string; propertyId: string; count: number; jobId: string } | null>(null);
+  const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
+  const [instructionsOcc, setInstructionsOcc] = useState<any>(null);
+  const [instructionsJobId, setInstructionsJobId] = useState<string>("");
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
   const [promptOccurrenceOpen, setPromptOccurrenceOpen] = useState(false);
@@ -682,7 +687,7 @@ export default function ServicesTab({
           {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
           {highlightId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 job service</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
-          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !vipOnly && !showCanceled && !showArchived && !highlightId && !q && datePreset) && (
+          {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !skippedNextOnly && !vipOnly && !showCanceled && !showArchived && !highlightId && !q && datePreset) && (
             <Badge
               size="sm"
               colorPalette="red"
@@ -706,6 +711,9 @@ export default function ServicesTab({
             >
               ✕ Clear
             </Badge>
+          )}
+          {skippedNextOnly && (
+            <Badge size="sm" colorPalette="red" variant="solid">Skipped Next</Badge>
           )}
         </HStack>
       )}
@@ -893,6 +901,22 @@ export default function ServicesTab({
               {overdueCount}
             </Badge>
           )}
+        </Button>
+        <Button
+          size="sm"
+          variant={skippedNextOnly ? "solid" : "outline"}
+          px="2"
+          onClick={() => setSkippedNextOnly((p) => !p)}
+          css={skippedNextOnly ? {
+            background: "var(--chakra-colors-red-100)",
+            color: "var(--chakra-colors-red-700)",
+            border: "1px solid var(--chakra-colors-red-400)",
+            "&:hover": { background: "var(--chakra-colors-red-200)" },
+          } : undefined}
+          title="Show only occurrences where next was not auto-created"
+        >
+          <Ban size={14} />
+          Skipped Next
         </Button>
       </HStack>
 
@@ -1101,6 +1125,10 @@ export default function ServicesTab({
                 if (tf === "ESTIMATE" && !o.isEstimate) return false;
                 if (tf === "TENTATIVE" && !o.isTentative) return false;
                 if (overdueActive && (new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"])).has(o.status)) return false;
+                if (skippedNextOnly) {
+                  const reason = (o.payment as any)?.nextOccurrenceSkipReason;
+                  if (!reason || reason === "one_off") return false;
+                }
                 if (osf === "ALL") return true;
                 const isUnclaimed = o.assignees.length === 0;
                 if (osf === "UNCLAIMED") return isUnclaimed;
@@ -1423,6 +1451,43 @@ export default function ServicesTab({
                         } : undefined}
                       >
                         <VStack align="start" gap={0} w="full" overflow="hidden">
+                          {/* Warning: next occurrence not created */}
+                          {(occ.payment as any)?.nextOccurrenceSkipReason && (occ.payment as any).nextOccurrenceSkipReason !== "one_off" && (
+                            <Box w="full" p={1.5} mb={1} bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md">
+                              <HStack justify="space-between" align="start" w="full">
+                                <Box>
+                                  <Text fontSize="xs" fontWeight="bold" color="red.700">
+                                    ⚠️ Next occurrence was NOT auto-created
+                                  </Text>
+                                  <Text fontSize="xs" color="red.600">
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency set."}
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "job_paused" && "Job service is paused."}
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "duplicate_exists" && "Scheduled occurrence already exists on next date."}
+                                    {(occ.payment as any).nextOccurrenceSkipReason === "occurrence_or_job_not_found" && "Could not find job service."}
+                                  </Text>
+                                </Box>
+                                <Button
+                                  size="xs"
+                                  colorPalette="red"
+                                  variant="outline"
+                                  flexShrink={0}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      await apiPost(`/api/admin/occurrences/${occ.id}/force-next`, {});
+                                      publishInlineMessage({ type: "SUCCESS", text: "Next occurrence created." });
+                                      void loadDetail(job.id, true);
+                                      void load(false);
+                                    } catch (err) {
+                                      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to create next occurrence.", err) });
+                                    }
+                                  }}
+                                >
+                                  Force Create Next
+                                </Button>
+                              </HStack>
+                            </Box>
+                          )}
                           <VStack align="start" gap={0} w="full">
                             <Text fontSize="xs" fontWeight="medium">
                               {occ.startAt
@@ -2000,6 +2065,19 @@ export default function ServicesTab({
                               busyId={statusButtonBusyId}
                               setBusyId={setStatusButtonBusyId}
                             />
+                            <StatusButton
+                              id="occ-manage-instructions"
+                              itemId={occ.id}
+                              label="Manage Instructions"
+                              onClick={async () => {
+                                setInstructionsOcc(occ);
+                                setInstructionsJobId(job.id);
+                                setInstructionsDialogOpen(true);
+                              }}
+                              variant="outline"
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
                             {occ.jobId && (
                               <StatusButton
                                 id="occ-link"
@@ -2279,6 +2357,12 @@ export default function ServicesTab({
           defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
           defaultAddons={(editingOccurrence as any).addons ?? []}
+          defaultContactName={(editingOccurrence as any).contactName ?? null}
+          defaultContactPhone={(editingOccurrence as any).contactPhone ?? null}
+          defaultContactEmail={(editingOccurrence as any).contactEmail ?? null}
+          defaultEstimateAddress={(editingOccurrence as any).estimateAddress ?? null}
+          defaultProposalAmount={(editingOccurrence as any).proposalAmount ?? null}
+          defaultProposalNotes={(editingOccurrence as any).proposalNotes ?? null}
           isAdmin={forAdmin}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           onSaved={() => {
@@ -2528,6 +2612,19 @@ export default function ServicesTab({
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {/* Manage Instructions Dialog */}
+      {instructionsOcc && (
+        <PinnedNoteDialog
+          open={instructionsDialogOpen}
+          onOpenChange={(o) => { setInstructionsDialogOpen(o); if (!o) setInstructionsOcc(null); }}
+          occurrenceId={instructionsOcc.id}
+          currentInstructions={(instructionsOcc as any).instructions ?? []}
+          onSaved={(instructions) => {
+            if (instructionsJobId) void loadDetail(instructionsJobId, true);
+          }}
+        />
+      )}
 
     </Box>
   );

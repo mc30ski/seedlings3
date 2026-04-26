@@ -107,6 +107,7 @@ export const payments: ServicesPayments = {
 
       // Auto-create next occurrence for repeating jobs
       let nextOccurrence: any = null;
+      let nextOccurrenceSkipReason: string | null = null;
       const fullOcc = await tx.jobOccurrence.findUnique({
         where: { id: occurrenceId },
         include: {
@@ -121,6 +122,16 @@ export const payments: ServicesPayments = {
       });
       // Use occurrence-level frequency override if set, otherwise fall back to job frequency
       const effectiveFreq = fullOcc?.frequencyDays ?? fullOcc?.job?.frequencyDays;
+      if (!fullOcc || !fullOcc.job) {
+        nextOccurrenceSkipReason = "occurrence_or_job_not_found";
+      } else if (!effectiveFreq) {
+        nextOccurrenceSkipReason = "no_frequency_set";
+      } else if (fullOcc.job.status === "PAUSED") {
+        nextOccurrenceSkipReason = "job_paused";
+      } else if (fullOcc.isOneOff || fullOcc.workflow === "ONE_OFF") {
+        nextOccurrenceSkipReason = "one_off";
+      }
+
       if (
         fullOcc &&
         fullOcc.job &&
@@ -138,17 +149,21 @@ export const payments: ServicesPayments = {
 
         const isAdminOnly = !!fullOcc.isAdminOnly;
 
-        // Guard against duplicate: check if a SCHEDULED occurrence already exists at this date
+        // Guard against duplicate: check if a SCHEDULED repeating occurrence already exists at this date
+        // Only match STANDARD workflow to avoid blocking on manually-created one-offs or estimates
         const existing = await tx.jobOccurrence.findFirst({
           where: {
             jobId: fullOcc.jobId,
             status: JobOccurrenceStatus.SCHEDULED,
             startAt: nextStart,
+            workflow: "STANDARD",
+            isOneOff: false,
           },
         });
         if (existing) {
           // Already exists — skip creation, use existing as "next"
           nextOccurrence = existing;
+          nextOccurrenceSkipReason = "duplicate_exists";
         } else {
 
         nextOccurrence = await tx.jobOccurrence.create({
@@ -232,7 +247,105 @@ export const payments: ServicesPayments = {
         }
       }
 
-      return { ...payment, nextOccurrence };
+      // Persist the skip reason on the payment record for visibility on cards
+      if (nextOccurrenceSkipReason) {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { nextOccurrenceSkipReason },
+        });
+      }
+
+      return { ...payment, nextOccurrence, nextOccurrenceSkipReason };
+    });
+  },
+
+  async forceCreateNextOccurrence(_currentUserId: string, occurrenceId: string) {
+    const fullOcc = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      include: {
+        job: {
+          select: {
+            id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true,
+            defaultAssignees: { where: { active: true }, select: { userId: true, role: true } },
+          },
+        },
+        payment: true,
+      },
+    });
+    if (!fullOcc) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+    if (!fullOcc.job) throw new ServiceError("NOT_FOUND", "Job not found.", 404);
+
+    const effectiveFreq = fullOcc.frequencyDays ?? fullOcc.job.frequencyDays;
+    if (!effectiveFreq) throw new ServiceError("NO_FREQUENCY", "No frequency set on job or occurrence.", 400);
+
+    const baseDate = fullOcc.startAt ? new Date(fullOcc.startAt) : new Date();
+    const nextStart = new Date(baseDate);
+    nextStart.setDate(nextStart.getDate() + effectiveFreq);
+    const nextEnd = fullOcc.endAt ? new Date(fullOcc.endAt) : null;
+    if (nextEnd) nextEnd.setDate(nextEnd.getDate() + effectiveFreq);
+
+    return prisma.$transaction(async (tx) => {
+      const nextOccurrence = await tx.jobOccurrence.create({
+        data: {
+          jobId: fullOcc.jobId!,
+          kind: fullOcc.kind,
+          startAt: nextStart,
+          endAt: nextEnd,
+          status: "SCHEDULED",
+          source: "GENERATED",
+          workflow: "STANDARD",
+          isAdminOnly: !!fullOcc.isAdminOnly,
+          jobType: fullOcc.jobType ?? null,
+          jobTags: (fullOcc as any).jobTags ?? null,
+          pinnedNote: null,
+          pinnedNoteRepeats: true,
+          notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
+          price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
+          estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
+          frequencyDays: fullOcc.frequencyDays ?? null,
+        } as any,
+      });
+
+      // Assign from job's default team
+      const defaults = fullOcc.job?.defaultAssignees ?? [];
+      if (defaults.length > 0) {
+        const claimerId = defaults[0].userId;
+        await tx.jobOccurrenceAssignee.createMany({
+          data: defaults.map((d, i) => ({
+            occurrenceId: nextOccurrence.id,
+            userId: d.userId,
+            role: d.role ?? null,
+            assignedById: i === 0 ? d.userId : claimerId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Carry forward instructions
+      const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
+        where: { occurrenceId, repeats: true },
+      });
+      if (carryForwardInstructions.length > 0) {
+        await tx.occurrenceInstruction.createMany({
+          data: carryForwardInstructions.map((i) => ({
+            occurrenceId: nextOccurrence.id,
+            text: i.text,
+            isPreset: i.isPreset,
+            repeats: i.repeats,
+            sortOrder: i.sortOrder,
+          })),
+        });
+      }
+
+      // Clear the skip reason on the payment
+      if (fullOcc.payment) {
+        await tx.payment.update({
+          where: { id: fullOcc.payment.id },
+          data: { nextOccurrenceSkipReason: null },
+        });
+      }
+
+      return { ok: true, nextOccurrence };
     });
   },
 

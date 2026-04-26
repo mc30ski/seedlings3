@@ -633,6 +633,7 @@ export type ServicesPayments = {
   ): Promise<void>;
 
   recalculateSplits(occurrenceId: string): Promise<any>;
+  forceCreateNextOccurrence(currentUserId: string, occurrenceId: string): Promise<any>;
 };
 
 export type ServicesExpenses = {

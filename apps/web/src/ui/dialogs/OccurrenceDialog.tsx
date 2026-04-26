@@ -85,6 +85,13 @@ type Props = {
   jobFrequencyDays?: number | null;
   /** Existing add-on services (for UPDATE mode) */
   defaultAddons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];
+  /** Estimate-specific fields */
+  defaultContactName?: string | null;
+  defaultContactPhone?: string | null;
+  defaultContactEmail?: string | null;
+  defaultEstimateAddress?: string | null;
+  defaultProposalAmount?: number | null;
+  defaultProposalNotes?: string | null;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   preventOutsideClose?: boolean;
   deferSave?: boolean;
@@ -123,6 +130,12 @@ export default function OccurrenceDialog({
   submitLabel,
   preventOutsideClose,
   defaultAddons,
+  defaultContactName,
+  defaultContactPhone,
+  defaultContactEmail,
+  defaultEstimateAddress,
+  defaultProposalAmount,
+  defaultProposalNotes,
   deferSave,
   onSaved,
   onBack,
@@ -146,6 +159,12 @@ export default function OccurrenceDialog({
   const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
   const [jobTags, setJobTags] = useState<string[]>([]);
+  const [contactName, setContactName] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [estimateAddress, setEstimateAddress] = useState("");
+  const [proposalAmount, setProposalAmount] = useState("");
+  const [proposalNotes, setProposalNotes] = useState("");
   const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
   const [addons, setAddons] = useState<{ id: string; tag?: string | null; customLabel?: string | null; price: number }[]>([]);
   const [addonTag, setAddonTag] = useState("");
@@ -193,6 +212,12 @@ export default function OccurrenceDialog({
     setJobType(defaultJobType ?? "");
     setJobTags(defaultJobTags ?? []);
     setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
+    setContactName(defaultContactName ?? "");
+    setContactPhone(defaultContactPhone ?? "");
+    setContactEmail(defaultContactEmail ?? "");
+    setEstimateAddress(defaultEstimateAddress ?? "");
+    setProposalAmount(defaultProposalAmount != null ? defaultProposalAmount.toFixed(2) : "");
+    setProposalNotes(defaultProposalNotes ?? "");
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
@@ -255,6 +280,14 @@ export default function OccurrenceDialog({
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
+        ...(workflow === "ESTIMATE" ? {
+          contactName: contactName.trim() || undefined,
+          contactPhone: contactPhone.trim() || undefined,
+          contactEmail: contactEmail.trim() || undefined,
+          estimateAddress: estimateAddress.trim() || undefined,
+          proposalAmount: proposalAmount !== "" ? Number(proposalAmount) : undefined,
+          proposalNotes: proposalNotes.trim() || undefined,
+        } : {}),
       };
 
       if (deferSave) {
@@ -326,6 +359,14 @@ export default function OccurrenceDialog({
         body.jobType = jobType || null;
         body.jobTags = jobTags.length > 0 ? jobTags : null;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
+        if (workflow === "ESTIMATE") {
+          body.contactName = contactName.trim() || null;
+          body.contactPhone = contactPhone.trim() || null;
+          body.contactEmail = contactEmail.trim() || null;
+          body.estimateAddress = estimateAddress.trim() || null;
+          body.proposalAmount = proposalAmount !== "" ? Number(proposalAmount) : null;
+          body.proposalNotes = proposalNotes.trim() || null;
+        }
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
         if (isAdmin && occurrenceId) {
@@ -410,16 +451,43 @@ export default function OccurrenceDialog({
                   </div>
                 )}
                 {(workflow === "ESTIMATE") && (
-                  <div>
-                    <Text mb="1">Estimate Title</Text>
-                    <input
-                      type="text"
-                      placeholder="e.g., Tree trimming estimate for backyard"
-                      value={occTitle}
-                      onChange={(e) => setOccTitle(e.target.value)}
-                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <Text mb="1">Estimate Title</Text>
+                      <Input
+                        size="sm"
+                        placeholder="e.g., Tree trimming estimate for backyard"
+                        value={occTitle}
+                        onChange={(e) => setOccTitle(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Text mb="1">Contact Name</Text>
+                      <Input size="sm" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g., Mark Johnson" />
+                    </div>
+                    <HStack gap={2}>
+                      <Box flex="1">
+                        <Text mb="1">Phone</Text>
+                        <Input size="sm" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="(555) 123-4567" />
+                      </Box>
+                      <Box flex="1">
+                        <Text mb="1">Email</Text>
+                        <Input size="sm" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="email@example.com" />
+                      </Box>
+                    </HStack>
+                    <div>
+                      <Text mb="1">Estimate Address</Text>
+                      <Input size="sm" value={estimateAddress} onChange={(e) => setEstimateAddress(e.target.value)} placeholder="123 Main St, Austin, TX" />
+                    </div>
+                    <div>
+                      <Text mb="1">Proposal Amount</Text>
+                      <CurrencyInput value={proposalAmount} onChange={setProposalAmount} size="sm" />
+                    </div>
+                    <div>
+                      <Text mb="1">Proposal Notes</Text>
+                      <Textarea size="sm" value={proposalNotes} onChange={(e) => setProposalNotes(e.target.value)} placeholder="Scope of work, materials, timeline…" rows={2} />
+                    </div>
+                  </>
                 )}
                 {workflow === "STANDARD" && (
                   <div>

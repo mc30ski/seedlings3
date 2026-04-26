@@ -441,6 +441,7 @@ export type PaymentInfo = {
   businessMarginPercent?: number | null;
   businessMarginAmount?: number | null;
   collectedBy?: { id: string; displayName?: string | null };
+  nextOccurrenceSkipReason?: string | null;
   splits: PaymentSplitItem[];
   createdAt: string;
 };

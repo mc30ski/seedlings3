@@ -1189,6 +1189,14 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.payments.recalculateSplits(String(req.params.occurrenceId));
   });
 
+  // Force-create next occurrence (admin) — bypasses duplicate guard
+  app.post("/admin/occurrences/:occurrenceId/force-next", adminGuard, async (req: any) => {
+    return services.payments.forceCreateNextOccurrence(
+      await currentUserId(req),
+      String(req.params.occurrenceId)
+    );
+  });
+
   // Update a payment (admin)
   app.patch("/admin/payments/:paymentId", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);

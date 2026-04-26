@@ -1367,8 +1367,30 @@ export default function HomePage() {
     }, 100);
   }, []);
 
+  const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
+
   return (
     <Container maxW="5xl" pt={4} pb={8}>
+      {isDev && (
+        <Box
+          position="fixed"
+          bottom="4"
+          right="4"
+          zIndex="9999"
+          bg="red.500"
+          color="white"
+          fontSize="sm"
+          fontWeight="bold"
+          px="4"
+          py="1.5"
+          borderRadius="full"
+          shadow="lg"
+          opacity="0.85"
+          pointerEvents="none"
+        >
+          DEV
+        </Box>
+      )}
       <AppSplash show={!authLoaded || (isSignedIn && meLoading)} />
       <Box
         as="header"
@@ -1502,7 +1524,7 @@ export default function HomePage() {
             }}
           >
             {/* Combined alert badge */}
-            {!alertsReady && (
+            {isSignedIn && !alertsReady && (
               <Box
                 width="24px"
                 height="24px"

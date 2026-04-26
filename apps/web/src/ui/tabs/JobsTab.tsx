@@ -1426,15 +1426,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     }
 
-    // Sort within each day group: ghosts first, then reminders, then regular
+    // Sort within each day group: ghosts first, then by type order
     const cardSortOrder = (occ: any): number => {
       if (occ._isPinnedGhost) return 0;
       if (occ._isReminderGhost) return 1;
-      if (occ.reminder) return 2;
-      if (occ.workflow === "REMINDER") return 3;
+      if (occ.workflow === "ANNOUNCEMENT") return 2;
+      if (occ.workflow === "EVENT") return 3;
       if (occ.workflow === "TASK") return 4;
-      if (occ.workflow === "ESTIMATE") return 5;
-      return 6;
+      if (occ.workflow === "FOLLOWUP") return 5;
+      if (occ.workflow === "REMINDER" || occ.reminder) return 6;
+      if (occ.workflow === "ESTIMATE") return 7;
+      return 8; // STANDARD + ONE_OFF (jobs)
     };
     for (const group of groups) {
       if (group.key === "pinned" || group.key === "reminders-due") continue;
@@ -1442,6 +1444,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         const oa = cardSortOrder(a);
         const ob = cardSortOrder(b);
         if (oa !== ob) return oa - ob;
+        // High-priority reminders first within reminder group
+        if (a.workflow === "REMINDER" && b.workflow === "REMINDER") {
+          const aHigh = (a as any).isHighPriority ? 0 : 1;
+          const bHigh = (b as any).isHighPriority ? 0 : 1;
+          if (aHigh !== bHigh) return aHigh - bHigh;
+        }
         // Within same type, sort by startAt
         const da = a.startAt ?? "";
         const db = b.startAt ?? "";
@@ -3186,6 +3194,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 ) : (
                 <Card.Body pt="2" px="4">
                   <VStack align="start" gap={2} w="full">
+                    {/* Warning: next occurrence not created */}
+                    {occ.payment?.nextOccurrenceSkipReason && occ.payment.nextOccurrenceSkipReason !== "one_off" && (
+                      <Box w="full" p={2} bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md">
+                        <Text fontSize="xs" fontWeight="bold" color="red.700">
+                          ⚠️ Next occurrence was NOT auto-created
+                        </Text>
+                        <Text fontSize="xs" color="red.600">
+                          {occ.payment.nextOccurrenceSkipReason === "no_frequency_set" && "No repeat frequency is set on the job or occurrence."}
+                          {occ.payment.nextOccurrenceSkipReason === "job_paused" && "The job service is paused."}
+                          {occ.payment.nextOccurrenceSkipReason === "duplicate_exists" && "A scheduled occurrence already exists on the next date."}
+                          {occ.payment.nextOccurrenceSkipReason === "occurrence_or_job_not_found" && "Could not find the job service."}
+                        </Text>
+                      </Box>
+                    )}
                     {/* Elapsed time for IN_PROGRESS / PAUSED (expanded) */}
                     {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
                       const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));

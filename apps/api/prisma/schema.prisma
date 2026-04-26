@@ -660,6 +660,8 @@ model Payment {
   collectedById  String
   collectedBy    User          @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  nextOccurrenceSkipReason String?   // null = created successfully, "one_off" = expected, others = warning
+
   splits         PaymentSplit[]
 
   createdAt      DateTime      @default(now())

@@ -48,6 +48,8 @@ type EditEstimate = {
   notes?: string | null;
   proposalAmount?: number | null;
   jobId?: string | null;
+  jobTags?: string | string[] | null;
+  jobType?: string | null;
   assignees?: { userId: string; user?: { id: string; displayName?: string | null; email?: string | null } }[];
 };
 
@@ -107,6 +109,15 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
       setAssigneeIds(editEstimate.assignees?.map((a) => a.userId) ?? []);
       setSelectValue([]);
       setSelectedJobId(editEstimate.jobId ? [editEstimate.jobId] : []);
+      const rawTags = editEstimate.jobTags;
+      if (Array.isArray(rawTags)) {
+        setJobTags(rawTags);
+      } else if (typeof rawTags === "string" && rawTags) {
+        try { setJobTags(JSON.parse(rawTags)); } catch { setJobTags([]); }
+      } else {
+        setJobTags([]);
+      }
+      setJobTagNote(editEstimate.jobType ?? "");
     } else {
       reset();
     }
