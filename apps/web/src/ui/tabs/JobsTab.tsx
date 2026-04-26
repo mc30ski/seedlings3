@@ -3085,13 +3085,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const actual = effectiveMinutes(occ);
                           const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
+                          const median = (occ as any).medianDurationMinutes as number | undefined;
                           const canEdit = (isClaimer || isActiveAssignee || forAdmin) && occ.startedAt;
-                          if (actual != null && adjEst) {
-                            const color = actual <= adjEst ? "green.600" : "red.600";
-                            return <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>{formatDuration(actual)}{occ.manualDurationMinutes != null ? " ✎" : ""}</Text>;
-                          }
-                          if (adjEst != null) return <Text color="fg.muted">{formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>;
-                          return null;
+                          const parts: string[] = [];
+                          if (actual != null) parts.push(`${formatDuration(actual)} actual`);
+                          if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.`);
+                          if (median != null) parts.push(`${formatDuration(median)} avg`);
+                          if (parts.length === 0) return null;
+                          const color = actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
+                          return (
+                            <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>
+                              {parts.join(" · ")}{occ.manualDurationMinutes != null ? " ✎" : ""}
+                            </Text>
+                          );
                         })()}
                       </Box>
                       ); })()}
@@ -3327,49 +3333,54 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Box>
                       );
                     })()}
-                    {(occ.estimatedMinutes != null || (occ.startedAt && occ.completedAt)) && (() => {
+                    {(occ.estimatedMinutes != null || occ.startedAt || (occ as any).medianDurationMinutes != null) && (() => {
                       const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                       const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
+                      const actual = effectiveMinutes(occ);
+                      const median = (occ as any).medianDurationMinutes as number | undefined;
+                      const hasData = adjEst != null || actual != null || median != null || occ.startedAt;
+                      if (!hasData) return null;
+                      const estDiscrepancy = actual != null && adjEst ? Math.abs(actual - adjEst) / adjEst : 0;
+                      const avgDiscrepancy = actual != null && median ? Math.abs(actual - median) / median : 0;
                       return (
-                      <HStack fontSize="xs" gap={2}>
-                        {adjEst != null && (
-                          <Text color="fg.muted">Est: {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>
-                        )}
-                        {(() => {
-                          const actual = effectiveMinutes(occ);
-                          if (actual == null) return null;
-                          const color = adjEst
-                            ? actual <= adjEst ? "green.600" : "red.600"
-                            : "fg.muted";
-                          return <Text color={color} fontWeight="medium">Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}</Text>;
-                        })()}
-                        {(() => {
-                          const actual = effectiveMinutes(occ);
-                          if (actual == null || !adjEst) return null;
-                          const discrepancy = Math.abs(actual - adjEst) / adjEst;
-                          if (discrepancy <= 0.3) return null;
-                          return (
-                            <Text fontSize="xs" color="orange.600" fontWeight="medium">
-                              ⚠ {Math.round(discrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
-                              <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>
-                                Edit time
-                              </Box>
-                            </Text>
-                          );
-                        })()}
-                      </HStack>
+                        <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
+                          <VStack align="start" gap={1}>
+                            <HStack gap={3} wrap="wrap">
+                              {adjEst != null && (
+                                <Text color="fg.muted">
+                                  <Text as="span" fontWeight="semibold">Est:</Text> {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}
+                                </Text>
+                              )}
+                              {median != null && (
+                                <Text color="fg.muted">
+                                  <Text as="span" fontWeight="semibold">Avg:</Text> {formatDuration(median)}
+                                </Text>
+                              )}
+                              {actual != null && (
+                                <Text color={adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
+                                  Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}
+                                </Text>
+                              )}
+                            </HStack>
+                            {actual != null && estDiscrepancy > 0.3 && adjEst && (
+                              <Text color="orange.600" fontWeight="medium">
+                                ⚠ {Math.round(estDiscrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
+                                <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
+                              </Text>
+                            )}
+                            {actual != null && avgDiscrepancy > 0.3 && median && !( estDiscrepancy > 0.3 && adjEst) && (
+                              <Text color="orange.600" fontWeight="medium">
+                                ⚠ {Math.round(avgDiscrepancy * 100)}% {actual > median ? "above" : "below"} average —{" "}
+                                <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
+                              </Text>
+                            )}
+                            {occ.startedAt && (
+                              <Text color="fg.muted">Started: {fmtDateTime(occ.startedAt)}{occ.completedAt ? ` · Completed: ${fmtDateTime(occ.completedAt)}` : ""}</Text>
+                            )}
+                          </VStack>
+                        </Box>
                       );
                     })()}
-                    {occ.startedAt && (
-                      <Text fontSize="xs" color="fg.muted">
-                        Start Time: {fmtDateTime(occ.startedAt)}
-                      </Text>
-                    )}
-                    {occ.completedAt && (
-                      <Text fontSize="xs" color="fg.muted">
-                        Complete Time: {fmtDateTime(occ.completedAt)}
-                      </Text>
-                    )}
                     {/* Followup attachments */}
                     {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
                       <Box p={2} bg="red.50" rounded="md" fontSize="xs">

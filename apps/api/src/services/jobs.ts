@@ -1123,6 +1123,46 @@ export const jobs: ServicesJobs = {
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });
 
+    // Compute historical median duration per job (last 10 completed occurrences)
+    const jobIds = [...new Set(occs.map((o: any) => o.jobId).filter(Boolean))] as string[];
+    const medianMap: Record<string, number> = {};
+    if (jobIds.length > 0) {
+      const completedOccs = await prisma.jobOccurrence.findMany({
+        where: {
+          jobId: { in: jobIds },
+          status: { in: ["CLOSED", "COMPLETED", "PENDING_PAYMENT"] },
+          startedAt: { not: null },
+          completedAt: { not: null },
+        },
+        select: { jobId: true, startedAt: true, completedAt: true, totalPausedMs: true, manualDurationMinutes: true },
+        orderBy: { completedAt: "desc" },
+      });
+      // Group by jobId, take last 10 per job
+      const byJob: Record<string, number[]> = {};
+      for (const o of completedOccs) {
+        if (!o.jobId || !o.startedAt || !o.completedAt) continue;
+        if (!byJob[o.jobId]) byJob[o.jobId] = [];
+        if (byJob[o.jobId].length >= 10) continue;
+        const mins = o.manualDurationMinutes ??
+          (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
+        if (mins > 0) byJob[o.jobId].push(mins);
+      }
+      for (const [jobId, durations] of Object.entries(byJob)) {
+        if (durations.length === 0) continue;
+        const sorted = durations.sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        medianMap[jobId] = sorted.length % 2 === 0
+          ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+          : Math.round(sorted[mid]);
+      }
+    }
+    // Attach median to each occurrence
+    for (const occ of occs as any[]) {
+      if (occ.jobId && medianMap[occ.jobId] != null) {
+        occ.medianDurationMinutes = medianMap[occ.jobId];
+      }
+    }
+
     return occs;
   },
 
