@@ -191,7 +191,7 @@ export const payments: ServicesPayments = {
         } // end else (duplicate guard)
       }
 
-      // Carry over likes to the new occurrence
+      // Carry over likes and property photo instructions to the new occurrence
       if (nextOccurrence) {
         const existingLikes = await tx.likedOccurrence.findMany({
           where: { occurrenceId },
@@ -200,6 +200,17 @@ export const payments: ServicesPayments = {
         if (existingLikes.length > 0) {
           await tx.likedOccurrence.createMany({
             data: existingLikes.map((l) => ({ userId: l.userId, occurrenceId: nextOccurrence.id })),
+            skipDuplicates: true,
+          });
+        }
+        // Carry forward property photo instructions
+        const existingPropertyPhotos = await tx.occurrencePropertyPhoto.findMany({
+          where: { occurrenceId },
+          select: { propertyPhotoId: true },
+        });
+        if (existingPropertyPhotos.length > 0) {
+          await tx.occurrencePropertyPhoto.createMany({
+            data: existingPropertyPhotos.map((p) => ({ occurrenceId: nextOccurrence.id, propertyPhotoId: p.propertyPhotoId })),
             skipDuplicates: true,
           });
         }

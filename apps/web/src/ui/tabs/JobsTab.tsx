@@ -42,6 +42,7 @@ import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
+import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
 import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
@@ -642,6 +643,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
+  const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
@@ -655,6 +657,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const timer = setTimeout(() => document.addEventListener("click", close), 50);
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [quickActionMenuOcc]);
+
+  useEffect(() => {
+    if (!contactMenuOcc) return;
+    const close = () => setContactMenuOcc(null);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [contactMenuOcc]);
 
   useEffect(() => {
     if (!quickDateMenuOpen) return;
@@ -2620,22 +2629,44 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           )}
                         </Text>
                         <HStack gap={1} flexShrink={0}>
-                          {/* Quick contact */}
+                          {/* Quick contact dropdown */}
                           {(() => {
                             const poc = (occ.job?.property as any)?.pointOfContact;
                             const phone = poc?.phone;
                             const email = poc?.email;
-                            if (phone) return (
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`tel:${phone}`, "_self"); }} title={`Call ${phone}`}>
-                                <Phone size={14} color="var(--chakra-colors-green-500)" />
-                              </Button>
+                            const name = poc?.firstName ? `${poc.firstName}${poc.lastName ? ` ${poc.lastName}` : ""}` : null;
+                            if (!phone && !email) return null;
+                            return (
+                              <Box position="relative">
+                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); setContactMenuOcc((v) => v === occ.id ? null : occ.id); }} title={name ? `Contact ${name}` : "Contact client"}>
+                                  <Phone size={14} color="var(--chakra-colors-green-500)" />
+                                </Button>
+                                {contactMenuOcc === occ.id && (
+                                  <VStack
+                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
+                                    ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                    onClick={(e: any) => e.stopPropagation()}
+                                  >
+                                    {name && <Text fontSize="xs" fontWeight="semibold" color="fg.muted" px="2" py="1">{name}</Text>}
+                                    {phone && (
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
+                                        <Phone size={12} /> Call {phone}
+                                      </Button>
+                                    )}
+                                    {phone && (
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`sms:${phone}`, "_self"); }}>
+                                        <MessageCircle size={12} /> Text {phone}
+                                      </Button>
+                                    )}
+                                    {email && (
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`mailto:${email}`, "_self"); }}>
+                                        <Mail size={12} /> Email {email}
+                                      </Button>
+                                    )}
+                                  </VStack>
+                                )}
+                              </Box>
                             );
-                            if (email) return (
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${email}`, "_self"); }} title={`Email ${email}`}>
-                                <Mail size={14} color="var(--chakra-colors-blue-500)" />
-                              </Button>
-                            );
-                            return null;
                           })()}
                           {isWorkerView && (
                             <>
@@ -2704,7 +2735,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
-                                                    {occ.linkGroupId && (
+                          <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
+                          {occ.linkGroupId && (
                             <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
                               <Link2 size={10} style={{ marginRight: 3 }} /> Linked
                             </Badge>
@@ -2758,22 +2790,44 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             )}
                           </Text>
                           <HStack gap={1} flexShrink={0}>
-                            {/* Quick contact */}
+                            {/* Quick contact dropdown */}
                             {(() => {
                               const poc = (occ.job?.property as any)?.pointOfContact;
                               const phone = poc?.phone;
                               const email = poc?.email;
-                              if (phone) return (
-                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`tel:${phone}`, "_self"); }} title={`Call ${phone}`}>
-                                  <Phone size={14} color="var(--chakra-colors-green-500)" />
-                                </Button>
+                              const name = poc?.firstName ? `${poc.firstName}${poc.lastName ? ` ${poc.lastName}` : ""}` : null;
+                              if (!phone && !email) return null;
+                              return (
+                                <Box position="relative">
+                                  <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); setContactMenuOcc((v) => v === occ.id ? null : occ.id); }} title={name ? `Contact ${name}` : "Contact client"}>
+                                    <Phone size={14} color="var(--chakra-colors-green-500)" />
+                                  </Button>
+                                  {contactMenuOcc === occ.id && (
+                                    <VStack
+                                      position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="150px"
+                                      ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                      onClick={(e: any) => e.stopPropagation()}
+                                    >
+                                      {name && <Text fontSize="xs" fontWeight="semibold" color="fg.muted" px="2" py="1">{name}</Text>}
+                                      {phone && (
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
+                                          <Phone size={12} /> Call {phone}
+                                        </Button>
+                                      )}
+                                      {phone && (
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`sms:${phone}`, "_self"); }}>
+                                          <MessageCircle size={12} /> Text {phone}
+                                        </Button>
+                                      )}
+                                      {email && (
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`mailto:${email}`, "_self"); }}>
+                                          <Mail size={12} /> Email {email}
+                                        </Button>
+                                      )}
+                                    </VStack>
+                                  )}
+                                </Box>
                               );
-                              if (email) return (
-                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${email}`, "_self"); }} title={`Email ${email}`}>
-                                  <Mail size={14} color="var(--chakra-colors-blue-500)" />
-                                </Button>
-                              );
-                              return null;
                             })()}
                             {isWorkerView && (
                               <>
@@ -2910,6 +2964,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                 </Card.Header>
+
+                {/* Property photo guidance — after badges */}
+                {!isCardCompact && ((occ.propertyPhotos ?? []).length > 0 || ((forAdmin || isAdmin || isSuper) && occ.job?.property?.id)) && (
+                  <Box mx="4" mt="2" mb="0">
+                    <OccurrenceInstructions
+                      occurrenceId={occ.id}
+                      count={(occ.propertyPhotos ?? []).length}
+                      propertyId={occ.job?.property?.id}
+                      canEdit={forAdmin || isAdmin || isSuper}
+                      onUpdated={(n) => setItems((prev) => prev.map((o) => {
+                        if (o.id !== occ.id) return o;
+                        const updated = { ...o };
+                        if (!updated.propertyPhotos) (updated as any).propertyPhotos = [];
+                        (updated as any).propertyPhotos = Array(n).fill({ propertyPhoto: {} });
+                        return updated;
+                      }))}
+                    />
+                  </Box>
+                )}
 
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
@@ -4457,6 +4530,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </HStack>
                   </Card.Footer>
                 )}
+                {/* Property photo instructions */}
                 {/* Pinned instruction banner — bottom of card */}
                 {(occ as any).pinnedNote && (
                   <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
@@ -5006,9 +5080,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               acceptPaymentOcc?.workflow === "STANDARD" &&
               !acceptPaymentOcc?.isOneOff
             ) {
+              const jobStatus = (acceptPaymentOcc?.job as any)?.status;
+              const isPaused = jobStatus === "PAUSED";
               publishInlineMessage({
                 type: "WARNING",
-                text: "Payment accepted, but no next occurrence was created. This repeating job has no frequency set on the job or occurrence.",
+                text: isPaused
+                  ? "Payment accepted. No next occurrence created because the Job Service is paused. Unpause the service to resume scheduling."
+                  : "Payment accepted, but no next occurrence was created. This repeating job has no frequency set on the job or occurrence.",
               });
             }
             setAcceptPaymentOcc(null);

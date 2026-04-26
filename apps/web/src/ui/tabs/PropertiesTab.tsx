@@ -42,6 +42,7 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import PropertyDialog from "@/src/ui/dialogs/PropertyDialog";
+import PropertyPhotosManager from "@/src/ui/components/PropertyPhotosManager";
 import { TextLink, MapLink } from "@/src/ui/helpers/Link";
 
 // Constant representing the kind states for this entity.
@@ -501,6 +502,9 @@ export default function PropertiesTab({
                     </Box>
                   )}
                 </VStack>
+              </Card.Body>
+              <Card.Body py="3" px="4" pt="0">
+                <PropertyPhotosManager propertyId={p.id} readOnly={!forAdmin} />
               </Card.Body>
               {forAdmin && (
                 <Card.Footer py="3" px="4" pt="0">

@@ -392,6 +392,7 @@ export type JobListItem = {
   } | null;
   assigneeCount: number;
   occurrenceCount?: number;
+  description?: string | null;
   notes?: string | null;
   defaultPrice?: number | null;
   estimatedMinutes?: number | null;
@@ -572,6 +573,7 @@ export type WorkerOccurrence = {
   _isReminderGhost?: boolean;
   _isPinnedGhost?: boolean;
   _ghostDate?: string;
+  propertyPhotos?: { propertyPhoto: { id: string; r2Key: string; url?: string; fileName?: string | null; description?: string | null; sortOrder: number } }[];
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {
     id: string;
@@ -591,4 +593,12 @@ export type OccurrencePhoto = {
   uploadedBy?: { id: string; displayName?: string | null };
   createdAt: string;
   url: string;
+};
+
+export type PropertyPhotoItem = {
+  id: string;
+  url: string;
+  fileName?: string | null;
+  description?: string | null;
+  sortOrder: number;
 };

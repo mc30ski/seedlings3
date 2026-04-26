@@ -18,13 +18,14 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { apiGet, apiDelete, apiPatch, apiPost } from "@/src/lib/api";
+import { apiGet, apiDelete, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker from "@/src/ui/components/JobTagPicker";
+import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
 const workflowItems = [
@@ -50,6 +51,8 @@ type Props = {
   mode?: "CREATE" | "UPDATE";
   // CREATE
   jobId?: string;
+  /** Property ID — for showing property photo instruction picker */
+  propertyId?: string | null;
   // UPDATE
   occurrenceId?: string;
   defaultStatus?: string | null;
@@ -94,6 +97,7 @@ export default function OccurrenceDialog({
   onOpenChange,
   mode = "CREATE",
   jobId,
+  propertyId,
   occurrenceId,
   defaultStatus,
   defaultKind,
@@ -145,6 +149,7 @@ export default function OccurrenceDialog({
   const [jobTags, setJobTags] = useState<string[]>([]);
   const [pinnedNote, setPinnedNote] = useState("");
   const [pinnedNoteRepeats, setPinnedNoteRepeats] = useState(true);
+  const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -276,6 +281,12 @@ export default function OccurrenceDialog({
             }
           }
         }
+        // Save property photo selections if changed
+        if (newOccId && propertyPhotoIds !== null) {
+          try {
+            await apiPut(`/api/admin/occurrences/${newOccId}/property-photos`, { propertyPhotoIds });
+          } catch (err) { console.error("Failed to save property photos:", err); }
+        }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
         const body: Record<string, unknown> = {
@@ -311,6 +322,12 @@ export default function OccurrenceDialog({
               try { await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description }); } catch {}
             }
           }
+        }
+        // Save property photo selections if changed
+        if (occurrenceId && propertyPhotoIds !== null) {
+          try {
+            await apiPut(`/api/admin/occurrences/${occurrenceId}/property-photos`, { propertyPhotoIds });
+          } catch (err) { console.error("Failed to save property photos:", err); }
         }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence updated." });
       }
@@ -752,6 +769,17 @@ export default function OccurrenceDialog({
                   <Checkbox.Control />
                   <Checkbox.Label>Administered (workers cannot claim, must be assigned)</Checkbox.Label>
                 </Checkbox.Root>
+
+                {propertyId && (
+                  <Box mt={2}>
+                    <JobPropertyPhotosPicker
+                      jobId={jobId ?? ""}
+                      propertyId={propertyId}
+                      occurrenceId={mode === "UPDATE" ? occurrenceId : undefined}
+                      onSelectionChange={setPropertyPhotoIds}
+                    />
+                  </Box>
+                )}
               </VStack>
             </Dialog.Body>
 

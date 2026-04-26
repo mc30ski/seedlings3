@@ -322,6 +322,14 @@ export default async function workerRoutes(app: FastifyInstance) {
           }))
         );
       }
+      // Generate download URLs for property photo instructions
+      if ((occ as any).propertyPhotos?.length) {
+        for (const pp of (occ as any).propertyPhotos) {
+          if (pp.propertyPhoto?.r2Key) {
+            pp.propertyPhoto.url = await getDownloadUrl(pp.propertyPhoto.r2Key, 3600, "property-photos");
+          }
+        }
+      }
       // Strip admin-only fields from client data
       const client = (occ as any).job?.property?.client;
       if (client) delete client.adminTags;
@@ -1052,6 +1060,45 @@ export default async function workerRoutes(app: FastifyInstance) {
     await prisma.jobOccurrencePhoto.delete({ where: { id: photoId } });
 
     return { ok: true };
+  });
+
+  // ── Property Photos (worker read) ──
+  app.get("/properties/:id/photos", workerGuard, async (req: any) => {
+    const propertyId = String(req.params.id);
+    const photos = await prisma.propertyPhoto.findMany({
+      where: { propertyId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const withUrls = await Promise.all(
+      photos.map(async (p) => ({
+        id: p.id,
+        url: await getDownloadUrl(p.r2Key, 3600, "property-photos"),
+        fileName: p.fileName,
+        description: p.description,
+        sortOrder: p.sortOrder,
+      }))
+    );
+    return withUrls;
+  });
+
+  // ── Occurrence Property Photos (worker read) ──
+  app.get("/occurrences/:id/property-photos", workerGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const links = await prisma.occurrencePropertyPhoto.findMany({
+      where: { occurrenceId },
+      include: { propertyPhoto: true },
+      orderBy: { propertyPhoto: { sortOrder: "asc" } },
+    });
+    const withUrls = await Promise.all(
+      links.map(async (l) => ({
+        id: l.propertyPhoto.id,
+        url: await getDownloadUrl(l.propertyPhoto.r2Key, 3600, "property-photos"),
+        fileName: l.propertyPhoto.fileName,
+        description: l.propertyPhoto.description,
+        sortOrder: l.propertyPhoto.sortOrder,
+      }))
+    );
+    return withUrls;
   });
 
   // ── Insurance ──

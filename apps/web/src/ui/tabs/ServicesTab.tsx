@@ -54,6 +54,7 @@ import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
+import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -210,6 +211,7 @@ export default function ServicesTab({
   const [occurrenceJobFreqDays, setOccurrenceJobFreqDays] = useState<number | null>(null);
   const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
   const [occurrenceDefaultWorkflow, setOccurrenceDefaultWorkflow] = useState<string | undefined>(undefined);
+  const [occurrencePropertyId, setOccurrencePropertyId] = useState<string | null>(null);
 
   // Comments
   type OccComment = { id: string; body: string; createdAt: string; updatedAt: string; author: { id: string; displayName?: string | null; email?: string | null } };
@@ -692,6 +694,7 @@ export default function ServicesTab({
                 setVipOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
+                setQ("");
                 setHighlightId(null);
                 setHighlightOccId(null);
                 setFlashOccId(null);
@@ -1032,6 +1035,7 @@ export default function ServicesTab({
                 setVipOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
+                setQ("");
                 setHighlightId(null);
                 setHighlightOccId(null);
                 setFlashOccId(null);
@@ -1129,6 +1133,9 @@ export default function ServicesTab({
                         </Box>
                       );
                     })()}
+                    {(job as any).description && (
+                      <Text fontSize="sm" color="fg.default">{(job as any).description}</Text>
+                    )}
                     <HStack gap={3} fontSize="xs">
                       {job.property?.displayName && (
                         <TextLink
@@ -1258,6 +1265,7 @@ export default function ServicesTab({
                         label="+ Occurrence"
                         onClick={async () => {
                           setOccurrenceJobId(job.id);
+                          setOccurrencePropertyId(job.propertyId);
                           setOccurrenceDefaultNotes(job.notes ?? null);
                           setOccurrenceDefaultPrice(job.defaultPrice ?? null);
                           setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
@@ -2178,6 +2186,7 @@ export default function ServicesTab({
           open={occurrenceDialogOpen}
           onOpenChange={setOccurrenceDialogOpen}
           jobId={occurrenceJobId}
+          propertyId={occurrencePropertyId}
           defaultNotes={occurrenceDefaultNotes}
           defaultPrice={occurrenceDefaultPrice}
           defaultEstimatedMinutes={occurrenceDefaultEstMins}
@@ -2205,6 +2214,7 @@ export default function ServicesTab({
           }}
           mode="UPDATE"
           occurrenceId={editingOccurrence.id}
+          propertyId={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.propertyId ?? null : null}
           defaultStatus={editingOccurrence.status}
           defaultKind={editingOccurrence.kind}
           defaultStartAt={editingOccurrence.startAt}
