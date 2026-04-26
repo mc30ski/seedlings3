@@ -1156,14 +1156,11 @@ export const jobs: ServicesJobs = {
           : Math.round(sorted[mid]);
       }
     }
-    // Attach median to each occurrence
-    for (const occ of occs as any[]) {
-      if (occ.jobId && medianMap[occ.jobId] != null) {
-        occ.medianDurationMinutes = medianMap[occ.jobId];
-      }
-    }
-
-    return occs;
+    // Attach median to each occurrence (spread to plain objects since Prisma results may be sealed)
+    return occs.map((occ: any) => ({
+      ...occ,
+      ...(occ.jobId && medianMap[occ.jobId] != null ? { medianDurationMinutes: medianMap[occ.jobId] } : {}),
+    }));
   },
 
   async getOccurrencesByIds(ids: string[]) {
