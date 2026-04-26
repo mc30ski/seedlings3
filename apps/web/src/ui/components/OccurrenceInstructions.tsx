@@ -258,12 +258,13 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
   );
 }
 
-/** Small badge for collapsed cards showing guidance count */
+/** Compact guidance indicator for collapsed cards */
 export function InstructionsBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <Badge size="sm" colorPalette="blue" variant="subtle">
-      Guidance ({count})
-    </Badge>
+    <HStack gap={1.5} px="2" py="1" bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md" w="full">
+      <Camera size={12} color="var(--chakra-colors-blue-600)" />
+      <Text fontSize="xs" fontWeight="semibold" color="blue.700">Guidance ({count})</Text>
+    </HStack>
   );
 }

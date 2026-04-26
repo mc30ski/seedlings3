@@ -2735,7 +2735,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
-                          <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                           {occ.linkGroupId && (
                             <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
                               <Link2 size={10} style={{ marginRight: 3 }} /> Linked
@@ -2987,6 +2986,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="3" px="4" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
+                      <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       {/* Elapsed time for IN_PROGRESS / PAUSED */}
                       {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
                         const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
