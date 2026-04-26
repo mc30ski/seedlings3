@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import {
   Badge,
   Box,
@@ -12,7 +13,6 @@ import {
   NativeSelect,
   Portal,
   Select,
-  Switch,
   Text,
   Textarea,
   VStack,
@@ -24,7 +24,7 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import JobTagPicker from "@/src/ui/components/JobTagPicker";
+import JobTagPicker, { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
@@ -68,8 +68,6 @@ type Props = {
   defaultIsAdminOnly?: boolean;
   defaultJobType?: string | null;
   defaultJobTags?: string[] | null;
-  defaultPinnedNote?: string | null;
-  defaultPinnedNoteRepeats?: boolean;
   isAdmin?: boolean;
   /** Pre-selected assignees (carried from previous occurrence) */
   defaultAssignees?: { userId: string; displayName?: string | null }[];
@@ -85,6 +83,8 @@ type Props = {
   defaultFrequencyDays?: number | null;
   /** Job's frequencyDays — used to warn if "Repeating" is selected without frequency */
   jobFrequencyDays?: number | null;
+  /** Existing add-on services (for UPDATE mode) */
+  defaultAddons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   preventOutsideClose?: boolean;
   deferSave?: boolean;
@@ -111,8 +111,6 @@ export default function OccurrenceDialog({
   defaultIsAdminOnly,
   defaultJobType,
   defaultJobTags,
-  defaultPinnedNote,
-  defaultPinnedNoteRepeats,
   isAdmin,
   defaultAssignees,
   defaultWorkflow,
@@ -124,6 +122,7 @@ export default function OccurrenceDialog({
   title,
   submitLabel,
   preventOutsideClose,
+  defaultAddons,
   deferSave,
   onSaved,
   onBack,
@@ -147,9 +146,11 @@ export default function OccurrenceDialog({
   const [freqError, setFreqError] = useState("");
   const [jobType, setJobType] = useState("");
   const [jobTags, setJobTags] = useState<string[]>([]);
-  const [pinnedNote, setPinnedNote] = useState("");
-  const [pinnedNoteRepeats, setPinnedNoteRepeats] = useState(true);
   const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
+  const [addons, setAddons] = useState<{ id: string; tag?: string | null; customLabel?: string | null; price: number }[]>([]);
+  const [addonTag, setAddonTag] = useState("");
+  const [addonCustomLabel, setAddonCustomLabel] = useState("");
+  const [addonPrice, setAddonPrice] = useState("");
 
   // Inline expenses
   type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
@@ -191,12 +192,14 @@ export default function OccurrenceDialog({
     setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
     setJobType(defaultJobType ?? "");
     setJobTags(defaultJobTags ?? []);
-    setPinnedNote(defaultPinnedNote ?? "");
-    setPinnedNoteRepeats(defaultPinnedNoteRepeats ?? true);
     setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
     setExpenses([]);
     setNewExpCost("");
     setNewExpDesc("");
+    setAddons(defaultAddons ?? []);
+    setAddonTag("");
+    setAddonCustomLabel("");
+    setAddonPrice("");
     setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
   }
   if (!open && initRef.current) {
@@ -251,7 +254,6 @@ export default function OccurrenceDialog({
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
-        ...(pinnedNote.trim() ? { pinnedNote: pinnedNote.trim(), pinnedNoteRepeats } : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
       };
 
@@ -287,6 +289,18 @@ export default function OccurrenceDialog({
             await apiPut(`/api/admin/occurrences/${newOccId}/property-photos`, { propertyPhotoIds });
           } catch (err) { console.error("Failed to save property photos:", err); }
         }
+        // Save add-on services
+        if (newOccId && addons.length > 0) {
+          for (const addon of addons) {
+            try {
+              await apiPost(`/api/admin/occurrences/${newOccId}/addons`, {
+                tag: addon.tag || undefined,
+                customLabel: addon.customLabel || undefined,
+                price: addon.price,
+              });
+            } catch (err) { console.error("Failed to create addon:", err); }
+          }
+        }
         publishInlineMessage({ type: "SUCCESS", text: "Occurrence created." });
       } else {
         const body: Record<string, unknown> = {
@@ -311,8 +325,6 @@ export default function OccurrenceDialog({
         body.isAdminOnly = isAdminOnly;
         body.jobType = jobType || null;
         body.jobTags = jobTags.length > 0 ? jobTags : null;
-        body.pinnedNote = pinnedNote.trim() || null;
-        body.pinnedNoteRepeats = pinnedNoteRepeats;
         body.frequencyDays = occFrequencyDays !== "" ? Number(occFrequencyDays) : null;
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
         // Create new expenses, delete removed ones
@@ -475,47 +487,7 @@ export default function OccurrenceDialog({
                     onCustomNoteChange={setJobType}
                   />
                 </div>
-                <div>
-                  <Text mb="1">📌 Pinned Instruction <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional — shows on card)</Text></Text>
-                  <Box display="flex" gap="6px" flexWrap="wrap" mb={2}>
-                    {["Cut shorter", "Cut longer", "Skip backyard", "Skip front yard", "Bag clippings", "Double cut", "Edge only", "Blow only", "Watch for pet", "Gate code changed", "Client home — knock first", "Client not home — proceed"].map((p) => (
-                      <Badge
-                        key={p}
-                        size="sm"
-                        variant={pinnedNote === p ? "solid" : "outline"}
-                        colorPalette={pinnedNote === p ? "yellow" : "gray"}
-                        cursor="pointer"
-                        px="2"
-                        py="0.5"
-                        borderRadius="full"
-                        onClick={() => setPinnedNote(pinnedNote === p ? "" : p)}
-                        userSelect="none"
-                      >
-                        {p}
-                      </Badge>
-                    ))}
-                  </Box>
-                  <Input
-                    size="sm"
-                    placeholder="e.g., Trim hedges extra short near driveway"
-                    value={pinnedNote}
-                    onChange={(e) => setPinnedNote(e.target.value)}
-                  />
-                  {pinnedNote.trim() && (
-                    <HStack justify="space-between" align="center" mt={2}>
-                      <Box>
-                        <Text fontSize="xs" fontWeight="medium">Carry forward</Text>
-                        <Text fontSize="xs" color="fg.muted">Keep on future repeating occurrences</Text>
-                      </Box>
-                      <Switch.Root checked={pinnedNoteRepeats} onCheckedChange={(e) => setPinnedNoteRepeats(e.checked)} colorPalette="blue" size="sm">
-                        <Switch.HiddenInput />
-                        <Switch.Control>
-                          <Switch.Thumb />
-                        </Switch.Control>
-                      </Switch.Root>
-                    </HStack>
-                  )}
-                </div>
+                {/* Instructions are managed via the Manage Instructions dialog */}
                 <div>
                   <Text mb="1">Start date *</Text>
                   <Input
@@ -778,6 +750,105 @@ export default function OccurrenceDialog({
                       occurrenceId={mode === "UPDATE" ? occurrenceId : undefined}
                       onSelectionChange={setPropertyPhotoIds}
                     />
+                  </Box>
+                )}
+
+                {/* Add-on services — not for estimates */}
+                {workflow !== "ESTIMATE" && (
+                  <Box mt={2} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50">
+                    <VStack align="start" gap={2}>
+                      <Text fontSize="xs" fontWeight="semibold" color="fg.muted">Add-on Services</Text>
+                      {addons.map((addon) => (
+                        <HStack key={addon.id} justify="space-between" w="full" fontSize="xs">
+                          <Text>{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}</Text>
+                          <HStack gap={2}>
+                            <Text fontWeight="semibold">+${addon.price.toFixed(2)}</Text>
+                            <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={async () => {
+                              if (mode === "UPDATE" && addon.id && !addon.id.startsWith("_new_")) {
+                                try {
+                                  await apiDelete(`/api/admin/occurrences/${occurrenceId}/addons/${addon.id}`);
+                                } catch {}
+                              }
+                              setAddons((prev) => prev.filter((a) => a.id !== addon.id));
+                            }}>
+                              <X size={10} />
+                            </Button>
+                          </HStack>
+                        </HStack>
+                      ))}
+                      <Box w="full">
+                        <Text fontSize="xs" fontWeight="medium" mb={1}>Add a service</Text>
+                        <Box display="flex" gap="4px" flexWrap="wrap" mb={2}>
+                          {(() => {
+                            const usedTags = new Set([...jobTags, ...addons.map((a) => a.tag).filter(Boolean) as string[]]);
+                            return JOB_TAGS.filter((tag) => !usedTags.has(tag));
+                          })().map((tag) => (
+                            <Badge
+                              key={tag}
+                              size="sm"
+                              colorPalette={addonTag === tag ? "blue" : "gray"}
+                              variant={addonTag === tag ? "solid" : "outline"}
+                              cursor="pointer"
+                              px="2"
+                              borderRadius="full"
+                              onClick={() => { setAddonTag(addonTag === tag ? "" : tag); setAddonCustomLabel(""); }}
+                            >
+                              {jobTagLabel(tag)}
+                            </Badge>
+                          ))}
+                        </Box>
+                        {!addonTag && (
+                          <Box mb={2}>
+                            <input
+                              type="text"
+                              value={addonCustomLabel}
+                              onChange={(e) => setAddonCustomLabel(e.target.value)}
+                              placeholder="Or custom service..."
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "13px" }}
+                            />
+                          </Box>
+                        )}
+                        <HStack gap={2}>
+                          <Box flex="1">
+                            <CurrencyInput value={addonPrice} onChange={setAddonPrice} size="sm" />
+                          </Box>
+                          <Button
+                            size="xs"
+                            colorPalette="blue"
+                            disabled={!addonPrice || Number(addonPrice) <= 0 || (!addonTag && !addonCustomLabel.trim())}
+                            onClick={async () => {
+                              const newAddon = {
+                                id: `_new_${Date.now()}`,
+                                tag: addonTag || null,
+                                customLabel: addonCustomLabel.trim() || null,
+                                price: Number(addonPrice),
+                              };
+                              // If UPDATE mode, save immediately to API
+                              if (mode === "UPDATE" && occurrenceId) {
+                                try {
+                                  const created = await apiPost<any>(`/api/admin/occurrences/${occurrenceId}/addons`, {
+                                    tag: addonTag || undefined,
+                                    customLabel: addonCustomLabel.trim() || undefined,
+                                    price: Number(addonPrice),
+                                  });
+                                  setAddons((prev) => [...prev, created]);
+                                } catch (err) {
+                                  publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) });
+                                  return;
+                                }
+                              } else {
+                                setAddons((prev) => [...prev, newAddon]);
+                              }
+                              setAddonTag("");
+                              setAddonCustomLabel("");
+                              setAddonPrice("");
+                            }}
+                          >
+                            + Add
+                          </Button>
+                        </HStack>
+                      </Box>
+                    </VStack>
                   </Box>
                 )}
               </VStack>

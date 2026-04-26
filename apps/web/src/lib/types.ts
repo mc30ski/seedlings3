@@ -576,6 +576,8 @@ export type WorkerOccurrence = {
   _isPinnedGhost?: boolean;
   _ghostDate?: string;
   propertyPhotos?: { propertyPhoto: { id: string; r2Key: string; url?: string; fileName?: string | null; description?: string | null; sortOrder: number } }[];
+  addons?: { id: string; tag?: string | null; customLabel?: string | null; price: number }[];
+  instructions?: { id: string; text: string; isPreset: boolean; repeats: boolean; sortOrder: number }[];
   linkedOccurrenceId?: string | null;
   linkedOccurrence?: {
     id: string;

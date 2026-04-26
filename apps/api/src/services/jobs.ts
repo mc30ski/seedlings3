@@ -248,6 +248,17 @@ export const jobs: ServicesJobs = {
               include: { createdBy: { select: { id: true, displayName: true } } },
               orderBy: { createdAt: "asc" as const },
             },
+            addons: {
+              select: { id: true, tag: true, customLabel: true, price: true },
+              orderBy: { createdAt: "asc" as const },
+            },
+            instructions: {
+              select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+              orderBy: { sortOrder: "asc" as const },
+            },
+            propertyPhotos: {
+              include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
+            },
             _count: { select: { photos: true, comments: true } },
           },
         },
@@ -1101,6 +1112,14 @@ export const jobs: ServicesJobs = {
         propertyPhotos: {
           include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
         },
+        addons: {
+          select: { id: true, tag: true, customLabel: true, price: true },
+          orderBy: { createdAt: "asc" as const },
+        },
+        instructions: {
+          select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+          orderBy: { sortOrder: "asc" as const },
+        },
         linkedOccurrence: {
           select: {
             id: true, startAt: true, status: true, workflow: true, jobType: true, price: true,
@@ -1131,8 +1150,10 @@ export const jobs: ServicesJobs = {
         where: {
           jobId: { in: jobIds },
           status: { in: ["CLOSED", "COMPLETED", "PENDING_PAYMENT"] },
-          startedAt: { not: null },
-          completedAt: { not: null },
+          OR: [
+            { startedAt: { not: null }, completedAt: { not: null } },
+            { manualDurationMinutes: { not: null } },
+          ],
         },
         select: { jobId: true, startedAt: true, completedAt: true, totalPausedMs: true, manualDurationMinutes: true },
         orderBy: { completedAt: "desc" },
@@ -1140,12 +1161,16 @@ export const jobs: ServicesJobs = {
       // Group by jobId, take last 10 per job
       const byJob: Record<string, number[]> = {};
       for (const o of completedOccs) {
-        if (!o.jobId || !o.startedAt || !o.completedAt) continue;
+        if (!o.jobId) continue;
         if (!byJob[o.jobId]) byJob[o.jobId] = [];
         if (byJob[o.jobId].length >= 10) continue;
-        const mins = o.manualDurationMinutes ??
-          (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
-        if (mins > 0) byJob[o.jobId].push(mins);
+        let mins: number | null = null;
+        if (o.manualDurationMinutes != null) {
+          mins = o.manualDurationMinutes;
+        } else if (o.startedAt && o.completedAt) {
+          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
+        }
+        if (mins != null && mins > 0) byJob[o.jobId].push(mins);
       }
       for (const [jobId, durations] of Object.entries(byJob)) {
         if (durations.length === 0) continue;
@@ -1194,6 +1219,14 @@ export const jobs: ServicesJobs = {
         },
         propertyPhotos: {
           include: { propertyPhoto: { select: { id: true, r2Key: true, fileName: true, description: true, sortOrder: true } } },
+        },
+        addons: {
+          select: { id: true, tag: true, customLabel: true, price: true },
+          orderBy: { createdAt: "asc" as const },
+        },
+        instructions: {
+          select: { id: true, text: true, isPreset: true, repeats: true, sortOrder: true },
+          orderBy: { sortOrder: "asc" as const },
         },
         linkedOccurrence: {
           select: {

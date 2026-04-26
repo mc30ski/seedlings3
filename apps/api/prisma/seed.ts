@@ -59,6 +59,10 @@ async function clearDatabase() {
   await prisma.pinnedOccurrence.deleteMany();
   await prisma.likedOccurrence.deleteMany();
   await prisma.occurrenceComment.deleteMany();
+  await prisma.occurrenceInstruction.deleteMany();
+  await prisma.occurrenceAddon.deleteMany();
+  await prisma.occurrencePropertyPhoto.deleteMany();
+  await prisma.jobPropertyPhoto.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
@@ -84,6 +88,7 @@ async function clearDatabase() {
   await prisma.equipment.deleteMany();
 
   console.log("  Clearing properties...");
+  await prisma.propertyPhoto.deleteMany();
   await prisma.property.deleteMany();
 
   console.log("  Clearing contacts...");
@@ -533,149 +538,149 @@ async function seedDatabase() {
 
   // ─── COMPLETED (past) ─────────────────────────────────────────────────────
   const cHarrington21 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 8), endAt: addMinutes(daysAgo(21, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(21, 8), completedAt: addMinutes(daysAgo(21, 8), 40) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 8), endAt: addMinutes(daysAgo(21, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(21, 8), completedAt: addMinutes(daysAgo(21, 8), 40) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington14 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 8), endAt: addMinutes(daysAgo(14, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(14, 8), completedAt: addMinutes(daysAgo(14, 8), 42) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 8), endAt: addMinutes(daysAgo(14, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(14, 8), completedAt: addMinutes(daysAgo(14, 8), 42) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington7 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 45), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 50) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 50) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cLake14 = await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 13), endAt: addMinutes(daysAgo(14, 13), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(14, 13), completedAt: addMinutes(daysAgo(14, 13), 30) },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 13), endAt: addMinutes(daysAgo(14, 13), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(14, 13), completedAt: addMinutes(daysAgo(14, 13), 30) },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cLake7 = await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 13), endAt: addMinutes(daysAgo(7, 13), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(7, 13), completedAt: addMinutes(daysAgo(7, 13), 32) },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 13), endAt: addMinutes(daysAgo(7, 13), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(7, 13), completedAt: addMinutes(daysAgo(7, 13), 32) },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cMartinez14 = await occ(
-    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 40), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 38) },
+    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 40), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 38) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cWillowbrook14 = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(14, 7), endAt: addMinutes(daysAgo(14, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(14, 7), completedAt: addMinutes(daysAgo(14, 7), 110) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cWillowbrook7 = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 120), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 115) },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 115) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cThompson14 = await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 60), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 55) },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 9), endAt: addMinutes(daysAgo(14, 9), 60), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(14, 9), completedAt: addMinutes(daysAgo(14, 9), 55) },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cThompson7 = await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 60), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(7, 9), completedAt: addMinutes(daysAgo(7, 9), 58) },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 60), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(7, 9), completedAt: addMinutes(daysAgo(7, 9), 58) },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cObrien7 = await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 35), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 33) },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 33) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cSunrise7 = await occ(
-    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 180), status: "CLOSED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 170) },
+    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 180), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 170) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cPatel7 = await occ(
-    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
     [{ userId: TRAINEE_ID, role: "primary" }],
   );
   const cRiverBend7 = await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cChurch7 = await occ(
-    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 14), endAt: addMinutes(daysAgo(7, 14), 90), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(7, 14), completedAt: addMinutes(daysAgo(7, 14), 85) },
+    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 14), endAt: addMinutes(daysAgo(7, 14), 90), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(7, 14), completedAt: addMinutes(daysAgo(7, 14), 85) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cKim14 = await occ(
-    { jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 10), endAt: addMinutes(daysAgo(14, 10), 30), status: "CLOSED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 50.0, estimatedMinutes: 30, startedAt: daysAgo(14, 10), completedAt: addMinutes(daysAgo(14, 10), 28) },
+    { jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 10), endAt: addMinutes(daysAgo(14, 10), 30), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 50.0, estimatedMinutes: 30, startedAt: daysAgo(14, 10), completedAt: addMinutes(daysAgo(14, 10), 28) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
   // ─── OVERDUE (past, still SCHEDULED, unclaimed) ───────────────────────────
-  await occ({ jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 13), endAt: addMinutes(daysAgo(1, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35 });
-  await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 9), endAt: addMinutes(daysAgo(1, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40 });
-  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(2, 7), endAt: addMinutes(daysAgo(2, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120 });
-  await occ({ jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 8), endAt: addMinutes(daysAgo(1, 8), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35 });
-  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(2, 7), endAt: addMinutes(daysAgo(2, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180 });
-  await occ({ jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 6), endAt: addMinutes(daysAgo(1, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150 });
-  await occ({ jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 15), endAt: addMinutes(daysAgo(3, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 });
-  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 14), endAt: addMinutes(daysAgo(1, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90 });
+  await occ({ jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 13), endAt: addMinutes(daysAgo(1, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35 });
+  await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 9), endAt: addMinutes(daysAgo(1, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40 });
+  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(2, 7), endAt: addMinutes(daysAgo(2, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120 });
+  await occ({ jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 8), endAt: addMinutes(daysAgo(1, 8), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35 });
+  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(2, 7), endAt: addMinutes(daysAgo(2, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180 });
+  await occ({ jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 6), endAt: addMinutes(daysAgo(1, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150 });
+  await occ({ jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 15), endAt: addMinutes(daysAgo(3, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 });
+  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(1, 14), endAt: addMinutes(daysAgo(1, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
   // Overdue assigned but not completed
   await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 9), endAt: addMinutes(daysAgo(1, 9), 60), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60 },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(1, 9), endAt: addMinutes(daysAgo(1, 9), 60), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60 },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   // Overdue — started but never completed (IN_PROGRESS)
   await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 8), endAt: addMinutes(daysAgo(2, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(2, 8) },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 8), endAt: addMinutes(daysAgo(2, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(2, 8) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   // Overdue — completed but payment not accepted (PENDING_PAYMENT)
   await occ(
-    { jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 8), endAt: addMinutes(daysAgo(3, 8), 30), status: "PENDING_PAYMENT", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 75.0, estimatedMinutes: 30, startedAt: daysAgo(3, 8), completedAt: addMinutes(daysAgo(3, 8), 28) },
+    { jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 8), endAt: addMinutes(daysAgo(3, 8), 30), status: "PENDING_PAYMENT", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 75.0, estimatedMinutes: 30, startedAt: daysAgo(3, 8), completedAt: addMinutes(daysAgo(3, 8), 28) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }],
   );
   // Overdue — assigned to trainee, still scheduled
   await occ(
-    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 15), endAt: addMinutes(daysAgo(2, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 },
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 15), endAt: addMinutes(daysAgo(2, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 },
     [{ userId: TRAINEE_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
 
   // ─── TODAY / TOMORROW ─────────────────────────────────────────────────────
   // Assigned today
   const todayHarrington = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const todayWillowbrook = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 7), endAt: addMinutes(daysFromNow(0, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, pinnedNote: "Cut shorter — board meeting tomorrow" },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 7), endAt: addMinutes(daysFromNow(0, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, pinnedNote: "Cut shorter — board meeting tomorrow" },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }],
   );
   await occ(
-    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 15), endAt: addMinutes(daysFromNow(0, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 },
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 15), endAt: addMinutes(daysFromNow(0, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 },
     [{ userId: TRAINEE_ID, role: "primary" }],
   );
-  await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150, isClientConfirmed: true, pinnedNote: "Bag clippings — client event this weekend", pinnedNoteRepeats: false },
+  const todayRiverBend = await occ(
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, isClientConfirmed: true, pinnedNote: "Bag clippings — client event this weekend", pinnedNoteRepeats: false },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   // In progress today (must be confirmed to have been started)
   await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35, startedAt: daysFromNow(0, 8), isClientConfirmed: true },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 8), endAt: addMinutes(daysFromNow(0, 8), 35), status: "IN_PROGRESS", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35, startedAt: daysFromNow(0, 8), isClientConfirmed: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
   // Unclaimed today
-  await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 9), endAt: addMinutes(daysFromNow(0, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40 });
-  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90 });
+  await occ({ jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 9), endAt: addMinutes(daysFromNow(0, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40 });
+  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 14), endAt: addMinutes(daysFromNow(0, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
 
   // Assigned tomorrow
   const tomorrowChenLeaf = await occ(
-    { jobId: chenLeafCleanup.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 9), endAt: addMinutes(daysFromNow(1, 9), 90), status: "SCHEDULED", workflow: "ONE_OFF", jobType: "LEAF_CLEANUP", price: 120.0, estimatedMinutes: 90, isOneOff: true },
+    { jobId: chenLeafCleanup.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 9), endAt: addMinutes(daysFromNow(1, 9), 90), status: "SCHEDULED", workflow: "ONE_OFF", jobTags: '["LEAF_CLEANUP"]', price: 120.0, estimatedMinutes: 90, isOneOff: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 9), endAt: addMinutes(daysFromNow(1, 9), 60), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60 },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 9), endAt: addMinutes(daysFromNow(1, 9), 60), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60 },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
 
   // Admin-assigned tomorrow (diverse: confirmed, unconfirmed, estimate, event)
   await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 8), endAt: addMinutes(daysFromNow(1, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 8), endAt: addMinutes(daysFromNow(1, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, isClientConfirmed: true },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 250.0, estimatedMinutes: 120 },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 250.0, estimatedMinutes: 120 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 14), endAt: addMinutes(daysFromNow(1, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 30 },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 14), endAt: addMinutes(daysFromNow(1, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 30 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }],
   );
   await occ(
@@ -684,65 +689,65 @@ async function seedDatabase() {
   );
 
   // Unclaimed tomorrow
-  await occ({ jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 13), endAt: addMinutes(daysFromNow(1, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35 });
-  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 7), endAt: addMinutes(daysFromNow(1, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180 });
-  await occ({ jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 30), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 50.0, estimatedMinutes: 30 });
+  await occ({ jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 13), endAt: addMinutes(daysFromNow(1, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35 });
+  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(1, 7), endAt: addMinutes(daysFromNow(1, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180 });
+  await occ({ jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(1, 10), endAt: addMinutes(daysFromNow(1, 10), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 50.0, estimatedMinutes: 30 });
 
   // ─── UPCOMING (2-7 days) ──────────────────────────────────────────────────
   // Assigned
   await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 8), endAt: addMinutes(daysFromNow(7, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45 },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 8), endAt: addMinutes(daysFromNow(7, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }],
   );
   await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 13), endAt: addMinutes(daysFromNow(7, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 65.0, estimatedMinutes: 35 },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(7, 13), endAt: addMinutes(daysFromNow(7, 13), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35 },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 8), endAt: addMinutes(daysFromNow(3, 8), 35), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 60.0, estimatedMinutes: 35 },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 8), endAt: addMinutes(daysFromNow(3, 8), 35), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35 },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(6, 6), endAt: addMinutes(daysFromNow(6, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 400.0, estimatedMinutes: 150 },
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(6, 6), endAt: addMinutes(daysFromNow(6, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
 
   // Unclaimed upcoming
-  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(5, 7), endAt: addMinutes(daysFromNow(5, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120 });
-  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(5, 7), endAt: addMinutes(daysFromNow(5, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 350.0, estimatedMinutes: 180 });
-  await occ({ jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(4, 15), endAt: addMinutes(daysFromNow(4, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 45.0, estimatedMinutes: 25 });
-  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(6, 14), endAt: addMinutes(daysFromNow(6, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 200.0, estimatedMinutes: 90 });
+  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(5, 7), endAt: addMinutes(daysFromNow(5, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120 });
+  await occ({ jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(5, 7), endAt: addMinutes(daysFromNow(5, 7), 180), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180 });
+  await occ({ jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(4, 15), endAt: addMinutes(daysFromNow(4, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 });
+  await occ({ jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(6, 14), endAt: addMinutes(daysFromNow(6, 14), 90), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90 });
 
   // Tentative upcoming
   await occ(
-    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(6, 9), endAt: addMinutes(daysFromNow(6, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 55.0, estimatedMinutes: 40, isTentative: true },
+    { jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(6, 9), endAt: addMinutes(daysFromNow(6, 9), 40), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 55.0, estimatedMinutes: 40, isTentative: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   await occ(
-    { jobId: thompsonGuestMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 14), endAt: addMinutes(daysFromNow(3, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_ONLY", price: 55.0, estimatedMinutes: 30, isTentative: true },
+    { jobId: thompsonGuestMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 14), endAt: addMinutes(daysFromNow(3, 14), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 55.0, estimatedMinutes: 30, isTentative: true },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
 
   // ─── FURTHER OUT (8-14 days) ──────────────────────────────────────────────
   await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(14, 8), endAt: addMinutes(daysFromNow(14, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45 },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(14, 8), endAt: addMinutes(daysFromNow(14, 8), 45), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
-  await occ({ jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(10, 8), endAt: addMinutes(daysFromNow(10, 8), 30), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 75.0, estimatedMinutes: 30 });
-  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(12, 7), endAt: addMinutes(daysFromNow(12, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120, isTentative: true, isAdminOnly: true });
+  await occ({ jobId: willowbrookPoolMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(10, 8), endAt: addMinutes(daysFromNow(10, 8), 30), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 75.0, estimatedMinutes: 30 });
+  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(12, 7), endAt: addMinutes(daysFromNow(12, 7), 120), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, isTentative: true, isAdminOnly: true });
 
   // ─── CANCELED ─────────────────────────────────────────────────────────────
-  await occ({ jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(28, 8), endAt: addMinutes(daysAgo(28, 8), 45), status: "CANCELED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 85.0, estimatedMinutes: 45 });
-  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(21, 7), endAt: addMinutes(daysAgo(21, 7), 120), status: "CANCELED", workflow: "STANDARD", jobType: "MOW_TRIM_BLOW", price: 250.0, estimatedMinutes: 120 });
-  await occ({ jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 9), endAt: addMinutes(daysAgo(21, 9), 60), status: "CANCELED", workflow: "STANDARD", jobType: "FULL_SERVICE", price: 125.0, estimatedMinutes: 60 });
+  await occ({ jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(28, 8), endAt: addMinutes(daysAgo(28, 8), 45), status: "CANCELED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45 });
+  await occ({ jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(21, 7), endAt: addMinutes(daysAgo(21, 7), 120), status: "CANCELED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120 });
+  await occ({ jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(21, 9), endAt: addMinutes(daysAgo(21, 9), 60), status: "CANCELED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60 });
 
   // ─── ESTIMATES ────────────────────────────────────────────────────────────
-  const estChenTree = await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "TREE_TRIMMING", isEstimate: true, isAdminOnly: true, proposalAmount: 450, proposalNotes: "3 large live oaks in the backyard need trimming. Two are approximately 30ft tall with branches overhanging the fence line into the neighbor's yard. The third is smaller (~20ft) but has significant dead wood that should be removed. Estimate includes all debris removal and hauling. We would need the chipper for this job. Recommend scheduling on a weekday when the neighbor is home so we can coordinate fence-line access. Lisa mentioned she also wants us to look at the crepe myrtle out front but that can be a separate estimate." });
-  const estChurchWash = await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobType: "PRESSURE_WASHING", isEstimate: true, isAdminOnly: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash covering approximately 5000 sqft of concrete. The main walkway from the parking lot to the front entrance has significant algae buildup on the north-facing side. Parking lot has oil stains in several spots that will need degreaser pre-treatment. We should avoid Sunday entirely and Saturday afternoon due to services. Pastor David said Tuesday or Wednesday would be ideal. Will need to bring the 3100 PSI unit and at least 200ft of hose to reach the far end of the lot. Estimate includes surface cleaner attachment rental." });
+  const estChenTree = await occ({ jobId: chenTreeEstimate.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(3, 10), endAt: addMinutes(daysFromNow(3, 10), 60), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["TREE_TRIM"]', isEstimate: true, isAdminOnly: true, proposalAmount: 450, proposalNotes: "3 large live oaks in the backyard need trimming. Two are approximately 30ft tall with branches overhanging the fence line into the neighbor's yard. The third is smaller (~20ft) but has significant dead wood that should be removed. Estimate includes all debris removal and hauling. We would need the chipper for this job. Recommend scheduling on a weekday when the neighbor is home so we can coordinate fence-line access. Lisa mentioned she also wants us to look at the crepe myrtle out front but that can be a separate estimate." });
+  const estChurchWash = await occ({ jobId: churchPressureWash.id, kind: "ENTIRE_SITE", startAt: daysFromNow(8, 10), endAt: addMinutes(daysFromNow(8, 10), 120), status: "PROPOSAL_SUBMITTED", workflow: "ESTIMATE", jobTags: '["PLANT"]', isEstimate: true, isAdminOnly: true, proposalAmount: 800, proposalNotes: "Full walkway and parking lot pressure wash covering approximately 5000 sqft of concrete. The main walkway from the parking lot to the front entrance has significant algae buildup on the north-facing side. Parking lot has oil stains in several spots that will need degreaser pre-treatment. We should avoid Sunday entirely and Saturday afternoon due to services. Pastor David said Tuesday or Wednesday would be ideal. Will need to bring the 3100 PSI unit and at least 200ft of hose to reach the far end of the lot. Estimate includes surface cleaner attachment rental." });
 
   // ─── ONE-OFF (aeration) ───────────────────────────────────────────────────
   await occ(
-    { jobId: patelAeration.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(5, 10), endAt: addMinutes(daysFromNow(5, 10), 60), status: "SCHEDULED", workflow: "ONE_OFF", jobType: "AERATION", price: 150.0, estimatedMinutes: 60, isOneOff: true },
+    { jobId: patelAeration.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(5, 10), endAt: addMinutes(daysFromNow(5, 10), 60), status: "SCHEDULED", workflow: "ONE_OFF", jobTags: '["AERATION"]', price: 150.0, estimatedMinutes: 60, isOneOff: true },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
@@ -1062,6 +1067,17 @@ async function seedDatabase() {
   await prisma.likedOccurrence.create({ data: { userId: ADMIN_WORKER_ID, occurrenceId: cThompson7.id } });
   await prisma.likedOccurrence.create({ data: { userId: EMPLOYEE_ID, occurrenceId: cObrien7.id } });
   await prisma.likedOccurrence.create({ data: { userId: CONTRACTOR_ID, occurrenceId: cSunrise7.id } });
+
+  console.log("  Creating occurrence instructions...");
+  // Willowbrook today: 2 instructions, one repeating preset + one one-time custom
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Cut shorter", isPreset: true, repeats: true, sortOrder: 0 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayWillowbrook.id, text: "Board meeting tomorrow — extra clean edges", isPreset: false, repeats: false, sortOrder: 1 } });
+  // River Bend today: 3 instructions, mix of repeating and one-time
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Bag clippings", isPreset: true, repeats: false, sortOrder: 0 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Watch for pet", isPreset: true, repeats: true, sortOrder: 1 } });
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayRiverBend.id, text: "Client event this weekend — park on street", isPreset: false, repeats: false, sortOrder: 2 } });
+  // Harrington today: 1 repeating instruction
+  await prisma.occurrenceInstruction.create({ data: { occurrenceId: todayHarrington.id, text: "Gate code changed", isPreset: true, repeats: true, sortOrder: 0 } });
 
   console.log("  Creating linked occurrences...");
   // Link the Harrington today and tomorrow occurrences

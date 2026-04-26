@@ -440,7 +440,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const withUrls = await Promise.all(
       photos.map(async (p) => ({
         ...p,
-        url: await getDownloadUrl(p.r2Key, 3600, "property-photos"),
+        url: await getDownloadUrl(p.r2Key, 86400, "property-photos"),
       }))
     );
     return withUrls;
@@ -477,7 +477,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         ...l,
         propertyPhoto: {
           ...l.propertyPhoto,
-          url: await getDownloadUrl(l.propertyPhoto.r2Key, 3600, "property-photos"),
+          url: await getDownloadUrl(l.propertyPhoto.r2Key, 86400, "property-photos"),
         },
       }))
     );
@@ -512,6 +512,31 @@ export default async function adminRoutes(app: FastifyInstance) {
       });
     }
     return { ok: true, count: propertyPhotoIds.length };
+  });
+
+  // ── Occurrence Add-on Services ───────────────────────────────────────────
+
+  app.post("/admin/occurrences/:id/addons", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const { tag, customLabel, price } = (req.body || {}) as { tag?: string; customLabel?: string; price: number };
+    if (price == null || price <= 0) throw app.httpErrors.badRequest("price is required and must be positive");
+    if (!tag && !customLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
+    return prisma.occurrenceAddon.create({
+      data: {
+        occurrenceId,
+        tag: tag || null,
+        customLabel: customLabel?.trim() || null,
+        price: Number(price),
+        createdById: uid,
+      },
+    });
+  });
+
+  app.delete("/admin/occurrences/:id/addons/:addonId", adminGuard, async (req: any) => {
+    const addonId = String(req.params.addonId);
+    await prisma.occurrenceAddon.delete({ where: { id: addonId } });
+    return { deleted: true };
   });
 
   // Jobs: list / get / create / update

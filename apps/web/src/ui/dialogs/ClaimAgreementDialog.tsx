@@ -44,7 +44,9 @@ export default function ClaimAgreementDialog({
   const isContractor = me?.workerType === "CONTRACTOR" || !me?.workerType;
   const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
 
-  const price = occurrence?.price ?? 0;
+  const basePrice = occurrence?.price ?? 0;
+  const addonsTotal = ((occurrence as any)?.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+  const price = basePrice + addonsTotal;
   const expTotal = (occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
   const net = price - expTotal;
   const pct = isEmployee ? marginPercent : commissionPercent;
@@ -88,8 +90,14 @@ export default function ClaimAgreementDialog({
                     <VStack align="stretch" gap={1} fontSize="sm">
                       <HStack justify="space-between">
                         <Text color="fg.muted">Job Price</Text>
-                        <Text fontWeight="medium">${price.toFixed(2)}</Text>
+                        <Text fontWeight="medium">${basePrice.toFixed(2)}</Text>
                       </HStack>
+                      {addonsTotal > 0 && (
+                        <HStack justify="space-between">
+                          <Text color="green.600">Add-ons</Text>
+                          <Text color="green.600">+${addonsTotal.toFixed(2)}</Text>
+                        </HStack>
+                      )}
                       {expTotal > 0 && (
                         <HStack justify="space-between">
                           <Text color="orange.600">Expenses</Text>
