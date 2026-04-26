@@ -488,19 +488,6 @@ export default function PropertiesTab({
                       <Text fontSize="xs" color="orange.600">{(p as any).accessNotes}</Text>
                     </Box>
                   )}
-                  {(p.lastPhotos ?? []).length > 0 && (
-                    <Box display="flex" gap={1} mt={1} flexWrap="wrap">
-                      {(p.lastPhotos ?? []).map((photo) => (
-                        <a key={photo.id} href={photo.url} target="_blank" rel="noopener noreferrer">
-                          <img
-                            src={photo.url}
-                            alt=""
-                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, cursor: "pointer" }}
-                          />
-                        </a>
-                      ))}
-                    </Box>
-                  )}
                 </VStack>
               </Card.Body>
               <Card.Body py="3" px="4" pt="0">
