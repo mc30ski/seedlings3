@@ -163,8 +163,9 @@ export const payments: ServicesPayments = {
             isAdminOnly,
             jobType: fullOcc.jobType ?? null,
             jobTags: (fullOcc as any).jobTags ?? null,
-            pinnedNote: (fullOcc as any).pinnedNoteRepeats ? ((fullOcc as any).pinnedNote ?? null) : null,
-            pinnedNoteRepeats: (fullOcc as any).pinnedNoteRepeats ?? true,
+            // Legacy pinnedNote fields kept null — instructions are carried forward separately below
+            pinnedNote: null,
+            pinnedNoteRepeats: true,
             notes: fullOcc.notes ?? fullOcc.job.notes ?? null,
             price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
             estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
@@ -212,6 +213,21 @@ export const payments: ServicesPayments = {
           await tx.occurrencePropertyPhoto.createMany({
             data: existingPropertyPhotos.map((p) => ({ occurrenceId: nextOccurrence.id, propertyPhotoId: p.propertyPhotoId })),
             skipDuplicates: true,
+          });
+        }
+        // Carry forward instructions (only those with repeats === true)
+        const carryForwardInstructions = await tx.occurrenceInstruction.findMany({
+          where: { occurrenceId, repeats: true },
+        });
+        if (carryForwardInstructions.length > 0) {
+          await tx.occurrenceInstruction.createMany({
+            data: carryForwardInstructions.map((i) => ({
+              occurrenceId: nextOccurrence.id,
+              text: i.text,
+              isPreset: i.isPreset,
+              repeats: i.repeats,
+              sortOrder: i.sortOrder,
+            })),
           });
         }
       }

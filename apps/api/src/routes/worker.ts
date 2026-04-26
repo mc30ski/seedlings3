@@ -326,7 +326,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       if ((occ as any).propertyPhotos?.length) {
         for (const pp of (occ as any).propertyPhotos) {
           if (pp.propertyPhoto?.r2Key) {
-            pp.propertyPhoto.url = await getDownloadUrl(pp.propertyPhoto.r2Key, 3600, "property-photos");
+            pp.propertyPhoto.url = await getDownloadUrl(pp.propertyPhoto.r2Key, 86400, "property-photos");
           }
         }
       }
@@ -1072,7 +1072,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const withUrls = await Promise.all(
       photos.map(async (p) => ({
         id: p.id,
-        url: await getDownloadUrl(p.r2Key, 3600, "property-photos"),
+        url: await getDownloadUrl(p.r2Key, 86400, "property-photos"),
         fileName: p.fileName,
         description: p.description,
         sortOrder: p.sortOrder,
@@ -1092,7 +1092,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const withUrls = await Promise.all(
       links.map(async (l) => ({
         id: l.propertyPhoto.id,
-        url: await getDownloadUrl(l.propertyPhoto.r2Key, 3600, "property-photos"),
+        url: await getDownloadUrl(l.propertyPhoto.r2Key, 86400, "property-photos"),
         fileName: l.propertyPhoto.fileName,
         description: l.propertyPhoto.description,
         sortOrder: l.propertyPhoto.sortOrder,
@@ -1417,6 +1417,58 @@ export default async function workerRoutes(app: FastifyInstance) {
       data,
     });
     return { ok: true, pinnedNote, pinnedNoteRepeats: data.pinnedNoteRepeats };
+  });
+
+  // ── Occurrence Instructions (multiple) ──
+  app.post("/occurrences/:id/instructions", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const { text, isPreset, repeats } = (req.body || {}) as { text: string; isPreset?: boolean; repeats?: boolean };
+    if (!text?.trim()) throw app.httpErrors.badRequest("text is required");
+    // Permission: claimer or admin
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
+    const count = await prisma.occurrenceInstruction.count({ where: { occurrenceId } });
+    return prisma.occurrenceInstruction.create({
+      data: { occurrenceId, text: text.trim(), isPreset: !!isPreset, repeats: repeats ?? true, sortOrder: count },
+    });
+  });
+
+  app.patch("/occurrences/:id/instructions/:instructionId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const instructionId = String(req.params.instructionId);
+    const body = req.body || {};
+    // Permission: claimer or admin
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
+    const data: any = {};
+    if ("text" in body) data.text = String(body.text).trim();
+    if ("repeats" in body) data.repeats = !!body.repeats;
+    return prisma.occurrenceInstruction.update({ where: { id: instructionId }, data });
+  });
+
+  app.delete("/occurrences/:id/instructions/:instructionId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const instructionId = String(req.params.instructionId);
+    // Permission: claimer or admin
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid);
+    const user = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isClaimer && !isAdmin) throw app.httpErrors.forbidden("Only the claimer or an admin can manage instructions");
+    await prisma.occurrenceInstruction.delete({ where: { id: instructionId } });
+    return { deleted: true };
   });
 
   app.post("/occurrences/:id/confirm", workerGuard, async (req: any) => {

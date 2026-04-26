@@ -110,6 +110,7 @@ model User {
   calendarFeedTokens        CalendarFeedToken[]
   occurrenceComments        OccurrenceComment[]
   propertyPhotosUploaded    PropertyPhoto[]
+  occurrenceAddons          OccurrenceAddon[]
 }
 
 model UserRole {
@@ -557,6 +558,8 @@ model JobOccurrence {
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]
+  addons       OccurrenceAddon[]
+  instructions OccurrenceInstruction[]
   photos           JobOccurrencePhoto[]
   propertyPhotos   OccurrencePropertyPhoto[]
   pins             PinnedOccurrence[]
@@ -855,4 +858,35 @@ model OccurrencePropertyPhoto {
   propertyPhoto   PropertyPhoto  @relation(fields: [propertyPhotoId], references: [id], onDelete: Cascade)
 
   @@unique([occurrenceId, propertyPhotoId])
+}
+
+// ── Add-on Services ─────────────────────────────────────────────────────────
+
+model OccurrenceAddon {
+  id           String        @id @default(cuid())
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  tag          String?
+  customLabel  String?
+  price        Float
+  createdById  String
+  createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime      @default(now())
+
+  @@index([occurrenceId])
+}
+
+// ── Occurrence Instructions ─────────────────────────────────────────────────
+
+model OccurrenceInstruction {
+  id           String        @id @default(cuid())
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  text         String
+  isPreset     Boolean       @default(false)
+  repeats      Boolean       @default(true)
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+
+  @@index([occurrenceId])
 }

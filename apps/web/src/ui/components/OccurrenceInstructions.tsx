@@ -17,19 +17,21 @@ type Props = {
   canEdit?: boolean;
   /** Start expanded? */
   defaultExpanded?: boolean;
+  /** Start in edit mode immediately */
+  startInEditMode?: boolean;
   /** Called after edit saves, so parent can update count */
   onUpdated?: (newCount: number) => void;
 };
 
 type AllPhoto = PropertyPhotoItem & { selected: boolean };
 
-export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, onUpdated }: Props) {
+export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, startInEditMode, onUpdated }: Props) {
   const [photos, setPhotos] = useState<PropertyPhotoItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(!!startInEditMode);
   const [allPhotos, setAllPhotos] = useState<AllPhoto[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -85,15 +87,13 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 
   if (displayCount === 0 && !editing) {
     if (!canEdit || !propertyId) return null;
-    // Show "Add Guidance" button for admins even when no instructions yet
     return (
       <Button
         size="xs"
         variant="outline"
-        colorPalette="blue"
         onClick={() => { setEditing(true); setExpanded(true); }}
       >
-        <Camera size={12} /> Add Guidance
+        Manage Guidance
       </Button>
     );
   }
@@ -114,13 +114,10 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
           {canEdit && propertyId && !editing && (
             <Button
               size="xs"
-              variant="ghost"
-              px="1"
-              minW="0"
+              variant="outline"
               onClick={(e) => { e.stopPropagation(); setEditing(true); setExpanded(true); }}
-              title="Edit guidance"
             >
-              <Pencil size={12} />
+              Manage
             </Button>
           )}
           {expanded ? <ChevronUp size={14} color="var(--chakra-colors-blue-500)" /> : <ChevronDown size={14} color="var(--chakra-colors-blue-500)" />}
@@ -262,7 +259,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 export function InstructionsBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <HStack gap={1.5} px="2" py="1" bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md" w="full">
+    <HStack gap={1.5} px="2" py="1" bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
       <Camera size={12} color="var(--chakra-colors-blue-600)" />
       <Text fontSize="xs" fontWeight="semibold" color="blue.700">Guidance ({count})</Text>
     </HStack>

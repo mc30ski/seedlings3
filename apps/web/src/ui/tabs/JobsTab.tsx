@@ -37,13 +37,14 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import SendReceiptDialog from "@/src/ui/dialogs/SendReceiptDialog";
 import { type ReceiptData } from "@/src/lib/receipt";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
-import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
@@ -96,6 +97,16 @@ function assigneeSortOrder(a: { assignedById?: string | null; userId: string; ro
   if (isClaimer) return 0;
   if (a.role === "observer") return 2;
   return 1;
+}
+
+function addonTotal(occ: any): number {
+  return (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+}
+
+function totalPrice(occ: any): number | null {
+  const base = (occ.price || null) ?? (occ.proposalAmount || null);
+  if (base == null) return addonTotal(occ) > 0 ? addonTotal(occ) : null;
+  return base + addonTotal(occ);
 }
 
 function parseJobTags(occ: any): string[] {
@@ -648,6 +659,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
   const [busyOccId, setBusyOccId] = useState<string | null>(null);
+  const [addAddonOcc, setAddAddonOcc] = useState<WorkerOccurrence | null>(null);
+  const [addonTag, setAddonTag] = useState<string>("");
+  const [addonCustomLabel, setAddonCustomLabel] = useState("");
+  const [addonPrice, setAddonPrice] = useState("");
+  const [addonBusy, setAddonBusy] = useState(false);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
 
   // Close quick action menu on outside click
@@ -2267,6 +2283,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.job?.property?.displayName ?? occ.title ?? "Job"}
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
                         {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
+                        {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
                         {(occ as any).jobType && ` · Custom`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
@@ -2333,6 +2350,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {ghostIsTask ? (occ.title || "Task") : ghostIsReminder ? (occ.title || "Reminder") : (occ.job?.property?.displayName ?? "Job")}
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
                         {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
+                        {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
                         {(occ as any).jobType && ` · Custom`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
@@ -2964,21 +2982,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                 </Card.Header>
 
-                {/* Property photo guidance — after badges */}
-                {!isCardCompact && ((occ.propertyPhotos ?? []).length > 0 || ((forAdmin || isAdmin || isSuper) && occ.job?.property?.id)) && (
+                {/* Property photo guidance — read-only on Jobs tab */}
+                {!isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
                   <Box mx="4" mt="2" mb="0">
                     <OccurrenceInstructions
                       occurrenceId={occ.id}
                       count={(occ.propertyPhotos ?? []).length}
-                      propertyId={occ.job?.property?.id}
-                      canEdit={forAdmin || isAdmin || isSuper}
-                      onUpdated={(n) => setItems((prev) => prev.map((o) => {
-                        if (o.id !== occ.id) return o;
-                        const updated = { ...o };
-                        if (!updated.propertyPhotos) (updated as any).propertyPhotos = [];
-                        (updated as any).propertyPhotos = Array(n).fill({ propertyPhoto: {} });
-                        return updated;
-                      }))}
                     />
                   </Box>
                 )}
@@ -3025,12 +3034,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           ))}
                         </Box>
                       )}
-                      {/* Job tags */}
-                      {!isTaskOrReminder && (parseJobTags(occ).length > 0 || (occ as any).jobType) && (
+                      {/* Job tags + addon badges */}
+                      {!isTaskOrReminder && (parseJobTags(occ).length > 0 || (occ as any).jobType || (occ.addons ?? []).length > 0) && (
                         <Box display="flex" gap="4px" flexWrap="wrap">
                           {parseJobTags(occ).map((tag: string) => (
                             <Badge key={tag} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                               {jobTagLabel(tag)}
+                            </Badge>
+                          ))}
+                          {(occ.addons ?? []).map((addon: any) => (
+                            <Badge key={addon.id} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                              +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                             </Badge>
                           ))}
                           {(occ as any).jobType && (
@@ -3055,11 +3069,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         );
                       })()}
                       {/* Price / payout / time */}
-                      {(() => { const displayPrice = (occ.price || null) ?? (occ.proposalAmount || null); return (
+                      {(() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); const displayPrice = totalPrice(occ); return (
                       <Box display="flex" gap={2} flexWrap="wrap" alignItems="center">
                         {displayPrice != null && (
                           <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" py="0.5" borderRadius="full">
-                            ${displayPrice.toFixed(2)}{isEstimateOcc ? " (proposal)" : ""}
+                            ${displayPrice.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
                           </Badge>
                         )}
                         {occ.payment && (
@@ -3090,7 +3104,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const parts: string[] = [];
                           if (actual != null) parts.push(`${formatDuration(actual)} actual`);
                           if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.`);
-                          if (median != null) parts.push(`${formatDuration(median)} avg`);
+                          parts.push(median != null ? `${formatDuration(median)} avg` : "no avg yet");
                           if (parts.length === 0) return null;
                           const color = actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
                           return (
@@ -3245,11 +3259,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.contactEmail && <Text><strong>Email:</strong> {occ.contactEmail}</Text>}
                       </Box>
                     )}
-                    {(parseJobTags(occ).length > 0 || (occ as any).jobType) && (
+                    {(parseJobTags(occ).length > 0 || (occ as any).jobType || (occ.addons ?? []).length > 0) && (
                       <Box display="flex" gap="4px" flexWrap="wrap">
                         {parseJobTags(occ).map((tag: string) => (
                           <Badge key={tag} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                             {jobTagLabel(tag)}
+                          </Badge>
+                        ))}
+                        {(occ.addons ?? []).map((addon: any) => (
+                          <Badge key={addon.id} fontSize="xs" px="2" borderRadius="full" bg="gray.200" color="gray.700">
+                            +{addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
                           </Badge>
                         ))}
                         {(occ as any).jobType && (
@@ -3259,11 +3278,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         )}
                       </Box>
                     )}
-                    {((occ.price || null) ?? (occ.proposalAmount || null)) != null && (
+                    {totalPrice(occ) != null && (() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); return (
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                        ${((occ.price || null) ?? (occ.proposalAmount || null))!.toFixed(2)}{isEstimateOcc ? " (proposal)" : ""}
+                        ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
                       </Badge>
-                    )}
+                    ); })()}
                     {occ.payment && (
                       <HStack gap={1}>
                         <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
@@ -3299,7 +3318,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </HStack>
                     )}
                     {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
-                      const displayPrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
+                      const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
+                      const addonsAmt = addonTotal(occ);
+                      const displayPrice = basePrice + addonsAmt;
                       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                       const net = displayPrice - expTotal;
                       const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
@@ -3351,11 +3372,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   <Text as="span" fontWeight="semibold">Est:</Text> {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}
                                 </Text>
                               )}
-                              {median != null && (
-                                <Text color="fg.muted">
-                                  <Text as="span" fontWeight="semibold">Avg:</Text> {formatDuration(median)}
-                                </Text>
-                              )}
+                              <Text color="fg.muted">
+                                <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "not enough data yet"}
+                              </Text>
                               {actual != null && (
                                 <Text color={adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
                                   Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}
@@ -3608,29 +3627,32 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     })()}
 
                     {/* Expenses */}
+                    {/* Add-on services */}
+                    {(occ.addons ?? []).length > 0 && (
+                      <Box mt={1} p={1} bg="green.50" rounded="sm" w="full" borderWidth="1px" borderColor="green.200">
+                        <Text fontSize="xs" fontWeight="medium" color="green.700">
+                          Add-ons: +${addonTotal(occ).toFixed(2)}
+                        </Text>
+                        <VStack align="start" gap={0} mt={0.5}>
+                          {(occ.addons ?? []).map((addon: any) => (
+                            <Text key={addon.id} fontSize="xs" color="green.600">
+                              +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                            </Text>
+                          ))}
+                        </VStack>
+                      </Box>
+                    )}
+                    {/* Expenses */}
                     {occ.expenses && occ.expenses.length > 0 && (
-                      <Box mt={1} p={1} bg="orange.50" rounded="sm" w="full">
-                        <Text fontSize="xs" fontWeight="medium" color="orange.700">
-                          Expenses: ${occ.expenses.reduce((s, e) => s + e.cost, 0).toFixed(2)}
+                      <Box mt={1} p={1} bg="red.50" rounded="sm" w="full" borderWidth="1px" borderColor="red.200">
+                        <Text fontSize="xs" fontWeight="medium" color="red.700">
+                          Expenses: −${occ.expenses.reduce((s, e) => s + e.cost, 0).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
                           {occ.expenses.map((exp) => (
-                            <HStack key={exp.id} gap={1} w="full">
-                              <Text fontSize="xs" color="orange.600" flex="1">
-                                ${exp.cost.toFixed(2)} — {exp.description}
-                              </Text>
-                              {isClaimer && occ.status !== "CLOSED" && (
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  colorPalette="red"
-                                  disabled={isOffline}
-                                  onClick={() => deleteExpense(exp.id)}
-                                >
-                                  ✕
-                                </Button>
-                              )}
-                            </HStack>
+                            <Text key={exp.id} fontSize="xs" color="red.600">
+                              −${exp.cost.toFixed(2)} — {exp.description}
+                            </Text>
                           ))}
                         </VStack>
                       </Box>
@@ -4373,29 +4395,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {!isTaskOrReminder && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
-                        <Button
-                          size="xs"
-                          variant="outline"
+                      {!isTaskOrReminder && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && (
+                        <StatusButton
+                          id="occ-pinned-note"
+                          itemId={occ.id}
+                          label="Manage Instructions"
                           disabled={isOffline}
-                          onClick={() => {
+                          title={isOffline ? "Requires internet" : undefined}
+                          onClick={async () => {
                             setPinnedNoteOcc(occ);
                             setPinnedNoteDialogOpen(true);
                           }}
-                        >
-                          📌 {(occ as any).pinnedNote ? "Edit Instruction" : "Add Instruction"}
-                        </Button>
-                      )}
-                      {isClaimer && !isTaskOrReminder && (
-                        <StatusButton
-                          id="occ-add-expense"
-                          itemId={occ.id}
-                          label="Expenses"
-                          onClick={async () => setExpenseDialogOccId(occ.id)}
                           variant="outline"
-                          colorPalette="orange"
-                          disabled={isOffline}
-                          title={isOffline ? "Requires internet" : undefined}
                           busyId={statusButtonBusyId}
                           setBusyId={setStatusButtonBusyId}
                         />
@@ -4540,21 +4551,45 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     </HStack>
                   </Card.Footer>
                 )}
-                {/* Property photo instructions */}
-                {/* Guidance indicator — collapsed cards only, above pinned instruction */}
-                {isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
-                  <Box mx="4" mb="1" mt="0">
-                    <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
-                  </Box>
-                )}
-                {/* Pinned instruction banner — bottom of card */}
-                {(occ as any).pinnedNote && (
-                  <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                    <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
-                      📌 {(occ as any).pinnedNote}
-                      {!(occ as any).pinnedNoteRepeats && <Text as="span" fontWeight="normal" fontStyle="italic"> (this time only)</Text>}
-                    </Text>
-                  </Box>
+                {/* Guidance + Instructions — collapsed: inline wrapping row, expanded: full-width banner */}
+                {isCardCompact ? (
+                  ((occ.propertyPhotos ?? []).length > 0 || ((occ as any).instructions ?? []).length > 0) && (
+                    <Box mx="4" mb="1" mt="0" display="flex" flexWrap="wrap" gap="1">
+                      {(occ.propertyPhotos ?? []).length > 0 && (
+                        <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
+                      )}
+                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                        <HStack key={inst.id} gap="1" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {inst.text}</Text>
+                          {inst.repeats && <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>}
+                        </HStack>
+                      ))}
+                    </Box>
+                  )
+                ) : (
+                  <>
+                    {(occ.propertyPhotos ?? []).length > 0 && (
+                      <Box mx="4" mb="1" mt="0">
+                        <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
+                      </Box>
+                    )}
+                    {((occ as any).instructions ?? []).length > 0 && (
+                      <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                        <VStack align="stretch" gap="0.5">
+                          {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                            <HStack key={inst.id} gap="1">
+                              <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                                📌 {inst.text}
+                              </Text>
+                              {inst.repeats && (
+                                <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>
+                              )}
+                            </HStack>
+                          ))}
+                        </VStack>
+                      </Box>
+                    )}
+                  </>
                 )}
               </Card.Root>
             );
@@ -4665,10 +4700,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           open={pinnedNoteDialogOpen}
           onOpenChange={(o) => { setPinnedNoteDialogOpen(o); if (!o) setPinnedNoteOcc(null); }}
           occurrenceId={pinnedNoteOcc.id}
-          currentNote={(pinnedNoteOcc as any).pinnedNote}
-          currentRepeats={(pinnedNoteOcc as any).pinnedNoteRepeats ?? true}
-          onSaved={(note, repeats) => {
-            setItems((prev) => prev.map((o) => o.id === pinnedNoteOcc.id ? { ...o, pinnedNote: note, pinnedNoteRepeats: repeats } as any : o));
+          currentInstructions={(pinnedNoteOcc as any).instructions ?? []}
+          onSaved={(instructions) => {
+            setItems((prev) => prev.map((o) => o.id === pinnedNoteOcc.id ? { ...o, instructions } as any : o));
           }}
         />
       )}
@@ -5070,7 +5104,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             if (!o) setAcceptPaymentOcc(null);
           }}
           endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
-          defaultAmount={acceptPaymentOcc.price}
+          defaultAmount={totalPrice(acceptPaymentOcc)}
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
@@ -5201,6 +5235,96 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Button>
                   <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
                     Done
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Add Service Dialog */}
+      <Dialog.Root open={!!addAddonOcc} onOpenChange={(e) => { if (!e.open) { setAddAddonOcc(null); setAddonTag(""); setAddonCustomLabel(""); setAddonPrice(""); } }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Add Service</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Box>
+                    <Text fontSize="xs" fontWeight="medium" mb={1}>Service type</Text>
+                    <Box display="flex" gap="4px" flexWrap="wrap">
+                      {JOB_TAGS.map((tag) => (
+                        <Badge
+                          key={tag}
+                          size="sm"
+                          colorPalette={addonTag === tag ? "teal" : "gray"}
+                          variant={addonTag === tag ? "solid" : "outline"}
+                          cursor="pointer"
+                          px="2"
+                          borderRadius="full"
+                          onClick={() => { setAddonTag(addonTag === tag ? "" : tag); setAddonCustomLabel(""); }}
+                        >
+                          {jobTagLabel(tag)}
+                        </Badge>
+                      ))}
+                    </Box>
+                  </Box>
+                  {!addonTag && (
+                    <Box>
+                      <Text fontSize="xs" fontWeight="medium" mb={1}>Or custom service</Text>
+                      <input
+                        type="text"
+                        value={addonCustomLabel}
+                        onChange={(e) => setAddonCustomLabel(e.target.value)}
+                        placeholder="e.g., Remove fallen branch"
+                        style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                      />
+                    </Box>
+                  )}
+                  <Box>
+                    <Text fontSize="xs" fontWeight="medium" mb={1}>Price *</Text>
+                    <CurrencyInput
+                      value={addonPrice}
+                      onChange={setAddonPrice}
+                      size="sm"
+                    />
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setAddAddonOcc(null)}>Cancel</Button>
+                  <Button
+                    colorPalette="teal"
+                    loading={addonBusy}
+                    disabled={!addonPrice || Number(addonPrice) <= 0 || (!addonTag && !addonCustomLabel.trim())}
+                    onClick={async () => {
+                      if (!addAddonOcc) return;
+                      setAddonBusy(true);
+                      try {
+                        const created = await apiPost<{ id: string; tag?: string; customLabel?: string; price: number }>(`/api/admin/occurrences/${addAddonOcc.id}/addons`, {
+                          tag: addonTag || undefined,
+                          customLabel: addonCustomLabel.trim() || undefined,
+                          price: Number(addonPrice),
+                        });
+                        setItems((prev) => prev.map((o) => o.id === addAddonOcc.id ? { ...o, addons: [...(o.addons ?? []), created] } : o));
+                        publishInlineMessage({ type: "SUCCESS", text: "Service added." });
+                        setAddAddonOcc(null);
+                        setAddonTag("");
+                        setAddonCustomLabel("");
+                        setAddonPrice("");
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add service.", err) });
+                      }
+                      setAddonBusy(false);
+                    }}
+                  >
+                    Add
                   </Button>
                 </HStack>
               </Dialog.Footer>
@@ -5413,6 +5537,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
                     <Badge colorPalette="orange" variant="solid" mb={1}>Tentative</Badge>
                     <Text fontSize="sm">Cannot be claimed or started until an admin confirms it. Used when scheduling is uncertain or needs client approval.</Text>
+                  </Box>
+
+                  <Box p={3} borderWidth="1px" rounded="md" borderColor="orange.300">
+                    <Badge colorPalette="orange" variant="solid" mb={1}>Unconfirmed</Badge>
+                    <Text fontSize="sm">The client has not yet confirmed the appointment. Workers can still claim and start the job, but the card shows an orange "Unconfirmed" badge as a heads-up. The claimer or an admin can mark it confirmed, which removes the badge. Newly auto-created occurrences start unconfirmed by default.</Text>
                   </Box>
 
                   <Box p={3} borderWidth="1px" rounded="md" borderColor="yellow.400">

@@ -51,10 +51,12 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
+import OccurrenceInstructions from "@/src/ui/components/OccurrenceInstructions";
 import DefaultCrewDialog from "@/src/ui/dialogs/DefaultCrewDialog";
 import DeleteDialog, { type ToDeleteProps } from "@/src/ui/dialogs/DeleteDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -200,6 +202,7 @@ export default function ServicesTab({
 
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
+  const [guidanceOcc, setGuidanceOcc] = useState<{ occId: string; propertyId: string; count: number; jobId: string } | null>(null);
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
   const [promptOccurrenceOpen, setPromptOccurrenceOpen] = useState(false);
@@ -1103,6 +1106,11 @@ export default function ServicesTab({
                 if (osf === "UNCLAIMED") return isUnclaimed;
                 return o.status === osf;
               })
+              .sort((a: JobOccurrenceFull, b: JobOccurrenceFull) => {
+                const da = a.startAt ? new Date(a.startAt).getTime() : 0;
+                const db = b.startAt ? new Date(b.startAt).getTime() : 0;
+                return db - da;
+              })
             : [];
 
           return (
@@ -1423,6 +1431,9 @@ export default function ServicesTab({
                               {parseJobTags(occ).length > 0 && (
                                 <> · {parseJobTags(occ).map(jobTagLabel).join(", ")}</>
                               )}
+                              {((occ as any).addons ?? []).length > 0 && (
+                                <> + {((occ as any).addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}</>
+                              )}
                               {(occ as any).jobType && (
                                 <> · Custom</>
                               )}
@@ -1458,42 +1469,62 @@ export default function ServicesTab({
                                 })}
                               </VStack>
                             )}
-                            <Text fontSize="xs" color="fg.muted">
-                              Price:{" "}
-                              {occ.price != null ? (
-                                <b>${occ.price.toFixed(2)}</b>
-                              ) : (
-                                <span>Not set</span>
-                              )}
-                            </Text>
-                            {occ.payment && (
-                              <Text fontSize="xs" color="green.700" fontWeight="medium">
-                                Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {prettyStatus((occ.payment as any).method)}
-                              </Text>
-                            )}
+                            {(() => {
+                              const addonsAmt = ((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+                              const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
+                              const grossPrice = occ.price != null ? occ.price + addonsAmt : null;
+                              const net = grossPrice != null ? grossPrice - expTotal : null;
+                              const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
+
+                              // Build simple price line: $50 + $14 add-ons − $5 exp = $59
+                              const parts: string[] = [];
+                              if (occ.price != null) parts.push(`$${occ.price.toFixed(2)}`);
+                              if (addonsAmt > 0) parts.push(`$${addonsAmt.toFixed(2)} add-ons`);
+                              if (expTotal > 0) parts.push(`$${expTotal.toFixed(2)} exp`);
+
+                              return (
+                                <Box fontSize="xs" color="fg.muted">
+                                  {grossPrice != null ? (
+                                    <Text>
+                                      <b>${(net ?? grossPrice).toFixed(2)}</b>
+                                      {(addonsAmt > 0 || expTotal > 0) && (
+                                        <> ({occ.price != null ? `$${occ.price.toFixed(2)}` : ""}{addonsAmt > 0 ? ` + $${addonsAmt.toFixed(2)}` : ""}{expTotal > 0 ? ` − $${expTotal.toFixed(2)}` : ""})</>
+                                      )}
+                                    </Text>
+                                  ) : (
+                                    <Text>Price: Not set</Text>
+                                  )}
+                                  {occ.payment && (
+                                    <Text color="green.700" fontWeight="medium">
+                                      Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {prettyStatus((occ.payment as any).method)}
+                                    </Text>
+                                  )}
+                                  {assignees.length > 1 && net != null && (
+                                    <Text color="fg.muted" mt={0.5}>
+                                      ~${(net / assignees.length).toFixed(2)}/person if split evenly ({assignees.length} workers)
+                                    </Text>
+                                  )}
+                                </Box>
+                              );
+                            })()}
                             {occ.price != null && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (() => {
+                              // Keep per-worker payout breakdown (only shows if workers assigned)
+                              const addonsAmt = ((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
+                              const grossPrice = occ.price! + addonsAmt;
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
-                              const net = occ.price! - expTotal;
+                              if (assignees.length === 0) return null;
+                              const net = grossPrice - expTotal;
                               const hasContractors = assignees.some((a: any) => a.user?.workerType !== "EMPLOYEE" && a.user?.workerType !== "TRAINEE");
                               const hasEmployees = assignees.some((a: any) => a.user?.workerType === "EMPLOYEE" || a.user?.workerType === "TRAINEE");
                               const commission = hasContractors && commissionPercent > 0 ? Math.round(net * commissionPercent) / 100 : 0;
                               const margin = hasEmployees && marginPercent > 0 ? Math.round(net * marginPercent) / 100 : 0;
-                              const totalPayout = Math.max(0, occ.price! - expTotal - commission - margin);
+                              const totalPayout = Math.max(0, grossPrice - expTotal - commission - margin);
 
                               return (
                                 <Box fontSize="xs" color="fg.muted" mt={0.5}>
-                                  <HStack gap={2}>
-                                    <Text>Est. payout:</Text>
-                                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                                      ${totalPayout.toFixed(2)}
-                                    </Badge>
-                                  </HStack>
-                                  <Text fontSize="xs" color="fg.muted">
-                                    ${occ.price!.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""}{commission > 0 ? ` − $${commission.toFixed(2)} commission (${commissionPercent}%)` : ""}{margin > 0 ? ` − $${margin.toFixed(2)} margin (${marginPercent}%)` : ""}
-                                  </Text>
                                   {assignees.length > 0 && (
-                                    <VStack align="start" gap={0.5} mt={1}>
+                                    <VStack align="start" gap={0.5}>
                                       {assignees.map((a: any) => {
                                         const perPerson = Math.round(totalPayout / assignees.length * 100) / 100;
                                         return (
@@ -1634,38 +1665,60 @@ export default function ServicesTab({
                               );
                             })()}
 
+                            {/* Add-on services */}
+                            {((occ as any).addons ?? []).length > 0 && (
+                              <Box mt={1} p={1} bg="green.50" rounded="sm" borderWidth="1px" borderColor="green.200">
+                                <Text fontSize="xs" fontWeight="medium" color="green.700">
+                                  Add-ons: +${((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0).toFixed(2)}
+                                </Text>
+                                <VStack align="start" gap={0} mt={0.5}>
+                                  {((occ as any).addons ?? []).map((addon: any) => (
+                                    <Text key={addon.id} fontSize="xs" color="green.600">
+                                      +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                                    </Text>
+                                  ))}
+                                </VStack>
+                              </Box>
+                            )}
+                            {/* Expenses */}
                             {occ.expenses && occ.expenses.length > 0 && (
-                              <Box mt={1} p={1} bg="orange.50" rounded="sm">
-                                <Text fontSize="xs" fontWeight="medium" color="orange.700">
-                                  Expenses: ${occ.expenses.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
+                              <Box mt={1} p={1} bg="red.50" rounded="sm" borderWidth="1px" borderColor="red.200">
+                                <Text fontSize="xs" fontWeight="medium" color="red.700">
+                                  Expenses: −${occ.expenses.reduce((s: number, e: any) => s + e.cost, 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {occ.expenses.map((exp: any) => (
-                                    <HStack key={exp.id} gap={1} w="full">
-                                      <Text fontSize="xs" color="orange.600" flex="1">
-                                        ${exp.cost.toFixed(2)} — {exp.description}
+                                    <Text key={exp.id} fontSize="xs" color="red.600">
+                                      −${exp.cost.toFixed(2)} — {exp.description}
+                                    </Text>
+                                  ))}
+                                </VStack>
+                              </Box>
+                            )}
+                            {((occ as any).instructions ?? []).length > 0 && (
+                              <Box mt={1} p={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" rounded="sm">
+                                <VStack align="stretch" gap="0.5">
+                                  {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                                    <HStack key={inst.id} gap="1">
+                                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                                        📌 {inst.text}
                                       </Text>
-                                      {forAdmin && !["COMPLETED", "PENDING_PAYMENT", "CLOSED", "ARCHIVED"].includes(occ.status) && (
-                                        <Button
-                                          size="xs"
-                                          variant="ghost"
-                                          colorPalette="red"
-                                          onClick={async () => {
-                                            try {
-                                              await apiDelete(`/api/admin/expenses/${exp.id}`);
-                                              publishInlineMessage({ type: "SUCCESS", text: "Expense deleted." });
-                                              void loadDetail(job.id, true);
-                                            } catch (err: any) {
-                                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete expense failed.", err) });
-                                            }
-                                          }}
-                                        >
-                                          ✕
-                                        </Button>
+                                      {inst.repeats && (
+                                        <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>
                                       )}
                                     </HStack>
                                   ))}
                                 </VStack>
+                              </Box>
+                            )}
+                            {/* Guidance (read-only on card) */}
+                            {((occ as any).propertyPhotos ?? []).length > 0 && (
+                              <Box mt={1}>
+                                <OccurrenceInstructions
+                                  occurrenceId={occ.id}
+                                  count={((occ as any).propertyPhotos ?? []).length}
+                                  defaultExpanded={false}
+                                />
                               </Box>
                             )}
                             {(occ as any)._count?.photos > 0 && (
@@ -1809,6 +1862,7 @@ export default function ServicesTab({
                           </HStack>
                         </VStack>
 
+
                         {forAdmin && (
                           <HStack gap={2} mt={2} wrap="wrap">
                             <Button
@@ -1931,6 +1985,36 @@ export default function ServicesTab({
                                   setAssigneeJobId(job.id);
                                   setAssigneeHasPayment(!!occ.payment);
                                   setAssigneeDialogOpen(true);
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            <StatusButton
+                              id="occ-manage-guidance"
+                              itemId={occ.id}
+                              label="Manage Guidance"
+                              onClick={async () => setGuidanceOcc({ occId: occ.id, propertyId: job.propertyId, count: ((occ as any).propertyPhotos ?? []).length, jobId: job.id })}
+                              variant="outline"
+                              busyId={statusButtonBusyId}
+                              setBusyId={setStatusButtonBusyId}
+                            />
+                            {occ.jobId && (
+                              <StatusButton
+                                id="occ-link"
+                                itemId={occ.id}
+                                label={occ.linkGroupId ? "Unlink" : "Link"}
+                                onClick={async () => {
+                                  if (occ.linkGroupId) {
+                                    await apiPost(`/api/admin/occurrences/${occ.id}/unlink`);
+                                    publishInlineMessage({ type: "SUCCESS", text: "Occurrence unlinked." });
+                                    void loadDetail(job.id, true);
+                                  } else {
+                                    setLinkPickerOccId(occ.id);
+                                    setLinkPickerJobId(job.id);
+                                    setLinkPickerPropertyId(job.propertyId);
+                                  }
                                 }}
                                 variant="outline"
                                 busyId={statusButtonBusyId}
@@ -2071,42 +2155,6 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "ARCHIVED" && (
-                              <StatusButton
-                                id="occ-add-expense"
-                                itemId={occ.id}
-                                label="Add Expense"
-                                onClick={async () => {
-                                  setExpenseDialogOccId(occ.id);
-                                  setExpenseDialogJobId(job.id);
-                                }}
-                                variant="outline"
-                                colorPalette="orange"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
-                            {occ.jobId && (
-                              <StatusButton
-                                id="occ-link"
-                                itemId={occ.id}
-                                label={occ.linkGroupId ? "Unlink" : "Link to..."}
-                                onClick={async () => {
-                                  if (occ.linkGroupId) {
-                                    await apiPost(`/api/admin/occurrences/${occ.id}/unlink`);
-                                    publishInlineMessage({ type: "SUCCESS", text: "Occurrence unlinked." });
-                                    void loadDetail(job.id, true);
-                                  } else {
-                                    setLinkPickerOccId(occ.id);
-                                    setLinkPickerJobId(job.id);
-                                    setLinkPickerPropertyId(job.propertyId);
-                                  }
-                                }}
-                                variant="outline"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
                             <StatusButton
                               id="occ-delete"
                               itemId={occ.id}
@@ -2227,11 +2275,10 @@ export default function ServicesTab({
           defaultIsAdminOnly={(editingOccurrence as any).isAdminOnly}
           defaultJobType={(editingOccurrence as any).jobType}
           defaultJobTags={(() => { const raw = (editingOccurrence as any).jobTags; if (!raw) return null; if (Array.isArray(raw)) return raw; try { return JSON.parse(raw); } catch { return null; } })()}
-          defaultPinnedNote={(editingOccurrence as any).pinnedNote}
-          defaultPinnedNoteRepeats={(editingOccurrence as any).pinnedNoteRepeats ?? true}
           defaultWorkflow={editingOccurrence.workflow}
           defaultOccTitle={(editingOccurrence as any).title ?? null}
           defaultFrequencyDays={(editingOccurrence as any).frequencyDays ?? null}
+          defaultAddons={(editingOccurrence as any).addons ?? []}
           isAdmin={forAdmin}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
           onSaved={() => {
@@ -2450,6 +2497,38 @@ export default function ServicesTab({
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {/* Manage Guidance Dialog */}
+      <Dialog.Root open={!!guidanceOcc} onOpenChange={(e) => { if (!e.open) setGuidanceOcc(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg" maxH="80vh" overflowY="auto">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Manage Guidance</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {guidanceOcc && (
+                  <OccurrenceInstructions
+                    occurrenceId={guidanceOcc.occId}
+                    count={guidanceOcc.count}
+                    propertyId={guidanceOcc.propertyId}
+                    canEdit
+                    defaultExpanded
+                    startInEditMode
+                    onUpdated={() => void loadDetail(guidanceOcc.jobId, true)}
+                  />
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="ghost" onClick={() => setGuidanceOcc(null)}>Done</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
     </Box>
   );
 }
