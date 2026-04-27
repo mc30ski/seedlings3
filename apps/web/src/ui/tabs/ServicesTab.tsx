@@ -1646,12 +1646,14 @@ export default function ServicesTab({
                                   <Text color="fg.muted">Est: {occ.estimatedMinutes >= 60 ? `${Math.floor(occ.estimatedMinutes / 60)}h ${occ.estimatedMinutes % 60}m` : `${occ.estimatedMinutes}m`}</Text>
                                 )}
                                 {occ.startedAt && occ.completedAt && (() => {
-                                  const actual = (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000;
+                                  const workerCount = Math.max(1, (occ.assignees ?? []).filter((a: any) => a.role !== "observer").length);
+                                  const rawMins = (new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime() - ((occ as any).totalPausedMs ?? 0)) / 60000;
+                                  const actual = rawMins / workerCount;
                                   const fmt = actual >= 60 ? `${Math.floor(actual / 60)}h ${Math.round(actual % 60)}m` : `${Math.round(actual)}m`;
                                   const color = occ.estimatedMinutes
                                     ? actual <= occ.estimatedMinutes ? "green.600" : "red.600"
                                     : "fg.muted";
-                                  return <Text color={color} fontWeight="medium">Actual: {fmt}</Text>;
+                                  return <Text color={color} fontWeight="medium">Actual: {fmt}{workerCount > 1 ? ` (${workerCount} workers)` : ""}</Text>;
                                 })()}
                               </HStack>
                             )}

@@ -188,7 +188,8 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
 }
 
 export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
-  const { isAvail, isSuper } = determineRoles(me, purpose);
+  const { isAvail, isSuper: userIsSuper } = determineRoles(me, purpose);
+  const isSuper = userIsSuper && purpose === "SUPER";
 
   // General settings
   const [settings, setSettings] = useState<Setting[]>([]);

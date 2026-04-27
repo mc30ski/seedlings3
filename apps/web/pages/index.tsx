@@ -103,6 +103,17 @@ export default function HomePage() {
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
+  // Handle /e/[slug] QR redirect — navigate to equipment tab
+  useEffect(() => {
+    const qrSlug = sessionStorage.getItem("equipmentQrSlug");
+    if (qrSlug) {
+      // Switch to worker equipment tab (or admin if user is admin-only)
+      setTopTab("worker");
+      setWorkerInnerTab("equipment");
+      setWorkerCategory("Field");
+    }
+  }, []);
+
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
   const [networkInfoOpen, setNetworkInfoOpen] = useState(false);
   const [workflowEstimateDefaults, setWorkflowEstimateDefaults] = useState<any>(null);
@@ -765,12 +776,24 @@ export default function HomePage() {
           label: "Operations",
           icon: FiBarChart2,
           content: <OperationsTab />,
+          category: "System",
+          categoryIcon: FiSettings,
         },
         {
           value: "audit",
           label: "Audit",
           icon: FiSearch,
           content: <AuditTab />,
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          value: "settings",
+          label: "Settings",
+          icon: FiSettings,
+          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
+          category: "System",
+          categoryIcon: FiSettings,
         },
       ],
     },

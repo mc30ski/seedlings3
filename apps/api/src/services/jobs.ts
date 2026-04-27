@@ -1155,7 +1155,7 @@ export const jobs: ServicesJobs = {
             { manualDurationMinutes: { not: null } },
           ],
         },
-        select: { jobId: true, startedAt: true, completedAt: true, totalPausedMs: true, manualDurationMinutes: true },
+        select: { jobId: true, startedAt: true, completedAt: true, totalPausedMs: true, manualDurationMinutes: true, assignees: { select: { role: true } } },
         orderBy: { completedAt: "desc" },
       });
       // Group by jobId, take last 10 per job
@@ -1164,11 +1164,12 @@ export const jobs: ServicesJobs = {
         if (!o.jobId) continue;
         if (!byJob[o.jobId]) byJob[o.jobId] = [];
         if (byJob[o.jobId].length >= 10) continue;
+        const workerCount = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
         let mins: number | null = null;
         if (o.manualDurationMinutes != null) {
-          mins = o.manualDurationMinutes;
+          mins = o.manualDurationMinutes / workerCount;
         } else if (o.startedAt && o.completedAt) {
-          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
+          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000 / workerCount;
         }
         if (mins != null && mins > 0) byJob[o.jobId].push(mins);
       }
