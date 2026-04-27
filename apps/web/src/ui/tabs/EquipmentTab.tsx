@@ -82,6 +82,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [scanReturnFor, setScanReturnFor] = useState<string | null>(null);
   const [reserveConfirmEquip, setReserveConfirmEquip] = useState<Equipment | null>(null);
   const [reserveChecked, setReserveChecked] = useState(false);
+  const [qrAction, setQrAction] = useState<{ equipmentId: string; slug: string; action: "checkout" | "return"; label: string } | null>(null);
+  const [qrActionBusy, setQrActionBusy] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -152,12 +154,30 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }, []);
 
   // Check for pending equipment kind filter (set by suggested equipment chips on Jobs/Services tabs)
+  // or QR slug redirect (from /e/[slug] page)
   useEffect(() => {
     const kindOverride = window.sessionStorage.getItem("equipmentKindFilter");
     if (kindOverride) {
       setKind([kindOverride]);
       setQ("");
       window.sessionStorage.removeItem("equipmentKindFilter");
+    }
+    const qrSlug = window.sessionStorage.getItem("equipmentQrSlug");
+    if (qrSlug) {
+      window.sessionStorage.removeItem("equipmentQrSlug");
+      setQ(qrSlug);
+      setKind(["ALL"]);
+      setStatusFilter(["ALL"]);
+      // Look up equipment and check if user can auto-checkout/return
+      apiGet<{ equipment: Equipment; userHasReservation: boolean; userHasCheckout: boolean }>(`/api/equipment/by-slug/${encodeURIComponent(qrSlug)}`)
+        .then((result) => {
+          if (result.userHasReservation) {
+            setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "checkout", label: `Check out "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
+          } else if (result.userHasCheckout) {
+            setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "return", label: `Return "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
+          }
+        })
+        .catch(() => {});
     }
   });
 
@@ -1142,6 +1162,62 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     }}
                   >
                     Reserve Equipment
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* QR Auto-Action Confirmation Dialog (checkout/return via /e/[slug]) */}
+      <Dialog.Root open={!!qrAction} onOpenChange={(e) => { if (!e.open) setQrAction(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>{qrAction?.action === "checkout" ? "Confirm Check Out" : "Confirm Return"}</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm">{qrAction?.label}</Text>
+                {qrAction?.action === "checkout" && (
+                  <Text fontSize="xs" color="fg.muted" mt={2}>You scanned this equipment's QR code. Confirming will complete your checkout.</Text>
+                )}
+                {qrAction?.action === "return" && (
+                  <Text fontSize="xs" color="fg.muted" mt={2}>You scanned this equipment's QR code. Confirming will return it and end your checkout.</Text>
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setQrAction(null)} disabled={qrActionBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette={qrAction?.action === "checkout" ? "green" : "blue"}
+                    loading={qrActionBusy}
+                    onClick={async () => {
+                      if (!qrAction) return;
+                      setQrActionBusy(true);
+                      try {
+                        if (qrAction.action === "checkout") {
+                          await apiPost(`/api/equipment/${qrAction.equipmentId}/checkout/verify`, { slug: qrAction.slug });
+                          publishInlineMessage({ type: "SUCCESS", text: "Equipment checked out." });
+                        } else {
+                          await apiPost(`/api/equipment/${qrAction.equipmentId}/return/verify`, { slug: qrAction.slug });
+                          publishInlineMessage({ type: "SUCCESS", text: "Equipment returned." });
+                        }
+                        setQrAction(null);
+                        void load();
+                      } catch (err) {
+                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+                      } finally {
+                        setQrActionBusy(false);
+                      }
+                    }}
+                  >
+                    {qrAction?.action === "checkout" ? "Check Out" : "Return"}
                   </Button>
                 </HStack>
               </Dialog.Footer>

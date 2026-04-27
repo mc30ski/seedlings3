@@ -162,6 +162,28 @@ R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 
 ---
 
+## Equipment QR Codes
+
+Each piece of equipment has a `qrSlug` (e.g., `scag-vride-001`). QR codes encode a short URL: `https://seedlings.team/e/{slug}`.
+
+When scanned with a phone camera:
+- Opens the app → Equipment tab filtered to that item
+- If user has a reservation → prompts to confirm checkout
+- If user has an active checkout → prompts to confirm return
+
+### Generating QR Codes
+
+1. Go to https://really-free-qr-code-generator.com
+2. Settings:
+   - **Type:** URL
+   - **Content:** `https://seedlings.team/e/{slug}` (replace `{slug}` with the equipment's QR slug)
+   - **Size:** 128px
+   - **Error correction:** M
+   - **Margin:** 4
+3. Download and print. Laminate for outdoor durability.
+
+---
+
 ## Summary Workflow
 
 **Development**

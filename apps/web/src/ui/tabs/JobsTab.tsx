@@ -78,19 +78,21 @@ function effectiveMinutes(occ: {
   totalPausedMs?: number | null;
   manualDurationMinutes?: number | null;
   status?: string;
+  assignees?: { role?: string | null }[];
 }): number | null {
-  if (occ.manualDurationMinutes != null) return occ.manualDurationMinutes;
+  const workerCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
+  if (occ.manualDurationMinutes != null) return occ.manualDurationMinutes / workerCount;
   if (!occ.startedAt) return null;
   const startMs = new Date(occ.startedAt).getTime();
   const paused = occ.totalPausedMs ?? 0;
   if (occ.status === "PAUSED" && occ.pausedAt) {
-    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000;
+    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000 / workerCount;
   }
   if (occ.completedAt) {
-    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000;
+    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000 / workerCount;
   }
   // IN_PROGRESS
-  return (Date.now() - startMs - paused) / 60000;
+  return (Date.now() - startMs - paused) / 60000 / workerCount;
 }
 
 function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {

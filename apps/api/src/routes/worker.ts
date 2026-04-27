@@ -119,6 +119,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
+  // Lookup equipment by QR slug — returns equipment + user's checkout state
+  app.get("/equipment/by-slug/:slug", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const slug = String(req.params.slug).trim();
+    const equipment = await prisma.equipment.findFirst({
+      where: { qrSlug: { equals: slug, mode: "insensitive" } },
+    });
+    if (!equipment) throw app.httpErrors.notFound("Equipment not found for this QR code.");
+    // Check if this user has an active reservation or checkout
+    const activeCheckout = await prisma.checkout.findFirst({
+      where: { equipmentId: equipment.id, userId: uid, releasedAt: null },
+      orderBy: { createdAt: "desc" },
+    });
+    return {
+      equipment,
+      userHasReservation: !!activeCheckout && !activeCheckout.checkedOutAt,
+      userHasCheckout: !!activeCheckout && !!activeCheckout.checkedOutAt,
+    };
+  });
+
   // Enforce QR slug verification before finishing checkout
   app.post("/equipment/:id/checkout/verify", workerGuard, async (req: any) => {
     const id = req.params.id as string;
