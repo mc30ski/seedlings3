@@ -24,7 +24,7 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import JobTagPicker, { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
+import JobTagPicker, { jobTagLabel as _jobTagLabel, JOB_TAGS, type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
@@ -92,6 +92,8 @@ type Props = {
   defaultEstimateAddress?: string | null;
   defaultProposalAmount?: number | null;
   defaultProposalNotes?: string | null;
+  /** Dynamic job tags from settings */
+  jobTagsConfig?: JobTagConfig[] | null;
   showOneOff?: boolean; // @deprecated — workflow dropdown replaces this
   preventOutsideClose?: boolean;
   deferSave?: boolean;
@@ -136,10 +138,12 @@ export default function OccurrenceDialog({
   defaultEstimateAddress,
   defaultProposalAmount,
   defaultProposalNotes,
+  jobTagsConfig,
   deferSave,
   onSaved,
   onBack,
 }: Props) {
+  const jobTagLabel = (tag: string) => _jobTagLabel(tag, jobTagsConfig ?? undefined);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -553,6 +557,7 @@ export default function OccurrenceDialog({
                     onChange={setJobTags}
                     customNote={jobType}
                     onCustomNoteChange={setJobType}
+                    tagsConfig={jobTagsConfig}
                   />
                 </div>
                 {/* Instructions are managed via the Manage Instructions dialog */}
@@ -849,7 +854,8 @@ export default function OccurrenceDialog({
                         <Box display="flex" gap="4px" flexWrap="wrap" mb={2}>
                           {(() => {
                             const usedTags = new Set([...jobTags, ...addons.map((a) => a.tag).filter(Boolean) as string[]]);
-                            return JOB_TAGS.filter((tag) => !usedTags.has(tag));
+                            const allTags = (jobTagsConfig ?? JOB_TAGS.map((k) => ({ key: k, label: jobTagLabel(k) }))).map((t) => typeof t === "string" ? t : t.key);
+                            return allTags.filter((tag) => !usedTags.has(tag));
                           })().map((tag) => (
                             <Badge
                               key={tag}

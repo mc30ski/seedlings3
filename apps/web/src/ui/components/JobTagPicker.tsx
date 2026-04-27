@@ -2,43 +2,54 @@
 
 import { Badge, Box, Button, HStack, Input, Text, VStack } from "@chakra-ui/react";
 
-export const JOB_TAGS = [
-  "MOW",
-  "TRIM",
-  "EDGE",
-  "BLOW",
-  "HEDGE",
-  "LEAF_CLEANUP",
-  "AERATION",
-  "MULCH",
-  "WEED",
-  "FERTILIZE",
-  "TREE_TRIM",
-  "PLANT",
-] as const;
+/** Unified service type config: key + label + optional equipment mapping */
+export type ServiceTypeConfig = { key: string; label: string; equipmentKind?: string };
 
-export type JobTag = (typeof JOB_TAGS)[number];
+/** Hardcoded fallback — used when no setting is configured */
+export const DEFAULT_SERVICE_TYPES: ServiceTypeConfig[] = [
+  { key: "MOW", label: "Mow", equipmentKind: "MOWER" },
+  { key: "TRIM", label: "Trim", equipmentKind: "TRIMMER" },
+  { key: "EDGE", label: "Edge", equipmentKind: "EDGER" },
+  { key: "BLOW", label: "Blow", equipmentKind: "BLOWER" },
+  { key: "HEDGE", label: "Hedge", equipmentKind: "HEDGER" },
+  { key: "LEAF_CLEANUP", label: "Leaf Cleanup", equipmentKind: "BLOWER" },
+  { key: "AERATION", label: "Aeration", equipmentKind: "AERATOR" },
+  { key: "MULCH", label: "Mulch", equipmentKind: "MISC" },
+  { key: "WEED", label: "Weed" },
+  { key: "FERTILIZE", label: "Fertilize", equipmentKind: "SPREADER" },
+  { key: "TREE_TRIM", label: "Tree Trim", equipmentKind: "CUTTER" },
+  { key: "PLANT", label: "Plant" },
+];
 
-const TAG_LABELS: Record<string, string> = {
-  MOW: "Mow",
-  TRIM: "Trim",
-  EDGE: "Edge",
-  BLOW: "Blow",
-  HEDGE: "Hedge",
-  LEAF_CLEANUP: "Leaf Cleanup",
-  AERATION: "Aeration",
-  MULCH: "Mulch",
-  WEED: "Weed",
-  FERTILIZE: "Fertilize",
-  TREE_TRIM: "Tree Trim",
-  PLANT: "Plant",
-};
+/** Legacy export — array of tag keys */
+export const JOB_TAGS = DEFAULT_SERVICE_TYPES.map((t) => t.key);
 
-export function jobTagLabel(tag: string): string {
-  return TAG_LABELS[tag] ?? tag;
+/** Get label for a tag key, given an optional config */
+export function jobTagLabel(tag: string, config?: ServiceTypeConfig[]): string {
+  const list = config ?? DEFAULT_SERVICE_TYPES;
+  const found = list.find((t) => t.key === tag);
+  return found?.label ?? tag;
 }
 
-const PRESETS: { label: string; tags: JobTag[] }[] = [
+/** Parse the SERVICE_TYPES setting value */
+export function parseServiceTypesConfig(raw: string | null | undefined): ServiceTypeConfig[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].key) {
+      return parsed;
+    }
+  } catch {}
+  return null;
+}
+
+// Legacy aliases
+export type JobTagConfig = ServiceTypeConfig;
+export function parseJobTagsConfig(raw: string | null | undefined): ServiceTypeConfig[] | null {
+  return parseServiceTypesConfig(raw);
+}
+
+const PRESETS: { label: string; tags: string[] }[] = [
   { label: "Full Service", tags: ["MOW", "TRIM", "EDGE", "BLOW"] },
   { label: "Mow Only", tags: ["MOW"] },
 ];
@@ -48,9 +59,13 @@ type Props = {
   onChange: (tags: string[]) => void;
   customNote: string;
   onCustomNoteChange: (v: string) => void;
+  /** Dynamic service type config from settings — uses hardcoded defaults if not provided */
+  tagsConfig?: ServiceTypeConfig[] | null;
 };
 
-export default function JobTagPicker({ selected, onChange, customNote, onCustomNoteChange }: Props) {
+export default function JobTagPicker({ selected, onChange, customNote, onCustomNoteChange, tagsConfig }: Props) {
+  const tags = tagsConfig ?? DEFAULT_SERVICE_TYPES;
+
   function toggle(tag: string) {
     if (selected.includes(tag)) {
       onChange(selected.filter((t) => t !== tag));
@@ -59,8 +74,8 @@ export default function JobTagPicker({ selected, onChange, customNote, onCustomN
     }
   }
 
-  function applyPreset(tags: JobTag[]) {
-    onChange([...tags]);
+  function applyPreset(presetTags: string[]) {
+    onChange([...presetTags]);
   }
 
   return (
@@ -87,11 +102,11 @@ export default function JobTagPicker({ selected, onChange, customNote, onCustomN
 
       {/* Tag chips */}
       <Box display="flex" gap="6px" flexWrap="wrap">
-        {JOB_TAGS.map((tag) => {
-          const isSelected = selected.includes(tag);
+        {tags.map((t) => {
+          const isSelected = selected.includes(t.key);
           return (
             <Badge
-              key={tag}
+              key={t.key}
               size="sm"
               variant={isSelected ? "solid" : "outline"}
               colorPalette={isSelected ? "blue" : "gray"}
@@ -99,10 +114,10 @@ export default function JobTagPicker({ selected, onChange, customNote, onCustomN
               px="2"
               py="0.5"
               borderRadius="full"
-              onClick={() => toggle(tag)}
+              onClick={() => toggle(t.key)}
               userSelect="none"
             >
-              {TAG_LABELS[tag]}
+              {t.label}
             </Badge>
           );
         })}

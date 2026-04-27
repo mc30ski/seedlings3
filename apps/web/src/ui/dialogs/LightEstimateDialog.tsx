@@ -22,7 +22,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import JobTagPicker from "@/src/ui/components/JobTagPicker";
+import JobTagPicker, { type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 
 type WorkerLite = {
   id: string;
@@ -59,9 +59,10 @@ type Props = {
   onCreated?: () => void;
   myId?: string;
   editEstimate?: EditEstimate | null;
+  jobTagsConfig?: JobTagConfig[] | null;
 };
 
-export default function LightEstimateDialog({ open, onOpenChange, onCreated, myId, editEstimate }: Props) {
+export default function LightEstimateDialog({ open, onOpenChange, onCreated, myId, editEstimate, jobTagsConfig }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   const [title, setTitle] = useState("");
@@ -404,6 +405,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                     onChange={setJobTags}
                     customNote={jobTagNote}
                     onCustomNoteChange={setJobTagNote}
+                    tagsConfig={jobTagsConfig}
                   />
                 </Box>
 

@@ -51,7 +51,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import AssigneeDialog from "@/src/ui/dialogs/AssigneeDialog";
@@ -65,7 +65,7 @@ import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
-import { suggestedEquipment } from "@/src/lib/equipmentSuggestions";
+import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
@@ -297,7 +297,9 @@ export default function ServicesTab({
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
-  const [equipmentMap, setEquipmentMap] = useState<Record<string, string>>({});
+  const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
+  const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  const jobTagLabel = (tag: string) => _jobTagLabel(tag, serviceTypes);
 
   type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
   const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
@@ -351,8 +353,10 @@ export default function ServicesTab({
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
-        const eq = list.find((r: any) => r.key === "EQUIPMENT_SUGGESTIONS_MAP");
-        if (eq?.value) try { setEquipmentMap(JSON.parse(eq.value)); } catch {}
+        const st = list.find((r: any) => r.key === "SERVICE_TYPES");
+        if (st?.value) { const parsed = parseServiceTypesConfig(st.value); if (parsed) setServiceTypes(parsed); }
+        const ek = list.find((r: any) => r.key === "EQUIPMENT_KINDS");
+        if (ek?.value) { const parsed = parseEquipmentKindsConfig(ek.value); if (parsed) setEquipmentKinds(parsed); }
       })
       .catch(() => {});
   }, []);
@@ -1802,7 +1806,7 @@ export default function ServicesTab({
                             {/* Suggested equipment */}
                             {(() => {
                               const allTags = [...parseJobTags(occ), ...((occ as any).addons ?? []).map((a: any) => a.tag).filter(Boolean)];
-                              const suggestions = suggestedEquipment(equipmentMap, allTags);
+                              const suggestions = suggestedEquipment(serviceTypes, allTags, equipmentKinds);
                               if (suggestions.length === 0) return null;
                               return (
                                 <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
@@ -2416,6 +2420,7 @@ export default function ServicesTab({
               void loadDetail(occurrenceJobId, true);
             }
           }}
+          jobTagsConfig={serviceTypes}
         />
       )}
 
@@ -2453,6 +2458,7 @@ export default function ServicesTab({
           defaultProposalNotes={(editingOccurrence as any).proposalNotes ?? null}
           isAdmin={forAdmin}
           jobFrequencyDays={editOccurrenceJobId ? (items.find((j) => j.id === editOccurrenceJobId) as any)?.frequencyDays ?? null : null}
+          jobTagsConfig={serviceTypes}
           onSaved={() => {
             if (editOccurrenceJobId) void loadDetail(editOccurrenceJobId, true);
             void load(false);
