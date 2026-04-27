@@ -154,7 +154,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }, []);
 
   // Check for pending equipment kind filter (set by suggested equipment chips on Jobs/Services tabs)
-  // or QR slug redirect (from /e/[slug] page)
   useEffect(() => {
     const kindOverride = window.sessionStorage.getItem("equipmentKindFilter");
     if (kindOverride) {
@@ -162,23 +161,26 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       setQ("");
       window.sessionStorage.removeItem("equipmentKindFilter");
     }
-    const qrSlug = window.sessionStorage.getItem("equipmentQrSlug");
-    if (qrSlug) {
-      window.sessionStorage.removeItem("equipmentQrSlug");
-      setQ(qrSlug);
-      setKind(["ALL"]);
-      setStatusFilter(["ALL"]);
-      // Look up equipment and check if user can auto-checkout/return
-      apiGet<{ equipment: Equipment; userHasReservation: boolean; userHasCheckout: boolean }>(`/api/equipment/by-slug/${encodeURIComponent(qrSlug)}`)
-        .then((result) => {
-          if (result.userHasReservation) {
-            setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "checkout", label: `Check out "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
-          } else if (result.userHasCheckout) {
-            setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "return", label: `Return "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
-          }
-        })
-        .catch(() => {});
-    }
+  });
+
+  // Handle QR redirect result (from /e/[slug] page — API already called there)
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem("equipmentQrResult");
+    if (!raw) return;
+    window.sessionStorage.removeItem("equipmentQrResult");
+    try {
+      const result = JSON.parse(raw) as { slug: string; equipmentId: string | null; equipmentLabel?: string; userHasReservation?: boolean; userHasCheckout?: boolean };
+      if (result.slug) {
+        setQ(result.slug);
+        setKind(["ALL"]);
+        setStatusFilter(["ALL"]);
+      }
+      if (result.equipmentId && result.userHasReservation) {
+        setQrAction({ equipmentId: result.equipmentId, slug: result.slug, action: "checkout", label: `Check out "${result.equipmentLabel}"?` });
+      } else if (result.equipmentId && result.userHasCheckout) {
+        setQrAction({ equipmentId: result.equipmentId, slug: result.slug, action: "return", label: `Return "${result.equipmentLabel}"?` });
+      }
+    } catch {}
   });
 
   // Filtered items based on search, kind or status.
@@ -459,7 +461,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     purpose === "WORKER" &&
     e.status === "AVAILABLE" &&
     !isTrainee &&
-    (!e.requiresInsurance || me?.isInsuranceValid);
+    (!e.requiresInsurance || me?.isInsuranceValid || me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE");
 
   const canAdminForceRelease = (e: Equipment) =>
     purpose === "ADMIN" && !!e.holder;
@@ -921,7 +923,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {purpose === "WORKER" && e.status === "AVAILABLE" && isTrainee && (
                   <HStack gap={1} fontSize="xs" color="gray.500"><AlertTriangle size={12} /><Text>Trainees cannot reserve equipment</Text></HStack>
                 )}
-                {purpose === "WORKER" && e.status === "AVAILABLE" && !isTrainee && e.requiresInsurance && !me?.isInsuranceValid && (
+                {purpose === "WORKER" && e.status === "AVAILABLE" && !isTrainee && e.requiresInsurance && !me?.isInsuranceValid && me?.workerType !== "EMPLOYEE" && me?.workerType !== "TRAINEE" && (
                   <HStack gap={1} fontSize="xs" color="orange.500"><AlertTriangle size={12} /><Text>Insurance required to reserve</Text></HStack>
                 )}
                 {canAdminForceRelease(e) && (
