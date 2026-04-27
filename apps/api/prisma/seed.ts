@@ -279,59 +279,99 @@ async function seedDatabase() {
   // ── Equipment (18) ────────────────────────────────────────────────────────
   console.log("  Creating equipment...");
 
+  // Mowers
   const mower1 = await prisma.equipment.create({
-    data: { type: "Mower", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", status: "CHECKED_OUT", energy: "Gas", dailyRate: 75.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", status: "CHECKED_OUT", energy: "Gas", dailyRate: 75.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
   });
   const mower2 = await prisma.equipment.create({
-    data: { type: "Mower", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", status: "AVAILABLE", energy: "Gas", dailyRate: 70.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", status: "AVAILABLE", energy: "Gas", dailyRate: 70.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
   });
   const mower3 = await prisma.equipment.create({
-    data: { type: "Mower", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", status: "MAINTENANCE", energy: "Gas", dailyRate: 25.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
+    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", status: "MAINTENANCE", energy: "Gas", dailyRate: 25.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
   });
   const mower4 = await prisma.equipment.create({
-    data: { type: "Mower", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "toro-tc42-001" },
+    data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "toro-tc42-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "MOWER", brand: "EGO", model: "LM2135SP", shortDesc: "21\" self-propelled battery mower", status: "AVAILABLE", energy: "Battery", dailyRate: 30.0, qrSlug: "ego-lm2135-001" },
+  });
+  // Trimmers
   const trimmer1 = await prisma.equipment.create({
-    data: { type: "Trimmer", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fs131-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fs131-001" },
   });
   const trimmer2 = await prisma.equipment.create({
-    data: { type: "Trimmer", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", status: "CHECKED_OUT", energy: "Gas", dailyRate: 12.0, qrSlug: "stihl-fs91r-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", status: "CHECKED_OUT", energy: "Gas", dailyRate: 12.0, qrSlug: "stihl-fs91r-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "TRIMMER", brand: "Echo", model: "SRM-2620T", shortDesc: "Commercial string trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-srm2620-001" },
+  });
+  // Hedgers
   const trimmer3 = await prisma.equipment.create({
-    data: { type: "Trimmer", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-hs82-001" },
+    data: { type: "HEDGER", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-hs82-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "HEDGER", brand: "Echo", model: "HC-2810", shortDesc: "28\" double-sided hedge trimmer", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-hc2810-001" },
+  });
+  // Blowers
   const blower1 = await prisma.equipment.create({
-    data: { type: "Blower", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", status: "CHECKED_OUT", energy: "Gas", dailyRate: 20.0, qrSlug: "echo-pb8010t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", status: "CHECKED_OUT", energy: "Gas", dailyRate: 20.0, qrSlug: "echo-pb8010t-001" },
   });
   const blower2 = await prisma.equipment.create({
-    data: { type: "Blower", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", status: "AVAILABLE", energy: "Gas", dailyRate: 22.0, qrSlug: "stihl-br800-001" },
+    data: { type: "BLOWER", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", status: "AVAILABLE", energy: "Gas", dailyRate: 22.0, qrSlug: "stihl-br800-001" },
   });
   const blower3 = await prisma.equipment.create({
-    data: { type: "Blower", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", status: "CHECKED_OUT", energy: "Gas", dailyRate: 18.0, qrSlug: "echo-pb580t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", status: "CHECKED_OUT", energy: "Gas", dailyRate: 18.0, qrSlug: "echo-pb580t-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", status: "AVAILABLE", energy: "Battery", dailyRate: 18.0, qrSlug: "ego-lb6504-001" },
+  });
+  // Edgers
   const edger1 = await prisma.equipment.create({
-    data: { type: "Edger", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fc91-001" },
+    data: { type: "EDGER", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fc91-001" },
   });
   const edger2 = await prisma.equipment.create({
-    data: { type: "Edger", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, qrSlug: "echo-pe2620-001" },
+    data: { type: "EDGER", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, qrSlug: "echo-pe2620-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "EDGER", brand: "McLane", model: "101-4.75GT", shortDesc: "Gas powered lawn edger", status: "AVAILABLE", energy: "Gas", dailyRate: 18.0, qrSlug: "mclane-101-001" },
+  });
+  // Cutters (chainsaws, pole saws)
   const chainsawEquip = await prisma.equipment.create({
-    data: { type: "Chainsaw", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", status: "AVAILABLE", energy: "Gas", dailyRate: 30.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", status: "AVAILABLE", energy: "Gas", dailyRate: 30.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", status: "AVAILABLE", energy: "Gas", dailyRate: 25.0, qrSlug: "stihl-ht135-001" },
+  });
+  // Aerators
   const aerator = await prisma.equipment.create({
-    data: { type: "Aerator", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", status: "AVAILABLE", energy: "Gas", dailyRate: 45.0, qrSlug: "billygoat-ae401-001" },
+    data: { type: "AERATOR", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", status: "AVAILABLE", energy: "Gas", dailyRate: 45.0, qrSlug: "billygoat-ae401-001" },
   });
+  await prisma.equipment.create({
+    data: { type: "AERATOR", brand: "Ryan", model: "Lawnaire V", shortDesc: "Core aerator — 5 tine", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "ryan-lawnaire5-001" },
+  });
+  // Spreaders
   const spreader = await prisma.equipment.create({
-    data: { type: "Spreader", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", status: "AVAILABLE", energy: "Manual", dailyRate: 10.0, qrSlug: "lesco-101186-001" },
+    data: { type: "SPREADER", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", status: "AVAILABLE", energy: "Manual", dailyRate: 10.0, qrSlug: "lesco-101186-001" },
   });
-  const trailer = await prisma.equipment.create({
-    data: { type: "Trailer", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", status: "CHECKED_OUT", energy: "N/A", dailyRate: 35.0, qrSlug: "bigtex-35sa-001" },
+  await prisma.equipment.create({
+    data: { type: "SPREADER", brand: "Earthway", model: "2150", shortDesc: "50lb commercial drop spreader", status: "AVAILABLE", energy: "Manual", dailyRate: 8.0, qrSlug: "earthway-2150-001" },
   });
+  // Washers
   const pressureWasher = await prisma.equipment.create({
-    data: { type: "Pressure Washer", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", status: "AVAILABLE", energy: "Gas", dailyRate: 40.0, qrSlug: "simpson-msh3125-001" },
+    data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", status: "AVAILABLE", energy: "Gas", dailyRate: 40.0, qrSlug: "simpson-msh3125-001" },
+  });
+  await prisma.equipment.create({
+    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", status: "AVAILABLE", energy: "Electric", dailyRate: 25.0, qrSlug: "sunjoe-spx3000-001" },
+  });
+  // Misc
+  const trailer = await prisma.equipment.create({
+    data: { type: "MISC", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", status: "CHECKED_OUT", energy: "N/A", dailyRate: 35.0, qrSlug: "bigtex-35sa-001" },
   });
   const wheelbarrow = await prisma.equipment.create({
-    data: { type: "Wheelbarrow", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", status: "RETIRED", energy: "Manual", dailyRate: 5.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
+    data: { type: "MISC", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", status: "RETIRED", energy: "Manual", dailyRate: 5.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
+  });
+  await prisma.equipment.create({
+    data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, qrSlug: "gorilla-gor1200-001" },
   });
 
   // ── Equipment checkouts (5 active) ────────────────────────────────────────
@@ -991,6 +1031,13 @@ async function seedDatabase() {
       update: { value: s.value, description: s.description, updatedById: MICHAEL_ID },
     });
   }
+
+  // Equipment suggestions mapping
+  await prisma.setting.upsert({
+    where: { key: "EQUIPMENT_SUGGESTIONS_MAP" },
+    create: { key: "EQUIPMENT_SUGGESTIONS_MAP", value: JSON.stringify({ MOW: "MOWER", TRIM: "TRIMMER", EDGE: "EDGER", BLOW: "BLOWER", HEDGE: "HEDGER", LEAF_CLEANUP: "BLOWER", AERATION: "AERATOR", FERTILIZE: "SPREADER", TREE_TRIM: "CUTTER", MULCH: "MISC" }), description: "Maps job service tags to equipment kinds for suggestions on cards", updatedById: MICHAEL_ID },
+    update: { value: JSON.stringify({ MOW: "MOWER", TRIM: "TRIMMER", EDGE: "EDGER", BLOW: "BLOWER", HEDGE: "HEDGER", LEAF_CLEANUP: "BLOWER", AERATION: "AERATOR", FERTILIZE: "SPREADER", TREE_TRIM: "CUTTER", MULCH: "MISC" }), description: "Maps job service tags to equipment kinds for suggestions on cards", updatedById: MICHAEL_ID },
+  });
 
   // ── Pricing settings ───────────────────────────────────────────────────────
   console.log("  Creating pricing entries...");

@@ -2,21 +2,17 @@
 
 import { useEffect, useState } from "react";
 import {
-  Badge,
   Box,
   Button,
   Dialog,
   HStack,
-  Input,
   Portal,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { apiGet, apiPost, apiDelete, apiPatch } from "@/src/lib/api";
-import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import { apiGet, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
-  getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
 type Expense = { id: string; cost: number; description: string };
@@ -43,21 +39,10 @@ export default function CompleteJobDialog({
   const [busy, setBusy] = useState(false);
   const [completedAtTime, setCompletedAtTime] = useState("");
 
-  // New expense fields
-  const [newCost, setNewCost] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-
-  // Editing
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editCost, setEditCost] = useState("");
-  const [editDesc, setEditDesc] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    setNewCost("");
-    setNewDesc("");
-    setEditingId(null);
     // Default completedAt to now
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -69,49 +54,6 @@ export default function CompleteJobDialog({
   }, [open, occurrenceId]);
 
   const totalExpenses = expenses.reduce((s, e) => s + e.cost, 0);
-
-  async function handleAddExpense() {
-    const cost = parseFloat(newCost);
-    if (isNaN(cost) || cost <= 0 || !newDesc.trim()) return;
-    try {
-      const created = await apiPost<Expense>(`/api/occurrences/${occurrenceId}/expenses`, {
-        cost,
-        description: newDesc.trim(),
-      });
-      setExpenses((prev) => [...prev, created]);
-      setNewCost("");
-      setNewDesc("");
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add expense.", err) });
-    }
-  }
-
-  async function handleDeleteExpense(id: string) {
-    try {
-      await apiDelete(`/api/expenses/${id}`);
-      setExpenses((prev) => prev.filter((e) => e.id !== id));
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to delete expense.", err) });
-    }
-  }
-
-  async function handleUpdateExpense() {
-    if (!editingId) return;
-    const cost = parseFloat(editCost);
-    if (isNaN(cost) || cost <= 0 || !editDesc.trim()) return;
-    try {
-      await apiPatch(`/api/expenses/${editingId}`, {
-        cost,
-        description: editDesc.trim(),
-      });
-      setExpenses((prev) =>
-        prev.map((e) => e.id === editingId ? { ...e, cost, description: editDesc.trim() } : e)
-      );
-      setEditingId(null);
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to update expense.", err) });
-    }
-  }
 
   // Compute min for completedAt from startedAt
   const minCompletedAt = (() => {
@@ -163,7 +105,7 @@ export default function CompleteJobDialog({
                   )}
                 </Box>
                 <Text fontSize="sm" color="fg.muted">
-                  Review and update expenses before marking this job as complete.
+                  Review details before marking this job as complete.
                 </Text>
 
                 {/* Summary */}
@@ -188,83 +130,20 @@ export default function CompleteJobDialog({
                   </Box>
                 )}
 
-                {/* Existing expenses */}
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Expenses</Text>
-                  {expenses.length === 0 && !loading && (
-                    <Text fontSize="xs" color="fg.muted">No expenses recorded.</Text>
-                  )}
-                  <VStack align="stretch" gap={1}>
-                    {expenses.map((exp) =>
-                      editingId === exp.id ? (
-                        <HStack key={exp.id} gap={2}>
-                          <Box w="80px" flexShrink={0}>
-                            <CurrencyInput value={editCost} onChange={setEditCost} size="sm" placeholder="Cost" />
-                          </Box>
-                          <Input
-                            value={editDesc}
-                            onChange={(e) => setEditDesc(e.target.value)}
-                            size="sm"
-                            flex="1"
-                          />
-                          <Button size="xs" onClick={handleUpdateExpense}>Save</Button>
-                          <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>✕</Button>
-                        </HStack>
-                      ) : (
-                        <HStack key={exp.id} gap={2} fontSize="xs">
-                          <Text color="orange.600" flex="1">
-                            ${exp.cost.toFixed(2)} — {exp.description}
-                          </Text>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingId(exp.id);
-                              setEditCost(exp.cost.toFixed(2));
-                              setEditDesc(exp.description);
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            colorPalette="red"
-                            onClick={() => handleDeleteExpense(exp.id)}
-                          >
-                            ✕
-                          </Button>
-                        </HStack>
-                      )
-                    )}
-                  </VStack>
-                </Box>
-
-                {/* Add new expense */}
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Add Expense</Text>
-                  <HStack gap={2}>
-                    <Box w="80px" flexShrink={0}>
-                      <CurrencyInput value={newCost} onChange={setNewCost} size="sm" placeholder="Cost" />
-                    </Box>
-                    <Input
-                      value={newDesc}
-                      onChange={(e) => setNewDesc(e.target.value)}
-                      size="sm"
-                      flex="1"
-                      placeholder="Description"
-                    />
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      colorPalette="orange"
-                      disabled={!newCost || !newDesc.trim()}
-                      onClick={handleAddExpense}
-                    >
-                      Add
-                    </Button>
-                  </HStack>
-                </Box>
+                {/* Expenses (read-only — managed on Admin Services tab) */}
+                {expenses.length > 0 && (
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Expenses</Text>
+                    <VStack align="stretch" gap={1}>
+                      {expenses.map((exp) => (
+                        <Text key={exp.id} fontSize="xs" color="orange.600">
+                          −${exp.cost.toFixed(2)} — {exp.description}
+                        </Text>
+                      ))}
+                    </VStack>
+                    <Text fontSize="2xs" color="fg.muted" mt={1}>Expenses are managed on the Admin Services tab.</Text>
+                  </Box>
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

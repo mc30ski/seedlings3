@@ -136,6 +136,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
   }, []);
 
+  // Check for pending equipment kind filter (set by suggested equipment chips on Jobs/Services tabs)
+  useEffect(() => {
+    const kindOverride = window.sessionStorage.getItem("equipmentKindFilter");
+    if (kindOverride) {
+      setKind([kindOverride]);
+      setQ("");
+      window.sessionStorage.removeItem("equipmentKindFilter");
+    }
+  });
+
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
     let rows = items;

@@ -785,6 +785,7 @@ export default function HomePage() {
       const onEvent = (e: Event) => {
         const { q, forAdmin, entityId } = (e as CustomEvent).detail || {};
         if (!q && !entityId) return;
+        pushNavHistory(getCurrentNavState());
         setTopTab(forAdmin ? "admin" : "worker");
         forAdmin ? setAdminInnerTab(tabName) : setWorkerInnerTab(tabName);
         window.sessionStorage.setItem(
@@ -821,6 +822,7 @@ export default function HomePage() {
   setupSearchEvent("propertyTabToClientTabSearch", "clients");
   setupSearchEvent("propertyTabToClientTabContactSearch", "clients");
   setupSearchEvent("activityTavToEquipmentTabQRCodeSearch", "equipment");
+  setupSearchEvent("jobsToEquipmentKindFilter", "equipment");
   setupSearchEvent("jobsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
