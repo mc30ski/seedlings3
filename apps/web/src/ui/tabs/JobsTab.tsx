@@ -41,6 +41,7 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
+import { suggestedEquipment } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
@@ -226,6 +227,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
+  const [equipmentMap, setEquipmentMap] = useState<Record<string, string>>({});
 
   // Build a rich label for offline queue entries
   function queueLabel(occ: WorkerOccurrence | undefined, action: string, detail?: string): string {
@@ -892,6 +894,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
+        const eq = list.find((r: any) => r.key === "EQUIPMENT_SUGGESTIONS_MAP");
+        if (eq?.value) try { setEquipmentMap(JSON.parse(eq.value)); } catch {}
       })
       .catch(() => {});
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
@@ -2985,6 +2989,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {(occ.workflow === "ESTIMATE" || occ.isEstimate) && <StatusBadge status="Estimate" palette="pink" variant="solid" />}
                           {!isTaskOrReminder && (occ.workflow === "ONE_OFF" || occ.isOneOff) && <StatusBadge status="One-off" palette="cyan" variant="solid" />}
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
+                          {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
+                          {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
                         </HStack>
                       </Box>
                     )}
@@ -3679,6 +3685,37 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </VStack>
                       </Box>
                     )}
+                    {/* Suggested equipment */}
+                    {!isTaskOrReminder && (() => {
+                      const allTags = [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)];
+                      const suggestions = suggestedEquipment(equipmentMap, allTags);
+                      if (suggestions.length === 0) return null;
+                      return (
+                        <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Suggested Equipment</Text>
+                          <HStack gap={1.5} wrap="wrap">
+                            {suggestions.map((s) => (
+                              <Button
+                                key={s.equipmentKind}
+                                size="xs"
+                                variant="solid"
+                                colorPalette="blue"
+                                px="2"
+                                borderRadius="full"
+                                fontWeight="medium"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.sessionStorage.setItem("equipmentKindFilter", s.equipmentKind);
+                                  openEventSearch("jobsToEquipmentKindFilter", " ", forAdmin, s.equipmentKind);
+                                }}
+                              >
+                                {s.label} →
+                              </Button>
+                            ))}
+                          </HStack>
+                        </Box>
+                      );
+                    })()}
                     {!isTaskOrReminder && ((occ._count?.photos ?? 0) > 0 || isActiveAssignee) && (
                       <OccurrencePhotos
                         occurrenceId={occ.id}
@@ -5127,6 +5164,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }}
           endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
           defaultAmount={totalPrice(acceptPaymentOcc)}
+          basePrice={acceptPaymentOcc.price ?? null}
+          addonsTotal={addonTotal(acceptPaymentOcc)}
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}

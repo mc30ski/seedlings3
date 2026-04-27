@@ -45,6 +45,68 @@ type PricingValue = {
 
 type PricingEntry = Setting & { parsedValue: PricingValue | null };
 
+/** Inline editor for JSON key-value map settings */
+function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let pairs: [string, string][] = [];
+  try { pairs = Object.entries(JSON.parse(value)); } catch {}
+
+  const [newKey, setNewKey] = useState("");
+  const [newVal, setNewVal] = useState("");
+
+  function updatePair(idx: number, key: string, val: string) {
+    const updated = [...pairs];
+    updated[idx] = [key, val];
+    onChange(JSON.stringify(Object.fromEntries(updated)));
+  }
+
+  function removePair(idx: number) {
+    const updated = pairs.filter((_, i) => i !== idx);
+    onChange(JSON.stringify(Object.fromEntries(updated)));
+  }
+
+  function addPair() {
+    if (!newKey.trim() || !newVal.trim()) return;
+    const updated = [...pairs, [newKey.trim().toUpperCase(), newVal.trim().toUpperCase()] as [string, string]];
+    onChange(JSON.stringify(Object.fromEntries(updated)));
+    setNewKey("");
+    setNewVal("");
+  }
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      {pairs.map(([k, v], idx) => (
+        <HStack key={idx} gap={2}>
+          <Input size="sm" value={k} onChange={(e) => updatePair(idx, e.target.value.toUpperCase(), v)} flex="1" placeholder="Service tag" />
+          <Text fontSize="sm" color="fg.muted">→</Text>
+          <Input size="sm" value={v} onChange={(e) => updatePair(idx, k, e.target.value.toUpperCase())} flex="1" placeholder="Equipment kind" />
+          <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removePair(idx)}>
+            <Trash2 size={12} />
+          </Button>
+        </HStack>
+      ))}
+      <HStack gap={2} borderTopWidth="1px" borderColor="gray.200" pt={2}>
+        <Input size="sm" value={newKey} onChange={(e) => setNewKey(e.target.value)} flex="1" placeholder="New tag (e.g. MOW)" />
+        <Text fontSize="sm" color="fg.muted">→</Text>
+        <Input size="sm" value={newVal} onChange={(e) => setNewVal(e.target.value)} flex="1" placeholder="Equipment kind (e.g. MOWER)" />
+        <Button size="xs" variant="outline" onClick={addPair} disabled={!newKey.trim() || !newVal.trim()}>
+          <Plus size={12} />
+        </Button>
+      </HStack>
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const { isAvail, isSuper } = determineRoles(me, purpose);
 
@@ -265,13 +327,43 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                     </HStack>
 
                     {editingKey === s.key ? (
-                      <HStack gap={2} w="full">
-                        <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" autoFocus />
-                        <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
-                      </HStack>
+                      (() => {
+                        // JSON map editor (key-value pairs UI)
+                        let isJsonMap = false;
+                        try { isJsonMap = s.value.startsWith("{") && typeof JSON.parse(s.value) === "object" && !Array.isArray(JSON.parse(s.value)); } catch {}
+                        if (isJsonMap) {
+                          return <JsonMapEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                        }
+                        return (
+                          <HStack gap={2} w="full">
+                            <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} size="sm" flex="1" autoFocus />
+                            <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value}>Save</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                          </HStack>
+                        );
+                      })()
                     ) : (
-                      <Text fontSize="md" fontWeight="medium">{s.value}</Text>
+                      (() => {
+                        // Render JSON maps as readable key→value pairs
+                        try {
+                          if (s.value.startsWith("{")) {
+                            const obj = JSON.parse(s.value);
+                            const entries = Object.entries(obj);
+                            if (entries.length > 0) {
+                              return (
+                                <Box display="flex" gap="4px" flexWrap="wrap">
+                                  {entries.map(([k, v]) => (
+                                    <Badge key={k} size="sm" variant="outline" colorPalette="blue" px="2" borderRadius="full" fontSize="xs">
+                                      {k} → {String(v)}
+                                    </Badge>
+                                  ))}
+                                </Box>
+                              );
+                            }
+                          }
+                        } catch {}
+                        return <Text fontSize="md" fontWeight="medium">{s.value}</Text>;
+                      })()
                     )}
 
                     {s.updatedBy && (

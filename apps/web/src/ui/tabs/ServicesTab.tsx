@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -65,6 +65,7 @@ import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import AddExpenseDialog from "@/src/ui/dialogs/AddExpenseDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, onEventSearchRun, navigateToProfile } from "@/src/lib/bus";
+import { suggestedEquipment } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import TruncatedText from "@/src/ui/components/TruncatedText";
@@ -296,6 +297,7 @@ export default function ServicesTab({
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
+  const [equipmentMap, setEquipmentMap] = useState<Record<string, string>>({});
 
   type DeleteTarget = ToDeleteProps & { deleteType: "archived-job" | "archived-occurrence"; jobId?: string };
   const [toDelete, setToDelete] = useState<DeleteTarget | null>(null);
@@ -349,6 +351,8 @@ export default function ServicesTab({
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
+        const eq = list.find((r: any) => r.key === "EQUIPMENT_SUGGESTIONS_MAP");
+        if (eq?.value) try { setEquipmentMap(JSON.parse(eq.value)); } catch {}
       })
       .catch(() => {});
   }, []);
@@ -699,6 +703,7 @@ export default function ServicesTab({
                 setOccStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
+                setSkippedNextOnly(false);
                 setVipOnly(false);
                 setShowCanceled(false);
                 setShowArchived(false);
@@ -718,7 +723,7 @@ export default function ServicesTab({
         </HStack>
       )}
       {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
-      <HStack mb={2} gap={1} wrap="nowrap" pl="1">
+      <HStack mb={2} gap={1} wrap="wrap" pl="1">
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -906,7 +911,23 @@ export default function ServicesTab({
           size="sm"
           variant={skippedNextOnly ? "solid" : "outline"}
           px="2"
-          onClick={() => setSkippedNextOnly((p) => !p)}
+          onClick={() => {
+            const next = !skippedNextOnly;
+            setSkippedNextOnly(next);
+            if (next) {
+              // Expand all jobs and load details so filter can check payment data
+              const updates: Record<string, boolean> = {};
+              for (const job of items) {
+                if (!expandedMap[job.id]) {
+                  updates[job.id] = true;
+                  void loadDetail(job.id);
+                }
+              }
+              if (Object.keys(updates).length > 0) {
+                setExpandedMap((prev) => ({ ...prev, ...updates }));
+              }
+            }
+          }}
           css={skippedNextOnly ? {
             background: "var(--chakra-colors-red-100)",
             color: "var(--chakra-colors-red-700)",
@@ -915,8 +936,7 @@ export default function ServicesTab({
           } : undefined}
           title="Show only occurrences where next was not auto-created"
         >
-          <Ban size={14} />
-          Skipped Next
+          <CircleAlert size={14} />
         </Button>
       </HStack>
 
@@ -1140,6 +1160,9 @@ export default function ServicesTab({
                 return db - da;
               })
             : [];
+
+          // Hide jobs with no matching occurrences when skippedNextOnly filter is active
+          if (skippedNextOnly && detail && visibleOccs.length === 0) return null;
 
           return (
             <Card.Root key={job.id} variant="outline">
@@ -1776,6 +1799,37 @@ export default function ServicesTab({
                                 </VStack>
                               </Box>
                             )}
+                            {/* Suggested equipment */}
+                            {(() => {
+                              const allTags = [...parseJobTags(occ), ...((occ as any).addons ?? []).map((a: any) => a.tag).filter(Boolean)];
+                              const suggestions = suggestedEquipment(equipmentMap, allTags);
+                              if (suggestions.length === 0) return null;
+                              return (
+                                <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                                  <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Suggested Equipment</Text>
+                                  <HStack gap={1.5} wrap="wrap">
+                                    {suggestions.map((s) => (
+                                      <Button
+                                        key={s.equipmentKind}
+                                        size="xs"
+                                        variant="solid"
+                                        colorPalette="blue"
+                                        px="2"
+                                        borderRadius="full"
+                                        fontWeight="medium"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          window.sessionStorage.setItem("equipmentKindFilter", s.equipmentKind);
+                                          openEventSearch("jobsToEquipmentKindFilter", " ", true, s.equipmentKind);
+                                        }}
+                                      >
+                                        {s.label} →
+                                      </Button>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              );
+                            })()}
                             {/* Guidance (read-only on card) */}
                             {((occ as any).propertyPhotos ?? []).length > 0 && (
                               <Box mt={1}>
@@ -1945,19 +1999,49 @@ export default function ServicesTab({
                             >
                               View in Jobs
                             </Button>
-                            <StatusButton
-                              id="occ-edit"
-                              itemId={occ.id}
-                              label="Edit"
-                              onClick={async () => {
-                                setEditingOccurrence(occ);
-                                setEditOccurrenceJobId(job.id);
-                                setEditOccurrenceDialogOpen(true);
-                              }}
-                              variant="outline"
-                              busyId={statusButtonBusyId}
-                              setBusyId={setStatusButtonBusyId}
-                            />
+                            {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                              <StatusButton
+                                id="occ-edit"
+                                itemId={occ.id}
+                                label="Edit"
+                                onClick={async () => {
+                                  setEditingOccurrence(occ);
+                                  setEditOccurrenceJobId(job.id);
+                                  setEditOccurrenceDialogOpen(true);
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
+                            {occ.status === "CLOSED" && (
+                              <StatusButton
+                                id="occ-revert-payment"
+                                itemId={occ.id}
+                                label="Revert Payment"
+                                onClick={async () => {
+                                  setConfirmAction({
+                                    title: "Revert Payment?",
+                                    message: "This will delete the payment record and revert the occurrence to Pending Payment. You can then edit and re-accept payment.",
+                                    confirmLabel: "Revert",
+                                    colorPalette: "red",
+                                    onConfirm: async () => {
+                                      try {
+                                        await apiPatch(`/api/admin/occurrences/${occ.id}`, { status: "PENDING_PAYMENT" });
+                                        publishInlineMessage({ type: "SUCCESS", text: "Payment reverted. Occurrence is now Pending Payment." });
+                                        void loadDetail(job.id, true);
+                                        void load(false);
+                                      } catch (err) {
+                                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to revert.", err) });
+                                      }
+                                    },
+                                  });
+                                }}
+                                variant="outline"
+                                busyId={statusButtonBusyId}
+                                setBusyId={setStatusButtonBusyId}
+                              />
+                            )}
                             {(occ.workflow === "ESTIMATE" || occ.isEstimate) && occ.status === "PROPOSAL_SUBMITTED" && (
                               <StatusButton
                                 id="occ-accept-proposal"
@@ -2056,29 +2140,33 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            <StatusButton
-                              id="occ-manage-guidance"
-                              itemId={occ.id}
-                              label="Manage Guidance"
-                              onClick={async () => setGuidanceOcc({ occId: occ.id, propertyId: job.propertyId, count: ((occ as any).propertyPhotos ?? []).length, jobId: job.id })}
-                              variant="outline"
-                              busyId={statusButtonBusyId}
-                              setBusyId={setStatusButtonBusyId}
-                            />
-                            <StatusButton
-                              id="occ-manage-instructions"
-                              itemId={occ.id}
-                              label="Manage Instructions"
-                              onClick={async () => {
-                                setInstructionsOcc(occ);
-                                setInstructionsJobId(job.id);
-                                setInstructionsDialogOpen(true);
-                              }}
-                              variant="outline"
-                              busyId={statusButtonBusyId}
-                              setBusyId={setStatusButtonBusyId}
-                            />
-                            {occ.jobId && (
+                            {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                              <>
+                                <StatusButton
+                                  id="occ-manage-guidance"
+                                  itemId={occ.id}
+                                  label="Manage Guidance"
+                                  onClick={async () => setGuidanceOcc({ occId: occ.id, propertyId: job.propertyId, count: ((occ as any).propertyPhotos ?? []).length, jobId: job.id })}
+                                  variant="outline"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                                <StatusButton
+                                  id="occ-manage-instructions"
+                                  itemId={occ.id}
+                                  label="Manage Instructions"
+                                  onClick={async () => {
+                                    setInstructionsOcc(occ);
+                                    setInstructionsJobId(job.id);
+                                    setInstructionsDialogOpen(true);
+                                  }}
+                                  variant="outline"
+                                  busyId={statusButtonBusyId}
+                                  setBusyId={setStatusButtonBusyId}
+                                />
+                              </>
+                            )}
+                            {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.jobId && (
                               <StatusButton
                                 id="occ-link"
                                 itemId={occ.id}
@@ -2443,7 +2531,9 @@ export default function ServicesTab({
             if (!o) setAcceptPaymentOcc(null);
           }}
           endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
-          defaultAmount={acceptPaymentOcc.price}
+          defaultAmount={(() => { const base = acceptPaymentOcc.price ?? 0; const addons = ((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0); return base + addons || null; })()}
+          basePrice={acceptPaymentOcc.price ?? null}
+          addonsTotal={((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0)}
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}

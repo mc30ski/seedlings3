@@ -47,7 +47,8 @@ export type EventTypes =
   | "paymentsTabToServicesTabSearch"
   | "jobsTabToServicesTabSearch"
   | "servicesTabToJobsTabSearch"
-  | "remindersToJobsTabSearch";
+  | "remindersToJobsTabSearch"
+  | "jobsToEquipmentKindFilter";
 
 export type DialogMode = "CREATE" | "UPDATE";
 
@@ -87,6 +88,7 @@ export const EQUIPMENT_KIND = [
   "EDGER",
   "CUTTER",
   "SPREADER",
+  "AERATOR",
   "WASHER",
   "MISC",
 ] as const;

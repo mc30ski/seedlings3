@@ -33,6 +33,10 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   endpoint: string;
   defaultAmount?: number | null;
+  /** Base job price (before addons) — for breakdown display */
+  basePrice?: number | null;
+  /** Total addon amount — for breakdown display */
+  addonsTotal?: number;
   totalExpenses?: number;
   commissionPercent?: number;
   marginPercent?: number;
@@ -48,6 +52,8 @@ export default function AcceptPaymentDialog({
   onOpenChange,
   endpoint,
   defaultAmount,
+  basePrice,
+  addonsTotal = 0,
   totalExpenses = 0,
   commissionPercent = 0,
   marginPercent = 0,
@@ -179,6 +185,35 @@ export default function AcceptPaymentDialog({
 
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {/* Price breakdown */}
+                {(addonsTotal > 0 || totalExpenses > 0) && (
+                  <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                    {basePrice != null && (
+                      <HStack justify="space-between" fontSize="xs">
+                        <Text>Base price</Text>
+                        <Text>${basePrice.toFixed(2)}</Text>
+                      </HStack>
+                    )}
+                    {addonsTotal > 0 && (
+                      <HStack justify="space-between" fontSize="xs" color="green.700">
+                        <Text>Add-ons</Text>
+                        <Text>+${addonsTotal.toFixed(2)}</Text>
+                      </HStack>
+                    )}
+                    {totalExpenses > 0 && (
+                      <HStack justify="space-between" fontSize="xs" color="orange.600">
+                        <Text>Expenses</Text>
+                        <Text>−${totalExpenses.toFixed(2)}</Text>
+                      </HStack>
+                    )}
+                    <Box borderTopWidth="1px" borderColor="gray.300" mt={1} pt={1}>
+                      <HStack justify="space-between" fontSize="xs" fontWeight="bold">
+                        <Text>Total</Text>
+                        <Text>${defaultAmount != null ? defaultAmount.toFixed(2) : "—"}</Text>
+                      </HStack>
+                    </Box>
+                  </Box>
+                )}
                 <div>
                   <Text mb="1">Amount Paid *</Text>
                   <CurrencyInput
