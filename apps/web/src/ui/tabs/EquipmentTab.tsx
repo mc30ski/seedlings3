@@ -45,9 +45,9 @@ import DeleteDialog, {
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
+import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 
-// Constant representing the kind states for this entity.
-const kindStates = ["ALL", ...EQUIPMENT_KIND] as const;
+// Kind states are now derived from loaded items (see useMemo below)
 
 // Constant representing the status states for this entity.
 const workerStatusStates = [
@@ -73,6 +73,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
+  const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Equipment | null>(null);
@@ -87,11 +88,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Helper variable to disable other buttons while actions are in flight.
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
-  // Used to create the dropdown menus.
-  const kindItems = useMemo(
-    () => kindStates.map((s) => ({ label: s === "ALL" ? "All Kinds" : prettyStatus(s), value: s })),
-    []
-  );
+  // Derive equipment kinds from config + loaded items + hardcoded fallback
+  const kindItems = useMemo(() => {
+    const labelMap = new Map<string, string>();
+    // Config kinds first (preserves config order)
+    for (const k of equipmentKinds) labelMap.set(k.key, k.label);
+    // Hardcoded fallback
+    for (const k of EQUIPMENT_KIND) if (!labelMap.has(k)) labelMap.set(k, prettyStatus(k));
+    // Any types from actual items not yet in map
+    for (const i of items) if (i.type && !labelMap.has(i.type)) labelMap.set(i.type, prettyStatus(i.type));
+    return [{ label: "All Kinds", value: "ALL" }, ...[...labelMap.entries()].map(([value, label]) => ({ label, value }))];
+  }, [items, equipmentKinds]);
   const kindCollection = useMemo(
     () => createListCollection({ items: kindItems }),
     [kindItems]
@@ -130,6 +137,14 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
+    const settingsPath = forAdmin ? "/api/admin/settings" : "/api/settings";
+    apiGet<any[]>(settingsPath)
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        const ek = list.find((r: any) => r.key === "EQUIPMENT_KINDS");
+        if (ek?.value) { const parsed = parseEquipmentKindsConfig(ek.value); if (parsed) setEquipmentKinds(parsed); }
+      })
+      .catch(() => {});
   }, [forAdmin]);
 
   useEffect(() => {

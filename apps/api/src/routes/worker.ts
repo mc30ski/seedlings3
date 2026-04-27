@@ -1306,7 +1306,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     const { lat, lng } = (req.query || {}) as { lat?: string; lng?: string };
     if (!lat || !lng) throw app.httpErrors.badRequest("lat and lng are required");
 
-    const apiKey = process.env.OPENWEATHER_API_KEY;
+    // Read API key from Setting table, fall back to env var
+    const apiKeySetting = await prisma.setting.findUnique({ where: { key: "WEATHER_API_KEY" } });
+    const apiKey = apiKeySetting?.value || process.env.OPENWEATHER_API_KEY;
     if (!apiKey) throw app.httpErrors.serviceUnavailable("Weather API key not configured");
 
     try {

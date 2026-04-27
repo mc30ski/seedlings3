@@ -41,11 +41,11 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
-import { suggestedEquipment } from "@/src/lib/equipmentSuggestions";
+import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
-import { jobTagLabel, JOB_TAGS } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
@@ -227,7 +227,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
-  const [equipmentMap, setEquipmentMap] = useState<Record<string, string>>({});
+  const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
+  const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  const jobTagLabel = (tag: string) => _jobTagLabel(tag, serviceTypes);
 
   // Build a rich label for offline queue entries
   function queueLabel(occ: WorkerOccurrence | undefined, action: string, detail?: string): string {
@@ -894,8 +896,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
-        const eq = list.find((r: any) => r.key === "EQUIPMENT_SUGGESTIONS_MAP");
-        if (eq?.value) try { setEquipmentMap(JSON.parse(eq.value)); } catch {}
+        const st = list.find((r: any) => r.key === "SERVICE_TYPES");
+        if (st?.value) { const parsed = parseServiceTypesConfig(st.value); if (parsed) setServiceTypes(parsed); }
+        const ek = list.find((r: any) => r.key === "EQUIPMENT_KINDS");
+        if (ek?.value) { const parsed = parseEquipmentKindsConfig(ek.value); if (parsed) setEquipmentKinds(parsed); }
       })
       .catch(() => {});
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
@@ -3688,7 +3692,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {/* Suggested equipment */}
                     {!isTaskOrReminder && (() => {
                       const allTags = [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)];
-                      const suggestions = suggestedEquipment(equipmentMap, allTags);
+                      const suggestions = suggestedEquipment(serviceTypes, allTags, equipmentKinds);
                       if (suggestions.length === 0) return null;
                       return (
                         <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
@@ -4801,6 +4805,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCreated={() => void load(false)}
         myId={me?.id}
         editEstimate={editingLightEstimate}
+        jobTagsConfig={serviceTypes}
       />
       <ConfirmDialog
         open={!!confirmAction}
@@ -5319,18 +5324,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Service type</Text>
                     <Box display="flex" gap="4px" flexWrap="wrap">
-                      {JOB_TAGS.map((tag) => (
+                      {serviceTypes.map((t) => (
                         <Badge
-                          key={tag}
+                          key={t.key}
                           size="sm"
-                          colorPalette={addonTag === tag ? "teal" : "gray"}
-                          variant={addonTag === tag ? "solid" : "outline"}
+                          colorPalette={addonTag === t.key ? "teal" : "gray"}
+                          variant={addonTag === t.key ? "solid" : "outline"}
                           cursor="pointer"
                           px="2"
                           borderRadius="full"
-                          onClick={() => { setAddonTag(addonTag === tag ? "" : tag); setAddonCustomLabel(""); }}
+                          onClick={() => { setAddonTag(addonTag === t.key ? "" : t.key); setAddonCustomLabel(""); }}
                         >
-                          {jobTagLabel(tag)}
+                          {t.label}
                         </Badge>
                       ))}
                     </Box>

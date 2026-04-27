@@ -14,7 +14,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
+import { DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
 import { determineRoles, fmtDateTime } from "@/src/lib/lib";
@@ -107,6 +107,86 @@ function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValu
   );
 }
 
+/** Inline editor for JSON array-of-objects settings like [{key, label}] */
+function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let items: { key: string; label: string; equipmentKind?: string }[] = [];
+  try { items = JSON.parse(value); } catch {}
+
+  // Detect if any item has equipmentKind — show the column if so
+  const hasEquipmentKind = items.some((i) => i.equipmentKind);
+
+  const [newKey, setNewKey] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [newEquipment, setNewEquipment] = useState("");
+
+  function updateItem(idx: number, updates: Partial<{ key: string; label: string; equipmentKind: string }>) {
+    const updated = [...items];
+    const item = { ...updated[idx], ...updates };
+    if (!item.equipmentKind) delete item.equipmentKind;
+    updated[idx] = item;
+    onChange(JSON.stringify(updated));
+  }
+
+  function removeItem(idx: number) {
+    onChange(JSON.stringify(items.filter((_, i) => i !== idx)));
+  }
+
+  function addItem() {
+    if (!newKey.trim() || !newLabel.trim()) return;
+    const item: any = { key: newKey.trim().toUpperCase(), label: newLabel.trim() };
+    if (newEquipment.trim()) item.equipmentKind = newEquipment.trim().toUpperCase();
+    onChange(JSON.stringify([...items, item]));
+    setNewKey("");
+    setNewLabel("");
+    setNewEquipment("");
+  }
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      {/* Header */}
+      <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium">
+        <Text flex="1">Key</Text>
+        <Text flex="1">Label</Text>
+        {hasEquipmentKind && <Text flex="1">Equipment Kind</Text>}
+        <Box w="24px" />
+      </HStack>
+      {items.map((item, idx) => (
+        <HStack key={idx} gap={2}>
+          <Input size="sm" value={item.key} onChange={(e) => updateItem(idx, { key: e.target.value.toUpperCase() })} flex="1" placeholder="MOW" />
+          <Input size="sm" value={item.label} onChange={(e) => updateItem(idx, { label: e.target.value })} flex="1" placeholder="Mow" />
+          {hasEquipmentKind && (
+            <Input size="sm" value={item.equipmentKind ?? ""} onChange={(e) => updateItem(idx, { equipmentKind: e.target.value.toUpperCase() })} flex="1" placeholder="(optional)" />
+          )}
+          <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removeItem(idx)}>
+            <Trash2 size={12} />
+          </Button>
+        </HStack>
+      ))}
+      <HStack gap={2} borderTopWidth="1px" borderColor="gray.200" pt={2}>
+        <Input size="sm" value={newKey} onChange={(e) => setNewKey(e.target.value)} flex="1" placeholder="New key" />
+        <Input size="sm" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} flex="1" placeholder="Label" />
+        {hasEquipmentKind && (
+          <Input size="sm" value={newEquipment} onChange={(e) => setNewEquipment(e.target.value)} flex="1" placeholder="Equipment (opt)" />
+        )}
+        <Button size="xs" variant="outline" onClick={addItem} disabled={!newKey.trim() || !newLabel.trim()}>
+          <Plus size={12} />
+        </Button>
+      </HStack>
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const { isAvail, isSuper } = determineRoles(me, purpose);
 
@@ -116,6 +196,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
   // Pricing
   const [pricingEntries, setPricingEntries] = useState<PricingEntry[]>([]);
@@ -134,7 +215,21 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         apiGet<Setting[]>("/api/admin/settings"),
         apiGet<PricingEntry[]>("/api/admin/pricing"),
       ]);
-      setSettings((Array.isArray(allSettings) ? allSettings : []).filter((s) => !s.key.startsWith("pricing_")));
+      const SETTINGS_ORDER = [
+        "CONTRACTOR_PLATFORM_FEE_PERCENT",
+        "EMPLOYEE_BUSINESS_MARGIN_PERCENT",
+        "HIGH_VALUE_JOB_THRESHOLD",
+        "EQUIPMENT_KINDS",
+        "SERVICE_TYPES",
+        "WEATHER_API_KEY",
+      ];
+      const general = (Array.isArray(allSettings) ? allSettings : []).filter((s) => !s.key.startsWith("pricing_"));
+      general.sort((a, b) => {
+        const ai = SETTINGS_ORDER.indexOf(a.key);
+        const bi = SETTINGS_ORDER.indexOf(b.key);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      });
+      setSettings(general);
 
       const sorted = (Array.isArray(pricing) ? pricing : []).sort((a, b) => {
         const sa = a.parsedValue?.sortOrder ?? 100;
@@ -328,11 +423,19 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
                     {editingKey === s.key ? (
                       (() => {
-                        // JSON map editor (key-value pairs UI)
-                        let isJsonMap = false;
-                        try { isJsonMap = s.value.startsWith("{") && typeof JSON.parse(s.value) === "object" && !Array.isArray(JSON.parse(s.value)); } catch {}
-                        if (isJsonMap) {
-                          return <JsonMapEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                        // Detect JSON format and use appropriate editor
+                        try {
+                          const parsed = JSON.parse(s.value);
+                          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].key) {
+                            return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                          }
+                          if (typeof parsed === "object" && !Array.isArray(parsed)) {
+                            return <JsonMapEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                          }
+                        } catch {}
+                        // Also handle empty array case
+                        if (s.value === "[]") {
+                          return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
                         }
                         return (
                           <HStack gap={2} w="full">
@@ -344,11 +447,26 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       })()
                     ) : (
                       (() => {
-                        // Render JSON maps as readable key→value pairs
                         try {
-                          if (s.value.startsWith("{")) {
-                            const obj = JSON.parse(s.value);
-                            const entries = Object.entries(obj);
+                          const parsed = JSON.parse(s.value);
+                          // Array of {key, label, equipmentKind?} objects
+                          if (Array.isArray(parsed)) {
+                            if (parsed.length === 0) return <Text fontSize="xs" color="fg.muted" fontStyle="italic">No items configured</Text>;
+                            if (parsed[0]?.key) {
+                              return (
+                                <Box display="flex" gap="4px" flexWrap="wrap">
+                                  {parsed.map((item: any) => (
+                                    <Badge key={item.key} size="sm" variant="solid" colorPalette="blue" px="2" borderRadius="full" fontSize="xs">
+                                      {item.label}{item.equipmentKind ? ` → ${item.equipmentKind}` : ""}
+                                    </Badge>
+                                  ))}
+                                </Box>
+                              );
+                            }
+                          }
+                          // Object map (key→value pairs)
+                          if (typeof parsed === "object" && !Array.isArray(parsed)) {
+                            const entries = Object.entries(parsed);
                             if (entries.length > 0) {
                               return (
                                 <Box display="flex" gap="4px" flexWrap="wrap">
@@ -360,8 +478,32 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                                 </Box>
                               );
                             }
+                            return <Text fontSize="xs" color="fg.muted" fontStyle="italic">No mappings configured</Text>;
                           }
                         } catch {}
+                        const isSensitive = /api.key|secret|token|password/i.test(s.key);
+                        if (isSensitive && !revealedKeys.has(s.key)) {
+                          return (
+                            <HStack gap={1}>
+                              <Text fontSize="md" fontWeight="medium">••••••••••••••••</Text>
+                              {isSuper && (
+                                <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setRevealedKeys((prev) => new Set([...prev, s.key]))} title="Show value">
+                                  <Eye size={14} />
+                                </Button>
+                              )}
+                            </HStack>
+                          );
+                        }
+                        if (isSensitive) {
+                          return (
+                            <HStack gap={1}>
+                              <Text fontSize="md" fontWeight="medium">{s.value}</Text>
+                              <Button size="xs" variant="ghost" px="1" minW="0" onClick={() => setRevealedKeys((prev) => { const next = new Set(prev); next.delete(s.key); return next; })} title="Hide value">
+                                <EyeOff size={14} />
+                              </Button>
+                            </HStack>
+                          );
+                        }
                         return <Text fontSize="md" fontWeight="medium">{s.value}</Text>;
                       })()
                     )}
