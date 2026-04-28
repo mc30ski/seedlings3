@@ -51,6 +51,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
+import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
 import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
@@ -211,6 +212,8 @@ export default function ServicesTab({
   const [instructionsJobId, setInstructionsJobId] = useState<string>("");
 
   const [occurrenceDialogOpen, setOccurrenceDialogOpen] = useState(false);
+  const [estimateDialogOpen, setEstimateDialogOpen] = useState(false);
+  const [estimateLockedJobId, setEstimateLockedJobId] = useState<string | null>(null);
   const [promptOccurrenceOpen, setPromptOccurrenceOpen] = useState(false);
   const [occurrenceJobId, setOccurrenceJobId] = useState<string>("");
   const [occurrenceDefaultNotes, setOccurrenceDefaultNotes] = useState<string | null>(null);
@@ -220,6 +223,8 @@ export default function ServicesTab({
   const [occurrenceJobFreqDays, setOccurrenceJobFreqDays] = useState<number | null>(null);
   const [occurrenceDefaultAssignees, setOccurrenceDefaultAssignees] = useState<{ userId: string; displayName?: string | null }[]>([]);
   const [occurrenceDefaultWorkflow, setOccurrenceDefaultWorkflow] = useState<string | undefined>(undefined);
+  const [occurrenceDefaultJobTags, setOccurrenceDefaultJobTags] = useState<string[] | null>(null);
+  const [occurrenceDefaultJobType, setOccurrenceDefaultJobType] = useState<string | null>(null);
   const [occurrencePropertyId, setOccurrencePropertyId] = useState<string | null>(null);
 
   // Comments
@@ -1322,30 +1327,46 @@ export default function ServicesTab({
                       setBusyId={setStatusButtonBusyId}
                     />
                     {job.status === "ACCEPTED" && (
-                      <StatusButton
-                        id="job-new-occurrence"
-                        itemId={job.id}
-                        label="+ Occurrence"
-                        onClick={async () => {
-                          setOccurrenceJobId(job.id);
-                          setOccurrencePropertyId(job.propertyId);
-                          setOccurrenceDefaultNotes(job.notes ?? null);
-                          setOccurrenceDefaultPrice(job.defaultPrice ?? null);
-                          setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
-                          setOccurrenceJobHasFrequency(!!job.frequencyDays);
-                          setOccurrenceJobFreqDays(job.frequencyDays ?? null);
-                          setOccurrenceDefaultAssignees(
-                            (detail?.defaultAssignees ?? []).map((a) => ({
-                              userId: a.userId,
-                              displayName: a.user?.displayName ?? a.user?.email ?? null,
-                            }))
-                          );
-                          setOccurrenceDialogOpen(true);
-                        }}
-                        variant="outline"
-                        busyId={statusButtonBusyId}
-                        setBusyId={setStatusButtonBusyId}
-                      />
+                      <>
+                        <StatusButton
+                          id="job-new-occurrence"
+                          itemId={job.id}
+                          label="+ Occurrence"
+                          onClick={async () => {
+                            setOccurrenceJobId(job.id);
+                            setOccurrencePropertyId(job.propertyId);
+                            setOccurrenceDefaultNotes(job.notes ?? null);
+                            setOccurrenceDefaultPrice(job.defaultPrice ?? null);
+                            setOccurrenceDefaultEstMins(job.estimatedMinutes ?? null);
+                            setOccurrenceJobHasFrequency(!!job.frequencyDays);
+                            setOccurrenceJobFreqDays(job.frequencyDays ?? null);
+                            setOccurrenceDefaultJobTags(null);
+                            setOccurrenceDefaultJobType(null);
+                            setOccurrenceDefaultAssignees(
+                              (detail?.defaultAssignees ?? []).map((a) => ({
+                                userId: a.userId,
+                                displayName: a.user?.displayName ?? a.user?.email ?? null,
+                              }))
+                            );
+                            setOccurrenceDialogOpen(true);
+                          }}
+                          variant="outline"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                        <StatusButton
+                          id="job-new-estimate"
+                          itemId={job.id}
+                          label="+ Estimate"
+                          onClick={async () => {
+                            setEstimateLockedJobId(job.id);
+                            setEstimateDialogOpen(true);
+                          }}
+                          variant="outline"
+                          busyId={statusButtonBusyId}
+                          setBusyId={setStatusButtonBusyId}
+                        />
+                      </>
                     )}
                     {job.status === "PROPOSED" && (
                       <StatusButton
@@ -1520,6 +1541,9 @@ export default function ServicesTab({
                               {occ.startAt
                                 ? fmtDate(occ.startAt)
                                 : "—"}
+                              {(occ as any).title && (
+                                <> · {(occ as any).title}</>
+                              )}
                               {parseJobTags(occ).length > 0 && (
                                 <> · {parseJobTags(occ).map(jobTagLabel).join(", ")}</>
                               )}
@@ -2075,6 +2099,9 @@ export default function ServicesTab({
                                         setOccurrenceJobHasFrequency(false);
                                         setOccurrenceJobFreqDays(null);
                                         setOccurrenceDefaultWorkflow("STANDARD");
+                                        const rawTags = result.occurrence?.jobTags;
+                                        setOccurrenceDefaultJobTags(rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return null; } })()) : null);
+                                        setOccurrenceDefaultJobType(result.occurrence?.jobType ?? null);
                                         setPromptOccurrenceOpen(true);
                                       }
                                     } catch (err: any) {
@@ -2415,8 +2442,12 @@ export default function ServicesTab({
           jobFrequencyDays={occurrenceJobFreqDays}
           defaultAssignees={occurrenceDefaultAssignees}
           defaultWorkflow={occurrenceDefaultWorkflow}
+          defaultJobTags={occurrenceDefaultJobTags}
+          defaultJobType={occurrenceDefaultJobType}
           onSaved={() => {
             setOccurrenceDefaultWorkflow(undefined);
+            setOccurrenceDefaultJobTags(null);
+            setOccurrenceDefaultJobType(null);
             if (occurrenceJobId) {
               setExpandedMap((prev) => ({ ...prev, [occurrenceJobId]: true }));
               void loadDetail(occurrenceJobId, true);
@@ -2723,6 +2754,18 @@ export default function ServicesTab({
           }}
         />
       )}
+
+      {/* Estimate Dialog */}
+      <EstimateDialog
+        open={estimateDialogOpen}
+        onOpenChange={(o) => { setEstimateDialogOpen(o); if (!o) setEstimateLockedJobId(null); }}
+        onCreated={() => {
+          if (estimateLockedJobId) void loadDetail(estimateLockedJobId, true);
+          void load(false);
+        }}
+        lockedJobId={estimateLockedJobId}
+        jobTagsConfig={serviceTypes}
+      />
 
     </Box>
   );

@@ -1296,6 +1296,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         notes: (occ as any).proposalNotes ?? occ.notes ?? null,
         price: (occ as any).proposalAmount ?? occ.price ?? null,
         estimatedMinutes: occ.estimatedMinutes ?? null,
+        jobTags: (occ as any).jobTags ?? null,
+        jobType: (occ as any).jobType ?? null,
         assignees: occ.assignees.map((a) => ({ userId: a.userId })),
       },
     };
@@ -2179,6 +2181,7 @@ Respond ONLY with valid JSON in this exact format:
       proposalAmount: body.proposalAmount != null ? Number(body.proposalAmount) : undefined,
       proposalNotes: body.proposalNotes ? String(body.proposalNotes) : undefined,
       jobTags: Array.isArray(body.jobTags) ? JSON.stringify(body.jobTags) : undefined,
+      jobType: body.jobType ? String(body.jobType).trim() : undefined,
       assigneeUserIds: Array.isArray(body.assigneeUserIds) ? body.assigneeUserIds.map(String) : undefined,
       jobId: body.jobId ? String(body.jobId) : undefined,
     });

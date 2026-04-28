@@ -123,12 +123,12 @@ export default function JobTagPicker({ selected, onChange, customNote, onCustomN
         })}
       </Box>
 
-      {/* Custom note */}
+      {/* Custom job tag */}
       <Box>
-        <Text fontSize="xs" color="fg.muted" mb={1}>Custom note (optional)</Text>
+        <Text fontSize="xs" color="fg.muted" mb={1}>Custom Job Tag (optional)</Text>
         <Input
           size="sm"
-          placeholder="e.g., Backyard only, skip front beds"
+          placeholder="e.g., Dethatching, Stump Removal"
           value={customNote}
           onChange={(e) => onCustomNoteChange(e.target.value)}
         />

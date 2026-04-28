@@ -102,12 +102,13 @@ export default function ClientDialog({
   const [showMissingWarning, setShowMissingWarning] = useState(false);
 
   function ableToSave() {
+    const digits = phone.replace(/\D/g, "");
     return (
       statusValue &&
       kindValue &&
       firstName &&
       (!email || EMAIL_RE.test(email)) &&
-      (!phone || E164.test(phone))
+      (!phone || digits.length >= 10)
     );
   }
 

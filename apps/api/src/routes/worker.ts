@@ -119,30 +119,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
-  // Lookup equipment by QR slug — returns equipment + user's checkout state
-  app.get("/equipment/by-slug/:slug", workerGuard, async (req: any) => {
-    const slug = String(req.params.slug).trim();
-    if (!slug) throw app.httpErrors.badRequest("slug is required");
-    // Find equipment by slug (try exact match first, then case-insensitive via raw query)
-    let equipment = await prisma.equipment.findFirst({ where: { qrSlug: slug } });
-    if (!equipment) {
-      const results = await prisma.$queryRaw<any[]>`SELECT * FROM "Equipment" WHERE LOWER("qrSlug") = LOWER(${slug}) LIMIT 1`;
-      equipment = results[0] ?? null;
-    }
-    if (!equipment) throw app.httpErrors.notFound("Equipment not found for this QR code.");
-    // Check if this user has an active reservation or checkout
-    const uid = await currentUserId(req);
-    const activeCheckout = await prisma.checkout.findFirst({
-      where: { equipmentId: equipment.id, userId: uid, releasedAt: null },
-      orderBy: { createdAt: "desc" },
-    });
-    return {
-      equipment,
-      userHasReservation: !!activeCheckout && !activeCheckout.checkedOutAt,
-      userHasCheckout: !!activeCheckout && !!activeCheckout.checkedOutAt,
-    };
-  });
-
   // Enforce QR slug verification before finishing checkout
   app.post("/equipment/:id/checkout/verify", workerGuard, async (req: any) => {
     const id = req.params.id as string;
@@ -563,6 +539,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         notes: (occ as any).proposalNotes ?? occ.notes ?? null,
         price: (occ as any).proposalAmount ?? occ.price ?? null,
         estimatedMinutes: occ.estimatedMinutes ?? null,
+        jobTags: (occ as any).jobTags ?? null,
+        jobType: (occ as any).jobType ?? null,
         assignees: occ.assignees.map((a) => ({ userId: a.userId })),
       },
     };

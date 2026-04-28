@@ -55,7 +55,7 @@ import ClaimAgreementDialog from "@/src/ui/dialogs/ClaimAgreementDialog";
 import InsuranceUploadDialog from "@/src/ui/dialogs/InsuranceUploadDialog";
 import CompleteJobDialog from "@/src/ui/dialogs/CompleteJobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
-import LightEstimateDialog from "@/src/ui/dialogs/LightEstimateDialog";
+import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
 import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
@@ -795,7 +795,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   // Prompt to create occurrence after accepting estimate
   const [promptOccJobId, setPromptOccJobId] = useState<string | null>(null);
-  const [promptOccDefaults, setPromptOccDefaults] = useState<{ notes?: string | null; price?: number | null; estimatedMinutes?: number | null }>({});
+  const [promptOccDefaults, setPromptOccDefaults] = useState<{ notes?: string | null; price?: number | null; estimatedMinutes?: number | null; jobTags?: string[] | null; jobType?: string | null }>({});
 
   async function deleteExpense(expenseId: string) {
     try {
@@ -4011,10 +4011,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     estimatedMinutes: occ.estimatedMinutes,
                                   });
                                 } else if (result.jobId) {
+                                  const rawTags = result.occurrence?.jobTags;
                                   setPromptOccDefaults({
                                     notes: result.occurrence?.notes ?? null,
                                     price: result.occurrence?.price ?? null,
                                     estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
+                                    jobTags: rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return null; } })()) : null,
+                                    jobType: result.occurrence?.jobType ?? null,
                                   });
                                   setPromptOccJobId(result.jobId);
                                 }
@@ -4801,7 +4804,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         onCancel={() => setPendingEstimateConvert(null)}
       />
 
-      <LightEstimateDialog
+      <EstimateDialog
         open={lightEstDialogOpen}
         onOpenChange={(open) => { setLightEstDialogOpen(open); if (!open) setEditingLightEstimate(null); }}
         onCreated={() => void load(false)}
@@ -5710,6 +5713,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           defaultPrice={promptOccDefaults.price}
           defaultEstimatedMinutes={promptOccDefaults.estimatedMinutes}
           defaultNotes={promptOccDefaults.notes}
+          defaultJobTags={promptOccDefaults.jobTags}
+          defaultJobType={promptOccDefaults.jobType}
           title="Create First Occurrence"
           submitLabel="Create"
           createEndpoint={forAdmin ? `/api/admin/jobs/${promptOccJobId}/occurrences` : undefined}
