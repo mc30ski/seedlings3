@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 import { useAuth, RedirectToSignIn } from "@clerk/clerk-react";
 import { Box, Spinner, Text, VStack } from "@chakra-ui/react";
+import { setAuthTokenFetcher } from "@/src/lib/api";
 import { apiGet } from "@/src/lib/api";
 
 /**
@@ -14,38 +15,46 @@ import { apiGet } from "@/src/lib/api";
  */
 export default function EquipmentRedirect() {
   const router = useRouter();
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn, isLoaded, getToken } = useAuth();
   const slug = router.query.slug as string | undefined;
   const [error, setError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+
+  // Ensure the API client has the auth token (same as _app.tsx does)
+  useEffect(() => {
+    setAuthTokenFetcher(() => getToken());
+  }, [getToken]);
+
+  const doLookup = useCallback(async () => {
+    if (!slug) return;
+    try {
+      const result = await apiGet<{ equipment: any; userHasReservation: boolean; userHasCheckout: boolean }>(
+        `/api/equipment/by-slug/${encodeURIComponent(slug)}`
+      );
+      sessionStorage.setItem("equipmentQrResult", JSON.stringify({
+        slug,
+        equipmentId: result.equipment?.id ?? null,
+        equipmentLabel: result.equipment?.shortDesc || `${result.equipment?.brand ?? ""} ${result.equipment?.model ?? ""}`.trim(),
+        userHasReservation: result.userHasReservation ?? false,
+        userHasCheckout: result.userHasCheckout ?? false,
+      }));
+      router.replace("/");
+    } catch (err: any) {
+      console.error("Equipment lookup failed:", err);
+      setError(err?.message || "Unknown error");
+      // Still redirect so user can see the equipment tab filtered by slug
+      sessionStorage.setItem("equipmentQrResult", JSON.stringify({ slug, equipmentId: null }));
+      setTimeout(() => router.replace("/"), 4000);
+    }
+  }, [slug, router]);
 
   useEffect(() => {
-    if (!isLoaded || !slug) return;
-    if (!isSignedIn) return;
-
-    // Call the API to look up equipment and determine action
-    apiGet<{ equipment: any; userHasReservation: boolean; userHasCheckout: boolean }>(
-      `/api/equipment/by-slug/${encodeURIComponent(slug)}`
-    )
-      .then((result) => {
-        // Store the full result so EquipmentTab can show dialog immediately
-        sessionStorage.setItem("equipmentQrResult", JSON.stringify({
-          slug,
-          equipmentId: result.equipment.id,
-          equipmentLabel: result.equipment.shortDesc || `${result.equipment.brand} ${result.equipment.model}`,
-          userHasReservation: result.userHasReservation,
-          userHasCheckout: result.userHasCheckout,
-        }));
-        router.replace("/");
-      })
-      .catch((err) => {
-        console.error("Equipment lookup failed:", err);
-        const msg = err?.message || "Unknown error";
-        setError(`Lookup failed: ${msg}`);
-        // Still redirect after 4 seconds so user can at least see the equipment tab
-        sessionStorage.setItem("equipmentQrResult", JSON.stringify({ slug, equipmentId: null }));
-        setTimeout(() => router.replace("/"), 4000);
-      });
-  }, [isLoaded, isSignedIn, slug]);
+    if (!isLoaded || !slug || !isSignedIn || attempted) return;
+    // Small delay to ensure auth token fetcher is wired up
+    setAttempted(true);
+    const timer = setTimeout(() => void doLookup(), 300);
+    return () => clearTimeout(timer);
+  }, [isLoaded, isSignedIn, slug, attempted, doLookup]);
 
   if (!isLoaded) {
     return (
