@@ -38,12 +38,12 @@ export default function EquipmentRedirect() {
         router.replace("/");
       })
       .catch((err) => {
-        // If the lookup fails (404, network, etc.), just navigate with slug for search
         console.error("Equipment lookup failed:", err);
-        setError(err?.message || "Equipment not found");
-        // Still redirect after a moment so user can at least see the equipment tab
+        const msg = err?.message || "Unknown error";
+        setError(`Lookup failed: ${msg}`);
+        // Still redirect after 4 seconds so user can at least see the equipment tab
         sessionStorage.setItem("equipmentQrResult", JSON.stringify({ slug, equipmentId: null }));
-        setTimeout(() => router.replace("/"), 2000);
+        setTimeout(() => router.replace("/"), 4000);
       });
   }, [isLoaded, isSignedIn, slug]);
 
