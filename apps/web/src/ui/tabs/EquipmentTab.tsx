@@ -164,31 +164,34 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   });
 
   // Handle QR slug redirect (from /e/[slug] page)
-  const qrProcessed = useRef(false);
+  // Wait for items to load, then find equipment by slug and prompt checkout/return
+  const qrSlugPending = useRef<string | null>(null);
   useEffect(() => {
-    if (qrProcessed.current) return;
     const qrSlug = window.sessionStorage.getItem("equipmentQrSlug");
-    if (!qrSlug) return;
-    qrProcessed.current = true;
-    window.sessionStorage.removeItem("equipmentQrSlug");
-    setQ(qrSlug);
-    setKind(["ALL"]);
-    setStatusFilter(["ALL"]);
-    // Look up equipment and determine action
-    apiGet<{ equipment: any; userHasReservation: boolean; userHasCheckout: boolean }>(
-      `/api/equipment/by-slug/${encodeURIComponent(qrSlug)}`
-    )
-      .then((result) => {
-        if (result.userHasReservation) {
-          setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "checkout", label: `Check out "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
-        } else if (result.userHasCheckout) {
-          setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "return", label: `Return "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
-        }
-      })
-      .catch(() => {
-        // Lookup failed — equipment is still filtered by slug in search, just no auto-action
-      });
+    if (qrSlug) {
+      window.sessionStorage.removeItem("equipmentQrSlug");
+      qrSlugPending.current = qrSlug;
+      setQ(qrSlug);
+      setKind(["ALL"]);
+      setStatusFilter(["ALL"]);
+    }
   }, []);
+  // Once items are loaded, match the slug and show action dialog
+  useEffect(() => {
+    if (!qrSlugPending.current || items.length === 0) return;
+    const slug = qrSlugPending.current;
+    const match = items.find((e) => e.qrSlug?.toLowerCase() === slug.toLowerCase());
+    if (!match) return;
+    qrSlugPending.current = null;
+    // Check equipment status to determine action
+    if (match.status === "RESERVED") {
+      // User has it reserved — offer checkout
+      setQrAction({ equipmentId: match.id, slug, action: "checkout", label: `Check out "${match.shortDesc || match.brand + " " + match.model}"?` });
+    } else if (match.status === "CHECKED_OUT") {
+      // User has it checked out — offer return
+      setQrAction({ equipmentId: match.id, slug, action: "return", label: `Return "${match.shortDesc || match.brand + " " + match.model}"?` });
+    }
+  }, [items]);
 
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
