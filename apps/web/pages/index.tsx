@@ -105,9 +105,7 @@ export default function HomePage() {
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
   useEffect(() => {
-    const raw = sessionStorage.getItem("equipmentQrResult");
-    if (raw) {
-      // Switch to worker equipment tab
+    if (sessionStorage.getItem("equipmentQrSlug")) {
       setTopTab("worker");
       setWorkerInnerTab("equipment");
       setWorkerCategory("Field");
