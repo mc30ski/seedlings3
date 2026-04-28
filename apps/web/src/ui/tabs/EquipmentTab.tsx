@@ -163,25 +163,32 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   });
 
-  // Handle QR redirect result (from /e/[slug] page — API already called there)
+  // Handle QR slug redirect (from /e/[slug] page)
+  const qrProcessed = useRef(false);
   useEffect(() => {
-    const raw = window.sessionStorage.getItem("equipmentQrResult");
-    if (!raw) return;
-    window.sessionStorage.removeItem("equipmentQrResult");
-    try {
-      const result = JSON.parse(raw) as { slug: string; equipmentId: string | null; equipmentLabel?: string; userHasReservation?: boolean; userHasCheckout?: boolean };
-      if (result.slug) {
-        setQ(result.slug);
-        setKind(["ALL"]);
-        setStatusFilter(["ALL"]);
-      }
-      if (result.equipmentId && result.userHasReservation) {
-        setQrAction({ equipmentId: result.equipmentId, slug: result.slug, action: "checkout", label: `Check out "${result.equipmentLabel}"?` });
-      } else if (result.equipmentId && result.userHasCheckout) {
-        setQrAction({ equipmentId: result.equipmentId, slug: result.slug, action: "return", label: `Return "${result.equipmentLabel}"?` });
-      }
-    } catch {}
-  });
+    if (qrProcessed.current) return;
+    const qrSlug = window.sessionStorage.getItem("equipmentQrSlug");
+    if (!qrSlug) return;
+    qrProcessed.current = true;
+    window.sessionStorage.removeItem("equipmentQrSlug");
+    setQ(qrSlug);
+    setKind(["ALL"]);
+    setStatusFilter(["ALL"]);
+    // Look up equipment and determine action
+    apiGet<{ equipment: any; userHasReservation: boolean; userHasCheckout: boolean }>(
+      `/api/equipment/by-slug/${encodeURIComponent(qrSlug)}`
+    )
+      .then((result) => {
+        if (result.userHasReservation) {
+          setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "checkout", label: `Check out "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
+        } else if (result.userHasCheckout) {
+          setQrAction({ equipmentId: result.equipment.id, slug: qrSlug, action: "return", label: `Return "${result.equipment.shortDesc || result.equipment.brand + " " + result.equipment.model}"?` });
+        }
+      })
+      .catch(() => {
+        // Lookup failed — equipment is still filtered by slug in search, just no auto-action
+      });
+  }, []);
 
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
