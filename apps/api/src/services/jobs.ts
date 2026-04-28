@@ -848,6 +848,8 @@ export const jobs: ServicesJobs = {
     estimateAddress?: string;
     proposalAmount?: number;
     proposalNotes?: string;
+    jobTags?: string;
+    jobType?: string;
     assigneeUserIds?: string[];
     jobId?: string;
   }) {
@@ -870,6 +872,7 @@ export const jobs: ServicesJobs = {
           estimateAddress: input.estimateAddress ?? null,
           proposalAmount: input.proposalAmount ?? null,
           jobTags: input.jobTags ?? null,
+          jobType: input.jobType ?? null,
           proposalNotes: input.proposalNotes ?? null,
         } as any,
       });

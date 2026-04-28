@@ -29,7 +29,6 @@ import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
 
 const workflowItems = [
-  { label: "Estimate", value: "ESTIMATE" },
   { label: "Repeating Job", value: "STANDARD" },
   { label: "One-Off Job", value: "ONE_OFF" },
 ];
@@ -156,7 +155,7 @@ export default function OccurrenceDialog({
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
   const [occTitle, setOccTitle] = useState("");
-  const [workflow, setWorkflow] = useState(defaultWorkflow ?? "ESTIMATE");
+  const [workflow, setWorkflow] = useState(defaultWorkflow ?? "STANDARD");
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
   const [occFrequencyDays, setOccFrequencyDays] = useState("");
@@ -193,47 +192,43 @@ export default function OccurrenceDialog({
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  // Initialize form once when dialog opens — use ref to prevent re-init on re-renders
-  const initRef = useRef<string | null>(null);
-  const openKey = open ? `${mode}-${occurrenceId ?? jobId ?? "new"}` : null;
-  if (openKey && initRef.current !== openKey) {
-    initRef.current = openKey;
-    // Synchronous state init (runs once per dialog open, not in useEffect)
-    // React batches these setState calls during render
-    setStatus(defaultStatus ?? "");
-    setKind(defaultKind ?? "");
-    setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
-    setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
-    setNotes(defaultNotes ?? "");
-    setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
-    setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
-    setStartedAt(toDateTimeLocal(defaultStartedAt));
-    setCompletedAt(toDateTimeLocal(defaultCompletedAt));
-    setOccTitle(defaultOccTitle ?? "");
-    setWorkflow(defaultWorkflow ?? "ESTIMATE");
-    setIsTentative(false);
-    setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
-    setJobType(defaultJobType ?? "");
-    setJobTags(defaultJobTags ?? []);
-    setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
-    setContactName(defaultContactName ?? "");
-    setContactPhone(defaultContactPhone ?? "");
-    setContactEmail(defaultContactEmail ?? "");
-    setEstimateAddress(defaultEstimateAddress ?? "");
-    setProposalAmount(defaultProposalAmount != null ? defaultProposalAmount.toFixed(2) : "");
-    setProposalNotes(defaultProposalNotes ?? "");
-    setExpenses([]);
-    setNewExpCost("");
-    setNewExpDesc("");
-    setAddons(defaultAddons ?? []);
-    setAddonTag("");
-    setAddonCustomLabel("");
-    setAddonPrice("");
-    setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
-  }
-  if (!open && initRef.current) {
-    initRef.current = null;
-  }
+  // Initialize form every time dialog opens
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      setStatus(defaultStatus ?? "");
+      setKind(defaultKind ?? "");
+      setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
+      setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
+      setNotes(defaultNotes ?? "");
+      setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
+      setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
+      setStartedAt(toDateTimeLocal(defaultStartedAt));
+      setCompletedAt(toDateTimeLocal(defaultCompletedAt));
+      setOccTitle(defaultOccTitle ?? "");
+      setWorkflow(defaultWorkflow ?? "STANDARD");
+      setIsTentative(false);
+      setIsAdminOnly(defaultIsAdminOnly ?? (mode === "CREATE" ? true : false));
+      setJobType(defaultJobType ?? "");
+      setJobTags(defaultJobTags ?? []);
+      setOccFrequencyDays(defaultFrequencyDays != null ? String(defaultFrequencyDays) : "");
+      setContactName(defaultContactName ?? "");
+      setContactPhone(defaultContactPhone ?? "");
+      setContactEmail(defaultContactEmail ?? "");
+      setEstimateAddress(defaultEstimateAddress ?? "");
+      setProposalAmount(defaultProposalAmount != null ? defaultProposalAmount.toFixed(2) : "");
+      setProposalNotes(defaultProposalNotes ?? "");
+      setExpenses([]);
+      setNewExpCost("");
+      setNewExpDesc("");
+      setAddons(defaultAddons ?? []);
+      setAddonTag("");
+      setAddonCustomLabel("");
+      setAddonPrice("");
+      setSelectedAssignees(new Set((defaultAssignees ?? []).map((a) => a.userId)));
+    }
+    prevOpenRef.current = open;
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -454,45 +449,7 @@ export default function OccurrenceDialog({
                     </Select.Root>
                   </div>
                 )}
-                {(workflow === "ESTIMATE") && (
-                  <>
-                    <div>
-                      <Text mb="1">Estimate Title</Text>
-                      <Input
-                        size="sm"
-                        placeholder="e.g., Tree trimming estimate for backyard"
-                        value={occTitle}
-                        onChange={(e) => setOccTitle(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Text mb="1">Contact Name</Text>
-                      <Input size="sm" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g., Mark Johnson" />
-                    </div>
-                    <HStack gap={2}>
-                      <Box flex="1">
-                        <Text mb="1">Phone</Text>
-                        <Input size="sm" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="(555) 123-4567" />
-                      </Box>
-                      <Box flex="1">
-                        <Text mb="1">Email</Text>
-                        <Input size="sm" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="email@example.com" />
-                      </Box>
-                    </HStack>
-                    <div>
-                      <Text mb="1">Estimate Address</Text>
-                      <Input size="sm" value={estimateAddress} onChange={(e) => setEstimateAddress(e.target.value)} placeholder="123 Main St, Austin, TX" />
-                    </div>
-                    <div>
-                      <Text mb="1">Proposal Amount</Text>
-                      <CurrencyInput value={proposalAmount} onChange={setProposalAmount} size="sm" />
-                    </div>
-                    <div>
-                      <Text mb="1">Proposal Notes</Text>
-                      <Textarea size="sm" value={proposalNotes} onChange={(e) => setProposalNotes(e.target.value)} placeholder="Scope of work, materials, timeline…" rows={2} />
-                    </div>
-                  </>
-                )}
+                {/* Estimates are created via the dedicated EstimateDialog */}
                 {workflow === "STANDARD" && (
                   <div>
                     <Text mb="1">Frequency (days)</Text>

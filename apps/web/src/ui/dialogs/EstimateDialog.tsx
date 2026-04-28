@@ -60,9 +60,11 @@ type Props = {
   myId?: string;
   editEstimate?: EditEstimate | null;
   jobTagsConfig?: JobTagConfig[] | null;
+  /** When set, locks the Job Service dropdown to this job (used from Services tab) */
+  lockedJobId?: string | null;
 };
 
-export default function LightEstimateDialog({ open, onOpenChange, onCreated, myId, editEstimate, jobTagsConfig }: Props) {
+export default function EstimateDialog({ open, onOpenChange, onCreated, myId, editEstimate, jobTagsConfig, lockedJobId }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   const [title, setTitle] = useState("");
@@ -180,7 +182,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
     setProposalAmount("");
     setAssigneeIds(myId ? [myId] : []);
     setSelectValue([]);
-    setSelectedJobId([]);
+    setSelectedJobId(lockedJobId ? [lockedJobId] : []);
     setJobTags([]);
     setJobTagNote("");
   }
@@ -279,88 +281,13 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                   />
                 </Box>
 
-                {/* Contact Name */}
-                <HStack gap={2}>
-                  <Box flex="1">
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>First Name</Text>
-                    <input
-                      type="text"
-                      placeholder="First name"
-                      value={contactFirstName}
-                      onChange={(e) => setContactFirstName(e.target.value)}
-                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                    />
-                  </Box>
-                  <Box flex="1">
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>Last Name</Text>
-                    <input
-                      type="text"
-                      placeholder="Last name"
-                      value={contactLastName}
-                      onChange={(e) => setContactLastName(e.target.value)}
-                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                    />
-                  </Box>
-                </HStack>
-
-                {/* Contact Phone */}
+                {/* Job Service link */}
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Contact Phone</Text>
-                  <input
-                    type="tel"
-                    placeholder="(555) 123-4567"
-                    value={contactPhone}
-                    onChange={(e) => {
-                      setContactPhone(e.target.value);
-                      validatePhone(e.target.value);
-                    }}
-                    onBlur={() => validatePhone(contactPhone)}
-                    style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${phoneError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
-                  />
-                  {phoneError && <Text fontSize="xs" color="red.500" mt={0.5}>{phoneError}</Text>}
-                </Box>
-
-                {/* Contact Email */}
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Contact Email</Text>
-                  <input
-                    type="email"
-                    placeholder="email@example.com"
-                    value={contactEmail}
-                    onChange={(e) => {
-                      setContactEmail(e.target.value);
-                      validateEmail(e.target.value);
-                    }}
-                    onBlur={() => validateEmail(contactEmail)}
-                    style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${emailError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
-                  />
-                  {emailError && <Text fontSize="xs" color="red.500" mt={0.5}>{emailError}</Text>}
-                </Box>
-
-                {/* Address */}
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Address</Text>
-                  <AddressAutocomplete
-                    value={estimateAddress}
-                    onChange={setEstimateAddress}
-                    placeholder="Start typing an address..."
-                  />
-                </Box>
-
-                {/* Optional Job Service link */}
-                {!selectedJobId[0] && (
-                  <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
-                    <Text fontSize="xs" color="yellow.800">
-                      You can optionally link to an existing Job Service below. If the estimate is accepted without one, you'll be prompted to create a Client, Property, and Job Service.
-                    </Text>
-                  </Box>
-                )}
-                <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Job Service (optional)</Text>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>{lockedJobId ? "Job Service" : "Job Service (optional)"}</Text>
                   <Select.Root
                     collection={createListCollection({
                       items: [
-                        { label: "None — standalone estimate", value: "" },
+                        ...(lockedJobId ? [] : [{ label: "None — standalone estimate", value: "" }]),
                         ...jobs.map((j) => ({
                           label: `${j.property?.displayName ?? "Unknown"} — ${j.property?.client?.displayName ?? ""}`.trim(),
                           value: j.id,
@@ -371,6 +298,7 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                     onValueChange={(e) => setSelectedJobId(e.value)}
                     size="sm"
                     positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                    disabled={!!lockedJobId}
                   >
                     <Select.Control>
                       <Select.Trigger>
@@ -392,10 +320,90 @@ export default function LightEstimateDialog({ open, onOpenChange, onCreated, myI
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
-                  <Text fontSize="xs" color="fg.muted" mt={1}>
-                    Link to an existing Job Service. When accepted, it will create an occurrence under that job instead of starting the New Job workflow.
-                  </Text>
                 </Box>
+                {!selectedJobId[0] && (
+                  <Box p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
+                    <Text fontSize="xs" color="yellow.800">
+                      No Job Service linked. If the estimate is accepted, you'll be prompted to create a Client, Property, and Job Service using information below.
+                    </Text>
+                  </Box>
+                )}
+                {selectedJobId[0] && (
+                  <Box p={3} bg="green.50" borderWidth="1px" borderColor="green.200" borderRadius="md">
+                    <Text fontSize="xs" color="green.800">
+                      Linked to an existing Job Service. Contact and address info comes from the job's property.
+                    </Text>
+                  </Box>
+                )}
+
+                {/* Contact & Address — only shown for standalone estimates (no Job Service) */}
+                {!selectedJobId[0] && (
+                  <>
+                    <HStack gap={2}>
+                      <Box flex="1">
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>First Name</Text>
+                        <input
+                          type="text"
+                          placeholder="First name"
+                          value={contactFirstName}
+                          onChange={(e) => setContactFirstName(e.target.value)}
+                          style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                        />
+                      </Box>
+                      <Box flex="1">
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>Last Name</Text>
+                        <input
+                          type="text"
+                          placeholder="Last name"
+                          value={contactLastName}
+                          onChange={(e) => setContactLastName(e.target.value)}
+                          style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                        />
+                      </Box>
+                    </HStack>
+
+                    <Box>
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>Contact Phone</Text>
+                      <input
+                        type="tel"
+                        placeholder="(555) 123-4567"
+                        value={contactPhone}
+                        onChange={(e) => {
+                          setContactPhone(e.target.value);
+                          validatePhone(e.target.value);
+                        }}
+                        onBlur={() => validatePhone(contactPhone)}
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${phoneError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
+                      />
+                      {phoneError && <Text fontSize="xs" color="red.500" mt={0.5}>{phoneError}</Text>}
+                    </Box>
+
+                    <Box>
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>Contact Email</Text>
+                      <input
+                        type="email"
+                        placeholder="email@example.com"
+                        value={contactEmail}
+                        onChange={(e) => {
+                          setContactEmail(e.target.value);
+                          validateEmail(e.target.value);
+                        }}
+                        onBlur={() => validateEmail(contactEmail)}
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: `1px solid ${emailError ? "#e53e3e" : "#ccc"}`, borderRadius: "6px" }}
+                      />
+                      {emailError && <Text fontSize="xs" color="red.500" mt={0.5}>{emailError}</Text>}
+                    </Box>
+
+                    <Box>
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>Address</Text>
+                      <AddressAutocomplete
+                        value={estimateAddress}
+                        onChange={setEstimateAddress}
+                        placeholder="Start typing an address..."
+                      />
+                    </Box>
+                  </>
+                )}
 
                 {/* Job Tags */}
                 <Box>
