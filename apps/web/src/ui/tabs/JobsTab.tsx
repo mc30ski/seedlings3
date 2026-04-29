@@ -102,6 +102,35 @@ function assigneeSortOrder(a: { assignedById?: string | null; userId: string; ro
   return 1;
 }
 
+/**
+ * Returns a preset contact message based on occurrence state, or null if no message is appropriate.
+ */
+function getQuickMessage(occ: any, contactName: string | null): { label: string; body: string } | null {
+  const name = contactName ?? "there";
+  const dateStr = occ.startAt ? new Date(occ.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "your upcoming appointment";
+
+  // Unconfirmed — needs client confirmation (only if claimed)
+  const isClaimed = (occ.assignees ?? []).length > 0;
+  if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed && isClaimed) {
+    return {
+      label: "Request Confirmation",
+      body: `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}. Could you please confirm this works for you? Or let us know if you need to reschedule.`,
+    };
+  }
+
+  // Pending payment
+  if (occ.status === "PENDING_PAYMENT") {
+    const amount = totalPrice(occ);
+    const amountStr = amount != null ? ` of $${amount.toFixed(2)}` : "";
+    return {
+      label: "Request Payment",
+      body: `Hi ${name}, this is Seedlings Lawn Care. Your lawn service on ${dateStr} has been completed. A payment${amountStr} is due at your earliest convenience. Please let us know if you have any questions. Thank you!`,
+    };
+  }
+
+  return null;
+}
+
 function addonTotal(occ: any): number {
   return (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
 }
@@ -1544,6 +1573,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               gap={0}
               minW="150px"
             >
+              {(isAdmin || isSuper) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  w="full"
+                  justifyContent="start"
+                  onClick={() => { setCreateMenuOpen(false); setEditingLightEstimate(null); setLightEstDialogOpen(true); }}
+                >
+                  Estimate
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"
@@ -1593,17 +1633,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   onClick={() => { setCreateMenuOpen(false); setEditingAnnouncement(null); setAnnouncementDialogOpen(true); }}
                 >
                   Announcement
-                </Button>
-              )}
-              {(isAdmin || isSuper) && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  w="full"
-                  justifyContent="start"
-                  onClick={() => { setCreateMenuOpen(false); setEditingLightEstimate(null); setLightEstDialogOpen(true); }}
-                >
-                  Estimate
                 </Button>
               )}
             </VStack>
@@ -2236,6 +2265,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
               </HStack>
+              {isWorkerView && group.label === "Tomorrow" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
+                <Badge
+                  size="sm"
+                  variant="solid"
+                  bg="blue.400"
+                  color="white"
+                  ml="2"
+                  px="3"
+                  py="1"
+                  borderRadius="full"
+                  cursor="pointer"
+                  mb={3}
+                  _hover={{ opacity: 0.85 }}
+                  onClick={(e: any) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "reminders" } }));
+                  }}
+                >
+                  Plan tomorrow →
+                </Badge>
+              )}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {group.items.map((occ, occIdx) => {
             const assignees = occ.assignees ?? [];
@@ -2302,7 +2352,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
                         {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
                         {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
-                        {(occ as any).jobType && ` · Custom`}
+                        {(occ as any).jobType && ` · ${(occ as any).jobType}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
                       <Button
@@ -2369,7 +2419,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {occ.job?.property?.client?.displayName && ` — ${clientLabel(occ.job.property.client.displayName)}`}
                         {parseJobTags(occ).length > 0 && ` · ${parseJobTags(occ).map(jobTagLabel).join(", ")}`}
                         {(occ.addons ?? []).length > 0 && ` + ${(occ.addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}`}
-                        {(occ as any).jobType && ` · Custom`}
+                        {(occ as any).jobType && ` · ${(occ as any).jobType}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
                       <Button
@@ -2699,6 +2749,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                         <Mail size={12} /> Email {email}
                                       </Button>
                                     )}
+                                    {(() => {
+                                      const msg = getQuickMessage(occ, name);
+                                      if (!msg) return null;
+                                      const encoded = encodeURIComponent(msg.body);
+                                      return (
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
+                                            setContactMenuOcc(null);
+                                            if (phone) {
+                                              window.open(`sms:${phone}?body=${encoded}`, "_self");
+                                            } else if (email) {
+                                              window.open(`mailto:${email}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                                            }
+                                          }}>
+                                            <MessageCircle size={12} /> {msg.label}
+                                          </Button>
+                                      );
+                                    })()}
                                   </VStack>
                                 )}
                               </Box>
@@ -2859,6 +2926,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                           <Mail size={12} /> Email {email}
                                         </Button>
                                       )}
+                                      {(() => {
+                                        const msg = getQuickMessage(occ, name);
+                                        if (!msg) return null;
+                                        const encoded = encodeURIComponent(msg.body);
+                                        return (
+                                            <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
+                                              setContactMenuOcc(null);
+                                              if (phone) {
+                                                window.open(`sms:${phone}?body=${encoded}`, "_self");
+                                              } else if (email) {
+                                                window.open(`mailto:${email}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                                              }
+                                            }}>
+                                              <MessageCircle size={12} /> {msg.label}
+                                            </Button>
+                                        );
+                                      })()}
                                     </VStack>
                                   )}
                                 </Box>
@@ -2915,7 +2999,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   {occ.linkedOccurrence.job?.property?.displayName ?? "Job"}
                                   {occ.linkedOccurrence.job?.property?.client?.displayName && ` — ${clientLabel(occ.linkedOccurrence.job.property.client.displayName)}`}
                                   {parseJobTags(occ.linkedOccurrence).length > 0 && ` · ${parseJobTags(occ.linkedOccurrence).map(jobTagLabel).join(", ")}`}
-                                  {occ.linkedOccurrence.jobType && ` · Custom`}
+                                  {occ.linkedOccurrence.jobType && ` · ${occ.linkedOccurrence.jobType}`}
                                   {occ.linkedOccurrence.startAt && ` · ${fmtDate(occ.linkedOccurrence.startAt)}`}
                                 </a>
                               </Box>
@@ -3115,7 +3199,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </Badge>
                           ) : null;
                         })()}
-                        {(() => {
+                        {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (() => {
                           const actual = effectiveMinutes(occ);
                           const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
@@ -3124,7 +3208,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const parts: string[] = [];
                           if (actual != null) parts.push(`${formatDuration(actual)} actual`);
                           if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.`);
-                          parts.push(median != null ? `${formatDuration(median)} avg` : "no avg yet");
+                          if (occ.workflow === "STANDARD") {
+                            parts.push(median != null ? `${formatDuration(median)} avg` : "no avg yet");
+                          }
                           if (parts.length === 0) return null;
                           const color = actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
                           return (
@@ -3388,7 +3474,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Box>
                       );
                     })()}
-                    {(occ.estimatedMinutes != null || occ.startedAt || (occ as any).medianDurationMinutes != null) && (() => {
+                    {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (occ.estimatedMinutes != null || occ.startedAt || (occ as any).medianDurationMinutes != null) && (() => {
                       const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                       const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
                       const actual = effectiveMinutes(occ);
@@ -3406,9 +3492,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   <Text as="span" fontWeight="semibold">Est:</Text> {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}
                                 </Text>
                               )}
-                              <Text color="fg.muted">
-                                <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "not enough data yet"}
-                              </Text>
+                              {(occ.workflow === "STANDARD") && (
+                                <Text color="fg.muted">
+                                  <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "not enough data yet"}
+                                </Text>
+                              )}
                               {actual != null && (
                                 <Text color={adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
                                   Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}
@@ -3765,7 +3853,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               >
                                 {lo.startAt ? fmtDate(lo.startAt) : "No date"}
                                 {lo.job?.property?.displayName ? ` · ${lo.job.property.displayName}` : ""}
-                                {parseJobTags(lo).length > 0 && ` · ${parseJobTags(lo).map(jobTagLabel).join(", ")}`}{(lo as any).jobType && ` · Custom`}
+                                {parseJobTags(lo).length > 0 && ` · ${parseJobTags(lo).map(jobTagLabel).join(", ")}`}{(lo as any).jobType && ` · ${(lo as any).jobType}`}
                               </Badge>
                             ))}
                           </HStack>
@@ -4684,6 +4772,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           }))}
           onChanged={() => void load(false)}
           isAdmin={forAdmin && (isAdmin || isSuper)}
+          isClaimer={!!(me?.id && (manageOccurrence.assignees ?? []).some((a: any) => a.userId === me.id && a.assignedById === me.id && a.role !== "observer"))}
         />
       )}
 
@@ -4769,6 +4858,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           onOpenChange={(o) => { setPinnedNoteDialogOpen(o); if (!o) setPinnedNoteOcc(null); }}
           occurrenceId={pinnedNoteOcc.id}
           currentInstructions={(pinnedNoteOcc as any).instructions ?? []}
+          isRepeating={pinnedNoteOcc.workflow === "STANDARD" || (!pinnedNoteOcc.workflow && !pinnedNoteOcc.isOneOff && !pinnedNoteOcc.isEstimate)}
           onSaved={(instructions) => {
             setItems((prev) => prev.map((o) => o.id === pinnedNoteOcc.id ? { ...o, instructions } as any : o));
           }}
