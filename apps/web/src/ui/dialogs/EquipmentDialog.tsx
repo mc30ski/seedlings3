@@ -140,7 +140,7 @@ export default function EquipmentDialog({
       model: model,
       shortDesc: shortDesc,
       longDesc: longDesc,
-      energy: (type[0] as EquipmentEnergy) ?? EQUIPMENT_ENERGY[0],
+      energy: (energy[0] as EquipmentEnergy) ?? EQUIPMENT_ENERGY[0],
       features: features,
       condition: condition,
       issues: issues,

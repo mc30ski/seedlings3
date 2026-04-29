@@ -49,6 +49,8 @@ type Props = {
   occurrenceId: string;
   currentInstructions?: Instruction[];
   onSaved?: (instructions: Instruction[]) => void;
+  /** When false, carry-forward is hidden and all instructions default to non-repeating */
+  isRepeating?: boolean;
 };
 
 export default function PinnedNoteDialog({
@@ -57,6 +59,7 @@ export default function PinnedNoteDialog({
   occurrenceId,
   currentInstructions,
   onSaved,
+  isRepeating = true,
 }: Props) {
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [customText, setCustomText] = useState("");
@@ -77,7 +80,7 @@ export default function PinnedNoteDialog({
       const created = await apiPost<Instruction>(`/api/occurrences/${occurrenceId}/instructions`, {
         text,
         isPreset: true,
-        repeats: newRepeats,
+        repeats: isRepeating ? newRepeats : false,
       });
       setInstructions((prev) => [...prev, created]);
     } catch (err) {
@@ -91,7 +94,7 @@ export default function PinnedNoteDialog({
       const created = await apiPost<Instruction>(`/api/occurrences/${occurrenceId}/instructions`, {
         text: customText.trim(),
         isPreset: false,
-        repeats: newRepeats,
+        repeats: isRepeating ? newRepeats : false,
       });
       setInstructions((prev) => [...prev, created]);
       setCustomText("");
@@ -140,16 +143,18 @@ export default function PinnedNoteDialog({
                     {instructions.map((inst) => (
                       <HStack key={inst.id} gap={2} p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md" align="center">
                         <Text fontSize="sm" flex="1">{inst.text}</Text>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          px="1"
-                          minW="0"
-                          title={inst.repeats ? "Carries forward — click to make one-time" : "One-time — click to carry forward"}
-                          onClick={() => void toggleRepeats(inst.id, inst.repeats)}
-                        >
-                          <Repeat size={12} color={inst.repeats ? "var(--chakra-colors-blue-500)" : "var(--chakra-colors-gray-300)"} />
-                        </Button>
+                        {isRepeating && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            px="1"
+                            minW="0"
+                            title={inst.repeats ? "Carries forward — click to make one-time" : "One-time — click to carry forward"}
+                            onClick={() => void toggleRepeats(inst.id, inst.repeats)}
+                          >
+                            <Repeat size={12} color={inst.repeats ? "var(--chakra-colors-blue-500)" : "var(--chakra-colors-gray-300)"} />
+                          </Button>
+                        )}
                         <Button
                           size="xs"
                           variant="ghost"
@@ -169,14 +174,16 @@ export default function PinnedNoteDialog({
                   <Text fontSize="sm" color="fg.muted">No instructions yet. Add presets or custom instructions below.</Text>
                 )}
 
-                <Checkbox.Root
-                  checked={newRepeats}
-                  onCheckedChange={(e) => setNewRepeats(!!e.checked)}
-                >
-                  <Checkbox.HiddenInput />
-                  <Checkbox.Control />
-                  <Checkbox.Label fontSize="sm">Carry forward new instructions to future occurrences</Checkbox.Label>
-                </Checkbox.Root>
+                {isRepeating && (
+                  <Checkbox.Root
+                    checked={newRepeats}
+                    onCheckedChange={(e) => setNewRepeats(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label fontSize="sm">Carry forward new instructions to future occurrences</Checkbox.Label>
+                  </Checkbox.Root>
+                )}
 
                 <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Quick add</Text>

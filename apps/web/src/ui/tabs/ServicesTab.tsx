@@ -1551,7 +1551,7 @@ export default function ServicesTab({
                                 <> + {((occ as any).addons ?? []).map((a: any) => a.tag ? jobTagLabel(a.tag) : a.customLabel).join(", ")}</>
                               )}
                               {(occ as any).jobType && (
-                                <> · Custom</>
+                                <> · {(occ as any).jobType}</>
                               )}
                             </Text>
                             {occ.assignees.length === 0 ? (
@@ -1972,7 +1972,7 @@ export default function ServicesTab({
                                       >
                                         {lo.startAt ? fmtDate(lo.startAt) : "No date"} · {prettyStatus(lo.status)}
                                         {parseJobTags(lo).length > 0 && <> · {parseJobTags(lo).map(jobTagLabel).join(", ")}</>}
-                                        {(lo as any).jobType && <> · Custom</>}
+                                        {(lo as any).jobType && <> · {(lo as any).jobType}</>}
                                       </Badge>
                                     ))}
                                   </HStack>
@@ -2632,8 +2632,10 @@ export default function ServicesTab({
                           void loadDetail(job.id);
                           continue;
                         }
+                        const excludeStatuses = new Set(["COMPLETED", "CLOSED", "CANCELED", "ARCHIVED", "PENDING_PAYMENT"]);
                         for (const o of detail.occurrences) {
                           if (o.id === linkPickerOccId) continue;
+                          if (excludeStatuses.has(o.status)) continue;
                           allOccs.push({
                             occ: o,
                             jobLabel: job.property?.displayName ?? "Job",
@@ -2679,7 +2681,7 @@ export default function ServicesTab({
                             <Text fontSize="sm" fontWeight="medium">
                               {o.startAt ? fmtDate(o.startAt) : "No date"}
                               {parseJobTags(o).length > 0 && <> · {parseJobTags(o).map(jobTagLabel).join(", ")}</>}
-                              {(o as any).jobType && <> · Custom</>}
+                              {(o as any).jobType && <> · {(o as any).jobType}</>}
                             </Text>
                             <Text fontSize="xs" color="fg.muted">
                               {prettyStatus(o.status)}
@@ -2749,6 +2751,7 @@ export default function ServicesTab({
           onOpenChange={(o) => { setInstructionsDialogOpen(o); if (!o) setInstructionsOcc(null); }}
           occurrenceId={instructionsOcc.id}
           currentInstructions={(instructionsOcc as any).instructions ?? []}
+          isRepeating={instructionsOcc.workflow === "STANDARD" || (!instructionsOcc.workflow && !instructionsOcc.isOneOff && !instructionsOcc.isEstimate)}
           onSaved={(instructions) => {
             if (instructionsJobId) void loadDetail(instructionsJobId, true);
           }}

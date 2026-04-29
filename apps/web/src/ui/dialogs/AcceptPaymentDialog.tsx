@@ -112,7 +112,7 @@ export default function AcceptPaymentDialog({
 
   async function handleSubmit() {
     const amt = parseFloat(amountPaid);
-    if (isNaN(amt) || amt <= 0) {
+    if (isNaN(amt) || amt < 0) {
       publishInlineMessage({ type: "WARNING", text: "Please enter a valid amount." });
       return;
     }

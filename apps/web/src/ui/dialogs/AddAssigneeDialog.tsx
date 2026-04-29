@@ -31,9 +31,11 @@ type Props = {
   currentAssignees: Assignee[];
   onChanged?: () => void;
   isAdmin?: boolean;
+  /** When true, the current user is the claimer and can reassign roles */
+  isClaimer?: boolean;
 };
 
-export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, onChanged, isAdmin }: Props) {
+export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, onChanged, isAdmin, isClaimer }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
@@ -104,10 +106,13 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   }
 
   async function handleMakeClaimer(userId: string) {
-    if (!isAdmin) return;
+    if (!isAdmin && !isClaimer) return;
     setBusyId(userId);
     try {
-      await apiPost(`/api/admin/occurrences/${occurrenceId}/reassign-claimer`, { userId });
+      const endpoint = isAdmin
+        ? `/api/admin/occurrences/${occurrenceId}/reassign-claimer`
+        : `/api/occurrences/${occurrenceId}/reassign-claimer`;
+      await apiPost(endpoint, { userId });
       setMembers((prev) => prev.map((m) => ({
         ...m,
         assignedById: m.userId === userId ? userId : (m.role === "observer" ? m.assignedById : userId),
@@ -121,11 +126,14 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   }
 
   async function handleToggleRole(userId: string, currentRole: string | null) {
-    if (!isAdmin) return;
+    if (!isAdmin && !isClaimer) return;
     const newRole = currentRole === "observer" ? null : "observer";
     setBusyId(userId);
     try {
-      await apiPatch(`/api/admin/occurrences/${occurrenceId}/assignees/${userId}/role`, { role: newRole ?? undefined });
+      const endpoint = isAdmin
+        ? `/api/admin/occurrences/${occurrenceId}/assignees/${userId}/role`
+        : `/api/occurrences/${occurrenceId}/assignees/${userId}/role`;
+      await apiPatch(endpoint, { role: newRole ?? undefined });
       setMembers((prev) => prev.map((m) => {
         if (m.userId !== userId) return m;
         if (newRole === "observer") return { ...m, role: "observer", assignedById: null };
@@ -161,10 +169,10 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                 addBusy={addBusy}
                 onAdd={handleAdd}
                 onRemove={handleRemove}
-                onToggleRole={isAdmin ? handleToggleRole : undefined}
-                onMakeClaimer={isAdmin ? handleMakeClaimer : undefined}
-                showRoleControls={!!isAdmin}
-                showMakeClaimer={!!isAdmin}
+                onToggleRole={(isAdmin || isClaimer) ? handleToggleRole : undefined}
+                onMakeClaimer={(isAdmin || isClaimer) ? handleMakeClaimer : undefined}
+                showRoleControls={!!(isAdmin || isClaimer)}
+                showMakeClaimer={!!(isAdmin || isClaimer)}
                 allowRemoveClaimer={!!isAdmin}
                 myId={myId}
                 onLeave={handleLeave}

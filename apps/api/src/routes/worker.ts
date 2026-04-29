@@ -690,6 +690,34 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.jobs.removeOccurrenceAssignee(uid, String(req.params.id), String(req.params.userId));
   });
 
+  // Claimer can reassign claimer role
+  app.post("/occurrences/:id/reassign-claimer", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const { userId } = req.body || {};
+    if (!userId) throw app.httpErrors.badRequest("userId is required");
+    // Verify current user is the claimer
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid && a.role !== "observer");
+    if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can reassign this role");
+    return services.jobs.reassignClaimer(uid, occurrenceId, String(userId));
+  });
+
+  // Claimer can toggle observer/worker role
+  app.patch("/occurrences/:id/assignees/:userId/role", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const targetUserId = String(req.params.userId);
+    const { role } = req.body || {};
+    // Verify current user is the claimer
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, include: { assignees: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    const isClaimer = occ.assignees.some((a: any) => a.userId === uid && a.assignedById === uid && a.role !== "observer");
+    if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can change roles");
+    return services.jobs.changeAssigneeRole(uid, occurrenceId, targetUserId, role === "observer" ? "observer" : null);
+  });
+
   app.post("/occurrences/:id/unclaim", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     return services.jobs.unclaimOccurrence(uid, String(req.params.id));

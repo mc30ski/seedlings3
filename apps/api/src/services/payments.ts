@@ -13,8 +13,8 @@ export const payments: ServicesPayments = {
     if (!VALID_METHODS.includes(method as PaymentMethod)) {
       throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${method}`, 400);
     }
-    if (amountPaid <= 0) {
-      throw new ServiceError("INVALID_AMOUNT", "Amount paid must be greater than zero.", 400);
+    if (amountPaid < 0) {
+      throw new ServiceError("INVALID_AMOUNT", "Amount paid cannot be negative.", 400);
     }
     if (!splits || splits.length === 0) {
       throw new ServiceError("INVALID_SPLITS", "At least one payment split is required.", 400);
@@ -526,8 +526,8 @@ export const payments: ServicesPayments = {
 
       const data: any = {};
       if (input.amountPaid !== undefined) {
-        if (input.amountPaid <= 0) {
-          throw new ServiceError("INVALID_AMOUNT", "Amount paid must be greater than zero.", 400);
+        if (input.amountPaid < 0) {
+          throw new ServiceError("INVALID_AMOUNT", "Amount paid cannot be negative.", 400);
         }
         data.amountPaid = input.amountPaid;
       }
