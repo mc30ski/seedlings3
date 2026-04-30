@@ -272,7 +272,7 @@ export default function SuperUnclaimedTab() {
               borderColor={cardBorder}
               bg={cardBg}
             >
-              <Card.Body py="3" px="4">
+              <Card.Body py="2" px="3">
                 <VStack align="start" gap={1}>
                   <Text fontSize="sm" fontWeight="semibold">
                     {isVip && <span title={vipReason || "VIP Client"} style={{ cursor: "help" }}>⭐ </span>}

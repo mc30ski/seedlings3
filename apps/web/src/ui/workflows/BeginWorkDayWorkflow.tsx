@@ -341,7 +341,7 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                   <Dialog.Body>
                     <VStack align="stretch" gap={3}>
                       <Card.Root variant="outline" borderColor="orange.300" bg="orange.50">
-                        <Card.Body py="3" px="4">
+                        <Card.Body py="2" px="3">
                           <VStack align="start" gap={1}>
                             <Text fontSize="sm" fontWeight="semibold">
                               {current.job?.property?.displayName}

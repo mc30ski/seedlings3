@@ -531,6 +531,33 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  // ── Equipment Instructions (admin only) ─────────────────────────────────
+
+  app.post("/admin/equipment/:id/instructions", adminGuard, async (req: any) => {
+    const equipmentId = String(req.params.id);
+    const { text, isPreset } = (req.body || {}) as { text: string; isPreset?: boolean };
+    if (!text?.trim()) throw app.httpErrors.badRequest("text is required");
+    const count = await prisma.equipmentInstruction.count({ where: { equipmentId } });
+    return prisma.equipmentInstruction.create({
+      data: { equipmentId, text: text.trim(), isPreset: !!isPreset, sortOrder: count },
+    });
+  });
+
+  app.patch("/admin/equipment/:id/instructions/:instructionId", adminGuard, async (req: any) => {
+    const instructionId = String(req.params.instructionId);
+    const body = req.body || {};
+    const data: any = {};
+    if ("text" in body) data.text = String(body.text).trim();
+    if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
+    return prisma.equipmentInstruction.update({ where: { id: instructionId }, data });
+  });
+
+  app.delete("/admin/equipment/:id/instructions/:instructionId", adminGuard, async (req: any) => {
+    const instructionId = String(req.params.instructionId);
+    await prisma.equipmentInstruction.delete({ where: { id: instructionId } });
+    return { deleted: true };
+  });
+
   // ── Job Service Default Property Photos ─────────────────────────────────
 
   app.get("/admin/jobs/:id/property-photos", adminGuard, async (req: any) => {

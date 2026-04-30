@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -690,6 +690,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
   const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
+  const [actionMenuOcc, setActionMenuOcc] = useState<string | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
@@ -717,6 +718,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [contactMenuOcc]);
 
   useEffect(() => {
+    if (!actionMenuOcc) return;
+    const close = () => setActionMenuOcc(null);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [actionMenuOcc]);
+
+  useEffect(() => {
     if (!quickDateMenuOpen) return;
     const close = () => setQuickDateMenuOpen(false);
     const timer = setTimeout(() => document.addEventListener("click", close), 50);
@@ -728,11 +736,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     message: string;
     confirmLabel: string;
     colorPalette: string;
-    onConfirm: ((inputValue: string) => void) | (() => void);
+    onConfirm: ((inputValue: string, amountValue?: string) => void) | (() => void);
     inputPlaceholder?: string;
     inputLabel?: string;
     inputOptional?: boolean;
     inputDefaultValue?: string;
+    amountLabel?: string;
+    amountPlaceholder?: string;
+    amountDefaultValue?: string;
     cancelLabel?: string;
     onCancelAction?: () => void;
   } | null>(null);
@@ -1160,11 +1171,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setBusyOccId(null);
   }
 
-  async function completeEstimate(occurrenceId: string, comments: string) {
+  async function completeEstimate(occurrenceId: string, comments: string, amount?: string) {
     setBusyOccId(occurrenceId);
     try {
+      const proposalAmount = amount && amount.trim() !== "" ? parseFloat(amount) : null;
       await apiPost(`/api/occurrences/${occurrenceId}/submit-proposal`, {
         proposalNotes: comments || undefined,
+        ...(proposalAmount != null && !Number.isNaN(proposalAmount) ? { proposalAmount } : {}),
       });
       publishInlineMessage({ type: "SUCCESS", text: "Estimate completed." });
       await load(false);
@@ -1763,7 +1776,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2}>
       {headerSlot && (
         <HStack mb={2} gap={2} wrap="nowrap">
           {headerSlot}
@@ -2337,7 +2350,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     opacity: ghostHighPriority ? 1 : 0.8,
                   }}
                 >
-                  <Card.Body py="3" px="4">
+                  <Card.Body py="2" px="3">
                     <VStack align="start" gap={1}>
                       <HStack gap={2} align="center">
                         <Bell size={14} style={{ color: "var(--chakra-colors-purple-600)" }} />
@@ -2408,7 +2421,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     opacity: 0.8,
                   }}
                 >
-                  <Card.Body py="3" px="4">
+                  <Card.Body py="2" px="3">
                     <VStack align="start" gap={1}>
                       <HStack gap={2} align="center">
                         <Pin size={14} fill="currentColor" style={{ color: `var(--chakra-colors-${ghostColor}-600)` }} />
@@ -2575,7 +2588,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
                   </Box>
                 )}
-                <Card.Header py="3" px="4" pb="0" display="block">
+                <Card.Header py="2" px="3" pb="0" display="block">
                   {isCardCompact ? (
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection="column" gap={1}>
@@ -2649,6 +2662,119 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     </Button>
                                     <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
                                       <CheckCircle2 size={12} /> Complete
+                                    </Button>
+                                  </VStack>
+                                )}
+                              </Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
+                                e.stopPropagation();
+                                setConfirmAction({
+                                  title: "Complete Estimate?",
+                                  message: "Add any comments about this estimate (optional):",
+                                  confirmLabel: "Complete",
+                                  colorPalette: "purple",
+                                  inputLabel: "Comments",
+                                  inputPlaceholder: "Notes about this estimate...",
+                                  inputOptional: true,
+                                  inputDefaultValue: occ.proposalNotes ?? "",
+                                  amountLabel: "Proposal Amount ($) — optional",
+                                  amountPlaceholder: "0.00",
+                                  amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
+                                  onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
+                                });
+                              }}><CheckCircle2 size={12} /></Box>
+                            );
+                          }
+                          if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper)))) {
+                            return (
+                              <Box position="relative" flexShrink={0}>
+                                <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
+                                  e.stopPropagation();
+                                  setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
+                                }}><CheckCircle2 size={12} /></Box>
+                                {quickActionMenuOcc === occ.id && (
+                                  <VStack
+                                    position="fixed"
+                                    bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                                    onClick={(e: any) => e.stopPropagation()}
+                                    ref={(el: HTMLDivElement | null) => {
+                                      if (el && el.parentElement) {
+                                        const rect = el.parentElement.getBoundingClientRect();
+                                        el.style.top = `${rect.bottom + 4}px`;
+                                        el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+                                      }
+                                    }}
+                                  >
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
+                                      setQuickActionMenuOcc(null);
+                                      setConfirmAction({
+                                        title: "Accept Estimate?",
+                                        message: "Add a comment:",
+                                        confirmLabel: "Accept",
+                                        colorPalette: "green",
+                                        inputPlaceholder: "Comment...",
+                                        inputLabel: "Comment",
+                                        onConfirm: async (comment: string) => {
+                                          try {
+                                            const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
+                                            publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+                                            await load(false);
+                                            if (!result.jobId) {
+                                              setPendingEstimateConvert({
+                                                occurrenceId: occ.id,
+                                                contactName: occ.contactName,
+                                                contactPhone: occ.contactPhone,
+                                                contactEmail: occ.contactEmail,
+                                                estimateAddress: occ.estimateAddress,
+                                                proposalAmount: occ.proposalAmount,
+                                                proposalNotes: occ.proposalNotes,
+                                                title: occ.title,
+                                                estimatedMinutes: occ.estimatedMinutes,
+                                              });
+                                            } else if (result.jobId) {
+                                              const rawTags = result.occurrence?.jobTags;
+                                              setPromptOccDefaults({
+                                                notes: result.occurrence?.notes ?? null,
+                                                price: result.occurrence?.price ?? null,
+                                                estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
+                                                jobTags: rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return null; } })()) : null,
+                                                jobType: result.occurrence?.jobType ?? null,
+                                              });
+                                              setPromptOccJobId(result.jobId);
+                                            }
+                                          } catch (err: any) {
+                                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                                          }
+                                        },
+                                      });
+                                    }}>
+                                      <CheckCircle2 size={12} /> Accept
+                                    </Button>
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
+                                      setQuickActionMenuOcc(null);
+                                      setConfirmAction({
+                                        title: "Reject Estimate?",
+                                        message: "Add a reason:",
+                                        confirmLabel: "Reject",
+                                        colorPalette: "red",
+                                        inputPlaceholder: "Reason...",
+                                        inputLabel: "Reason",
+                                        onConfirm: async (reason: string) => {
+                                          try {
+                                            await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
+                                            publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
+                                            await load(false);
+                                          } catch (err: any) {
+                                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                                          }
+                                        },
+                                      });
+                                    }}>
+                                      <X size={12} /> Reject
                                     </Button>
                                   </VStack>
                                 )}
@@ -2771,19 +2897,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               </Box>
                             );
                           })()}
-                          {isWorkerView && (
-                            <>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
-                                <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                              </Button>
-                              <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                                {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-                              </Button>
-                            </>
-                          )}
-                          <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); shareOccurrenceLink(occ.id); }} title="Share link">
-                            <Share2 size={14} />
-                          </Button>
+                          <Box position="relative">
+                            <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
+                              <MoreHorizontal size={16} />
+                            </Button>
+                            {actionMenuOcc === occ.id && (
+                              <VStack
+                                position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                onClick={(e: any) => e.stopPropagation()}
+                              >
+                                {isWorkerView && (
+                                  <>
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
+                                      <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                                      <Box as="span" ml={2}>{likedIds.has(occ.id) ? "Unlike" : "Like"}</Box>
+                                    </Button>
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void togglePin(occ.id); }}>
+                                      <Pin size={14} fill={pinnedIds.has(occ.id) ? "currentColor" : "none"} />
+                                      <Box as="span" ml={2}>{pinnedIds.has(occ.id) ? "Unpin" : "Pin"}</Box>
+                                    </Button>
+                                  </>
+                                )}
+                                <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id); }}>
+                                  <Share2 size={14} />
+                                  <Box as="span" ml={2}>Share link</Box>
+                                </Button>
+                              </VStack>
+                            )}
+                          </Box>
                         </HStack>
                       </HStack>
                       {isLightEstimate && occ.estimateAddress && (
@@ -2948,19 +3090,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 </Box>
                               );
                             })()}
-                            {isWorkerView && (
-                              <>
-                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void toggleLike(occ.id); }} title={likedIds.has(occ.id) ? "Unlike" : "Like"}>
-                                  <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                                </Button>
-                                <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); void togglePin(occ.id); }} title={pinnedIds.has(occ.id) ? "Unpin" : "Pin"}>
-                                  {pinnedIds.has(occ.id) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-                                </Button>
-                              </>
-                            )}
-                            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); shareOccurrenceLink(occ.id); }} title="Share link">
-                              <Share2 size={14} />
-                            </Button>
+                            <Box position="relative">
+                              <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
+                                <MoreHorizontal size={16} />
+                              </Button>
+                              {actionMenuOcc === occ.id && (
+                                <VStack
+                                  position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                  ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                  onClick={(e: any) => e.stopPropagation()}
+                                >
+                                  {isWorkerView && (
+                                    <>
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
+                                        <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                                        <Box as="span" ml={2}>{likedIds.has(occ.id) ? "Unlike" : "Like"}</Box>
+                                      </Button>
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void togglePin(occ.id); }}>
+                                        <Pin size={14} fill={pinnedIds.has(occ.id) ? "currentColor" : "none"} />
+                                        <Box as="span" ml={2}>{pinnedIds.has(occ.id) ? "Unpin" : "Pin"}</Box>
+                                      </Button>
+                                    </>
+                                  )}
+                                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id); }}>
+                                    <Share2 size={14} />
+                                    <Box as="span" ml={2}>Share link</Box>
+                                  </Button>
+                                </VStack>
+                              )}
+                            </Box>
                           </HStack>
                         </HStack>
                         {isEstimateOcc && occ.title && !isLightEstimate && (
@@ -3097,7 +3255,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
 
                 {isCardCompact ? (
-                  <Card.Body py="3" px="4" pt="1" overflow="hidden">
+                  <Card.Body py="2" px="3" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
                       {/* Elapsed time for IN_PROGRESS / PAUSED */}
                       {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
@@ -3949,7 +4107,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 )}
 
                 {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
-                  <Card.Footer py="3" px="4" pt="0">
+                  <Card.Footer py="2" px="3" pt="0">
                     <VStack align="start" gap={2} mb="2">
                     {/* Confirm client — must happen before Start */}
                     {needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
@@ -4043,7 +4201,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           inputPlaceholder: "Notes about this estimate...",
                           inputOptional: true,
                           inputDefaultValue: occ.proposalNotes ?? "",
-                          onConfirm: (comments: string) => void completeEstimate(occ.id, comments),
+                          amountLabel: "Proposal Amount ($) — optional",
+                          amountPlaceholder: "0.00",
+                          amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
+                          onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
                         })}
                       >
                         Complete Estimate
@@ -4632,7 +4793,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative &&
                   (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED")
                 ) && (
-                  <Card.Footer py="3" px="4" pt="0">
+                  <Card.Footer py="2" px="3" pt="0">
                     <HStack gap={2} wrap="wrap">
                       {/* Task reopen */}
                       {isTask && occ.status === "CLOSED" && (
@@ -4710,7 +4871,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {/* Guidance + Instructions — collapsed: inline wrapping row, expanded: full-width banner */}
                 {isCardCompact ? (
                   ((occ.propertyPhotos ?? []).length > 0 || ((occ as any).instructions ?? []).length > 0) && (
-                    <Box mx="4" mb="1" mt="0" display="flex" flexWrap="wrap" gap="1">
+                    <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
                       {(occ.propertyPhotos ?? []).length > 0 && (
                         <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       )}
@@ -4725,12 +4886,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 ) : (
                   <>
                     {(occ.propertyPhotos ?? []).length > 0 && (
-                      <Box mx="4" mb="1" mt="0">
+                      <Box mx="3" mb="2" mt="0">
                         <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       </Box>
                     )}
                     {((occ as any).instructions ?? []).length > 0 && (
-                      <Box mx="4" mb="3" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                      <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
                         <VStack align="stretch" gap="0.5">
                           {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
                             <HStack key={inst.id} gap="1">
@@ -4912,11 +5073,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         inputLabel={confirmAction?.inputLabel}
         inputOptional={confirmAction?.inputOptional}
         inputDefaultValue={confirmAction?.inputDefaultValue}
+        amountLabel={confirmAction?.amountLabel}
+        amountPlaceholder={confirmAction?.amountPlaceholder}
+        amountDefaultValue={confirmAction?.amountDefaultValue}
         cancelLabel={confirmAction?.cancelLabel}
         onCancelAction={confirmAction?.onCancelAction}
-        onConfirm={(inputValue: string) => {
-          if (confirmAction?.inputPlaceholder) {
-            (confirmAction.onConfirm as (v: string) => void)(inputValue);
+        onConfirm={(inputValue: string, amountValue?: string) => {
+          if (confirmAction?.inputPlaceholder || confirmAction?.amountLabel) {
+            (confirmAction!.onConfirm as (v: string, a?: string) => void)(inputValue, amountValue);
           } else {
             (confirmAction?.onConfirm as () => void)();
           }

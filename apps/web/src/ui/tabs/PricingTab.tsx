@@ -168,7 +168,7 @@ export default function PricingTab({ isSuper }: Props) {
           if (!v) return null;
           return (
             <Card.Root key={entry.key} variant="outline">
-              <Card.Body py="3" px="4">
+              <Card.Body py="2" px="3">
                 <HStack justify="space-between" align="start" gap={3}>
                   <VStack align="start" gap={1} flex="1" minW={0}>
                     <HStack gap={2} align="center">

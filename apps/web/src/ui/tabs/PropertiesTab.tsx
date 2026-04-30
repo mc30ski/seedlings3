@@ -417,7 +417,7 @@ export default function PropertiesTab({
                 </Text>
               )}
             <Card.Root variant="outline" borderColor={p.status === "ARCHIVED" ? "gray.200" : (p.client as any)?.isVip ? "yellow.300" : undefined} bg={p.status === "ARCHIVED" ? "gray.50" : undefined}>
-              <Card.Header py="3" px="4" pb="0">
+              <Card.Header py="2" px="3" pb="0">
                 <VStack align="start" gap={1.5}>
                   <HStack gap={1} minW={0}>
                     {(p.client as any)?.isVip && <Text title={(p.client as any)?.vipReason || "VIP Client"} cursor="help">⭐</Text>}
@@ -443,7 +443,7 @@ export default function PropertiesTab({
                 </VStack>
               </Card.Header>
 
-              <Card.Body py="3" px="4" pt="1">
+              <Card.Body py="2" px="3" pt="1">
                 <VStack align="start" gap={1.5}>
                   <Box fontSize="sm">
                     <MapLink address={address} />
@@ -490,11 +490,11 @@ export default function PropertiesTab({
                   )}
                 </VStack>
               </Card.Body>
-              <Card.Body py="3" px="4" pt="0">
+              <Card.Body py="2" px="3" pt="0">
                 <PropertyPhotosManager propertyId={p.id} readOnly={!forAdmin} />
               </Card.Body>
               {forAdmin && (
-                <Card.Footer py="3" px="4" pt="0">
+                <Card.Footer py="2" px="3" pt="0">
                   <HStack gap={2} wrap="wrap">
                     <StatusButton
                       id={"properties-edit"}

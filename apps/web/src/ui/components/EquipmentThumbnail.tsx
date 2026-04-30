@@ -15,6 +15,8 @@ type Props = {
   equipmentId: string;
   /** Use admin endpoint when true; defaults to worker (read-only) */
   isAdmin?: boolean;
+  /** When false, skip the photos API call entirely (caller already knows there are no photos). */
+  hasPhotos?: boolean;
   size?: number;
   onClick?: () => void;
 };
@@ -24,10 +26,10 @@ type Props = {
  * Lazy-loads when scrolled into view (IntersectionObserver).
  * Clicking opens a full-size viewer (unless onClick is provided).
  */
-export default function EquipmentThumbnail({ equipmentId, isAdmin, size = 64, onClick }: Props) {
+export default function EquipmentThumbnail({ equipmentId, isAdmin, hasPhotos, size = 64, onClick }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [inView, setInView] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(hasPhotos === false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -58,6 +60,10 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, size = 64, on
   // Fetch the photo URL once visible (or use the shared cache so the expanded card reuses the same URL)
   useEffect(() => {
     if (!inView) return;
+    if (hasPhotos === false) {
+      setLoaded(true);
+      return;
+    }
     const cached = getCachedEquipmentPhotos(equipmentId, !!isAdmin);
     if (cached) {
       setUrl(cached.length > 0 ? cached[0].url : null);
@@ -79,7 +85,7 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, size = 64, on
       if (!cancelled) setLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [inView, equipmentId, isAdmin]);
+  }, [inView, equipmentId, isAdmin, hasPhotos]);
 
   // Always reserve space so siblings don't shift when the photo loads (or doesn't exist).
   const hasImage = !!url;

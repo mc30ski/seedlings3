@@ -360,7 +360,7 @@ function FeedCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
       borderColor={style.borderColor}
       bg={style.bg}
     >
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <HStack align="start" gap={3}>
           {/* Timeline dot */}
           <Box

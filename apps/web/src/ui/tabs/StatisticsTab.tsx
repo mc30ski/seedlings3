@@ -290,7 +290,7 @@ export default function StatisticsTab({ myId }: Props = {}) {
 
                 return (
                   <Card.Root key={w.userId} variant="outline">
-                    <Card.Body py="3" px="4">
+                    <Card.Body py="2" px="3">
                       <HStack justify="space-between" align="start" mb={2}>
                         <VStack align="start" gap={0}>
                           <Text fontSize="md" fontWeight="semibold">{w.displayName}</Text>
@@ -492,7 +492,7 @@ function ChartView({ workers, daysInRange }: { workers: WorkerStat[]; daysInRang
 function ChartSection({ title, subtitle, children }: { title: string; subtitle?: React.ReactNode; children: React.ReactNode }) {
   return (
     <Card.Root variant="outline">
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <HStack justify="space-between" align="center" mb={2}>
           <Text fontSize="sm" fontWeight="semibold">{title}</Text>
           {subtitle}

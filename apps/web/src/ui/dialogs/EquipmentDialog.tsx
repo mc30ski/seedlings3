@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Badge,
+  Box,
   Button,
   Checkbox,
   Dialog,
@@ -30,6 +31,8 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import EquipmentPhotos from "@/src/ui/components/EquipmentPhotos";
+import EquipmentInstructionsDialog from "@/src/ui/dialogs/EquipmentInstructionsDialog";
+import type { EquipmentInstruction } from "@/src/lib/types";
 
 type Props = {
   open: boolean;
@@ -66,6 +69,8 @@ export default function EquipmentDialog({
   const [age, setAge] = useState<string | undefined>("");
   const [dailyRate, setDailyRate] = useState("");
   const [requiresInsurance, setRequiresInsurance] = useState(false);
+  const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
+  const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
 
   const typeItems = useMemo(
     () =>
@@ -116,6 +121,7 @@ export default function EquipmentDialog({
       setAge(initial.age ?? "");
       setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
       setRequiresInsurance(!!initial.requiresInsurance);
+      setInstructions(initial.instructions ?? []);
     } else {
       setType([EQUIPMENT_KIND[0]]);
       setQrSlug("");
@@ -130,6 +136,7 @@ export default function EquipmentDialog({
       setAge("");
       setDailyRate("");
       setRequiresInsurance(false);
+      setInstructions([]);
     }
   }, [open, mode, initial]);
 
@@ -381,6 +388,29 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
+                {mode === "UPDATE" && initial?.id && isAdmin && (
+                  <div>
+                    <HStack justify="space-between" alignItems="center" mb="1">
+                      <Text fontSize="sm" fontWeight="medium">Instructions</Text>
+                      <Button size="xs" variant="outline" onClick={() => setInstructionsDialogOpen(true)}>
+                        Manage Instructions
+                      </Button>
+                    </HStack>
+                    {instructions.length > 0 ? (
+                      <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                        <VStack align="stretch" gap="0.5">
+                          {instructions.map((inst) => (
+                            <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
+                              📌 {inst.text}
+                            </Text>
+                          ))}
+                        </VStack>
+                      </Box>
+                    ) : (
+                      <Text fontSize="xs" color="fg.muted">No instructions set.</Text>
+                    )}
+                  </div>
+                )}
                 {mode === "UPDATE" && initial?.id && (
                   <div>
                     <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
@@ -411,6 +441,20 @@ export default function EquipmentDialog({
           </Dialog.Content>
         </Dialog.Positioner>
       </Portal>
+      {mode === "UPDATE" && initial?.id && isAdmin && (
+        <EquipmentInstructionsDialog
+          open={instructionsDialogOpen}
+          onOpenChange={setInstructionsDialogOpen}
+          equipmentId={initial.id}
+          currentInstructions={instructions}
+          onSaved={(updated) => {
+            setInstructions(updated);
+            // Trigger parent reload so cards show the new instructions immediately
+            // (they're already persisted via the inner dialog's API calls).
+            onSaved?.({ ...initial, instructions: updated });
+          }}
+        />
+      )}
     </Dialog.Root>
   );
 }

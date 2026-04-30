@@ -148,6 +148,7 @@ model Equipment {
   photos       EquipmentPhoto[]
   pins         PinnedEquipment[]
   likes        LikedEquipment[]
+  instructions EquipmentInstruction[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -796,6 +797,20 @@ model LikedEquipment {
 
   @@unique([userId, equipmentId])
   @@index([userId])
+}
+
+model EquipmentInstruction {
+  id           String    @id @default(cuid())
+
+  equipmentId  String
+  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  text         String
+  isPreset     Boolean   @default(false)
+  sortOrder    Int       @default(0)
+  createdAt    DateTime  @default(now())
+
+  @@index([equipmentId])
 }
 
 model OccurrenceComment {

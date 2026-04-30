@@ -356,7 +356,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
             if (!v) return null;
             return (
               <Card.Root key={entry.key} variant="outline">
-                <Card.Body py="3" px="4">
+                <Card.Body py="2" px="3">
                   <HStack justify="space-between" align="start" gap={3}>
                     <VStack align="start" gap={1} flex="1" minW={0}>
                       <HStack gap={2} align="center" wrap="wrap">
@@ -401,7 +401,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
           <VStack align="stretch" gap={3}>
             {settings.map((s) => (
               <Card.Root key={s.id} variant="outline">
-                <Card.Body py="3" px="4">
+                <Card.Body py="2" px="3">
                   <VStack align="start" gap={1}>
                     <HStack justify="space-between" w="full" align="start">
                       <VStack align="start" gap={0}>

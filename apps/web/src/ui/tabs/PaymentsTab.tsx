@@ -338,7 +338,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                 toggleCard();
               }}
             >
-              <Card.Body py="3" px="4">
+              <Card.Body py="2" px="3">
                 {isCardCompact ? (
                   <HStack justify="space-between" align="center">
                     <Text fontSize="md" fontWeight="semibold" truncate>
@@ -488,7 +488,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                   toggleCard();
                 }}
               >
-                <Card.Body py="3" px="4">
+                <Card.Body py="2" px="3">
                   {isCardCompact ? (
                     <HStack justify="space-between" align="center">
                       <Text fontSize="md" fontWeight="semibold" truncate>
@@ -936,7 +936,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2}>
       <HStack mb={2} gap={2} wrap="nowrap">
         <Select.Root
           collection={typeFilterCollection}
@@ -1256,7 +1256,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 toggleCard();
               }}
             >
-              <Card.Body py="3" px="4">
+              <Card.Body py="2" px="3">
                 {isCardCompact ? (
                   <HStack justify="space-between" align="center">
                     <Text fontSize="md" fontWeight="semibold" truncate>
@@ -1439,7 +1439,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   toggleCard();
                 }}
               >
-                <Card.Body py="3" px="4">
+                <Card.Body py="2" px="3">
                   {isCardCompact ? (
                     <HStack justify="space-between" align="center">
                       <Text fontSize="md" fontWeight="semibold" truncate>
