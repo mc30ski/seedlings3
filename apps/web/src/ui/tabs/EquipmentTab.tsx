@@ -18,7 +18,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertTriangle, Filter, LayoutList, List, Maximize2, Plus, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Filter, Hand, Heart, LayoutList, List, Maximize2, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -68,10 +68,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const pfx = purpose === "WORKER" ? "equip_w" : "equip_a";
   const [compact, setCompact] = usePersistedState(`${pfx}_compact`, false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(
     `${pfx}_status`, purpose === "WORKER" ? ["CLAIMED"] : ["ALL"]
   );
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
+  const [likedOnly, setLikedOnly] = usePersistedState<boolean>(`${pfx}_likedOnly`, false);
+
+  const isWorkerView = purpose === "WORKER";
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
@@ -151,6 +158,107 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       .catch(() => {});
   }, [forAdmin]);
 
+  // Worker-only: load pinned + liked equipment
+  useEffect(() => {
+    if (!isWorkerView) return;
+    apiGet<string[]>("/api/equipment/pinned")
+      .then((ids) => setPinnedIds(new Set(Array.isArray(ids) ? ids : [])))
+      .catch(() => {});
+    apiGet<string[]>("/api/equipment/liked")
+      .then((ids) => setLikedIds(new Set(Array.isArray(ids) ? ids : [])))
+      .catch(() => {});
+  }, [isWorkerView]);
+
+  // Deep-link: highlight a specific equipment item (from share link)
+  useEffect(() => {
+    (window as any).__equipmentTabReady = true;
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ equipmentId: string }>).detail?.equipmentId;
+      if (!id) return;
+      setHighlightId(id);
+      setQ("");
+      setKind(["ALL"]);
+      setStatusFilter(["ALL"]);
+      setExpandedCards(new Set([id]));
+    };
+    window.addEventListener("equipmentTab:highlight", handler);
+    return () => {
+      (window as any).__equipmentTabReady = false;
+      window.removeEventListener("equipmentTab:highlight", handler);
+    };
+  }, []);
+
+  async function togglePin(equipmentId: string) {
+    const wasPinned = pinnedIds.has(equipmentId);
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (wasPinned) next.delete(equipmentId);
+      else next.add(equipmentId);
+      return next;
+    });
+    try {
+      await apiPost(`/api/equipment/${equipmentId}/${wasPinned ? "unpin" : "pin"}`);
+    } catch (err) {
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        if (wasPinned) next.add(equipmentId);
+        else next.delete(equipmentId);
+        return next;
+      });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Pin failed.", err) });
+    }
+  }
+
+  async function toggleLike(equipmentId: string) {
+    const wasLiked = likedIds.has(equipmentId);
+    setLikedIds((prev) => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(equipmentId);
+      else next.add(equipmentId);
+      return next;
+    });
+    try {
+      await apiPost(`/api/equipment/${equipmentId}/${wasLiked ? "unlike" : "like"}`);
+    } catch (err) {
+      setLikedIds((prev) => {
+        const next = new Set(prev);
+        if (wasLiked) next.add(equipmentId);
+        else next.delete(equipmentId);
+        return next;
+      });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Like failed.", err) });
+    }
+  }
+
+  function shareEquipmentLink(equipmentId: string) {
+    const url = `${window.location.origin}/?equipment=${equipmentId}${forAdmin ? "&view=admin" : ""}`;
+    navigator.clipboard.writeText(url).then(() => {
+      publishInlineMessage({ type: "SUCCESS", text: "Link copied to clipboard." });
+    }).catch(() => {
+      publishInlineMessage({ type: "ERROR", text: "Failed to copy link." });
+    });
+  }
+
+  function ActionIcons({ equipmentId }: { equipmentId: string }) {
+    return (
+      <HStack gap={1} flexShrink={0}>
+        {isWorkerView && (
+          <>
+            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); void toggleLike(equipmentId); }} title={likedIds.has(equipmentId) ? "Unlike" : "Like"}>
+              <Heart size={14} fill={likedIds.has(equipmentId) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+            </Button>
+            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); void togglePin(equipmentId); }} title={pinnedIds.has(equipmentId) ? "Unpin" : "Pin"}>
+              {pinnedIds.has(equipmentId) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
+            </Button>
+          </>
+        )}
+        <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); shareEquipmentLink(equipmentId); }} title="Share link">
+          <Share2 size={14} />
+        </Button>
+      </HStack>
+    );
+  }
+
   useEffect(() => {
     onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
   }, []);
@@ -198,6 +306,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Filtered items based on search, kind or status.
   const filtered = useMemo(() => {
     let rows = items;
+
+    // Deep-link: filter to a single equipment item.
+    if (highlightId) {
+      rows = rows.filter((r) => r.id === highlightId);
+      return rows;
+    }
 
     // Filter based on entity type.
     if (kind[0] !== "ALL") {
@@ -251,8 +365,36 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       });
     }
 
+    // Liked-only filter (worker)
+    if (isWorkerView && likedOnly) {
+      rows = rows.filter((r) => likedIds.has(r.id));
+    }
+
     return rows;
-  }, [items, q, kind, statusFilter, forAdmin]);
+  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId]);
+
+  // Split into Pinned + Claimed + Available + Unavailable groups (worker view only).
+  const groups = useMemo(() => {
+    if (!isWorkerView) {
+      return [{ key: "all", label: null as string | null, items: filtered }];
+    }
+    const pinned: Equipment[] = [];
+    const claimed: Equipment[] = [];
+    const available: Equipment[] = [];
+    const unavailable: Equipment[] = [];
+    for (const e of filtered) {
+      if (pinnedIds.has(e.id)) pinned.push(e);
+      else if (!!me && e.holder?.userId === me.id && (e.status === "RESERVED" || e.status === "CHECKED_OUT")) claimed.push(e);
+      else if (e.status === "AVAILABLE") available.push(e);
+      else unavailable.push(e);
+    }
+    const out: { key: string; label: string | null; items: Equipment[] }[] = [];
+    if (pinned.length > 0) out.push({ key: "pinned", label: "Pinned", items: pinned });
+    if (claimed.length > 0) out.push({ key: "claimed", label: "Claimed", items: claimed });
+    if (available.length > 0) out.push({ key: "available", label: "Available", items: available });
+    if (unavailable.length > 0) out.push({ key: "unavailable", label: "Unavailable", items: unavailable });
+    return out;
+  }, [filtered, pinnedIds, isWorkerView, me]);
 
   function openCreate() {
     setEditing(null);
@@ -463,11 +605,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }
 
   const canWorkerCheckout = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "RESERVED";
+    purpose === "WORKER" && e.status === "RESERVED" && !!me && e.holder?.userId === me.id;
   const canWorkerCancel = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "RESERVED";
+    purpose === "WORKER" && e.status === "RESERVED" && !!me && e.holder?.userId === me.id;
   const canWorkerReturn = (e: Equipment) =>
-    purpose === "WORKER" && e.status === "CHECKED_OUT";
+    purpose === "WORKER" && e.status === "CHECKED_OUT" && !!me && e.holder?.userId === me.id;
   const isTrainee = me?.workerType === "TRAINEE";
   const canWorkerReserve = (e: Equipment) =>
     purpose === "WORKER" &&
@@ -674,6 +816,23 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {isWorkerView && (
+          <Button
+            size="sm"
+            variant={likedOnly ? "solid" : "outline"}
+            px="2"
+            flexShrink={0}
+            onClick={() => setLikedOnly(!likedOnly)}
+            css={likedOnly ? {
+              background: "var(--chakra-colors-red-500)",
+              color: "white",
+              borderColor: "var(--chakra-colors-red-500)",
+            } : undefined}
+            title="Show liked only"
+          >
+            <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
+          </Button>
+        )}
         {forAdmin && (
           <Button
             variant="solid"
@@ -688,32 +847,38 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Button>
         )}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL") && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
-          {kind[0] !== "ALL" && (
+          {highlightId && (
+            <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 item</Badge>
+          )}
+          {!highlightId && kind[0] !== "ALL" && (
             <Badge size="sm" colorPalette="blue" variant="subtle">
               {kindItems.find((i) => i.value === kind[0])?.label}
             </Badge>
           )}
-          {statusFilter[0] !== "ALL" && (
+          {!highlightId && statusFilter[0] !== "ALL" && (
             <Badge size="sm" colorPalette="purple" variant="subtle">
               {statusItems.find((i) => i.value === statusFilter[0])?.label}
             </Badge>
           )}
-          {!(kind[0] === "ALL" && statusFilter[0] === "ALL") && (
-            <Badge
-              size="sm"
-              colorPalette="red"
-              variant="outline"
-              cursor="pointer"
-              onClick={() => {
-                setKind(["ALL"]);
-                setStatusFilter(["ALL"]);
-              }}
-            >
-              ✕ Clear
-            </Badge>
+          {!highlightId && isWorkerView && likedOnly && (
+            <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
           )}
+          <Badge
+            size="sm"
+            colorPalette="red"
+            variant="outline"
+            cursor="pointer"
+            onClick={() => {
+              setHighlightId(null);
+              setKind(["ALL"]);
+              setStatusFilter(["ALL"]);
+              if (isWorkerView) setLikedOnly(false);
+            }}
+          >
+            ✕ Clear
+          </Badge>
         </HStack>
       )}
       <Box position="relative">
@@ -727,7 +892,37 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             No equipment matches current filters.
           </Box>
         )}
-        {filtered.map((e: Equipment) => {
+        {groups.map((group) => (
+          <Box key={group.key} data-group={group.key}>
+            {group.label && (
+              <HStack
+                gap={3}
+                align="center"
+                my={2}
+                cursor="pointer"
+                onClick={() => setCollapsedGroups((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group.key)) next.delete(group.key);
+                  else next.add(group.key);
+                  return next;
+                })}
+                _hover={{ opacity: 0.7 }}
+              >
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+                <HStack gap={1.5} align="center">
+                  <Text fontSize="sm" fontWeight="bold" color="gray.600" whiteSpace="nowrap" textTransform="uppercase" letterSpacing="wide">
+                    {group.label}
+                  </Text>
+                  <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
+                    {group.items.length}
+                  </Badge>
+                  <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
+                </HStack>
+                <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
+              </HStack>
+            )}
+            {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
+            {group.items.map((e: Equipment) => {
           const isCardCompact = compact && !expandedCards.has(e.id);
           const toggleCard = compact
             ? () => setExpandedCards((prev) => {
@@ -754,8 +949,48 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               <HStack align="center" gap={3} py="3" px="4">
                 <EquipmentThumbnail equipmentId={e.id} />
                 <VStack align="stretch" gap={1} flex="1" minW={0}>
-                  <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
-                    <Text fontSize="sm" fontWeight="semibold">{e.shortDesc}</Text>
+                  <HStack justify="space-between" alignItems="flex-start" gap={2}>
+                  <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
+                    <HStack gap={2} alignItems="center" minW={0}>
+                      {(() => {
+                        if (canWorkerReserve(e)) {
+                          return (
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Reserve" onClick={(ev: any) => {
+                              ev.stopPropagation();
+                              setReserveConfirmEquip(e);
+                              setReserveChecked(false);
+                            }}><Hand size={12} /></Box>
+                          );
+                        }
+                        if (canWorkerCheckout(e)) {
+                          return (
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Check Out" onClick={(ev: any) => {
+                              ev.stopPropagation();
+                              setScanFor(e.id);
+                            }}><ScanLine size={12} /></Box>
+                          );
+                        }
+                        if (canWorkerReturn(e)) {
+                          return (
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Return" onClick={(ev: any) => {
+                              ev.stopPropagation();
+                              setScanReturnFor(e.id);
+                            }}><RotateCcw size={12} /></Box>
+                          );
+                        }
+                        return null;
+                      })()}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        whiteSpace="nowrap"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        minW={0}
+                        flex="1"
+                        title={e.shortDesc}
+                      >{e.shortDesc}</Text>
+                    </HStack>
                     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                       <StatusBadge
                         status={e.status ?? ""}
@@ -770,6 +1005,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       )}
                     </Box>
                   </Box>
+                  <ActionIcons equipmentId={e.id} />
+                  </HStack>
                   <HStack gap={2} fontSize="xs" color="fg.muted" wrap="wrap">
                     <Text>
                       {e.brand ? `${e.brand} ` : ""}
@@ -794,8 +1031,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             ) : (
             <>
             <Card.Header py="3" px="4" pb="0">
-              <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
-                <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">{e.shortDesc}</Text>
+              <HStack justify="space-between" alignItems="flex-start" gap={2}>
+              <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
+                <Text
+                  fontSize={isCardCompact ? "sm" : "md"}
+                  fontWeight="semibold"
+                  whiteSpace={isCardCompact ? "nowrap" : undefined}
+                  overflow={isCardCompact ? "hidden" : undefined}
+                  textOverflow={isCardCompact ? "ellipsis" : undefined}
+                  title={isCardCompact ? e.shortDesc : undefined}
+                >{e.shortDesc}</Text>
                 <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
                   <StatusBadge
                     status={e.status ?? ""}
@@ -810,6 +1055,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   )}
                 </Box>
               </Box>
+              <ActionIcons equipmentId={e.id} />
+              </HStack>
             </Card.Header>
             {isCardCompact ? (
               <Card.Body py="3" px="4" pt="0">
@@ -919,6 +1166,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     label={"Check Out"}
                     onClick={async () => void setScanFor(e.id)}
                     variant={"solid"}
+                    colorPalette={"blue"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
@@ -943,6 +1191,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     label={"Return"}
                     onClick={async () => void setScanReturnFor(e.id)}
                     variant={"solid"}
+                    colorPalette={"orange"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
@@ -955,6 +1204,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     label={"Reserve"}
                     onClick={async () => { setReserveConfirmEquip(e); setReserveChecked(false); }}
                     variant={"solid"}
+                    colorPalette={"yellow"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
@@ -1059,6 +1309,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Card.Root>
           );
         })}
+            </VStack>}
+          </Box>
+        ))}
       </VStack>
       </Box>
 
