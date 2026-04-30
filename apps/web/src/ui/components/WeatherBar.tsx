@@ -49,7 +49,7 @@ function dayLabel(date: string, label?: string): string {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
   if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+  if (d.toDateString() === tomorrow.toDateString()) return "Tmrw";
   return d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
@@ -76,19 +76,8 @@ export default function WeatherBar() {
   const [prevDay, setPrevDay] = useState(0);
   const [sliding, setSliding] = useState(false);
   const slideTimer = useRef<ReturnType<typeof setTimeout>>();
-  const [visible, setVisible] = useState(true);
-  useEffect(() => {
-    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setVisible(false); } catch {}
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { visible: v } = (e as CustomEvent).detail || {};
-      setVisible(v);
-    };
-    window.addEventListener("seedlings:weatherBarToggle", handler);
-    return () => window.removeEventListener("seedlings:weatherBarToggle", handler);
-  }, []);
+  // Visibility toggle removed — bar is always visible. (To revert, restore the prior
+  // `visible` state, localStorage handling, and toggle event listener from git.)
 
   useEffect(() => {
     let cancelled = false;
@@ -152,8 +141,6 @@ export default function WeatherBar() {
     return () => clearInterval(interval);
   }, [data, userPaused]);
 
-  if (!visible) return null;
-
   if (loading && !data) return (
     <Box px={2} py={1.5} bg="gray.200" borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" position="relative">
       <style>{`@keyframes weather-shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }`}</style>
@@ -200,32 +187,56 @@ export default function WeatherBar() {
   function renderDayRow(p: ReturnType<typeof dayProps>) {
     return (
       <HStack gap={1.5} fontSize="xs" color={p.theme.text} whiteSpace="nowrap" overflow="hidden">
-        <Text fontWeight="bold" flexShrink={0} w="65px">{p.label}</Text>
+        <Text fontWeight="bold" flexShrink={0} w="42px">{p.label}</Text>
         <WeatherIcon icon={p.icon} size={14} />
         <Text fontWeight="semibold" flexShrink={0}>{p.temp}</Text>
         <Text flexShrink={0}>·</Text>
         <Text overflow="hidden" textOverflow="ellipsis">{capitalize(p.desc)}</Text>
         {p.rain > 0 && <><Text flexShrink={0}>·</Text><HStack gap={0.5} flexShrink={0} color={p.rain >= 50 ? p.theme.text : p.theme.sub}><Droplets size={11} /><Text fontWeight={p.rain >= 50 ? "bold" : "normal"}>{p.rain}%</Text></HStack></>}
-        {p.wind > 0 && <><Text flexShrink={0}>·</Text><Text color={p.theme.sub} flexShrink={0}>{p.wind}mph</Text></>}
       </HStack>
     );
   }
 
+  // "Now" cell experiment — shows current temp on the left of the bar.
+  // To revert: delete this NowCell and the two HStack wrappers below that include it.
+  const NowCell = ({ borderColor, sub, text, hasRightBorder = true }: { borderColor: string; sub: string; text: string; hasRightBorder?: boolean }) => (
+    <Box
+      flexShrink={0}
+      px={2}
+      py={1.5}
+      borderRightWidth={hasRightBorder ? "1px" : 0}
+      borderColor={borderColor}
+      display="flex"
+      flexDirection="column"
+      justifyContent="center"
+      alignItems="center"
+      minW="56px"
+    >
+      <Text fontSize="2xs" color={sub} lineHeight="1" fontWeight="medium" textTransform="uppercase">Now</Text>
+      <Text fontSize="sm" fontWeight="bold" color={text} lineHeight="1.2">{current.temp}°</Text>
+    </Box>
+  );
+
   if (expanded) {
     return (
       <Box borderRadius="md" mb={1} borderWidth="1px" borderColor="gray.400" overflow="hidden" cursor="pointer" onClick={() => setExpanded(false)}>
-        {forecast.map((_, i) => {
-          const p = dayProps(i);
-          return (
-            <Box key={i} px={2} py={1.5} bg={p.theme.bg} borderBottom={i < forecast.length - 1 ? "1px solid" : undefined} borderColor={p.theme.border}>
-              {renderDayRow(p)}
-            </Box>
-          );
-        })}
-        <HStack px={2} py={1.5} bg="gray.100" justify="center">
-          <Text fontSize="xs" color="blue.600" cursor="pointer" _hover={{ textDecoration: "underline" }} onClick={(e) => { e.stopPropagation(); window.open(weatherUrl, "_blank"); }}>
-            View full forecast →
-          </Text>
+        <HStack alignItems="stretch" gap={0}>
+          <NowCell borderColor={theme.border} sub={theme.sub} text={theme.text} />
+          <Box flex="1" minW={0}>
+            {forecast.map((_, i) => {
+              const p = dayProps(i);
+              return (
+                <Box key={i} px={2} py={1.5} bg={p.theme.bg} borderBottom={i < forecast.length - 1 ? "1px solid" : undefined} borderColor={p.theme.border}>
+                  {renderDayRow(p)}
+                </Box>
+              );
+            })}
+            <HStack px={2} py={1.5} bg="gray.100" justify="center">
+              <Text fontSize="xs" color="blue.600" cursor="pointer" _hover={{ textDecoration: "underline" }} onClick={(e) => { e.stopPropagation(); window.open(weatherUrl, "_blank"); }}>
+                View full forecast →
+              </Text>
+            </HStack>
+          </Box>
         </HStack>
       </Box>
     );
@@ -244,16 +255,21 @@ export default function WeatherBar() {
       style={{ height: ROW_H + 12 }}
       onClick={() => setExpanded(true)}
     >
-      <Box
-        px={2} py={1.5}
-        style={{
-          transform: sliding ? `translateY(-${ROW_H + 12}px)` : "translateY(0)",
-          transition: sliding ? "transform 0.4s ease-in-out" : "none",
-        }}
-      >
-        {renderDayRow(prev)}
-        <Box mt={1.5}>{renderDayRow(next)}</Box>
-      </Box>
+      <HStack alignItems="stretch" gap={0} h="full">
+        <NowCell borderColor={theme.border} sub={theme.sub} text={theme.text} />
+        <Box flex="1" minW={0} overflow="hidden">
+          <Box
+            px={2} py={1.5}
+            style={{
+              transform: sliding ? `translateY(-${ROW_H + 12}px)` : "translateY(0)",
+              transition: sliding ? "transform 0.4s ease-in-out" : "none",
+            }}
+          >
+            {renderDayRow(prev)}
+            <Box mt={1.5}>{renderDayRow(next)}</Box>
+          </Box>
+        </Box>
+      </HStack>
     </Box>
   );
 }

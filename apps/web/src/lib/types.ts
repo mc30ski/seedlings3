@@ -147,6 +147,15 @@ export type Equipment = {
   retiredAt?: string | undefined;
 
   holder?: EquipmentHolder | undefined;
+  hasPhotos?: boolean;
+  instructions?: EquipmentInstruction[];
+};
+
+export type EquipmentInstruction = {
+  id: string;
+  text: string;
+  isPreset: boolean;
+  sortOrder: number;
 };
 
 export const PROPERTY_KIND = ["SINGLE", "AGGREGATE_SITE"] as const;

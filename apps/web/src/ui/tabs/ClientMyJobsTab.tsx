@@ -240,7 +240,7 @@ export default function ClientMyJobsTab() {
               const addr = [p.street1, p.city, p.state].filter(Boolean).join(", ");
               return (
                 <Card.Root key={p.id} variant="outline">
-                  <Card.Body py="3" px="4">
+                  <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start" gap={3}>
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="semibold">{p.displayName}</Text>
@@ -268,7 +268,7 @@ export default function ClientMyJobsTab() {
               const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
                 <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : undefined} bg={isActive ? "blue.50" : undefined}>
-                  <Card.Body py="3" px="4">
+                  <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>
@@ -325,7 +325,7 @@ export default function ClientMyJobsTab() {
               const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
                 <Card.Root key={job.id} variant="outline">
-                  <Card.Body py="3" px="4">
+                  <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>

@@ -469,7 +469,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
         )}
         {filtered.map((c: Client) => (
           <Card.Root key={c.id} variant="outline">
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <VStack align="start" gap={1.5}>
                 <HStack gap={1} minW={0}>
                   {(c as any).isVip && <Text title={(c as any).vipReason || "VIP Client"} cursor="help">⭐</Text>}
@@ -489,7 +489,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
               </VStack>
             </Card.Header>
             {c.notesInternal && (
-              <Card.Body py="3" px="4" pt="1" pb="0">
+              <Card.Body py="2" px="3" pt="1" pb="0">
                 <TruncatedText>{c.notesInternal}</TruncatedText>
               </Card.Body>
             )}
@@ -511,7 +511,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                 </Box>
               </Card.Body>
             )}
-            <Card.Footer py="3" px="4" pt="2">
+            <Card.Footer py="2" px="3" pt="2">
               <HStack gap={2} wrap="wrap" w="full">
                 {forAdmin && (
                   <>

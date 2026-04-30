@@ -92,6 +92,8 @@ export const equipment: ServicesEquipment = {
           include: { user: true },
           take: 1,
         },
+        _count: { select: { photos: true } },
+        instructions: { orderBy: { sortOrder: "asc" } },
       },
     });
 
@@ -110,8 +112,8 @@ export const equipment: ServicesEquipment = {
           }
         : null;
 
-      const { checkouts, auditEvents, ...equip } = e as any;
-      return { ...(equip as any), holder };
+      const { checkouts, auditEvents, _count, ...equip } = e as any;
+      return { ...(equip as any), holder, hasPhotos: ((_count as any)?.photos ?? 0) > 0 };
     });
 
     return mapped;

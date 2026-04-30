@@ -958,19 +958,31 @@ export default function HomePage() {
   }, [topTab, adminInnerTab]);
 
   const BRAND_ICON_H = 34; // px
-  const [currentTemp, setCurrentTemp] = useState<number | null>(null);
-  const [weatherBarVisible, setWeatherBarVisible] = useState(true);
+
+  // Earnings shown in the title bar (replaced the weather toggle).
+  // Click cycles through Today → Week → Month → All Time.
+  // To revert: restore the prior `currentTemp` + `weatherBarVisible` state from git
+  // and the Cloud icon button below.
+  type EarningsPeriod = "today" | "thisWeek" | "thisMonth" | "allTime";
+  const EARNINGS_PERIODS: EarningsPeriod[] = ["today", "thisWeek", "thisMonth", "allTime"];
+  const EARNINGS_LABELS: Record<EarningsPeriod, string> = { today: "Today", thisWeek: "Wk", thisMonth: "Mo", allTime: "All" };
+  const [earnings, setEarnings] = useState<{ today: number; thisWeek: number; thisMonth: number; allTime: number } | null>(null);
+  const [earningsPeriod, setEarningsPeriod] = usePersistedState<EarningsPeriod>("titleEarningsPeriod", "thisWeek");
   useEffect(() => {
-    try { if (localStorage.getItem("seedlings_hideWeatherBar") === "1") setWeatherBarVisible(false); } catch {}
-  }, []);
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { temp } = (e as CustomEvent).detail || {};
-      if (typeof temp === "number") setCurrentTemp(temp);
-    };
-    window.addEventListener("seedlings:weather", handler);
-    return () => window.removeEventListener("seedlings:weather", handler);
-  }, []);
+    if (!isSignedIn || !me?.id) return;
+    apiGet<{ today: number; thisWeek: number; thisMonth: number; allTime: number }>("/api/payments/earnings-summary")
+      .then((d) => setEarnings({ today: d?.today ?? 0, thisWeek: d?.thisWeek ?? 0, thisMonth: d?.thisMonth ?? 0, allTime: d?.allTime ?? 0 }))
+      .catch(() => {});
+  }, [isSignedIn, me?.id]);
+  function fmtEarnings(n: number): string {
+    if (n >= 100000) return `${Math.round(n / 1000)}k`;
+    if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
+    return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  function cycleEarningsPeriod() {
+    const idx = EARNINGS_PERIODS.indexOf(earningsPeriod);
+    setEarningsPeriod(EARNINGS_PERIODS[(idx + 1) % EARNINGS_PERIODS.length]);
+  }
 
   const headerBtnRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -1577,33 +1589,6 @@ export default function HomePage() {
             </HStack>
           </Box>
 
-          {/* Center: current temperature — click to toggle weather bar */}
-          <Box textAlign="center" justifySelf="center" position="absolute" left="50%" transform="translateX(-50%)">
-            {currentTemp != null && (
-              <Text
-                fontSize="sm"
-                fontWeight="semibold"
-                color={weatherBarVisible ? "fg.default" : "fg.muted"}
-                lineHeight="1"
-                whiteSpace="nowrap"
-                cursor="pointer"
-                px="2"
-                py="1"
-                borderRadius="md"
-                bg={weatherBarVisible ? "#c4d1b3" : "transparent"}
-                _hover={{ color: "blue.500" }}
-                onClick={() => {
-                  const next = !weatherBarVisible;
-                  setWeatherBarVisible(next);
-                  try { localStorage.setItem("seedlings_hideWeatherBar", next ? "0" : "1"); } catch {}
-                  window.dispatchEvent(new CustomEvent("seedlings:weatherBarToggle", { detail: { visible: next } }));
-                }}
-              >
-                {currentTemp}°F
-              </Text>
-            )}
-          </Box>
-
           {/* Right: badges + worker type + Clerk */}
           <div
             ref={headerBtnRef as any}
@@ -1616,6 +1601,27 @@ export default function HomePage() {
               minHeight: `${BRAND_ICON_H}px`,
             }}
           >
+            {/* Earnings pill — click cycles Today → Wk → Mo → All.
+                (Experiment: replaced the weather toggle. To revert, restore from git.) */}
+            {earnings != null && (
+              <Box
+                as="button"
+                cursor="pointer"
+                px="2"
+                py="1"
+                borderRadius="md"
+                bg="green.50"
+                color="green.700"
+                _hover={{ bg: "green.100" }}
+                title={`Earnings (${EARNINGS_LABELS[earningsPeriod]}) — click to cycle period`}
+                onClick={cycleEarningsPeriod}
+              >
+                <Text fontSize="sm" fontWeight="semibold" lineHeight="1" whiteSpace="nowrap">
+                  ${fmtEarnings(earnings[earningsPeriod])}
+                  <Text as="span" fontSize="2xs" fontWeight="medium" color="green.600" ml={1}>{EARNINGS_LABELS[earningsPeriod]}</Text>
+                </Text>
+              </Box>
+            )}
             {/* Combined alert badge */}
             {isSignedIn && !alertsReady && (
               <Box
@@ -1730,10 +1736,10 @@ export default function HomePage() {
                   setWorkerInnerTab("profile" as any);
                 }}
               >
-                {me.workerType === "EMPLOYEE" ? "W-2"
-                  : me.workerType === "CONTRACTOR" ? "1099"
-                  : me.workerType === "TRAINEE" ? "Trainee"
-                  : "Unclassified"}
+                {me.workerType === "EMPLOYEE" ? "E"
+                  : me.workerType === "CONTRACTOR" ? "C"
+                  : me.workerType === "TRAINEE" ? "T"
+                  : "?"}
               </Badge>
             )}
             {isSignedIn && !hasAnyRole && me?.isApproved && (

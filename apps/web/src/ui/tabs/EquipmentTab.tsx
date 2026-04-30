@@ -18,7 +18,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertTriangle, Filter, Hand, Heart, LayoutList, List, Maximize2, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
+import { AlertTriangle, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -79,6 +79,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
@@ -240,22 +241,73 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   }
 
   function ActionIcons({ equipmentId }: { equipmentId: string }) {
+    const isOpen = openActionMenuId === equipmentId;
+    const isLiked = likedIds.has(equipmentId);
+    const isPinned = pinnedIds.has(equipmentId);
     return (
-      <HStack gap={1} flexShrink={0}>
-        {isWorkerView && (
+      <Box position="relative" flexShrink={0}>
+        <Button
+          variant="ghost"
+          size="xs"
+          px="1"
+          minW="0"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            setOpenActionMenuId(isOpen ? null : equipmentId);
+          }}
+          title="More actions"
+        >
+          <MoreHorizontal size={16} />
+        </Button>
+        {isOpen && (
           <>
-            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); void toggleLike(equipmentId); }} title={likedIds.has(equipmentId) ? "Unlike" : "Like"}>
-              <Heart size={14} fill={likedIds.has(equipmentId) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-            </Button>
-            <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); void togglePin(equipmentId); }} title={pinnedIds.has(equipmentId) ? "Unpin" : "Pin"}>
-              {pinnedIds.has(equipmentId) ? <Pin size={14} fill="currentColor" /> : <Pin size={14} />}
-            </Button>
+            <Box
+              position="fixed"
+              inset="0"
+              zIndex={9999}
+              onClick={(ev) => { ev.stopPropagation(); setOpenActionMenuId(null); }}
+            />
+            <VStack
+              position="fixed"
+              bg="white"
+              borderWidth="1px"
+              borderColor="gray.200"
+              rounded="md"
+              shadow="lg"
+              zIndex={10000}
+              p={1}
+              gap={0}
+              minW="140px"
+              align="stretch"
+              onClick={(ev) => ev.stopPropagation()}
+              ref={(el: HTMLDivElement | null) => {
+                if (el && el.parentElement) {
+                  const rect = el.parentElement.getBoundingClientRect();
+                  el.style.top = `${rect.bottom + 4}px`;
+                  el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+                }
+              }}
+            >
+              {isWorkerView && (
+                <>
+                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setOpenActionMenuId(null); void toggleLike(equipmentId); }}>
+                    <Heart size={14} fill={isLiked ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                    <Box as="span" ml={2}>{isLiked ? "Unlike" : "Like"}</Box>
+                  </Button>
+                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setOpenActionMenuId(null); void togglePin(equipmentId); }}>
+                    <Pin size={14} fill={isPinned ? "currentColor" : "none"} />
+                    <Box as="span" ml={2}>{isPinned ? "Unpin" : "Pin"}</Box>
+                  </Button>
+                </>
+              )}
+              <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setOpenActionMenuId(null); shareEquipmentLink(equipmentId); }}>
+                <Share2 size={14} />
+                <Box as="span" ml={2}>Share link</Box>
+              </Button>
+            </VStack>
           </>
         )}
-        <Button variant="ghost" size="xs" px="0" minW="0" onClick={(ev) => { ev.stopPropagation(); shareEquipmentLink(equipmentId); }} title="Share link">
-          <Share2 size={14} />
-        </Button>
-      </HStack>
+      </Box>
     );
   }
 
@@ -946,8 +998,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             }}
           >
             {isCardCompact && !forAdmin ? (
-              <HStack align="center" gap={3} py="3" px="4">
-                <EquipmentThumbnail equipmentId={e.id} />
+              <HStack align="center" gap={3} py="2" px="3">
+                <EquipmentThumbnail equipmentId={e.id} hasPhotos={e.hasPhotos} />
                 <VStack align="stretch" gap={1} flex="1" minW={0}>
                   <HStack justify="space-between" alignItems="flex-start" gap={2}>
                   <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
@@ -1030,7 +1082,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               </HStack>
             ) : (
             <>
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <HStack justify="space-between" alignItems="flex-start" gap={2}>
               <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
                 <Text
@@ -1059,7 +1111,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               </HStack>
             </Card.Header>
             {isCardCompact ? (
-              <Card.Body py="3" px="4" pt="0">
+              <Card.Body py="2" px="3" pt="0">
                 <HStack gap={2} fontSize="xs" color="fg.muted">
                   <Text>
                     {e.brand ? `${e.brand} ` : ""}
@@ -1075,14 +1127,14 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 </HStack>
               </Card.Body>
             ) : (
-            <Card.Body py="3" px="4" pt="0">
+            <Card.Body py="2" px="3" pt="0">
               <VStack align="start" gap={0}>
                 <Text fontSize="sm" color="fg.muted">
                   {e.brand ? `${e.brand} ` : ""}
                   {e.model ? `${e.model} ` : ""}
                 </Text>
                 <Box mt={1} mb={1}>
-                  <EquipmentPhotos equipmentId={e.id} readOnly={!forAdmin} />
+                  <EquipmentPhotos equipmentId={e.id} readOnly={!forAdmin} hasPhotos={e.hasPhotos} />
                 </Box>
                 {e.qrSlug && (
                   <Text fontSize="xs" color="gray.500" mt={0}>
@@ -1143,7 +1195,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Card.Body>
             )}
             {!isCardCompact && (
-            <Card.Footer py="3" px="4" pt="0">
+            <Card.Footer py="2" px="3" pt="0">
               <HStack gap={2} wrap="wrap">
                 {forAdmin && (
                   <StatusButton
@@ -1305,6 +1357,27 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             </Card.Footer>
             )}
             </>
+            )}
+            {(e.instructions ?? []).length > 0 && (
+              isCardCompact ? (
+                <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
+                  {(e.instructions ?? []).map((inst) => (
+                    <HStack key={inst.id} gap="1" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {inst.text}</Text>
+                    </HStack>
+                  ))}
+                </Box>
+              ) : (
+                <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                  <VStack align="stretch" gap="0.5">
+                    {(e.instructions ?? []).map((inst) => (
+                      <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
+                        📌 {inst.text}
+                      </Text>
+                    ))}
+                  </VStack>
+                </Box>
+              )
             )}
           </Card.Root>
           );

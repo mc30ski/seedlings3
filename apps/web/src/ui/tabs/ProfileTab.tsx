@@ -274,7 +274,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         <VStack align="stretch" gap={4} w="full">
           {/* Name & info card */}
           <Card.Root variant="outline">
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <HStack justify="space-between" align="center">
                 <Text fontWeight="semibold">Personal Information</Text>
                 {isSelf && (
@@ -300,7 +300,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                 )}
               </HStack>
             </Card.Header>
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <VStack align="stretch" gap={3}>
                 <HStack gap={3}>
                   <Box flex="1">
@@ -384,10 +384,10 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
           {/* Home base card */}
           <Card.Root variant="outline">
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <Text fontWeight="semibold">Home Base Address</Text>
             </Card.Header>
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <VStack align="stretch" gap={2}>
                 <Text fontSize="xs" color="fg.muted">
                   Used as the starting point for route optimization.
@@ -404,10 +404,10 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
           {/* Available days */}
           <Card.Root variant="outline">
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <Text fontWeight="semibold">Available Days</Text>
             </Card.Header>
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <VStack align="stretch" gap={2}>
                 <Text fontSize="xs" color="fg.muted">
                   Select which days of the week you're typically available to work.
@@ -447,10 +447,10 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
 
           {/* Hours per day */}
           <Card.Root variant="outline">
-            <Card.Header py="3" px="4" pb="0">
+            <Card.Header py="2" px="3" pb="0">
               <Text fontWeight="semibold">Hours Per Day</Text>
             </Card.Header>
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <VStack align="stretch" gap={2}>
                 <Text fontSize="xs" color="fg.muted">
                   How many hours per day you're typically available to work.
@@ -557,7 +557,7 @@ function CalendarFeedsSection() {
 
   return (
     <Card.Root variant="outline" mt={4}>
-      <Card.Header py="3" px="4" pb="0">
+      <Card.Header py="2" px="3" pb="0">
         <HStack justify="space-between" align="center">
           <Text fontWeight="semibold">Calendar Feeds</Text>
           {feeds.length > 1 && (
@@ -567,7 +567,7 @@ function CalendarFeedsSection() {
           )}
         </HStack>
       </Card.Header>
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         {loading ? (
           <Spinner size="sm" />
         ) : feeds.length === 0 ? (
@@ -612,7 +612,7 @@ function OfflineSection() {
 
   return (
     <Card.Root variant="outline" mt={4}>
-      <Card.Header py="3" px="4" pb="0">
+      <Card.Header py="2" px="3" pb="0">
         <HStack justify="space-between" align="center">
           <Text fontWeight="semibold">Connection</Text>
           <HStack gap={2} align="center">
@@ -628,7 +628,7 @@ function OfflineSection() {
           </HStack>
         </HStack>
       </Card.Header>
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <VStack align="stretch" gap={3}>
           <HStack justify="space-between" align="center">
             <VStack align="start" gap={0}>
@@ -745,11 +745,11 @@ function SeasonSection() {
 
   return (
     <Card.Root variant="outline" mt={4}>
-      <Card.Header py="3" px="4" pb="0">
+      <Card.Header py="2" px="3" pb="0">
         <Text fontWeight="semibold">Season Theme</Text>
 
       </Card.Header>
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <VStack align="stretch" gap={3}>
           <Text fontSize="xs" color="fg.muted">
             The app icon changes with the seasons. Spring/Summer (Mar–Aug) uses the green icon, Fall/Winter (Sep–Feb) uses the fall icon. You can override this for your experience.
@@ -807,7 +807,7 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
 
   return (
     <Card.Root variant="outline">
-      <Card.Header py="3" px="4" pb="0">
+      <Card.Header py="2" px="3" pb="0">
         <HStack justify="space-between" alignItems="center">
           <Text fontWeight="semibold">Earnings</Text>
           {isSelf && (
@@ -823,7 +823,7 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
           )}
         </HStack>
       </Card.Header>
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <VStack align="stretch" gap={3}>
           <HStack gap={4} wrap="wrap">
             <VStack align="start" gap={0}>

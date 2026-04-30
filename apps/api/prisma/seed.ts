@@ -374,6 +374,41 @@ async function seedDatabase() {
     data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, qrSlug: "gorilla-gor1200-001" },
   });
 
+  // ── Equipment instructions ─────────────────────────────────────────────────
+  console.log("  Creating equipment instructions...");
+
+  await prisma.equipmentInstruction.createMany({
+    data: [
+      // mower1 (Scag 52") — large, finicky
+      { equipmentId: mower1.id, text: "Hard to start when cold — let choke run for 30s", isPreset: false, sortOrder: 0 },
+      { equipmentId: mower1.id, text: "Refuel before returning", isPreset: true, sortOrder: 1 },
+
+      // mower3 (Honda push, in maintenance)
+      { equipmentId: mower3.id, text: "Sharp blade — handle with care", isPreset: true, sortOrder: 0 },
+
+      // trimmer1 (Stihl FS 131)
+      { equipmentId: trimmer1.id, text: "Loud — wear ear protection", isPreset: true, sortOrder: 0 },
+      { equipmentId: trimmer1.id, text: "Uses 50:1 fuel mix only", isPreset: false, sortOrder: 1 },
+
+      // blower1 (Echo PB-8010T) — heavy
+      { equipmentId: blower1.id, text: "Heavy — two-person carry", isPreset: true, sortOrder: 0 },
+      { equipmentId: blower1.id, text: "Loud — wear ear protection", isPreset: true, sortOrder: 1 },
+
+      // chainsaw — safety
+      { equipmentId: chainsawEquip.id, text: "Chaps required when operating", isPreset: false, sortOrder: 0 },
+      { equipmentId: chainsawEquip.id, text: "Sharp blade — handle with care", isPreset: true, sortOrder: 1 },
+
+      // aerator — heavy/awkward
+      { equipmentId: aerator.id, text: "Heavy — two-person carry", isPreset: true, sortOrder: 0 },
+
+      // pressure washer
+      { equipmentId: pressureWasher.id, text: "Never use 0° nozzle on surfaces", isPreset: false, sortOrder: 0 },
+
+      // trailer
+      { equipmentId: trailer.id, text: "Check tire pressure weekly (50 PSI)", isPreset: false, sortOrder: 0 },
+    ],
+  });
+
   // ── Equipment checkouts (5 active) ────────────────────────────────────────
   console.log("  Creating checkouts...");
 

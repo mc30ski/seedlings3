@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Box, Button, HStack, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
+import { Box, Button, HStack, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
@@ -24,11 +24,13 @@ type Props = {
   equipmentId: string;
   /** Worker = read-only view; admin = upload/edit/delete */
   readOnly?: boolean;
+  /** When false, skip the initial fetch (caller already knows there are no photos). */
+  hasPhotos?: boolean;
 };
 
-export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
+export default function EquipmentPhotos({ equipmentId, readOnly, hasPhotos }: Props) {
   const [photos, setPhotos] = useState<EquipmentPhoto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(hasPhotos !== false);
   const [uploading, setUploading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDesc, setEditDesc] = useState("");
@@ -57,8 +59,15 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
   }
 
   useEffect(() => {
+    // Worker view: if caller already knows there are no photos, skip the fetch.
+    // Admins can upload, so still load (to allow uploads even when initially empty).
+    if (hasPhotos === false && readOnly) {
+      setPhotos([]);
+      setLoading(false);
+      return;
+    }
     void load();
-  }, [equipmentId]);
+  }, [equipmentId, hasPhotos, readOnly]);
 
   async function handleUpload(file: File) {
     setUploading(true);

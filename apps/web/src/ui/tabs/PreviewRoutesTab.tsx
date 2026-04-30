@@ -686,7 +686,7 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
                       borderColor={stop.dateChanged ? "orange.300" : isClaimed ? "teal.200" : undefined}
                       bg={stop.dateChanged ? "orange.50" : isClaimed ? "teal.50" : undefined}
                     >
-                      <Card.Body py="3" px="4">
+                      <Card.Body py="2" px="3">
                         <HStack gap={3} align="start">
                           <Box
                             w="28px"

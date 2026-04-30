@@ -65,7 +65,7 @@ export default function ClientServicesTab() {
           <VStack align="stretch" gap={2}>
             {jobs.map((job: any) => (
               <Card.Root key={job.id} variant="outline" borderColor="green.300">
-                <Card.Body py="3" px="4">
+                <Card.Body py="2" px="3">
                   <HStack justify="space-between" align="start">
                     <VStack align="start" gap={0.5}>
                       <Text fontSize="sm" fontWeight="medium">{job.property?.displayName ?? "Property"}</Text>
@@ -104,7 +104,7 @@ export default function ClientServicesTab() {
           { title: "Aeration & Overseeding", desc: "Core aeration and overseeding to promote a thick, healthy lawn. Recommended annually in fall." },
         ].map((svc) => (
           <Card.Root key={svc.title} variant="outline" borderColor="green.200">
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <Text fontSize="sm" fontWeight="semibold" color="green.800">{svc.title}</Text>
               <Text fontSize="xs" color="green.700" mt={1}>{svc.desc}</Text>
             </Card.Body>

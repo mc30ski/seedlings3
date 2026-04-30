@@ -62,7 +62,7 @@ const presetCollection = createListCollection({ items: presetItems });
 function MetricCard({ label, value, color = "fg.default", sub }: { label: string; value: string | number; color?: string; sub?: string }) {
   return (
     <Card.Root variant="outline">
-      <Card.Body py="3" px="4">
+      <Card.Body py="2" px="3">
         <Text fontSize="2xl" fontWeight="bold" color={color} lineHeight="1">{value}</Text>
         <Text fontSize="xs" color="fg.muted" mt={1}>{label}</Text>
         {sub && <Text fontSize="xs" color="fg.muted">{sub}</Text>}
@@ -298,7 +298,7 @@ export default function OperationsTab() {
           {/* Financial */}
           <SectionHeader>Financial</SectionHeader>
           <Card.Root variant="outline" bg={data.financial.netRevenue >= 0 ? "green.50" : "red.50"} borderColor={data.financial.netRevenue >= 0 ? "green.200" : "red.200"} mb={2}>
-            <Card.Body py="3" px="4">
+            <Card.Body py="2" px="3">
               <Text fontSize="3xl" fontWeight="bold" color={data.financial.netRevenue >= 0 ? "green.700" : "red.700"} lineHeight="1">
                 {fmt(data.financial.netRevenue)}
               </Text>

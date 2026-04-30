@@ -731,7 +731,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" bg="gray.50" p={2} pb={0} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2}>
       <HStack mb={2} gap={1} wrap="wrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -1175,7 +1175,7 @@ export default function ServicesTab({
 
           return (
             <Card.Root key={job.id} variant="outline">
-              <Card.Header py="3" px="4" pb="0">
+              <Card.Header py="2" px="3" pb="0">
                 <HStack gap={3} justify="space-between" align="start">
                   <VStack align="start" gap={0} flex="1" minW={0}>
                     <Text fontSize="md" fontWeight="semibold">
@@ -1249,7 +1249,7 @@ export default function ServicesTab({
                 )}
               </Card.Header>
 
-              <Card.Body py="3" px="4" pt="0">
+              <Card.Body py="2" px="3" pt="0">
                 <VStack align="start" gap={0} mb={2}>
                   <Text fontSize="xs" color="fg.muted">
                     Default price:{" "}

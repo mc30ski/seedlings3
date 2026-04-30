@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Button, Dialog, HStack, VStack, Portal, Text, Box } from "@chakra-ui/react";
+import CurrencyInput from "@/src/ui/components/CurrencyInput";
 
 type Props = {
   open: boolean;
@@ -9,7 +10,7 @@ type Props = {
   message: string;
   confirmLabel?: string;
   confirmColorPalette?: string;
-  onConfirm: ((inputValue: string) => void) | (() => void);
+  onConfirm: ((inputValue: string, amountValue?: string) => void) | (() => void);
   onCancel: () => void;
   /** If provided, shows a text input with this placeholder */
   inputPlaceholder?: string;
@@ -19,6 +20,10 @@ type Props = {
   inputOptional?: boolean;
   /** Default value for the input */
   inputDefaultValue?: string;
+  /** If provided, shows an additional currency input. The amount value is passed as the 2nd arg to onConfirm. Always optional. */
+  amountLabel?: string;
+  amountPlaceholder?: string;
+  amountDefaultValue?: string;
   /** Custom label for the cancel button */
   cancelLabel?: string;
   /** Action to perform on cancel (instead of just closing) */
@@ -37,24 +42,32 @@ export default function ConfirmDialog({
   inputLabel,
   inputOptional,
   inputDefaultValue,
+  amountLabel,
+  amountPlaceholder,
+  amountDefaultValue,
   cancelLabel,
   onCancelAction,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const [amountValue, setAmountValue] = useState("");
 
-  // Reset input when dialog opens/closes
+  // Reset inputs when dialog opens/closes
   useEffect(() => {
-    if (open) setInputValue(inputDefaultValue ?? "");
-  }, [open, inputDefaultValue]);
+    if (open) {
+      setInputValue(inputDefaultValue ?? "");
+      setAmountValue(amountDefaultValue ?? "");
+    }
+  }, [open, inputDefaultValue, amountDefaultValue]);
 
   const hasInput = !!inputPlaceholder;
+  const hasAmount = !!amountLabel;
   const canConfirm = !hasInput || inputOptional || inputValue.trim().length > 0;
 
   function handleConfirm() {
     if (!canConfirm) return;
-    if (hasInput) {
-      (onConfirm as (v: string) => void)(inputValue.trim());
+    if (hasInput || hasAmount) {
+      (onConfirm as (v: string, a?: string) => void)(inputValue.trim(), hasAmount ? amountValue : undefined);
     } else {
       (onConfirm as () => void)();
     }
@@ -103,6 +116,19 @@ export default function ConfirmDialog({
                       outline: "none",
                       resize: "vertical",
                     }}
+                  />
+                </Box>
+              )}
+              {hasAmount && (
+                <Box mt={3}>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>
+                    {amountLabel}
+                  </Text>
+                  <CurrencyInput
+                    value={amountValue}
+                    onChange={setAmountValue}
+                    size="sm"
+                    placeholder={amountPlaceholder ?? "0.00"}
                   />
                 </Box>
               )}

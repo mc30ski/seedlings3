@@ -632,6 +632,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
 
     const now = new Date();
+    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -646,13 +647,14 @@ export default async function workerRoutes(app: FastifyInstance) {
       },
     });
 
-    let thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
+    let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
     const byMethod: Record<string, number> = {};
     let jobCount = 0;
 
     for (const sp of splits) {
       allTime += sp.amount;
       const d = sp.payment.createdAt;
+      if (d >= startOfToday) today += sp.amount;
       if (d >= startOfWeek) thisWeek += sp.amount;
       if (d >= startOfMonth) thisMonth += sp.amount;
       if (d >= startOfYear) thisYear += sp.amount;
@@ -661,6 +663,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     }
 
     return {
+      today: Math.round(today * 100) / 100,
       thisWeek: Math.round(thisWeek * 100) / 100,
       thisMonth: Math.round(thisMonth * 100) / 100,
       thisYear: Math.round(thisYear * 100) / 100,
