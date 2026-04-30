@@ -118,7 +118,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
             borderRadius="md"
             overflow="hidden"
             cursor="pointer"
-            onClick={() => setViewerIndex(idx)}
+            onClick={(e) => { e.stopPropagation(); setViewerIndex(idx); }}
             borderWidth="1px"
             borderColor="gray.200"
             flexShrink={0}
