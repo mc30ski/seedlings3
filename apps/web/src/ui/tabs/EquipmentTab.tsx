@@ -199,6 +199,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     });
     try {
       await apiPost(`/api/equipment/${equipmentId}/${wasPinned ? "unpin" : "pin"}`);
+      publishInlineMessage({ type: "SUCCESS", text: wasPinned ? "Unpinned" : "Pinned", icon: Pin, autoHideMs: 1500 });
     } catch (err) {
       setPinnedIds((prev) => {
         const next = new Set(prev);
@@ -220,6 +221,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     });
     try {
       await apiPost(`/api/equipment/${equipmentId}/${wasLiked ? "unlike" : "like"}`);
+      publishInlineMessage({ type: "SUCCESS", text: wasLiked ? "Unliked" : "Liked", icon: Heart, autoHideMs: 1500 });
     } catch (err) {
       setLikedIds((prev) => {
         const next = new Set(prev);
@@ -876,13 +878,28 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             flexShrink={0}
             onClick={() => setLikedOnly(!likedOnly)}
             css={likedOnly ? {
-              background: "var(--chakra-colors-red-500)",
-              color: "white",
-              borderColor: "var(--chakra-colors-red-500)",
+              background: "var(--chakra-colors-red-100)",
+              color: "var(--chakra-colors-red-600)",
+              border: "1px solid var(--chakra-colors-red-400)",
+              "&:hover": { background: "var(--chakra-colors-red-200)" },
             } : undefined}
-            title="Show liked only"
+            title={`Show liked only (${likedIds.size})`}
           >
-            <Heart size={14} fill={likedOnly ? "currentColor" : "none"} />
+            <Heart size={14} fill={likedOnly ? "currentColor" : "none"} color="var(--chakra-colors-red-500)" />
+            {likedIds.size > 0 && (
+              <Badge
+                size="xs"
+                colorPalette="red"
+                variant="solid"
+                borderRadius="full"
+                px="1.5"
+                fontSize="2xs"
+                lineHeight="1"
+                minW="0"
+              >
+                {likedIds.size}
+              </Badge>
+            )}
           </Button>
         )}
         {forAdmin && (
