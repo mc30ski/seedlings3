@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, HStack, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
-import { Camera, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
@@ -19,18 +19,15 @@ type Props = {
   equipmentId: string;
   /** Worker = read-only view; admin = upload/edit/delete */
   readOnly?: boolean;
-  /** When true, render expanded by default (e.g., inside the EquipmentDialog) */
-  defaultExpanded?: boolean;
 };
 
-export default function EquipmentPhotos({ equipmentId, readOnly, defaultExpanded }: Props) {
+export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
   const [photos, setPhotos] = useState<EquipmentPhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDesc, setEditDesc] = useState("");
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [expanded, setExpanded] = useState(!!defaultExpanded);
 
   async function load() {
     try {
@@ -91,106 +88,88 @@ export default function EquipmentPhotos({ equipmentId, readOnly, defaultExpanded
     }
   }
 
-  if (loading) return <HStack gap={2} py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading photos...</Text></HStack>;
+  function pickFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) void handleUpload(file);
+    };
+    input.click();
+  }
+
+  if (loading) return null;
 
   // Hide entirely for workers when there are no photos
   if (readOnly && photos.length === 0) return null;
 
+  const canUpload = !readOnly && photos.length < 10;
+
   return (
-    <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
-      <HStack
-        px={3} py={2}
-        cursor="pointer"
-        onClick={() => setExpanded((v) => !v)}
-        justify="space-between"
-        bg="gray.50"
-      >
-        <HStack gap={1.5} fontSize="xs" fontWeight="semibold" color="fg.muted">
-          <Camera size={14} />
-          <Text>Photos ({photos.length})</Text>
-        </HStack>
-        <HStack gap={1}>
-          {!readOnly && expanded && photos.length < 10 && (
-            <Button
-              size="xs"
-              variant="outline"
-              loading={uploading}
-              onClick={(e) => {
-                e.stopPropagation();
-                const input = document.createElement("input");
-                input.type = "file";
-                input.accept = "image/*";
-                input.onchange = () => {
-                  const file = input.files?.[0];
-                  if (file) void handleUpload(file);
-                };
-                input.click();
-              }}
-            >
-              <Upload size={12} /> Upload
-            </Button>
-          )}
-          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </HStack>
+    <Box>
+      <HStack gap={1.5} wrap="wrap" align="center">
+        {photos.map((photo, idx) => (
+          <Box
+            key={photo.id}
+            position="relative"
+            w="64px"
+            h="64px"
+            borderRadius="md"
+            overflow="hidden"
+            cursor="pointer"
+            onClick={() => setViewerIndex(idx)}
+            borderWidth="1px"
+            borderColor="gray.200"
+            flexShrink={0}
+          >
+            <img
+              src={photo.url}
+              alt={photo.description || "Equipment photo"}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          </Box>
+        ))}
+        {canUpload && (
+          <Button
+            size="xs"
+            variant="outline"
+            loading={uploading}
+            onClick={(e) => { e.stopPropagation(); pickFile(); }}
+            w="64px"
+            h="64px"
+            p="0"
+            flexShrink={0}
+            title="Add photo"
+          >
+            <Plus size={20} />
+          </Button>
+        )}
       </HStack>
 
-      {expanded && photos.length === 0 && !readOnly && (
-        <Text fontSize="xs" color="fg.muted" px={3} py={2}>
-          No photos yet. Upload photos to help workers identify and use this equipment.
-        </Text>
-      )}
-
-      {expanded && photos.length > 0 && (
-        <Box p={2}>
-          {/* Thumbnail grid */}
-          <Box display="grid" gridTemplateColumns="repeat(auto-fill, minmax(80px, 1fr))" gap={2}>
-            {photos.map((photo, idx) => (
-              <Box
-                key={photo.id}
-                position="relative"
-                w="full"
-                aspectRatio="1"
-                borderRadius="md"
-                overflow="hidden"
-                cursor="pointer"
-                onClick={() => setViewerIndex(idx)}
-                borderWidth="1px"
-                borderColor="gray.200"
-              >
-                <img
-                  src={photo.url}
-                  alt={photo.description || "Equipment photo"}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              </Box>
-            ))}
-          </Box>
-
-          {/* Description editor (admin only) */}
-          {!readOnly && photos.map((photo) => (
-            editingId === photo.id ? (
-              <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.50" borderRadius="md">
-                <Text fontSize="xs" color="fg.muted">Description for: {photo.fileName ?? "photo"}</Text>
-                <Textarea
-                  size="sm"
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  placeholder="Optional description…"
-                  rows={2}
-                />
-                <HStack gap={1}>
-                  <Button size="xs" colorPalette="blue" onClick={() => void saveDescription(photo.id)}>Save</Button>
-                  <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
-                  <Box flex="1" />
-                  <Button size="xs" variant="ghost" colorPalette="red" onClick={() => { void handleDelete(photo.id); setEditingId(null); }}>
-                    <Trash2 size={12} /> Delete
-                  </Button>
-                </HStack>
-              </VStack>
-            ) : null
-          ))}
-        </Box>
-      )}
+      {/* Description editor (admin only) */}
+      {!readOnly && photos.map((photo) => (
+        editingId === photo.id ? (
+          <VStack key={`edit-${photo.id}`} align="stretch" gap={1} w="full" mt={2} p={2} bg="blue.50" borderRadius="md">
+            <Text fontSize="xs" color="fg.muted">Description for: {photo.fileName ?? "photo"}</Text>
+            <Textarea
+              size="sm"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              placeholder="Optional description…"
+              rows={2}
+            />
+            <HStack gap={1}>
+              <Button size="xs" colorPalette="blue" onClick={() => void saveDescription(photo.id)}>Save</Button>
+              <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+              <Box flex="1" />
+              <Button size="xs" variant="ghost" colorPalette="red" onClick={() => { void handleDelete(photo.id); setEditingId(null); }}>
+                <Trash2 size={12} /> Delete
+              </Button>
+            </HStack>
+          </VStack>
+        ) : null
+      ))}
 
       {/* Full-size viewer with navigation */}
       {viewerIndex != null && photos[viewerIndex] && (() => {
