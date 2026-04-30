@@ -110,6 +110,7 @@ model User {
   calendarFeedTokens        CalendarFeedToken[]
   occurrenceComments        OccurrenceComment[]
   propertyPhotosUploaded    PropertyPhoto[]
+  equipmentPhotosUploaded   EquipmentPhoto[]
   occurrenceAddons          OccurrenceAddon[]
 }
 
@@ -142,10 +143,27 @@ model Equipment {
   requiresInsurance  Boolean  @default(false)
 
   checkouts    Checkout[]
+  photos       EquipmentPhoto[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   retiredAt  DateTime?
+}
+
+model EquipmentPhoto {
+  id           String    @id @default(cuid())
+  equipmentId  String
+  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  r2Key        String
+  fileName     String?
+  contentType  String?
+  description  String?
+  sortOrder    Int       @default(0)
+  uploadedById String
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime  @default(now())
+
+  @@index([equipmentId])
 }
 
 model Checkout {

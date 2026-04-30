@@ -2735,11 +2735,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   >
                                     {name && <Text fontSize="xs" fontWeight="semibold" color="fg.muted" px="2" py="1">{name}</Text>}
                                     {phone && (
-                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
-                                        <Phone size={12} /> Call {phone}
-                                      </Button>
-                                    )}
-                                    {phone && (
                                       <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`sms:${phone}`, "_self"); }}>
                                         <MessageCircle size={12} /> Text {phone}
                                       </Button>
@@ -2747,6 +2742,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     {email && (
                                       <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`mailto:${email}`, "_self"); }}>
                                         <Mail size={12} /> Email {email}
+                                      </Button>
+                                    )}
+                                    {phone && (
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
+                                        <Phone size={12} /> Call {phone}
                                       </Button>
                                     )}
                                     {(() => {
@@ -2912,11 +2912,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     >
                                       {name && <Text fontSize="xs" fontWeight="semibold" color="fg.muted" px="2" py="1">{name}</Text>}
                                       {phone && (
-                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
-                                          <Phone size={12} /> Call {phone}
-                                        </Button>
-                                      )}
-                                      {phone && (
                                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`sms:${phone}`, "_self"); }}>
                                           <MessageCircle size={12} /> Text {phone}
                                         </Button>
@@ -2924,6 +2919,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       {email && (
                                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`mailto:${email}`, "_self"); }}>
                                           <Mail size={12} /> Email {email}
+                                        </Button>
+                                      )}
+                                      {phone && (
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setContactMenuOcc(null); window.open(`tel:${phone}`, "_self"); }}>
+                                          <Phone size={12} /> Call {phone}
                                         </Button>
                                       )}
                                       {(() => {

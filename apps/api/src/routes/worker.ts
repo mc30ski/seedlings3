@@ -1111,6 +1111,25 @@ export default async function workerRoutes(app: FastifyInstance) {
     return withUrls;
   });
 
+  // ── Equipment Photos (worker read) ──
+  app.get("/equipment/:id/photos", workerGuard, async (req: any) => {
+    const equipmentId = String(req.params.id);
+    const photos = await prisma.equipmentPhoto.findMany({
+      where: { equipmentId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const withUrls = await Promise.all(
+      photos.map(async (p) => ({
+        id: p.id,
+        url: await getDownloadUrl(p.r2Key, 86400, "equipment-photos"),
+        fileName: p.fileName,
+        description: p.description,
+        sortOrder: p.sortOrder,
+      }))
+    );
+    return withUrls;
+  });
+
   // ── Occurrence Property Photos (worker read) ──
   app.get("/occurrences/:id/property-photos", workerGuard, async (req: any) => {
     const occurrenceId = String(req.params.id);

@@ -5,6 +5,7 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
+import { deleteObject } from "../lib/r2";
 
 type Tx = Prisma.TransactionClient;
 
@@ -386,11 +387,22 @@ export const equipment: ServicesEquipment = {
 
       await tx.checkout.deleteMany({ where: { equipmentId: id } });
 
+      // Collect photo R2 keys before deleting (cascade will remove DB rows when equipment is deleted)
+      const photos = await tx.equipmentPhoto.findMany({ where: { equipmentId: id }, select: { r2Key: true } });
+
       await writeAudit(tx, AUDIT.EQUIPMENT.DELETED, currentUserId, {
         equipmentRecord: { ...eq },
       });
 
       await tx.equipment.delete({ where: { id } });
+
+      // Best-effort R2 cleanup (don't fail the delete if R2 is unreachable)
+      for (const p of photos) {
+        try { await deleteObject(p.r2Key, "equipment-photos"); } catch (err) {
+          console.error("[equipment.hardDelete] R2 cleanup failed for", p.r2Key, err);
+        }
+      }
+
       return { deleted: true };
     });
   },
