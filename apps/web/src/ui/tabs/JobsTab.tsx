@@ -307,6 +307,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
     try {
       await apiPost(`/api/occurrences/${occId}/${wasPinned ? "unpin" : "pin"}`);
+      publishInlineMessage({ type: "SUCCESS", text: wasPinned ? "Unpinned" : "Pinned", icon: Pin, autoHideMs: 1500 });
     } catch (err) {
       setPinnedIds((prev) => {
         const next = new Set(prev);
@@ -344,6 +345,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
     try {
       await apiPost(`/api/occurrences/${occId}/${wasLiked ? "unlike" : "like"}`);
+      publishInlineMessage({ type: "SUCCESS", text: wasLiked ? "Unliked" : "Liked", icon: Heart, autoHideMs: 1500 });
     } catch (err) {
       setLikedIds((prev) => {
         const next = new Set(prev);

@@ -17,6 +17,8 @@ export type InlineMessageEventDetail = {
   autoHideMs?: number;
   /** Optional fade animation duration (ms) when hiding (auto or manual). Defaults to 180ms. */
   fadeOutMs?: number;
+  /** Optional icon override (defaults to one chosen by `type`). */
+  icon?: React.ElementType;
 };
 
 type Props = {
@@ -31,7 +33,7 @@ type Props = {
   style?: React.CSSProperties;
 };
 
-type MsgState = { type: MessageKind; text: string; fadeOutMs?: number } | null;
+type MsgState = { type: MessageKind; text: string; fadeOutMs?: number; icon?: React.ElementType } | null;
 
 // Publisher API (re-export below for convenience)
 const EVENT_NAME = "seedlings3:inline-message";
@@ -90,7 +92,7 @@ export default function InlineMessage({
 
       // replace current message
       clearTimers();
-      setMsg({ type: det.type, text: det.text, fadeOutMs: det.fadeOutMs });
+      setMsg({ type: det.type, text: det.text, fadeOutMs: det.fadeOutMs, icon: det.icon });
       // show (fade-in)
       setIsVisible(true);
 
@@ -166,7 +168,7 @@ export default function InlineMessage({
           >
             <HStack justify="space-between" align="center" gap="3" minH="44px">
               <HStack align="center" gap="3" minW={0}>
-                <Icon as={palette.icon} boxSize={5} flexShrink={0} />
+                <Icon as={msg?.icon ?? palette.icon} boxSize={5} flexShrink={0} />
                 <Text fontSize="md" fontWeight="semibold" lineClamp={4}>
                   {msg?.text ?? ""}
                 </Text>
