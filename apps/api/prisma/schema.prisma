@@ -112,6 +112,8 @@ model User {
   propertyPhotosUploaded    PropertyPhoto[]
   equipmentPhotosUploaded   EquipmentPhoto[]
   occurrenceAddons          OccurrenceAddon[]
+  pinnedEquipment           PinnedEquipment[]
+  likedEquipment            LikedEquipment[]
 }
 
 model UserRole {
@@ -144,6 +146,8 @@ model Equipment {
 
   checkouts    Checkout[]
   photos       EquipmentPhoto[]
+  pins         PinnedEquipment[]
+  likes        LikedEquipment[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -761,6 +765,36 @@ model LikedOccurrence {
   likedAt       DateTime      @default(now())
 
   @@unique([userId, occurrenceId])
+  @@index([userId])
+}
+
+model PinnedEquipment {
+  id           String    @id @default(cuid())
+
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  equipmentId  String
+  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  pinnedAt     DateTime  @default(now())
+
+  @@unique([userId, equipmentId])
+  @@index([userId])
+}
+
+model LikedEquipment {
+  id           String    @id @default(cuid())
+
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  equipmentId  String
+  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  likedAt      DateTime  @default(now())
+
+  @@unique([userId, equipmentId])
   @@index([userId])
 }
 

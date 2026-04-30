@@ -3,8 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
+import {
+  getCachedEquipmentPhotos,
+  setCachedEquipmentPhotos,
+  type CachedEquipmentPhoto,
+} from "@/src/lib/equipmentPhotosCache";
 
-type Photo = { id: string; url: string };
+type Photo = CachedEquipmentPhoto;
 
 type Props = {
   equipmentId: string;
@@ -50,16 +55,24 @@ export default function EquipmentThumbnail({ equipmentId, isAdmin, size = 64, on
     return () => observer.disconnect();
   }, []);
 
-  // Fetch the photo URL once visible
+  // Fetch the photo URL once visible (or use the shared cache so the expanded card reuses the same URL)
   useEffect(() => {
     if (!inView) return;
+    const cached = getCachedEquipmentPhotos(equipmentId, !!isAdmin);
+    if (cached) {
+      setUrl(cached.length > 0 ? cached[0].url : null);
+      setLoaded(true);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
         const endpoint = isAdmin ? `/api/admin/equipment/${equipmentId}/photos` : `/api/equipment/${equipmentId}/photos`;
         const list = await apiGet<Photo[]>(endpoint);
         if (cancelled) return;
-        setUrl(Array.isArray(list) && list.length > 0 ? list[0].url : null);
+        const photos = Array.isArray(list) ? list : [];
+        setCachedEquipmentPhotos(equipmentId, photos, !!isAdmin);
+        setUrl(photos.length > 0 ? photos[0].url : null);
       } catch {
         if (!cancelled) setUrl(null);
       }

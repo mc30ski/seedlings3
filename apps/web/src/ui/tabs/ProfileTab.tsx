@@ -345,23 +345,23 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
                   />
                   <Text fontSize="xs" color="fg.muted" mt="0.5">Auto-generated from first + last name. Edit to customize.</Text>
                 </Box>
-                <VStack align="start" gap={1}>
+                <VStack align="stretch" gap={1} w="full">
                   {targetUser?.email && (
-                    <HStack fontSize="sm">
-                      <Text color="fg.muted" w="80px">Email:</Text>
-                      <Text>{targetUser.email}</Text>
+                    <HStack fontSize="sm" alignItems="flex-start" w="full">
+                      <Text color="fg.muted" w="80px" flexShrink={0}>Email:</Text>
+                      <Text flex="1" minW={0} wordBreak="break-all">{targetUser.email}</Text>
                     </HStack>
                   )}
                   {(targetUser as any)?.phone && (
-                    <HStack fontSize="sm">
-                      <Text color="fg.muted" w="80px">Phone:</Text>
-                      <Text>{(targetUser as any).phone}</Text>
+                    <HStack fontSize="sm" alignItems="flex-start" w="full">
+                      <Text color="fg.muted" w="80px" flexShrink={0}>Phone:</Text>
+                      <Text flex="1" minW={0} wordBreak="break-all">{(targetUser as any).phone}</Text>
                     </HStack>
                   )}
                   {!(targetUser as any)?.phone && (
-                    <HStack fontSize="sm">
-                      <Text color="fg.muted" w="80px">Phone:</Text>
-                      <Text fontSize="xs" color="orange.500">Not set — add in Clerk to receive SMS</Text>
+                    <HStack fontSize="sm" alignItems="flex-start" w="full">
+                      <Text color="fg.muted" w="80px" flexShrink={0}>Phone:</Text>
+                      <Text flex="1" minW={0} fontSize="xs" color="orange.500">Not set — add in Clerk to receive SMS</Text>
                     </HStack>
                   )}
                 </VStack>
@@ -808,7 +808,20 @@ function EarningsSection({ targetUserId, isSelf }: { targetUserId: string; isSel
   return (
     <Card.Root variant="outline">
       <Card.Header py="3" px="4" pb="0">
-        <Text fontWeight="semibold">Earnings</Text>
+        <HStack justify="space-between" alignItems="center">
+          <Text fontWeight="semibold">Earnings</Text>
+          {isSelf && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "payments", category: "Money" } }));
+              }}
+            >
+              View Payments →
+            </Button>
+          )}
+        </HStack>
       </Card.Header>
       <Card.Body py="3" px="4">
         <VStack align="stretch" gap={3}>

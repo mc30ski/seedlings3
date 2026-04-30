@@ -785,6 +785,68 @@ export default async function workerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ── Pin / Unpin equipment ──
+
+  app.get("/equipment/pinned", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const pins = await prisma.pinnedEquipment.findMany({
+      where: { userId: uid },
+      select: { equipmentId: true },
+    });
+    return pins.map((p: any) => p.equipmentId);
+  });
+
+  app.post("/equipment/:id/pin", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
+    await prisma.pinnedEquipment.upsert({
+      where: { userId_equipmentId: { userId: uid, equipmentId } },
+      create: { userId: uid, equipmentId },
+      update: {},
+    });
+    return { ok: true };
+  });
+
+  app.post("/equipment/:id/unpin", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
+    await prisma.pinnedEquipment.deleteMany({
+      where: { userId: uid, equipmentId },
+    });
+    return { ok: true };
+  });
+
+  // ── Like / Unlike equipment ──
+
+  app.get("/equipment/liked", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const likes = await prisma.likedEquipment.findMany({
+      where: { userId: uid },
+      select: { equipmentId: true },
+    });
+    return likes.map((l: any) => l.equipmentId);
+  });
+
+  app.post("/equipment/:id/like", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
+    await prisma.likedEquipment.upsert({
+      where: { userId_equipmentId: { userId: uid, equipmentId } },
+      create: { userId: uid, equipmentId },
+      update: {},
+    });
+    return { ok: true };
+  });
+
+  app.post("/equipment/:id/unlike", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
+    await prisma.likedEquipment.deleteMany({
+      where: { userId: uid, equipmentId },
+    });
+    return { ok: true };
+  });
+
   // ── Tasks ──
 
   app.post("/tasks", workerGuard, async (req: any) => {

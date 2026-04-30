@@ -6,6 +6,11 @@ import { Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
+import {
+  getCachedEquipmentPhotos,
+  setCachedEquipmentPhotos,
+  invalidateEquipmentPhotos,
+} from "@/src/lib/equipmentPhotosCache";
 
 type EquipmentPhoto = {
   id: string;
@@ -29,11 +34,22 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
   const [editDesc, setEditDesc] = useState("");
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
-  async function load() {
+  async function load(useCache = true) {
+    const isAdmin = !readOnly;
+    if (useCache) {
+      const cached = getCachedEquipmentPhotos(equipmentId, isAdmin);
+      if (cached) {
+        setPhotos(cached);
+        setLoading(false);
+        return;
+      }
+    }
     try {
       const endpoint = readOnly ? `/api/equipment/${equipmentId}/photos` : `/api/admin/equipment/${equipmentId}/photos`;
       const list = await apiGet<EquipmentPhoto[]>(endpoint);
-      setPhotos(Array.isArray(list) ? list : []);
+      const photos = Array.isArray(list) ? list : [];
+      setCachedEquipmentPhotos(equipmentId, photos, isAdmin);
+      setPhotos(photos);
     } catch {
       setPhotos([]);
     }
@@ -59,7 +75,8 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
         key, fileName: file.name, contentType,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Photo uploaded." });
-      await load();
+      invalidateEquipmentPhotos(equipmentId);
+      await load(false);
     } catch (err) {
       console.error("[EquipmentPhotos] Upload error:", err);
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
@@ -71,6 +88,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
     try {
       await apiDelete(`/api/admin/equipment/${equipmentId}/photos/${photoId}`);
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+      invalidateEquipmentPhotos(equipmentId);
       publishInlineMessage({ type: "SUCCESS", text: "Photo deleted." });
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
@@ -81,6 +99,7 @@ export default function EquipmentPhotos({ equipmentId, readOnly }: Props) {
     try {
       await apiPatch(`/api/admin/equipment/${equipmentId}/photos/${photoId}`, { description: editDesc });
       setPhotos((prev) => prev.map((p) => p.id === photoId ? { ...p, description: editDesc.trim() || null } : p));
+      invalidateEquipmentPhotos(equipmentId);
       setEditingId(null);
       publishInlineMessage({ type: "SUCCESS", text: "Description saved." });
     } catch (err) {

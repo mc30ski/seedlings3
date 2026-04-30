@@ -1252,11 +1252,12 @@ export default function HomePage() {
   const programmaticNavRef = useRef(false);
   useEffect(() => {
     const onNav = (e: Event) => {
-      const { tab, autoAnalyze } = (e as CustomEvent).detail || {};
+      const { tab, category, autoAnalyze } = (e as CustomEvent).detail || {};
       if (tab) {
         programmaticNavRef.current = true;
         setTopTab("worker");
         setWorkerInnerTab(tab);
+        if (category) setWorkerCategory(category);
         if (autoAnalyze && tab === "routes") {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
@@ -1325,6 +1326,22 @@ export default function HomePage() {
     }
   }, [router.query.occ, isSignedIn]);
 
+  // Deep-link to a specific equipment item (e.g., ?equipment=ID or ?equipment=ID&view=admin)
+  useEffect(() => {
+    const equipmentId = router.query.equipment as string | undefined;
+    const view = router.query.view as string | undefined;
+    if (equipmentId) {
+      try {
+        localStorage.setItem("seedlings_deeplink_equipment", equipmentId);
+        if (view) localStorage.setItem("seedlings_deeplink_equipment_view", view);
+        localStorage.setItem("seedlings_deeplink_equipment_ts", String(Date.now()));
+      } catch {}
+      if (isSignedIn) {
+        router.replace("/", undefined, { shallow: true });
+      }
+    }
+  }, [router.query.equipment, isSignedIn]);
+
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
     let occId: string | null = null;
@@ -1371,6 +1388,59 @@ export default function HomePage() {
           window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
         }
         window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId: savedOccId } }));
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [me?.isApproved, meLoading]);
+
+  // Consume ?equipment=<id> deep link after auth.
+  useEffect(() => {
+    if (meLoading || !me?.isApproved) return;
+    let equipmentId: string | null = null;
+    let view: string | null = null;
+    try {
+      equipmentId = localStorage.getItem("seedlings_deeplink_equipment");
+      view = localStorage.getItem("seedlings_deeplink_equipment_view");
+      const ts = localStorage.getItem("seedlings_deeplink_equipment_ts");
+      if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
+        equipmentId = null;
+      }
+    } catch {}
+    if (!equipmentId) {
+      try {
+        localStorage.removeItem("seedlings_deeplink_equipment");
+        localStorage.removeItem("seedlings_deeplink_equipment_view");
+        localStorage.removeItem("seedlings_deeplink_equipment_ts");
+      } catch {}
+      return;
+    }
+    try {
+      localStorage.removeItem("seedlings_deeplink_equipment");
+      localStorage.removeItem("seedlings_deeplink_equipment_view");
+      localStorage.removeItem("seedlings_deeplink_equipment_ts");
+    } catch {}
+    if (router.query.equipment) {
+      router.replace("/", undefined, { shallow: true });
+    }
+    if (view === "admin") {
+      setTopTab("admin");
+      setAdminInnerTab("equipment" as any);
+    } else {
+      setTopTab("worker");
+      setWorkerInnerTab("equipment");
+      setWorkerCategory("Field");
+    }
+    const savedId = equipmentId;
+    let attempts = 0;
+    const maxAttempts = 30;
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__equipmentTabReady || attempts >= maxAttempts) {
+        clearInterval(interval);
+        if (view !== "admin") {
+          window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "equipment" } }));
+        }
+        window.dispatchEvent(new CustomEvent("equipmentTab:highlight", { detail: { equipmentId: savedId } }));
       }
     }, 100);
     return () => clearInterval(interval);
