@@ -39,6 +39,7 @@ import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
+import EquipmentPhotos from "@/src/ui/components/EquipmentPhotos";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
@@ -807,6 +808,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   {e.brand ? `${e.brand} ` : ""}
                   {e.model ? `${e.model} ` : ""}
                 </Text>
+                <Box mt={1} mb={1}>
+                  <EquipmentPhotos equipmentId={e.id} readOnly={!forAdmin} />
+                </Box>
                 {e.qrSlug && (
                   <Text fontSize="xs" color="gray.500" mt={0}>
                     <Text as="span" fontWeight="bold">

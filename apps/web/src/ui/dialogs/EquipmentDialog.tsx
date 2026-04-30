@@ -29,6 +29,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
+import EquipmentPhotos from "@/src/ui/components/EquipmentPhotos";
 
 type Props = {
   open: boolean;
@@ -380,6 +381,12 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
+                {mode === "UPDATE" && initial?.id && (
+                  <div>
+                    <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
+                    <EquipmentPhotos equipmentId={initial.id} defaultExpanded />
+                  </div>
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

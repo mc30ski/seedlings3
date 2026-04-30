@@ -464,6 +464,73 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { deleted: true };
   });
 
+  // ── Equipment Photos ────────────────────────────────────────────────────
+
+  app.post("/admin/equipment/:id/photos/upload-url", adminGuard, async (req: any) => {
+    const equipmentId = String(req.params.id);
+    const { fileName, contentType } = (req.body || {}) as { fileName?: string; contentType?: string };
+    const name = fileName || `photo-${Date.now()}.jpg`;
+    const ct = contentType || "image/jpeg";
+    const key = `equipment/${equipmentId}/${Date.now()}-${name}`;
+    const uploadUrl = await getUploadUrl(key, ct, 300, "equipment-photos");
+    return { uploadUrl, key, contentType: ct };
+  });
+
+  app.post("/admin/equipment/:id/photos/confirm", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const equipmentId = String(req.params.id);
+    const { key, fileName, contentType, description } = (req.body || {}) as {
+      key: string; fileName?: string; contentType?: string; description?: string;
+    };
+    if (!key) throw app.httpErrors.badRequest("key is required");
+    const count = await prisma.equipmentPhoto.count({ where: { equipmentId } });
+    if (count >= 10) throw app.httpErrors.badRequest("Maximum 10 photos per equipment");
+    return prisma.equipmentPhoto.create({
+      data: {
+        equipmentId,
+        r2Key: key,
+        fileName: fileName ?? null,
+        contentType: contentType ?? null,
+        description: description?.trim() || null,
+        sortOrder: count,
+        uploadedById: uid,
+      },
+    });
+  });
+
+  app.get("/admin/equipment/:id/photos", adminGuard, async (req: any) => {
+    const equipmentId = String(req.params.id);
+    const photos = await prisma.equipmentPhoto.findMany({
+      where: { equipmentId },
+      orderBy: { sortOrder: "asc" },
+    });
+    const withUrls = await Promise.all(
+      photos.map(async (p) => ({
+        ...p,
+        url: await getDownloadUrl(p.r2Key, 86400, "equipment-photos"),
+      }))
+    );
+    return withUrls;
+  });
+
+  app.patch("/admin/equipment/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const photoId = String(req.params.photoId);
+    const body = req.body || {};
+    const data: any = {};
+    if ("description" in body) data.description = body.description?.trim() || null;
+    if ("sortOrder" in body) data.sortOrder = Number(body.sortOrder);
+    return prisma.equipmentPhoto.update({ where: { id: photoId }, data });
+  });
+
+  app.delete("/admin/equipment/:id/photos/:photoId", adminGuard, async (req: any) => {
+    const photoId = String(req.params.photoId);
+    const photo = await prisma.equipmentPhoto.findUnique({ where: { id: photoId } });
+    if (!photo) throw app.httpErrors.notFound("Photo not found");
+    await deleteObject(photo.r2Key, "equipment-photos");
+    await prisma.equipmentPhoto.delete({ where: { id: photoId } });
+    return { deleted: true };
+  });
+
   // ── Job Service Default Property Photos ─────────────────────────────────
 
   app.get("/admin/jobs/:id/property-photos", adminGuard, async (req: any) => {

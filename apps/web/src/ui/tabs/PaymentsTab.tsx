@@ -73,11 +73,53 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", defaultDateFrom);
-  const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", todayStr);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_w_datePreset", "thisMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset("thisMonth"), []);
+  const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", presetDates.from);
+  const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", presetDates.to);
+  const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [typeFilter, setTypeFilter] = usePersistedState<string[]>("pay_w_type", ["ALL"]);
   const [compact, setCompact] = usePersistedState("pay_w_compact", false);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+
+  function applyPreset(preset: DatePreset) {
+    setDatePreset(preset);
+    if (preset) {
+      const d = computeDatesFromPreset(preset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+    }
+  }
+
+  // Recompute dates from preset on each mount (so "last month" stays current)
+  const quickDateItems = useMemo(() => [
+    { label: "Today", value: "today" },
+    { label: "Last week", value: "lastWeek" },
+    { label: "Last month", value: "lastMonth" },
+    { label: "All time", value: "all" },
+  ], []);
+
+  useEffect(() => {
+    // Reset to default if persisted preset is not valid (allow "thisMonth" as default even though it's not in the dropdown)
+    const validPresets = [...quickDateItems.map((it) => it.value), "thisMonth"];
+    if (datePreset && !validPresets.includes(datePreset)) {
+      applyPreset("thisMonth");
+      return;
+    }
+    // Whenever datePreset changes (including hydration from localStorage), recompute dates
+    if (datePreset) {
+      const d = computeDatesFromPreset(datePreset);
+      setDateFrom(d.from);
+      setDateTo(d.to);
+    }
+  }, [datePreset]);
+
+  useEffect(() => {
+    if (!quickDateMenuOpen) return;
+    const close = () => setQuickDateMenuOpen(false);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [quickDateMenuOpen]);
 
   async function load() {
     setLoading(true);
@@ -189,76 +231,67 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         </Select.Root>
       </HStack>
       <HStack mb={2} gap={2} align="center">
-        <DateInput value={dateFrom} onChange={(val) => setDateFrom(val)} />
+        <DateInput value={dateFrom} onChange={(val) => { setDateFrom(val); setDatePreset(null); if (dateTo && val && val > dateTo) setDateTo(val); }} />
         <Text fontSize="sm">–</Text>
-        <DateInput value={dateTo} onChange={(val) => setDateTo(val)} />
+        <DateInput value={dateTo} onChange={(val) => { setDateTo(val); setDatePreset(null); if (dateFrom && val && val < dateFrom) setDateFrom(val); }} />
       </HStack>
-      {typeFilter[0] !== "ALL" && (
-        <HStack mb={2} gap={1} wrap="wrap" pl="2">
+      <HStack mb={2} gap={1} wrap="wrap" pl="1">
+        <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
+          <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
+            {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "This month"}
+            {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
+          </Badge>
+          {quickDateMenuOpen && (
+            <VStack position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+              ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 148))}px`; } }}>
+              {quickDateItems.map((it) => (
+                <Button key={it.value} size="xs" variant={datePreset === it.value ? "solid" : "ghost"} colorPalette={datePreset === it.value ? "green" : undefined} w="full" justifyContent="start"
+                  onClick={() => { setQuickDateMenuOpen(false); applyPreset(it.value as DatePreset); }}>
+                  {it.label}
+                </Button>
+              ))}
+            </VStack>
+          )}
+        </Box>
+        {typeFilter[0] !== "ALL" && (
           <Badge size="sm" colorPalette="purple" variant="subtle">
             {typeFilterItems.find((i) => i.value === typeFilter[0])?.label}
           </Badge>
-          {typeFilter[0] !== "ALL" && (
-            <Badge
-              size="sm"
-              colorPalette="red"
-              variant="outline"
-              cursor="pointer"
-              onClick={() => setTypeFilter(["ALL"])}
-            >
-              ✕ Clear
-            </Badge>
-          )}
-        </HStack>
-      )}
+        )}
+        {(typeFilter[0] !== "ALL" || !datePreset) && (
+          <Badge
+            size="sm"
+            colorPalette="red"
+            variant="outline"
+            cursor="pointer"
+            onClick={() => { setTypeFilter(["ALL"]); applyPreset("thisMonth"); }}
+          >
+            ✕ Clear
+          </Badge>
+        )}
+      </HStack>
 
       {(() => {
-        const totalExpenses = showJobs ? items.reduce(
-          (s, it) => s + (it.occurrence?.expenses ?? []).reduce((es, e) => es + e.cost, 0),
-          0
-        ) : 0;
-        const totalFees = showJobs ? items.reduce(
-          (s, it) => s + (it.payment.platformFeeAmount ?? 0),
-          0
-        ) : 0;
-        const totalMargins = showJobs ? items.reduce(
-          (s, it) => s + (it.payment.businessMarginAmount ?? 0),
-          0
-        ) : 0;
+        // totalAmount already represents the worker's post-deduction payout (commission/margin/expenses removed at acceptance time).
+        // Equipment rental charges are separate — billed AFTER payout, so they're a real additional deduction here.
         const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
         const visibleTotal = showJobs ? totalAmount : 0;
-        const totalDeductions = totalExpenses + totalEquipCost + totalFees + totalMargins;
-        const net = visibleTotal - totalDeductions;
+        const finalNet = visibleTotal - totalEquipCost;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
             {showJobs && (
               <Text fontSize="lg" fontWeight="bold" color="green.700">
-                Total: ${visibleTotal.toFixed(2)}
-              </Text>
-            )}
-            {totalExpenses > 0 && (
-              <Text fontSize="sm" color="orange.600">
-                Expenses: −${totalExpenses.toFixed(2)}
-              </Text>
-            )}
-            {totalFees > 0 && (
-              <Text fontSize="sm" color="orange.600">
-                Commission: −${totalFees.toFixed(2)}
-              </Text>
-            )}
-            {totalMargins > 0 && (
-              <Text fontSize="sm" color="orange.600">
-                Business Margin: −${totalMargins.toFixed(2)}
+                Payout: ${visibleTotal.toFixed(2)}
               </Text>
             )}
             {totalEquipCost > 0 && (
               <Text fontSize="sm" color="orange.600">
-                Equipment: −${totalEquipCost.toFixed(2)}
+                Equipment rental: −${totalEquipCost.toFixed(2)}
               </Text>
             )}
-            {totalDeductions > 0 && showJobs && (
+            {totalEquipCost > 0 && showJobs && (
               <Text fontSize="lg" fontWeight="bold" color="green.700">
-                Net: ${net.toFixed(2)}
+                Net: ${finalNet.toFixed(2)}
               </Text>
             )}
             {!showJobs && totalEquipCost > 0 && (
@@ -385,8 +418,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     })()}
                   </VStack>
                   {(() => {
+                    // myAmount is the post-deduction payout (commission/margin/expenses already removed at acceptance time).
+                    // Show informational context about what was deducted from the gross, but don't re-subtract.
                     const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                    const net = item.myAmount - expTotal;
+                    const fee = item.payment.platformFeeAmount ?? 0;
+                    const margin = item.payment.businessMarginAmount ?? 0;
                     return (
                       <VStack align="end" gap={0}>
                         <Text fontWeight="bold" color="green.700" fontSize="lg">
@@ -397,24 +433,24 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                             of ${item.payment.amountPaid.toFixed(2)} total
                           </Text>
                         )}
+                        {(expTotal > 0 || fee > 0 || margin > 0) && (
+                          <Text fontSize="2xs" color="fg.muted" fontStyle="italic" mt={0.5}>
+                            (after deductions)
+                          </Text>
+                        )}
                         {expTotal > 0 && (
-                          <Text fontSize="xs" color="orange.600">
-                            −${expTotal.toFixed(2)} expenses
+                          <Text fontSize="2xs" color="fg.muted">
+                            ${expTotal.toFixed(2)} expenses on job
                           </Text>
                         )}
-                        {item.payment.platformFeeAmount != null && item.payment.platformFeeAmount > 0 && (
-                          <Text fontSize="xs" color="orange.600">
-                            −${item.payment.platformFeeAmount.toFixed(2)} commission ({item.payment.platformFeePercent}%)
+                        {fee > 0 && (
+                          <Text fontSize="2xs" color="fg.muted">
+                            {item.payment.platformFeePercent}% commission applied
                           </Text>
                         )}
-                        {item.payment.businessMarginAmount != null && item.payment.businessMarginAmount > 0 && (
-                          <Text fontSize="xs" color="orange.600">
-                            −${item.payment.businessMarginAmount.toFixed(2)} margin ({item.payment.businessMarginPercent}%)
-                          </Text>
-                        )}
-                        {(expTotal > 0 || (item.payment.platformFeeAmount ?? 0) > 0 || (item.payment.businessMarginAmount ?? 0) > 0) && (
-                          <Text fontWeight="bold" color="green.700" fontSize="sm">
-                            Net: ${(net - (item.payment.platformFeeAmount ?? 0) - (item.payment.businessMarginAmount ?? 0)).toFixed(2)}
+                        {margin > 0 && (
+                          <Text fontSize="2xs" color="fg.muted">
+                            {item.payment.businessMarginPercent}% margin applied
                           </Text>
                         )}
                       </VStack>
@@ -515,8 +551,8 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
-  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "thisMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset("thisMonth"), []);
   const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
   const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
@@ -532,13 +568,27 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   }
 
   // Recompute dates from preset on each mount (so "last month" stays current)
+  const quickDateItems = useMemo(() => [
+    { label: "Today", value: "today" },
+    { label: "Last week", value: "lastWeek" },
+    { label: "Last month", value: "lastMonth" },
+    { label: "All time", value: "all" },
+  ], []);
+
   useEffect(() => {
+    // Reset to default if persisted preset is not valid (allow "thisMonth" as default even though it's not in the dropdown)
+    const validPresets = [...quickDateItems.map((it) => it.value), "thisMonth"];
+    if (datePreset && !validPresets.includes(datePreset)) {
+      applyPreset("thisMonth");
+      return;
+    }
+    // Whenever datePreset changes (including hydration from localStorage), recompute dates
     if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
       setDateFrom(d.from);
       setDateTo(d.to);
     }
-  }, []);
+  }, [datePreset]);
 
   useEffect(() => {
     if (!quickDateMenuOpen) return;
@@ -546,14 +596,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     const timer = setTimeout(() => document.addEventListener("click", close), 50);
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [quickDateMenuOpen]);
-
-  const quickDateItems = useMemo(() => [
-    { label: "This week", value: "thisWeek" },
-    { label: "This month", value: "thisMonth" },
-    { label: "Last week", value: "lastWeek" },
-    { label: "Last month", value: "lastMonth" },
-    { label: "All time", value: "all" },
-  ], []);
   const quickDateCollection = useMemo(() => createListCollection({ items: quickDateItems }), [quickDateItems]);
   const [methodFilter, setMethodFilter] = usePersistedState<string[]>("pay_a_method", ["ALL"]);
   const [personFilter, setPersonFilter] = usePersistedState<string[]>("pay_a_persons", []);
@@ -815,27 +857,16 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           css={{ background: "var(--chakra-colors-gray-100)" }}
           onClick={() => {
             const rows: string[] = [];
-            rows.push("Worker,Type,Job,Date,Amount,Expenses,Commission,Margin,Payout,Method");
+            // Note: sp.amount is the post-deduction payout (commission/margin/expenses already removed at acceptance time)
+            rows.push("Worker,Type,Job,Date,Payout,Method");
             for (const p of filteredItems) {
               const prop = p.occurrence?.job?.property;
-              const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-              const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
-              const fee = p.platformFeeAmount ?? 0;
-              const bMargin = (p as any).businessMarginAmount ?? 0;
-              const feeableSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
-              const empSplitTotal = p.splits.filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE").reduce((s, sp) => s + sp.amount, 0);
               for (const sp of p.splits) {
-                const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-                const expShare = expTotal * ratio;
-                const isEmp = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
-                const feeShare = !isEmp && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                const marginShare = isEmp && empSplitTotal > 0 ? bMargin * (sp.amount / empSplitTotal) : 0;
-                const payout = sp.amount - expShare - feeShare - marginShare;
                 const name = (sp.user?.displayName ?? sp.user?.email ?? sp.userId).replace(/,/g, "");
                 const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
                 const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
                 const date = p.createdAt ? fmtDate(p.createdAt) : "";
-                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${expShare.toFixed(2)},${feeShare.toFixed(2)},${marginShare.toFixed(2)},${payout.toFixed(2)},${prettyStatus(p.method)}`);
+                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${prettyStatus(p.method)}`);
               }
             }
             const blob = new Blob([rows.join("\n")], { type: "text/csv" });
@@ -854,7 +885,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
-              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "This month"}
               {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
@@ -897,7 +928,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 setPersonFilter([]);
                 setPersonSearch("");
                 setQ("");
-                applyPreset("lastMonth");
+                applyPreset("thisMonth");
               }}
             >
               ✕ Clear
@@ -1076,7 +1107,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
             <Badge size="sm" colorPalette="green" variant="subtle" cursor="pointer" onClick={() => setQuickDateMenuOpen((v) => !v)}>
-              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "Last month"}
+              {datePreset ? (PRESET_LABELS[datePreset] ?? datePreset) : (dateFrom || dateTo) ? "Custom dates" : "This month"}
               {" "}<Box as="span" display="inline-flex" alignItems="center" justifyContent="center" w="14px" h="14px" borderRadius="full" bg="green.500" color="white" verticalAlign="middle"><ChevronDown size={9} /></Box>
             </Badge>
             {quickDateMenuOpen && (
@@ -1117,7 +1148,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 setMethodFilter(["ALL"]);
                 setPersonFilter([]);
                 setPersonSearch("");
-                applyPreset("lastMonth");
+                applyPreset("thisMonth");
               }}
             >
               ✕ Clear
@@ -1288,51 +1319,16 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       </Text>
                     )}
                     {p.splits && p.splits.length > 0 && (() => {
-                      const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                      const fee = p.platformFeeAmount ?? 0;
-                      const margin = (p as any).businessMarginAmount ?? 0;
-                      const splitTotal = p.splits.reduce((s, sp) => s + sp.amount, 0);
-                      const feeableSplitTotal = p.splits
-                        .filter((sp: any) => sp.user?.workerType !== "EMPLOYEE" && sp.user?.workerType !== "TRAINEE")
-                        .reduce((s, sp) => s + sp.amount, 0);
-                      const employeeSplitTotal = p.splits
-                        .filter((sp: any) => sp.user?.workerType === "EMPLOYEE" || sp.user?.workerType === "TRAINEE")
-                        .reduce((s, sp) => s + sp.amount, 0);
+                      // sp.amount is the post-deduction payout — already net of expenses/commission/margin.
                       return (
                         <VStack align="start" gap={1} mt={0.5}>
-                          {p.splits.map((sp) => {
-                            const ratio = splitTotal > 0 ? sp.amount / splitTotal : 0;
-                            const expShare = expTotal * ratio;
-                            const isFeeable = (sp.user as any)?.workerType !== "EMPLOYEE" && (sp.user as any)?.workerType !== "TRAINEE";
-                            const isEmployee = (sp.user as any)?.workerType === "EMPLOYEE" || (sp.user as any)?.workerType === "TRAINEE";
-                            const feeShare = isFeeable && feeableSplitTotal > 0 ? fee * (sp.amount / feeableSplitTotal) : 0;
-                            const marginShare = isEmployee && employeeSplitTotal > 0 ? margin * (sp.amount / employeeSplitTotal) : 0;
-                            const personNet = sp.amount - expShare - feeShare - marginShare;
-                            const hasDeductions = expShare > 0 || feeShare > 0 || marginShare > 0;
-                            return (
-                              <Box key={sp.userId} fontSize="xs">
-                                <Text fontWeight="medium" color="fg.muted">
-                                  {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
-                                </Text>
-                                {hasDeductions && (
-                                  <Box pl={2}>
-                                    {expShare > 0 && (
-                                      <Text color="orange.600">−${expShare.toFixed(2)} expenses</Text>
-                                    )}
-                                    {feeShare > 0 && (
-                                      <Text color="orange.600">−${feeShare.toFixed(2)} commission</Text>
-                                    )}
-                                    {marginShare > 0 && (
-                                      <Text color="orange.600">−${marginShare.toFixed(2)} margin</Text>
-                                    )}
-                                    <Text fontWeight="medium" color="green.600">
-                                      Net: ${personNet.toFixed(2)}
-                                    </Text>
-                                  </Box>
-                                )}
-                              </Box>
-                            );
-                          })}
+                          {p.splits.map((sp) => (
+                            <Box key={sp.userId} fontSize="xs">
+                              <Text fontWeight="medium" color="green.700">
+                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
+                              </Text>
+                            </Box>
+                          ))}
                         </VStack>
                       );
                     })()}
@@ -1353,7 +1349,10 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   </VStack>
                   {(() => {
                     const expTotal = (p.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                    const net = p.amountPaid - expTotal;
+                    const fee = p.platformFeeAmount ?? 0;
+                    const margin = (p as any).businessMarginAmount ?? 0;
+                    const splitTotal = (p.splits ?? []).reduce((s, sp) => s + sp.amount, 0);
+                    const hasDeductions = expTotal > 0 || fee > 0 || margin > 0;
                     return (
                       <VStack align="end" gap={0}>
                         <Text fontWeight="bold" color="green.700" fontSize="lg">
@@ -1364,14 +1363,19 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                             −${expTotal.toFixed(2)} expenses
                           </Text>
                         )}
-                        {p.platformFeeAmount != null && p.platformFeeAmount > 0 && (
+                        {fee > 0 && (
                           <Text fontSize="xs" color="orange.600">
-                            −${p.platformFeeAmount.toFixed(2)} fee ({p.platformFeePercent}%)
+                            −${fee.toFixed(2)} commission ({p.platformFeePercent}%)
                           </Text>
                         )}
-                        {(expTotal > 0 || (p.platformFeeAmount ?? 0) > 0) && (
+                        {margin > 0 && (
+                          <Text fontSize="xs" color="orange.600">
+                            −${margin.toFixed(2)} margin ({(p as any).businessMarginPercent}%)
+                          </Text>
+                        )}
+                        {hasDeductions && (
                           <Text fontWeight="bold" color="green.700" fontSize="sm">
-                            Net: ${(net - (p.platformFeeAmount ?? 0)).toFixed(2)}
+                            Worker payout: ${splitTotal.toFixed(2)}
                           </Text>
                         )}
                       </VStack>

@@ -10,8 +10,9 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Check, CheckCircle2, Circle, Copy, Mail, MessageCircle, Navigation } from "lucide-react";
+import { Check, CheckCircle2, Circle, Copy, ExternalLink, Mail, MessageCircle, Navigation } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { openEventSearch } from "@/src/lib/bus";
 import { type Me, type WorkerOccurrence } from "@/src/lib/types";
 import { bizDateKey, clientLabel } from "@/src/lib/lib";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -328,6 +329,7 @@ function ChecklistItem({
       borderColor={confirmed ? "green.200" : "orange.300"}
       borderRadius="md"
       align="start"
+      position="relative"
     >
       {/* Check icon */}
       <Box mt="2px" flexShrink={0}>
@@ -340,6 +342,20 @@ function ChecklistItem({
 
       {/* Content */}
       <VStack align="start" gap={0.5} flex="1" minW={0}>
+        {/* Link to Jobs tab */}
+        <Button
+          size="xs"
+          variant="ghost"
+          px="1"
+          minW="0"
+          position="absolute"
+          top="1"
+          right="1"
+          title="View in Jobs"
+          onClick={() => openEventSearch("remindersToJobsTabSearch", occ.job?.property?.displayName ?? occ.title ?? "", !!forAdmin, occ.id)}
+        >
+          <ExternalLink size={12} />
+        </Button>
         <Text fontSize="sm" fontWeight="medium">
           {propertyName}
           {clientName && <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(clientName)}</Text>}
