@@ -40,6 +40,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import EquipmentPhotos from "@/src/ui/components/EquipmentPhotos";
+import EquipmentThumbnail from "@/src/ui/components/EquipmentThumbnail";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
@@ -749,6 +750,49 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               toggleCard();
             }}
           >
+            {isCardCompact && !forAdmin ? (
+              <HStack align="center" gap={3} py="3" px="4">
+                <EquipmentThumbnail equipmentId={e.id} />
+                <VStack align="stretch" gap={1} flex="1" minW={0}>
+                  <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
+                    <Text fontSize="sm" fontWeight="semibold">{e.shortDesc}</Text>
+                    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
+                      <StatusBadge
+                        status={e.status ?? ""}
+                        palette={equipmentStatusColor(e.status ?? "")}
+                        variant="subtle"
+                      />
+                      <StatusBadge status={e.type} palette="gray" variant="outline" />
+                      {e.requiresInsurance && (
+                        <span title="Valid insurance required to reserve this equipment">
+                          <StatusBadge status="Insured" palette="orange" variant="subtle" />
+                        </span>
+                      )}
+                    </Box>
+                  </Box>
+                  <HStack gap={2} fontSize="xs" color="fg.muted" wrap="wrap">
+                    <Text>
+                      {e.brand ? `${e.brand} ` : ""}
+                      {e.model ? `${e.model} ` : ""}
+                    </Text>
+                    {(me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                        No charge
+                      </Badge>
+                    ) : e.dailyRate != null && e.dailyRate > 0 ? (
+                      <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                        ${e.dailyRate.toFixed(2)}/day
+                      </Badge>
+                    ) : (
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                        No charge
+                      </Badge>
+                    )}
+                  </HStack>
+                </VStack>
+              </HStack>
+            ) : (
+            <>
             <Card.Header py="3" px="4" pb="0">
               <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 1, md: 3 }} justifyContent="space-between" alignItems={{ md: "center" }}>
                 <Text fontSize={isCardCompact ? "sm" : "md"} fontWeight="semibold">{e.shortDesc}</Text>
@@ -780,25 +824,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         ${e.dailyRate.toFixed(2)}/day
                       </Badge>
                     ) : null
-                  ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                      No charge (employee)
-                    </Badge>
-                  ) : e.dailyRate != null && e.dailyRate > 0 ? (
-                    <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
-                      ${e.dailyRate.toFixed(2)}/day rental
-                    </Badge>
-                  ) : (
-                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                      No charge
-                    </Badge>
-                  )}
-                  {e.holder && (
-                    <Text color="orange.500" fontWeight="medium">
-                      {e.holder.state === "CHECKED_OUT" ? "Out: " : "Reserved: "}
-                      {e.holder.displayName || e.holder.email || e.holder.userId.slice(0, 8)}
-                    </Text>
-                  )}
+                  ) : null}
                 </HStack>
               </Card.Body>
             ) : (
@@ -1027,6 +1053,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 )}
               </HStack>
             </Card.Footer>
+            )}
+            </>
             )}
           </Card.Root>
           );
