@@ -384,7 +384,7 @@ export default function EquipmentDialog({
                 {mode === "UPDATE" && initial?.id && (
                   <div>
                     <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
-                    <EquipmentPhotos equipmentId={initial.id} defaultExpanded />
+                    <EquipmentPhotos equipmentId={initial.id} />
                   </div>
                 )}
               </VStack>
