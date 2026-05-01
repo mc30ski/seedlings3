@@ -99,7 +99,7 @@ export function equipmentStatusColor(value: string): string {
     act.includes("UNRETIRED")
   )
     return "green";
-  if (act.includes("RESERVED")) return "orange";
+  if (act.includes("RESERVED")) return "purple";
   if (act.includes("CHECKED_OUT")) return "cyan";
   if (act.includes("MAINTENANCE_START") || act === "MAINTENANCE")
     return "yellow";

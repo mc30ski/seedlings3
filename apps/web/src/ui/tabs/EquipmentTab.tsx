@@ -1060,7 +1060,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         title={e.shortDesc}
                       >{e.shortDesc}</Text>
                     </HStack>
-                    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
+                    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0} mb={1}>
                       <StatusBadge
                         status={e.status ?? ""}
                         palette={equipmentStatusColor(e.status ?? "")}
@@ -1068,9 +1068,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       />
                       <StatusBadge status={e.type} palette="gray" variant="outline" />
                       {e.requiresInsurance && (
-                        <span title="Valid insurance required to reserve this equipment">
-                          <StatusBadge status="Insured" palette="orange" variant="subtle" />
-                        </span>
+                        <Box as="span" display="inline-flex" alignItems="center" title="Valid insurance required to reserve this equipment">
+                          <StatusBadge status="Insured" palette="yellow" variant="subtle" />
+                        </Box>
                       )}
                     </Box>
                   </Box>
@@ -1081,19 +1081,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {e.brand ? `${e.brand} ` : ""}
                       {e.model ? `${e.model} ` : ""}
                     </Text>
-                    {(me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                        No charge
-                      </Badge>
-                    ) : e.dailyRate != null && e.dailyRate > 0 ? (
-                      <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
-                        ${e.dailyRate.toFixed(2)}/day
-                      </Badge>
-                    ) : (
-                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                        No charge
-                      </Badge>
-                    )}
+                    {(() => {
+                      const wt = me?.workerType;
+                      const palette = wt === "EMPLOYEE" ? "blue" : wt === "TRAINEE" ? "green" : "orange";
+                      const rate = wt === "EMPLOYEE" ? e.employeeDailyRate
+                        : wt === "TRAINEE" ? null
+                        : e.dailyRate;
+                      if (rate != null && rate > 0) {
+                        return (
+                          <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                            ${rate.toFixed(2)}/day
+                          </Badge>
+                        );
+                      }
+                      return (
+                        <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                          No charge
+                        </Badge>
+                      );
+                    })()}
                   </HStack>
                 </VStack>
               </HStack>
@@ -1110,7 +1116,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   textOverflow={isCardCompact ? "ellipsis" : undefined}
                   title={isCardCompact ? e.shortDesc : undefined}
                 >{e.shortDesc}</Text>
-                <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0}>
+                <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0} mb={1}>
                   <StatusBadge
                     status={e.status ?? ""}
                     palette={equipmentStatusColor(e.status ?? "")}
@@ -1118,9 +1124,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   />
                   <StatusBadge status={e.type} palette="gray" variant="outline" />
                   {e.requiresInsurance && (
-                    <span title="Valid insurance required to reserve this equipment">
-                      <StatusBadge status="Insured" palette="orange" variant="subtle" />
-                    </span>
+                    <Box as="span" display="inline-flex" alignItems="center" title="Valid insurance required to reserve this equipment">
+                      <StatusBadge status="Insured" palette="yellow" variant="subtle" />
+                    </Box>
                   )}
                 </Box>
               </Box>
@@ -1134,13 +1140,20 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.brand ? `${e.brand} ` : ""}
                     {e.model ? `${e.model} ` : ""}
                   </Text>
-                  {forAdmin ? (
-                    e.dailyRate != null && e.dailyRate > 0 ? (
-                      <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                        ${e.dailyRate.toFixed(2)}/day
-                      </Badge>
-                    ) : null
-                  ) : null}
+                  {forAdmin && (
+                    <HStack gap={1}>
+                      {e.dailyRate != null && e.dailyRate > 0 && (
+                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor rate">
+                          ${e.dailyRate.toFixed(2)}/day
+                        </Badge>
+                      )}
+                      {e.employeeDailyRate != null && e.employeeDailyRate > 0 && (
+                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Employee rate">
+                          ${e.employeeDailyRate.toFixed(2)}/day
+                        </Badge>
+                      )}
+                    </HStack>
+                  )}
                 </HStack>
               </Card.Body>
             ) : (
@@ -1170,40 +1183,54 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   </Text>
                 )}
                 {forAdmin ? (
-                  <VStack align="start" gap={0} mt={0.5} fontSize="xs">
-                    <HStack gap={2}>
-                      <Text color="fg.muted">Employee:</Text>
-                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
-                    </HStack>
+                  <VStack align="start" gap={1} mt={0.5} fontSize="xs">
                     <HStack gap={2}>
                       <Text color="fg.muted">Contractor:</Text>
                       {e.dailyRate != null && e.dailyRate > 0 ? (
-                        <Badge colorPalette="orange" variant="solid" fontSize="xs" px="1.5" borderRadius="full">
+                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
                           ${e.dailyRate.toFixed(2)}/day
                         </Badge>
                       ) : (
-                        <Text color="green.500">No charge</Text>
+                        <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                      )}
+                    </HStack>
+                    <HStack gap={2}>
+                      <Text color="fg.muted">Employee:</Text>
+                      {e.employeeDailyRate != null && e.employeeDailyRate > 0 ? (
+                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                          ${e.employeeDailyRate.toFixed(2)}/day
+                        </Badge>
+                      ) : (
+                        <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
                       )}
                     </HStack>
                   </VStack>
-                ) : (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                ) : me?.workerType === "TRAINEE" ? (
                   <HStack gap={2} mt={0.5} wrap="wrap">
                     <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                      No charge — employees use equipment at no cost
+                      No charge — trainees cannot reserve equipment
                     </Badge>
-                    {e.dailyRate != null && e.dailyRate > 0 && (
-                      <Text fontSize="xs" color="gray.400">(${e.dailyRate.toFixed(2)}/day for contractors)</Text>
-                    )}
                   </HStack>
+                ) : me?.workerType === "EMPLOYEE" ? (
+                  e.employeeDailyRate != null && e.employeeDailyRate > 0 ? (
+                    <HStack gap={2} mt={0.5}>
+                      <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        ${e.employeeDailyRate.toFixed(2)}/day
+                      </Badge>
+                      <Text fontSize="xs" color="blue.500">rental cost</Text>
+                    </HStack>
+                  ) : (
+                    <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
+                  )
                 ) : e.dailyRate != null && e.dailyRate > 0 ? (
                   <HStack gap={2} mt={0.5}>
-                    <Badge colorPalette="orange" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                    <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                       ${e.dailyRate.toFixed(2)}/day
                     </Badge>
                     <Text fontSize="xs" color="orange.500">rental cost</Text>
                   </HStack>
                 ) : (
-                  <Text fontSize="xs" color="green.500" mt={0.5}>No rental cost</Text>
+                  <Text fontSize="xs" color="orange.500" mt={0.5}>No rental cost</Text>
                 )}
                 {/* Minimal collapsible for details */}
                 <ItemTile item={e} isMine={isMine(e)} />
@@ -1471,26 +1498,31 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                           {[reserveConfirmEquip.brand, reserveConfirmEquip.model].filter(Boolean).join(" ")}
                         </Text>
                       )}
-                      {(me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
-                        <Box mt={1} p={2} bg="green.50" rounded="md">
-                          <Text fontSize="xs" color="green.700" fontWeight="medium">
-                            No charge — employees use equipment at no cost
-                          </Text>
-                        </Box>
-                      ) : reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 ? (
-                        <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
-                          <Text fontSize="sm" color="orange.800" fontWeight="semibold">
-                            Rental charge: ${reserveConfirmEquip.dailyRate.toFixed(2)}/day
-                          </Text>
-                          <Text fontSize="xs" color="orange.600" mt={0.5}>
-                            This amount will be deducted from your payout for each day the equipment is reserved.
-                          </Text>
-                        </Box>
-                      ) : (
-                        <Box mt={1} p={2} bg="green.50" rounded="md">
-                          <Text fontSize="xs" color="green.700" fontWeight="medium">No rental charge for this equipment</Text>
-                        </Box>
-                      )}
+                      {(() => {
+                        const wt = me?.workerType;
+                        const rate = wt === "EMPLOYEE" ? reserveConfirmEquip.employeeDailyRate
+                          : wt === "TRAINEE" ? null
+                          : reserveConfirmEquip.dailyRate;
+                        if (rate != null && rate > 0) {
+                          return (
+                            <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
+                              <Text fontSize="sm" color="orange.800" fontWeight="semibold">
+                                Rental charge: ${rate.toFixed(2)}/day
+                              </Text>
+                              <Text fontSize="xs" color="orange.600" mt={0.5}>
+                                This amount will be deducted from your payout for each day the equipment is reserved.
+                              </Text>
+                            </Box>
+                          );
+                        }
+                        return (
+                          <Box mt={1} p={2} bg="green.50" rounded="md">
+                            <Text fontSize="xs" color="green.700" fontWeight="medium">
+                              {wt === "EMPLOYEE" ? "No charge — employees use equipment at no cost" : "No rental charge for this equipment"}
+                            </Text>
+                          </Box>
+                        );
+                      })()}
                     </Box>
 
                     <Text fontSize="sm">
@@ -1509,15 +1541,20 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       </Box>
                     )}
 
-                    {reserveConfirmEquip.dailyRate != null && reserveConfirmEquip.dailyRate > 0 &&
-                      me?.workerType !== "EMPLOYEE" && me?.workerType !== "TRAINEE" && (
-                      <Box p={2} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">
-                        <Text fontSize="sm" color="blue.700">
-                          This equipment has a rental rate of <b>${reserveConfirmEquip.dailyRate.toFixed(2)} per day</b>.
-                          Rental charges will be calculated based on the duration of your checkout and deducted from your earnings.
-                        </Text>
-                      </Box>
-                    )}
+                    {(() => {
+                      const wt = me?.workerType;
+                      if (wt === "TRAINEE") return null;
+                      const rate = wt === "EMPLOYEE" ? reserveConfirmEquip.employeeDailyRate : reserveConfirmEquip.dailyRate;
+                      if (rate == null || rate <= 0) return null;
+                      return (
+                        <Box p={2} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">
+                          <Text fontSize="sm" color="blue.700">
+                            This equipment has a rental rate of <b>${rate.toFixed(2)} per day</b>.
+                            Rental charges will be calculated based on the duration of your checkout and deducted from your earnings.
+                          </Text>
+                        </Box>
+                      );
+                    })()}
 
                     <Checkbox.Root
                       checked={reserveChecked}

@@ -68,6 +68,7 @@ export default function EquipmentDialog({
   const [issues, setIssues] = useState<string | undefined>("");
   const [age, setAge] = useState<string | undefined>("");
   const [dailyRate, setDailyRate] = useState("");
+  const [employeeDailyRate, setEmployeeDailyRate] = useState("");
   const [requiresInsurance, setRequiresInsurance] = useState(false);
   const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
@@ -120,6 +121,7 @@ export default function EquipmentDialog({
       setIssues(initial.issues ?? "");
       setAge(initial.age ?? "");
       setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
+      setEmployeeDailyRate(initial.employeeDailyRate != null ? initial.employeeDailyRate.toFixed(2) : "");
       setRequiresInsurance(!!initial.requiresInsurance);
       setInstructions(initial.instructions ?? []);
     } else {
@@ -135,6 +137,7 @@ export default function EquipmentDialog({
       setIssues("");
       setAge("");
       setDailyRate("");
+      setEmployeeDailyRate("");
       setRequiresInsurance(false);
       setInstructions([]);
     }
@@ -154,6 +157,7 @@ export default function EquipmentDialog({
       issues: issues,
       age: age,
       dailyRate: dailyRate ? parseFloat(dailyRate) : null,
+      employeeDailyRate: employeeDailyRate ? parseFloat(employeeDailyRate) : null,
       requiresInsurance,
     };
 
@@ -262,17 +266,28 @@ export default function EquipmentDialog({
                   />
                 </div>
                 {isAdmin && (
-                  <HStack gap={3}>
-                    <div style={{ flex: 1 }}>
-                      <Text mb="1">Daily Rate ($)</Text>
-                      <CurrencyInput
-                        value={dailyRate}
-                        onChange={setDailyRate}
-                        size="sm"
-                        placeholder="0.00"
-                      />
-                    </div>
-                    <div style={{ flex: 1 }}>
+                  <>
+                    <HStack gap={3}>
+                      <div style={{ flex: 1 }}>
+                        <Text mb="1">Contractor Rate ($/day)</Text>
+                        <CurrencyInput
+                          value={dailyRate}
+                          onChange={setDailyRate}
+                          size="sm"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <Text mb="1">Employee Rate ($/day)</Text>
+                        <CurrencyInput
+                          value={employeeDailyRate}
+                          onChange={setEmployeeDailyRate}
+                          size="sm"
+                          placeholder="0.00 (no charge)"
+                        />
+                      </div>
+                    </HStack>
+                    <div>
                       <Text mb="1">Requires Insurance</Text>
                       <Checkbox.Root
                         checked={requiresInsurance}
@@ -283,7 +298,7 @@ export default function EquipmentDialog({
                         <Checkbox.Label fontSize="sm">Yes</Checkbox.Label>
                       </Checkbox.Root>
                     </div>
-                  </HStack>
+                  </>
                 )}
                 <div>
                   <Text mb="1">Summary *</Text>
