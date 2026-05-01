@@ -11,11 +11,19 @@ type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
-function computeRentalCost(checkedOutAt: Date | null, releasedAt: Date, dailyRate: number | null): { rentalDays: number; rentalCost: number } | null {
-  if (!checkedOutAt || !dailyRate || dailyRate <= 0) return null;
+function computeRentalCost(
+  checkedOutAt: Date | null,
+  releasedAt: Date,
+  workerType: string | null | undefined,
+  contractorRate: number | null,
+  employeeRate: number | null,
+): { rentalDays: number; rentalCost: number } | null {
+  if (!checkedOutAt) return null;
+  const rate = workerType === "EMPLOYEE" ? employeeRate : contractorRate;
+  if (!rate || rate <= 0) return null;
   const msPerDay = 86_400_000;
   const rentalDays = Math.max(1, Math.ceil((releasedAt.getTime() - checkedOutAt.getTime()) / msPerDay));
-  return { rentalDays, rentalCost: rentalDays * dailyRate };
+  return { rentalDays, rentalCost: rentalDays * rate };
 }
 
 // Row-level lock helper
@@ -223,6 +231,7 @@ export const equipment: ServicesEquipment = {
       age?: string;
       qrSlug?: string | null;
       dailyRate?: number | null;
+      employeeDailyRate?: number | null;
       requiresInsurance?: boolean;
     }
   ) {
@@ -242,6 +251,7 @@ export const equipment: ServicesEquipment = {
         ...(input.issues !== undefined ? { issues: input.issues } : {}),
         ...(input.age !== undefined ? { age: input.age } : {}),
         ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
+        ...(input.employeeDailyRate !== undefined ? { employeeDailyRate: input.employeeDailyRate } : {}),
         ...(input.requiresInsurance !== undefined ? { requiresInsurance: input.requiresInsurance } : {}),
       };
 
@@ -273,6 +283,7 @@ export const equipment: ServicesEquipment = {
         | "issues"
         | "age"
         | "dailyRate"
+        | "employeeDailyRate"
         | "requiresInsurance"
       >
     >
@@ -295,6 +306,7 @@ export const equipment: ServicesEquipment = {
       if (patch.issues !== undefined) data.issues = patch.issues;
       if (patch.age !== undefined) data.age = patch.age;
       if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
+      if (patch.employeeDailyRate !== undefined) data.employeeDailyRate = patch.employeeDailyRate;
       if (patch.requiresInsurance !== undefined) data.requiresInsurance = patch.requiresInsurance;
 
       const updated = await tx.equipment.update({ where: { id }, data });
@@ -415,8 +427,9 @@ export const equipment: ServicesEquipment = {
       const active = await getActiveCheckout(tx, id);
       if (active) {
         const eq = await tx.equipment.findUnique({ where: { id } });
+        const holder = await tx.user.findUnique({ where: { id: active.userId } });
         const releasedAt = now();
-        const rental = computeRentalCost(active.checkedOutAt, releasedAt, eq?.dailyRate ?? null);
+        const rental = computeRentalCost(active.checkedOutAt, releasedAt, holder?.workerType, eq?.dailyRate ?? null, eq?.employeeDailyRate ?? null);
         const checkout = await tx.checkout.update({
           where: { id: active.id },
           data: {
@@ -630,7 +643,8 @@ export const equipment: ServicesEquipment = {
 
       // 3) Mark returned + compute rental cost
       const now = new Date();
-      const rental = computeRentalCost(active.checkedOutAt, now, eq.dailyRate);
+      const holder = await tx.user.findUnique({ where: { id: userId } });
+      const rental = computeRentalCost(active.checkedOutAt, now, holder?.workerType, eq.dailyRate, eq.employeeDailyRate ?? null);
       const returned = await tx.checkout.update({
         where: { id: active.id },
         data: {
