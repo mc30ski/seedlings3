@@ -741,12 +741,13 @@ model BusinessExpense {
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  date        DateTime
-  cost        Float
-  description String
-  category    String?
-  vendor      String?
-  notes       String?
+  date          DateTime
+  cost          Float
+  description   String
+  category      String?
+  vendor        String?
+  invoiceNumber String?
+  notes         String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

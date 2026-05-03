@@ -30,6 +30,7 @@ type BusinessExpense = {
   description: string;
   category?: string | null;
   vendor?: string | null;
+  invoiceNumber?: string | null;
   notes?: string | null;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null; email?: string | null };
@@ -43,6 +44,15 @@ type Summary = {
   total: number;
   byCategory: Record<string, number>;
   count: number;
+};
+
+type CompareBucket = { platformFees: number; businessMargin: number; earnings: number; expenses: number; net: number };
+type Comparison = {
+  today: CompareBucket;
+  thisWeek: CompareBucket;
+  thisMonth: CompareBucket;
+  thisYear: CompareBucket;
+  allTime: CompareBucket;
 };
 
 const COMMON_CATEGORIES = [
@@ -77,6 +87,7 @@ function todayStr(): string {
 export default function BusinessExpensesTab() {
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [comparison, setComparison] = useState<Comparison | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -96,7 +107,9 @@ export default function BusinessExpensesTab() {
   const [fCost, setFCost] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [fCategory, setFCategory] = useState("");
+  const [fCategoryCustom, setFCategoryCustom] = useState(false);
   const [fVendor, setFVendor] = useState("");
+  const [fInvoiceNumber, setFInvoiceNumber] = useState("");
   const [fNotes, setFNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -116,6 +129,11 @@ export default function BusinessExpensesTab() {
       if (filterTo) sumQs.set("to", filterTo);
       const s = await apiGet<Summary>(`/api/admin/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
       setSummary(s);
+      // Comparison is global (not filtered) — gives a steady "earnings vs expenses" picture.
+      try {
+        const cmp = await apiGet<Comparison>("/api/admin/business-expenses/vs-revenue");
+        setComparison(cmp);
+      } catch { /* non-fatal */ }
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load expenses.", err) });
     } finally {
@@ -139,7 +157,9 @@ export default function BusinessExpensesTab() {
     setFCost("");
     setFDescription("");
     setFCategory("");
+    setFCategoryCustom(false);
     setFVendor("");
+    setFInvoiceNumber("");
     setFNotes("");
     setDialogOpen(true);
   }
@@ -149,8 +169,12 @@ export default function BusinessExpensesTab() {
     setFDate(e.date.slice(0, 10));
     setFCost(e.cost.toFixed(2));
     setFDescription(e.description);
-    setFCategory(e.category ?? "");
+    const cat = e.category ?? "";
+    setFCategory(cat);
+    // If editing and the category is non-standard, start in custom mode
+    setFCategoryCustom(!!cat && !COMMON_CATEGORIES.includes(cat));
     setFVendor(e.vendor ?? "");
+    setFInvoiceNumber(e.invoiceNumber ?? "");
     setFNotes(e.notes ?? "");
     setDialogOpen(true);
   }
@@ -168,6 +192,7 @@ export default function BusinessExpensesTab() {
         description: fDescription.trim(),
         category: fCategory.trim() || null,
         vendor: fVendor.trim() || null,
+        invoiceNumber: fInvoiceNumber.trim() || null,
         notes: fNotes.trim() || null,
       };
       if (editing) {
@@ -280,6 +305,78 @@ export default function BusinessExpensesTab() {
         </Card.Root>
       )}
 
+      {/* Earnings vs Expenses comparison */}
+      {comparison && (() => {
+        const periods: { key: keyof Comparison; label: string }[] = [
+          { key: "today", label: "Today" },
+          { key: "thisWeek", label: "This Week" },
+          { key: "thisMonth", label: "This Month" },
+          { key: "thisYear", label: "This Year" },
+          { key: "allTime", label: "All Time" },
+        ];
+        return (
+          <Card.Root variant="outline" mb={3}>
+            <Card.Body p={3}>
+              <Text fontSize="sm" fontWeight="semibold" mb={2}>Earnings vs Expenses</Text>
+              <Text fontSize="xs" color="fg.muted" mb={3}>
+                Earnings = contractor platform fees + employee margin captured on payments. Net = earnings − business expenses.
+              </Text>
+              <Box overflowX="auto">
+                <Box as="table" w="full" fontSize="xs" style={{ borderCollapse: "collapse" }}>
+                  <Box as="thead">
+                    <Box as="tr">
+                      <Box as="th" textAlign="left" p={2} borderBottomWidth="1px" borderColor="gray.200" color="fg.muted" fontWeight="semibold"></Box>
+                      {periods.map((p) => (
+                        <Box as="th" key={p.key} textAlign="right" p={2} borderBottomWidth="1px" borderColor="gray.200" color="fg.muted" fontWeight="semibold" textTransform="uppercase" fontSize="2xs">
+                          {p.label}
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+                  <Box as="tbody">
+                    <Box as="tr">
+                      <Box as="td" p={2} color="fg.muted">Platform fees (contractors)</Box>
+                      {periods.map((p) => (
+                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].platformFees)}</Box>
+                      ))}
+                    </Box>
+                    <Box as="tr">
+                      <Box as="td" p={2} color="fg.muted">Margin (employees/trainees)</Box>
+                      {periods.map((p) => (
+                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].businessMargin)}</Box>
+                      ))}
+                    </Box>
+                    <Box as="tr" borderTopWidth="1px" borderColor="gray.200">
+                      <Box as="td" p={2} fontWeight="semibold" color="green.700">Earnings (total)</Box>
+                      {periods.map((p) => (
+                        <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="green.700">{fmtUSD(comparison[p.key].earnings)}</Box>
+                      ))}
+                    </Box>
+                    <Box as="tr">
+                      <Box as="td" p={2} fontWeight="semibold" color="orange.700">Business expenses</Box>
+                      {periods.map((p) => (
+                        <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="orange.700">−{fmtUSD(comparison[p.key].expenses)}</Box>
+                      ))}
+                    </Box>
+                    <Box as="tr" borderTopWidth="2px" borderColor="gray.300">
+                      <Box as="td" p={2} fontWeight="bold">Net</Box>
+                      {periods.map((p) => {
+                        const v = comparison[p.key].net;
+                        return (
+                          <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="bold" color={v >= 0 ? "green.700" : "red.600"}>
+                            {v < 0 ? "−" : ""}{fmtUSD(Math.abs(v))}
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  </Box>
+                </Box>
+              </Box>
+            </Card.Body>
+          </Card.Root>
+        );
+      })()}
+
       {/* Filters */}
       <Card.Root variant="outline" mb={3}>
         <Card.Body p={3}>
@@ -355,6 +452,7 @@ export default function BusinessExpensesTab() {
                     <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
                       <Text>{fmtDate(e.date)}</Text>
                       {e.vendor && <Text>· {e.vendor}</Text>}
+                      {e.invoiceNumber && <Text>· #{e.invoiceNumber}</Text>}
                       {e.createdBy?.displayName && <Text>· by {e.createdBy.displayName}</Text>}
                     </HStack>
                     {e.notes && (
@@ -410,16 +508,54 @@ export default function BusinessExpensesTab() {
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Category</Text>
-                    <HStack gap={2}>
-                      <Input size="sm" value={fCategory} onChange={(e) => setFCategory(e.target.value)} placeholder="e.g., Insurance" list="business-expense-categories" />
-                      <datalist id="business-expense-categories">
-                        {allCategories.map((c) => <option key={c} value={c} />)}
-                      </datalist>
-                    </HStack>
+                    {!fCategoryCustom ? (
+                      <Box display="flex" gap="6px" flexWrap="wrap">
+                        {COMMON_CATEGORIES.map((c) => (
+                          <Badge
+                            key={c}
+                            size="sm"
+                            colorPalette={fCategory === c ? "blue" : "gray"}
+                            variant={fCategory === c ? "solid" : "outline"}
+                            cursor="pointer"
+                            px="2"
+                            py="1"
+                            borderRadius="full"
+                            _hover={{ bg: fCategory === c ? undefined : "gray.100" }}
+                            onClick={() => setFCategory(fCategory === c ? "" : c)}
+                          >
+                            {c}
+                          </Badge>
+                        ))}
+                        <Badge
+                          size="sm"
+                          colorPalette="purple"
+                          variant="outline"
+                          cursor="pointer"
+                          px="2"
+                          py="1"
+                          borderRadius="full"
+                          _hover={{ bg: "purple.50" }}
+                          onClick={() => { setFCategoryCustom(true); setFCategory(""); }}
+                        >
+                          + Custom…
+                        </Badge>
+                      </Box>
+                    ) : (
+                      <HStack gap={2}>
+                        <Input size="sm" value={fCategory} onChange={(e) => setFCategory(e.target.value)} placeholder="Custom category" autoFocus />
+                        <Button size="xs" variant="ghost" onClick={() => { setFCategoryCustom(false); setFCategory(""); }}>
+                          Use preset
+                        </Button>
+                      </HStack>
+                    )}
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Vendor</Text>
                     <Input size="sm" value={fVendor} onChange={(e) => setFVendor(e.target.value)} placeholder="e.g., State Farm" />
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Invoice / Reference Number</Text>
+                    <Input size="sm" value={fInvoiceNumber} onChange={(e) => setFInvoiceNumber(e.target.value)} placeholder="e.g., INV-2026-0042" />
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Notes</Text>
