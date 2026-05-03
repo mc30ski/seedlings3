@@ -3017,6 +3017,7 @@ Respond ONLY with valid JSON in this exact format:
         date: new Date(String(b.date)),
         category: b.category ? String(b.category).trim() : null,
         vendor: b.vendor ? String(b.vendor).trim() : null,
+        invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
       },
     });
@@ -3031,6 +3032,7 @@ Respond ONLY with valid JSON in this exact format:
     if ("date" in b) data.date = b.date ? new Date(String(b.date)) : null;
     if ("category" in b) data.category = b.category ? String(b.category).trim() : null;
     if ("vendor" in b) data.vendor = b.vendor ? String(b.vendor).trim() : null;
+    if ("invoiceNumber" in b) data.invoiceNumber = b.invoiceNumber ? String(b.invoiceNumber).trim() : null;
     if ("notes" in b) data.notes = b.notes ? String(b.notes).trim() : null;
     return prisma.businessExpense.update({ where: { id }, data });
   });
@@ -3039,6 +3041,70 @@ Respond ONLY with valid JSON in this exact format:
     const id = String(req.params.id);
     await prisma.businessExpense.delete({ where: { id } });
     return { deleted: true };
+  });
+
+  /**
+   * Compare what the business "earns" (contractor platform fees + employee margins
+   * captured on payments) vs what the business spends (BusinessExpense rows),
+   * across the standard buckets. Net = earnings - expenses.
+   */
+  app.get("/admin/business-expenses/vs-revenue", superGuard, async (_req: any) => {
+    const now = new Date();
+    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const [payments, expenses] = await Promise.all([
+      prisma.payment.findMany({
+        select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true },
+      }),
+      prisma.businessExpense.findMany({
+        select: { date: true, cost: true },
+      }),
+    ]);
+
+    type Bucket = { platformFees: number; businessMargin: number; expenses: number };
+    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, expenses: 0 });
+    const today = empty(), thisWeek = empty(), thisMonth = empty(), thisYear = empty(), allTime = empty();
+
+    for (const p of payments) {
+      const fee = p.platformFeeAmount ?? 0;
+      const margin = p.businessMarginAmount ?? 0;
+      allTime.platformFees += fee;
+      allTime.businessMargin += margin;
+      if (p.createdAt >= startOfToday) { today.platformFees += fee; today.businessMargin += margin; }
+      if (p.createdAt >= startOfWeek)  { thisWeek.platformFees += fee; thisWeek.businessMargin += margin; }
+      if (p.createdAt >= startOfMonth) { thisMonth.platformFees += fee; thisMonth.businessMargin += margin; }
+      if (p.createdAt >= startOfYear)  { thisYear.platformFees += fee; thisYear.businessMargin += margin; }
+    }
+    for (const e of expenses) {
+      allTime.expenses += e.cost;
+      if (e.date >= startOfToday) today.expenses += e.cost;
+      if (e.date >= startOfWeek)  thisWeek.expenses += e.cost;
+      if (e.date >= startOfMonth) thisMonth.expenses += e.cost;
+      if (e.date >= startOfYear)  thisYear.expenses += e.cost;
+    }
+
+    const round = (n: number) => Math.round(n * 100) / 100;
+    const finalize = (b: Bucket) => {
+      const earnings = b.platformFees + b.businessMargin;
+      return {
+        platformFees: round(b.platformFees),
+        businessMargin: round(b.businessMargin),
+        earnings: round(earnings),
+        expenses: round(b.expenses),
+        net: round(earnings - b.expenses),
+      };
+    };
+
+    return {
+      today: finalize(today),
+      thisWeek: finalize(thisWeek),
+      thisMonth: finalize(thisMonth),
+      thisYear: finalize(thisYear),
+      allTime: finalize(allTime),
+    };
   });
 
   // Summary: totals by today, week, month, year, all time + grouped by category for current period
