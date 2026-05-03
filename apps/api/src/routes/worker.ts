@@ -405,13 +405,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     const location = (body.lat != null && body.lng != null)
       ? { lat: Number(body.lat), lng: Number(body.lng) }
       : undefined;
+    const timestamps: { startedAt?: string; completedAt?: string } = {};
+    if (body.completedAt) timestamps.completedAt = String(body.completedAt);
+    if (body.startedAt) timestamps.startedAt = String(body.startedAt);
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
       JobOccurrenceStatus.PENDING_PAYMENT,
       notes,
       location,
-      body.completedAt ? { completedAt: String(body.completedAt) } : undefined
+      Object.keys(timestamps).length ? timestamps : undefined
     );
   });
 

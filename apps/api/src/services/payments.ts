@@ -27,7 +27,22 @@ export const payments: ServicesPayments = {
       });
       if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
       if (occ.status !== JobOccurrenceStatus.PENDING_PAYMENT) {
-        throw new ServiceError("INVALID_STATUS", "Occurrence is not in pending payment status.", 409);
+        // Common case: already-accepted (CLOSED with existing payment) — likely a duplicate submit.
+        if (occ.status === JobOccurrenceStatus.CLOSED) {
+          const existing = await tx.payment.findUnique({ where: { occurrenceId } });
+          if (existing) {
+            throw new ServiceError(
+              "ALREADY_PAID",
+              `This occurrence was already paid ($${existing.amountPaid.toFixed(2)} on ${existing.createdAt.toISOString().slice(0, 10)}). Refresh to see the recorded payment.`,
+              409
+            );
+          }
+        }
+        throw new ServiceError(
+          "INVALID_STATUS",
+          `Cannot accept payment — occurrence status is "${occ.status}", expected "PENDING_PAYMENT". Refresh to see the current state.`,
+          409
+        );
       }
 
       // Transition occurrence to CLOSED
