@@ -244,6 +244,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [showArchived, setShowArchived] = useState(false);
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
+  // Live tick — re-render every minute so "X actual" elapsed time updates while the page is open.
+  // (Once a job is completed, effectiveMinutes() uses completedAt and stops counting naturally.)
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
   const [showInfoDialog, setShowInfoDialog] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -1518,7 +1525,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   return (
     <Box w="full">
       <HStack mb={2} gap={2} wrap="nowrap">
-        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
+        <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
         <Button
@@ -1530,6 +1537,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{
             background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
             color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
+            border: "1px solid var(--chakra-colors-gray-300)",
+            borderRadius: "6px",
           }}
           title={compact ? "Expand all cards" : "Collapse all cards"}
         >
@@ -1556,6 +1565,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         >
           <Filter size={14} />
           {filtersOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowInfoDialog(true)}
+          px="2"
+          flexShrink={0}
+          title="How jobs work"
+          css={{
+            background: "var(--chakra-colors-gray-100)",
+            border: "1px solid var(--chakra-colors-gray-300)",
+            borderRadius: "6px",
+          }}
+        >
+          <Info size={14} />
         </Button>
         <Box position="relative" flexShrink={0} ref={createMenuRef}>
           <Button
@@ -1778,7 +1802,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
       {headerSlot && (
         <HStack mb={2} gap={2} wrap="nowrap">
           {headerSlot}
@@ -1794,7 +1818,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1818,7 +1842,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1842,7 +1866,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -1980,15 +2004,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             <Calendar size={14} />
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setShowInfoDialog(true)}
-          px="2"
-          title="How jobs work"
-        >
-          <Info size={14} />
-        </Button>
       </HStack>
 
       <HStack mb={2} gap={2} align="center">
@@ -3259,19 +3274,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 {isCardCompact ? (
                   <Card.Body py="2" px="3" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
-                      {/* Elapsed time for IN_PROGRESS / PAUSED */}
-                      {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
-                        const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
-                        const elapsedStr = formatDuration(elapsed);
-                        const est = occ.estimatedMinutes;
-                        const over = est && elapsed > est;
-                        const isPaused = occ.status === "PAUSED";
-                        return (
-                          <Text fontSize="xs" fontWeight="semibold" color={over ? "red.500" : isPaused ? "orange.600" : "blue.600"}>
-                            {isPaused ? `Paused at ${elapsedStr}` : `Worked ${elapsedStr}`}{est ? ` / ${formatDuration(est)} est.` : ""}{over ? " — over estimate" : ""}
-                          </Text>
-                        );
-                      })()}
                       {/* Event time */}
                       {isEvent && occ.startAt && (() => {
                         const d = new Date(occ.startAt);
@@ -3364,18 +3366,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
                           const median = (occ as any).medianDurationMinutes as number | undefined;
-                          const canEdit = (isClaimer || isActiveAssignee || forAdmin) && occ.startedAt;
+                          const canEdit = (isClaimer || isActiveAssignee || forAdmin) && !!occ.completedAt;
+                          const isPaused = occ.status === "PAUSED";
                           const parts: string[] = [];
                           if (actual != null) parts.push(`${formatDuration(actual)} actual`);
                           if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.`);
-                          if (occ.workflow === "STANDARD") {
-                            parts.push(median != null ? `${formatDuration(median)} avg` : "no avg yet");
+                          if (occ.workflow === "STANDARD" && median != null) {
+                            parts.push(`${formatDuration(median)} avg`);
                           }
+                          if (isPaused) parts.push("paused");
                           if (parts.length === 0) return null;
-                          const color = actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
+                          const color = isPaused ? "orange.600" : occ.completedAt && actual != null && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.muted";
                           return (
                             <Text color={color} fontWeight="medium" cursor={canEdit ? "pointer" : undefined} textDecoration={canEdit ? "underline" : undefined} onClick={canEdit ? (e: any) => { e.stopPropagation(); setEditTimeOcc(occ); } : undefined}>
-                              {parts.join(" · ")}{occ.manualDurationMinutes != null ? " ✎" : ""}
+                              {parts.join(" · ")}
                             </Text>
                           );
                         })()}
@@ -3466,19 +3470,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </Text>
                       </Box>
                     )}
-                    {/* Elapsed time for IN_PROGRESS / PAUSED (expanded) */}
-                    {(occ.status === "IN_PROGRESS" || occ.status === "PAUSED") && occ.startedAt && (() => {
-                      const elapsed = Math.max(0, Math.round(effectiveMinutes(occ) ?? 0));
-                      const elapsedStr = formatDuration(elapsed);
-                      const est = occ.estimatedMinutes;
-                      const over = est && elapsed > est;
-                      const isPaused = occ.status === "PAUSED";
-                      return (
-                        <Text fontSize="sm" fontWeight="semibold" color={over ? "red.500" : isPaused ? "orange.600" : "blue.600"}>
-                          {isPaused ? `Paused at ${elapsedStr}` : `Worked ${elapsedStr}`}{est ? ` / ${formatDuration(est)} est.` : ""}{over ? " — over estimate" : ""}
-                        </Text>
-                      );
-                    })()}
                     {/* Event time — prominent */}
                     {isEvent && occ.startAt && (() => {
                       const d = new Date(occ.startAt);
@@ -3558,82 +3549,88 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         )}
                       </Box>
                     )}
-                    {totalPrice(occ) != null && (() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); return (
-                      <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                        ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
-                      </Badge>
-                    ); })()}
-                    {occ.payment && (
-                      <HStack gap={1}>
-                        <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                          Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
-                        </Badge>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          colorPalette="teal"
-                          px="2"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const poc = occ.job?.property?.pointOfContact;
-                            setReceiptContact({ phone: poc?.phone, email: poc?.email });
-                            setReceiptData({
-                              businessName: "Seedlings Lawn Care",
-                              clientName: occ.job?.property?.client?.displayName ?? "Client",
-                              propertyAddress: [occ.job?.property?.street1, occ.job?.property?.city, occ.job?.property?.state].filter(Boolean).join(", "),
-                              jobType: [parseJobTags(occ).length > 0 ? parseJobTags(occ).map(jobTagLabel).join(", ") : null, (occ as any).jobType ? `Custom: ${(occ as any).jobType}` : null].filter(Boolean).join(" · ") || occ.kind || "Lawn Care",
-                              serviceDate: occ.startAt ? fmtDate(occ.startAt) : "—",
-                              completedDate: occ.completedAt ? fmtDate(occ.completedAt) : "—",
-                              amount: (occ.payment as any).amountPaid,
-                              method: (occ.payment as any).method ?? "CASH",
-                              workers: (occ.assignees ?? []).filter((a) => a.role !== "observer").map((a) => a.user?.displayName ?? ""),
-                              receiptId: occ.id.slice(-8).toUpperCase(),
-                            });
-                            setReceiptDialogOpen(true);
-                          }}
-                          title="Send receipt"
-                        >
-                          Receipt
-                        </Button>
-                      </HStack>
+                    {(totalPrice(occ) != null || occ.payment || ((occ.price || null) ?? (occ.proposalAmount || null)) != null) && (
+                      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
+                        <VStack align="start" gap={1}>
+                          {totalPrice(occ) != null && (() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); return (
+                            <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                              ${totalPrice(occ)!.toFixed(2)}{addonsAmt > 0 ? ` ($${(basePrice ?? 0).toFixed(2)} + $${addonsAmt.toFixed(2)})` : ""}{isEstimateOcc ? " (proposal)" : ""}
+                            </Badge>
+                          ); })()}
+                          {occ.payment && (
+                            <HStack gap={1}>
+                              <Badge bg="green.700" color="white" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                                Paid: ${(occ.payment as any).amountPaid.toFixed(2)}
+                              </Badge>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorPalette="teal"
+                                px="2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const poc = occ.job?.property?.pointOfContact;
+                                  setReceiptContact({ phone: poc?.phone, email: poc?.email });
+                                  setReceiptData({
+                                    businessName: "Seedlings Lawn Care",
+                                    clientName: occ.job?.property?.client?.displayName ?? "Client",
+                                    propertyAddress: [occ.job?.property?.street1, occ.job?.property?.city, occ.job?.property?.state].filter(Boolean).join(", "),
+                                    jobType: [parseJobTags(occ).length > 0 ? parseJobTags(occ).map(jobTagLabel).join(", ") : null, (occ as any).jobType ? `Custom: ${(occ as any).jobType}` : null].filter(Boolean).join(" · ") || occ.kind || "Lawn Care",
+                                    serviceDate: occ.startAt ? fmtDate(occ.startAt) : "—",
+                                    completedDate: occ.completedAt ? fmtDate(occ.completedAt) : "—",
+                                    amount: (occ.payment as any).amountPaid,
+                                    method: (occ.payment as any).method ?? "CASH",
+                                    workers: (occ.assignees ?? []).filter((a) => a.role !== "observer").map((a) => a.user?.displayName ?? ""),
+                                    receiptId: occ.id.slice(-8).toUpperCase(),
+                                  });
+                                  setReceiptDialogOpen(true);
+                                }}
+                                title="Send receipt"
+                              >
+                                Receipt
+                              </Button>
+                            </HStack>
+                          )}
+                          {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
+                            const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
+                            const addonsAmt = addonTotal(occ);
+                            const displayPrice = basePrice + addonsAmt;
+                            const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
+                            const net = displayPrice - expTotal;
+                            const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+                            const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
+                            const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
+                            const deduction = Math.round(net * pct) / 100;
+                            const payout = net - deduction;
+                            const label = isEmp ? "margin" : "commission";
+                            const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+                            const perPerson = activeAssignees.length > 1 ? Math.round(payout / activeAssignees.length * 100) / 100 : null;
+                            return (
+                              <Box fontSize="xs" color="fg.muted">
+                                {pct > 0 && (
+                                  <>
+                                    <HStack gap={2}>
+                                      <Text>Est. payout:</Text>
+                                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                        ${payout.toFixed(2)}
+                                      </Badge>
+                                    </HStack>
+                                    <Text fontSize="xs" color="fg.muted">
+                                      ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
+                                    </Text>
+                                  </>
+                                )}
+                                {perPerson != null && (
+                                  <Text fontSize="xs" color="fg.muted" mt={pct > 0 ? 0.5 : 0}>
+                                    ~${perPerson.toFixed(2)}/person if split evenly ({activeAssignees.length} workers)
+                                  </Text>
+                                )}
+                              </Box>
+                            );
+                          })()}
+                        </VStack>
+                      </Box>
                     )}
-                    {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
-                      const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
-                      const addonsAmt = addonTotal(occ);
-                      const displayPrice = basePrice + addonsAmt;
-                      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                      const net = displayPrice - expTotal;
-                      const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-                      const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
-                      const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                      const deduction = Math.round(net * pct) / 100;
-                      const payout = net - deduction;
-                      const label = isEmp ? "margin" : "commission";
-                      const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
-                      const perPerson = activeAssignees.length > 1 ? Math.round(payout / activeAssignees.length * 100) / 100 : null;
-                      return (
-                        <Box fontSize="xs" color="fg.muted" mt={0.5}>
-                          {pct > 0 && (
-                            <>
-                              <HStack gap={2}>
-                                <Text>Est. payout:</Text>
-                                <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                                  ${payout.toFixed(2)}
-                                </Badge>
-                              </HStack>
-                              <Text fontSize="xs" color="fg.muted">
-                                ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
-                              </Text>
-                            </>
-                          )}
-                          {perPerson != null && (
-                            <Text fontSize="xs" color="fg.muted" mt={pct > 0 ? 0.5 : 0}>
-                              ~${perPerson.toFixed(2)}/person if split evenly ({activeAssignees.length} workers)
-                            </Text>
-                          )}
-                        </Box>
-                      );
-                    })()}
                     {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (occ.estimatedMinutes != null || occ.startedAt || (occ as any).medianDurationMinutes != null) && (() => {
                       const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
                       const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
@@ -3647,6 +3644,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
                           <VStack align="start" gap={1}>
                             <HStack gap={3} wrap="wrap">
+                              {actual != null && (
+                                <Text color={occ.status === "PAUSED" ? "orange.600" : occ.completedAt && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
+                                  Actual: {formatDuration(actual)}{occ.status === "PAUSED" ? " (paused)" : ""}{occ.manualDurationMinutes != null ? " (manual)" : ""}
+                                </Text>
+                              )}
                               {adjEst != null && (
                                 <Text color="fg.muted">
                                   <Text as="span" fontWeight="semibold">Est:</Text> {formatDuration(adjEst)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}
@@ -3654,22 +3656,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               )}
                               {(occ.workflow === "STANDARD") && (
                                 <Text color="fg.muted">
-                                  <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "not enough data yet"}
-                                </Text>
-                              )}
-                              {actual != null && (
-                                <Text color={adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
-                                  Actual: {formatDuration(actual)}{occ.manualDurationMinutes != null ? " (manual)" : ""}
+                                  <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "n/a"}
                                 </Text>
                               )}
                             </HStack>
-                            {actual != null && estDiscrepancy > 0.3 && adjEst && (
+                            {occ.completedAt && actual != null && estDiscrepancy > 0.3 && adjEst && (
                               <Text color="orange.600" fontWeight="medium">
                                 ⚠ {Math.round(estDiscrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
                               </Text>
                             )}
-                            {actual != null && avgDiscrepancy > 0.3 && median && !( estDiscrepancy > 0.3 && adjEst) && (
+                            {occ.completedAt && actual != null && avgDiscrepancy > 0.3 && median && !( estDiscrepancy > 0.3 && adjEst) && (
                               <Text color="orange.600" fontWeight="medium">
                                 ⚠ {Math.round(avgDiscrepancy * 100)}% {actual > median ? "above" : "below"} average —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
@@ -4698,7 +4695,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {!isAnnouncement && (isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && (
+                      {!isAnnouncement && (isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && !occ.startedAt && (
                         <StatusButton
                           id="occ-manage-team"
                           itemId={occ.id}
@@ -5499,6 +5496,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           occurrenceId={completeDialogOcc.id}
           occurrencePrice={completeDialogOcc.price}
           startedAt={completeDialogOcc.startedAt}
+          estimatedMinutes={completeDialogOcc.estimatedMinutes}
+          totalPausedMs={completeDialogOcc.totalPausedMs}
+          workerCount={(completeDialogOcc.assignees ?? []).filter((a) => a.role !== "observer").length}
           onCompleted={(completedAt) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
@@ -5557,9 +5557,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </Dialog.Body>
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
-                  <Button variant="ghost" onClick={() => setPhotoPromptOccId(null)}>
-                    Skip
-                  </Button>
                   <Button colorPalette="blue" onClick={() => { setPhotoPromptOccId(null); void load(false); }}>
                     Done
                   </Button>

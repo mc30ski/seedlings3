@@ -17,6 +17,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -608,6 +609,7 @@ export default function ServicesTab({
 
   return (
     <Box w="full">
+      {forAdmin && <ChangeRequestsPanel />}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -731,7 +733,7 @@ export default function ServicesTab({
           )}
         </HStack>
       )}
-      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2}>
+      {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
       <HStack mb={2} gap={1} wrap="wrap" pl="1">
         <Select.Root
           collection={kindCollection}
@@ -742,7 +744,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -766,7 +768,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -790,7 +792,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)", borderRadius: "6px" }}>
               <Layers size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -814,7 +816,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }}>
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>

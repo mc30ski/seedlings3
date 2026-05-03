@@ -6,17 +6,21 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Input,
+  Portal,
   Spinner,
   Text,
+  Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Download } from "lucide-react";
-import { apiGet, apiPost } from "@/src/lib/api";
+import { Calendar, CheckCircle2, Download, SkipForward, X } from "lucide-react";
+import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
-import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
 type Photo = { id: string; url: string; contentType?: string | null };
 
@@ -43,11 +47,23 @@ type UpcomingJob = {
   startAt?: string | null;
   startedAt?: string | null;
   estimatedMinutes?: number | null;
+  workflow?: string | null;
+  isEstimate?: boolean | null;
   jobType?: string | null;
   price?: number | null;
+  proposalAmount?: number | null;
+  proposalNotes?: string | null;
   property: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null };
   workers: string[];
   photos?: Photo[];
+  pendingChangeRequest?: {
+    id: string;
+    kind: "RESCHEDULE" | "SKIP";
+    status: string;
+    proposedStartAt?: string | null;
+    comment?: string | null;
+    createdAt: string;
+  } | null;
 };
 
 type ClientProfile = {
@@ -124,6 +140,18 @@ export default function ClientMyJobsTab() {
   const [viewerPhotos, setViewerPhotos] = useState<Photo[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
 
+  // Action dialog state
+  const [actionDialog, setActionDialog] = useState<
+    | { type: "reschedule"; job: UpcomingJob }
+    | { type: "skip"; job: UpcomingJob }
+    | { type: "accept"; job: UpcomingJob }
+    | { type: "decline"; job: UpcomingJob }
+    | null
+  >(null);
+  const [proposedDate, setProposedDate] = useState("");
+  const [actionComment, setActionComment] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+
   // Global keyboard handler for photo viewer
   const viewerIdxRef = useRef(viewerIdx);
   const viewerPhotosRef = useRef(viewerPhotos);
@@ -141,6 +169,15 @@ export default function ClientMyJobsTab() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [viewerPhoto]);
+
+  async function reloadUpcoming() {
+    try {
+      const upcomingRes = await apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming");
+      setUpcoming(upcomingRes.items);
+    } catch (err) {
+      console.error("Reload upcoming failed:", err);
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -164,6 +201,72 @@ export default function ClientMyJobsTab() {
     }
     void load();
   }, []);
+
+  function openAction(type: "reschedule" | "skip" | "accept" | "decline", job: UpcomingJob) {
+    setActionDialog({ type, job } as any);
+    setActionComment("");
+    if (type === "reschedule") {
+      // Default proposed date to one week after the current scheduled date.
+      const base = job.startAt ? new Date(job.startAt) : new Date();
+      base.setDate(base.getDate() + 7);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setProposedDate(`${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}T${pad(base.getHours())}:${pad(base.getMinutes())}`);
+    } else {
+      setProposedDate("");
+    }
+  }
+
+  async function submitAction() {
+    if (!actionDialog) return;
+    setActionBusy(true);
+    try {
+      const { type, job } = actionDialog;
+      if (type === "reschedule") {
+        if (!proposedDate) {
+          publishInlineMessage({ type: "WARNING", text: "Please choose a proposed date." });
+          setActionBusy(false);
+          return;
+        }
+        await apiPost(`/api/client/occurrences/${job.id}/reschedule-request`, {
+          proposedStartAt: new Date(proposedDate).toISOString(),
+          comment: actionComment.trim() || undefined,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: "Reschedule request sent." });
+      } else if (type === "skip") {
+        await apiPost(`/api/client/occurrences/${job.id}/skip-request`, {
+          comment: actionComment.trim() || undefined,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: "Skip request sent." });
+      } else if (type === "accept") {
+        await apiPost(`/api/client/estimates/${job.id}/accept`, {
+          comment: actionComment.trim() || undefined,
+        });
+        publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+      } else if (type === "decline") {
+        await apiPost(`/api/client/estimates/${job.id}/decline`, {
+          reason: actionComment.trim() || undefined,
+        });
+        publishInlineMessage({ type: "INFO", text: "Estimate declined." });
+      }
+      setActionDialog(null);
+      await reloadUpcoming();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function cancelChangeRequest(job: UpcomingJob) {
+    if (!job.pendingChangeRequest) return;
+    try {
+      await apiDelete(`/api/client/change-requests/${job.pendingChangeRequest.id}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Request canceled." });
+      await reloadUpcoming();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Cancel failed.", err) });
+    }
+  }
 
   function openViewer(photos: Photo[], idx: number) {
     setViewerPhotos(photos);
@@ -265,17 +368,24 @@ export default function ClientMyJobsTab() {
           <VStack align="stretch" gap={2}>
             {upcoming.map((job) => {
               const isActive = job.status === "IN_PROGRESS";
+              const isEstimate = job.workflow === "ESTIMATE" || job.isEstimate;
+              const isProposalSubmitted = isEstimate && job.status === "PROPOSAL_SUBMITTED";
+              const canRequestChange = !isEstimate && (job.status === "SCHEDULED" || job.status === "ACCEPTED") && !job.pendingChangeRequest;
               const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
               return (
-                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : undefined} bg={isActive ? "blue.50" : undefined}>
+                <Card.Root key={job.id} variant="outline" borderColor={isActive ? "blue.300" : isEstimate ? "purple.200" : undefined} bg={isActive ? "blue.50" : isEstimate ? "purple.50" : undefined}>
                   <Card.Body py="2" px="3">
                     <HStack justify="space-between" align="start">
                       <VStack align="start" gap={1} flex="1" minW={0}>
                         <Text fontSize="sm" fontWeight="medium">{job.property.displayName}</Text>
                         {addr && <Box fontSize="xs"><MapLink address={addr} /></Box>}
                         <HStack gap={2} wrap="wrap">
-                          <Badge colorPalette={isActive ? "blue" : "gray"} variant={isActive ? "solid" : "outline"} fontSize="xs" borderRadius="full" px="2">
-                            {isActive ? "In Progress" : "Scheduled"}
+                          <Badge
+                            colorPalette={isEstimate ? "purple" : isActive ? "blue" : "gray"}
+                            variant={isActive || isEstimate ? "solid" : "outline"}
+                            fontSize="xs" borderRadius="full" px="2"
+                          >
+                            {isEstimate ? (isProposalSubmitted ? "Estimate ready" : "Estimate") : isActive ? "In Progress" : "Scheduled"}
                           </Badge>
                           {job.jobType && (
                             <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
@@ -289,8 +399,13 @@ export default function ClientMyJobsTab() {
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
-                        {job.price != null && (
-                          <Text fontSize="xs" color="green.600" fontWeight="medium">${job.price.toFixed(2)}</Text>
+                        {(job.proposalAmount != null || job.price != null) && (
+                          <Text fontSize="xs" color="green.600" fontWeight="medium">
+                            ${(job.proposalAmount ?? job.price ?? 0).toFixed(2)}{isEstimate ? " (proposed)" : ""}
+                          </Text>
+                        )}
+                        {isProposalSubmitted && job.proposalNotes && (
+                          <Text fontSize="xs" color="fg.muted" mt={1}>{job.proposalNotes}</Text>
                         )}
                       </VStack>
                       <VStack align="end" gap={1} flexShrink={0}>
@@ -299,6 +414,51 @@ export default function ClientMyJobsTab() {
                         </Text>
                       </VStack>
                     </HStack>
+
+                    {/* Pending change request banner */}
+                    {job.pendingChangeRequest && (
+                      <Box mt={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.200" rounded="md">
+                        <HStack justify="space-between" gap={2} wrap="wrap">
+                          <Box flex="1" minW={0}>
+                            <Text fontSize="xs" fontWeight="semibold" color="orange.800">
+                              {job.pendingChangeRequest.kind === "RESCHEDULE" ? "Reschedule requested" : "Skip requested"}
+                            </Text>
+                            {job.pendingChangeRequest.kind === "RESCHEDULE" && job.pendingChangeRequest.proposedStartAt && (
+                              <Text fontSize="xs" color="orange.700">
+                                Proposed: {fmtDateWeekday(job.pendingChangeRequest.proposedStartAt)}
+                              </Text>
+                            )}
+                            <Text fontSize="2xs" color="orange.600">Awaiting admin approval</Text>
+                          </Box>
+                          <Button size="xs" variant="ghost" colorPalette="red" onClick={() => void cancelChangeRequest(job)}>
+                            Cancel
+                          </Button>
+                        </HStack>
+                      </Box>
+                    )}
+
+                    {/* Quick action buttons */}
+                    {canRequestChange && (
+                      <HStack gap={1} mt={2}>
+                        <Button size="xs" variant="outline" onClick={() => openAction("reschedule", job)}>
+                          <Calendar size={12} /> Reschedule
+                        </Button>
+                        <Button size="xs" variant="outline" onClick={() => openAction("skip", job)}>
+                          <SkipForward size={12} /> Skip
+                        </Button>
+                      </HStack>
+                    )}
+                    {isProposalSubmitted && (
+                      <HStack gap={1} mt={2}>
+                        <Button size="xs" colorPalette="green" onClick={() => openAction("accept", job)}>
+                          <CheckCircle2 size={12} /> Accept Estimate
+                        </Button>
+                        <Button size="xs" variant="outline" colorPalette="red" onClick={() => openAction("decline", job)}>
+                          <X size={12} /> Decline
+                        </Button>
+                      </HStack>
+                    )}
+
                     {(job.photos ?? []).length > 0 && (
                       <HStack gap={2} mt={2} wrap="wrap">
                         {(job.photos ?? []).map((p, idx) => (
@@ -410,6 +570,131 @@ export default function ClientMyJobsTab() {
           <Text position="absolute" bottom="4" color="whiteAlpha.700" fontSize="sm">{viewerIdx + 1} / {viewerPhotos.length}</Text>
         </Box>
       )}
+
+      {/* Reschedule / Skip / Accept / Decline dialog */}
+      <Dialog.Root open={!!actionDialog} onOpenChange={(e) => { if (!e.open) setActionDialog(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>
+                  {actionDialog?.type === "reschedule" && "Request Reschedule"}
+                  {actionDialog?.type === "skip" && "Request to Skip"}
+                  {actionDialog?.type === "accept" && "Accept Estimate"}
+                  {actionDialog?.type === "decline" && "Decline Estimate"}
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  {actionDialog && (
+                    <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                      <Text fontSize="sm" fontWeight="medium">{actionDialog.job.property.displayName}</Text>
+                      {actionDialog.job.startAt && (
+                        <Text fontSize="xs" color="fg.muted">Currently: {fmtDateWeekday(actionDialog.job.startAt)}</Text>
+                      )}
+                    </Box>
+                  )}
+
+                  {actionDialog?.type === "reschedule" && (
+                    <>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Preferred new date & time *</Text>
+                        <Input
+                          type="datetime-local"
+                          value={proposedDate}
+                          onChange={(e) => setProposedDate(e.target.value)}
+                        />
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Reason (optional)</Text>
+                        <Textarea
+                          value={actionComment}
+                          onChange={(e) => setActionComment(e.target.value)}
+                          placeholder="e.g., Out of town that week"
+                          rows={2}
+                        />
+                      </Box>
+                      <Text fontSize="xs" color="fg.muted">
+                        Your request will be sent to your service provider for approval. The current date stays scheduled until they confirm.
+                      </Text>
+                    </>
+                  )}
+
+                  {actionDialog?.type === "skip" && (
+                    <>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Reason (optional)</Text>
+                        <Textarea
+                          value={actionComment}
+                          onChange={(e) => setActionComment(e.target.value)}
+                          placeholder="e.g., Lawn doesn't need it this week"
+                          rows={2}
+                        />
+                      </Box>
+                      <Text fontSize="xs" color="fg.muted">
+                        Skipping cancels just this single visit. Future scheduled visits aren't affected.
+                      </Text>
+                    </>
+                  )}
+
+                  {actionDialog?.type === "accept" && (
+                    <>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Comment (optional)</Text>
+                        <Textarea
+                          value={actionComment}
+                          onChange={(e) => setActionComment(e.target.value)}
+                          placeholder="Any questions or notes?"
+                          rows={2}
+                        />
+                      </Box>
+                      {actionDialog.job.proposalAmount != null && (
+                        <Box p={2} bg="green.50" rounded="md" borderWidth="1px" borderColor="green.200">
+                          <Text fontSize="sm" color="green.800" fontWeight="semibold">
+                            Estimate: ${actionDialog.job.proposalAmount.toFixed(2)}
+                          </Text>
+                        </Box>
+                      )}
+                    </>
+                  )}
+
+                  {actionDialog?.type === "decline" && (
+                    <Box>
+                      <Text fontSize="sm" mb={1}>Reason (optional)</Text>
+                      <Textarea
+                        value={actionComment}
+                        onChange={(e) => setActionComment(e.target.value)}
+                        placeholder="Help us understand"
+                        rows={2}
+                      />
+                    </Box>
+                  )}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setActionDialog(null)} disabled={actionBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette={actionDialog?.type === "decline" ? "red" : actionDialog?.type === "accept" ? "green" : "blue"}
+                    onClick={() => void submitAction()}
+                    loading={actionBusy}
+                    disabled={actionDialog?.type === "reschedule" && !proposedDate}
+                  >
+                    {actionDialog?.type === "reschedule" && "Send Request"}
+                    {actionDialog?.type === "skip" && "Send Skip Request"}
+                    {actionDialog?.type === "accept" && "Accept"}
+                    {actionDialog?.type === "decline" && "Decline"}
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }

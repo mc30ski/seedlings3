@@ -23,6 +23,12 @@ type Props = {
   occurrenceId: string;
   occurrencePrice?: number | null;
   startedAt?: string | null;
+  /** Estimated minutes for the job (raw, before per-worker division). */
+  estimatedMinutes?: number | null;
+  /** Total paused time in ms across all pauses. */
+  totalPausedMs?: number | null;
+  /** Number of non-observer assignees. */
+  workerCount?: number;
   onCompleted: (completedAt?: string) => void;
 };
 
@@ -32,6 +38,9 @@ export default function CompleteJobDialog({
   occurrenceId,
   occurrencePrice,
   startedAt,
+  estimatedMinutes,
+  totalPausedMs,
+  workerCount,
   onCompleted,
 }: Props) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -54,6 +63,28 @@ export default function CompleteJobDialog({
   }, [open, occurrenceId]);
 
   const totalExpenses = expenses.reduce((s, e) => s + e.cost, 0);
+
+  // Compute elapsed time from current completedAtTime + startedAt + paused time, per worker.
+  // Compare to per-worker adjusted estimate. Show a warning if it differs by more than 25%.
+  const wc = Math.max(1, workerCount ?? 1);
+  const elapsedMin: number | null = (() => {
+    if (!startedAt || !completedAtTime) return null;
+    const start = new Date(startedAt).getTime();
+    const end = new Date(completedAtTime).getTime();
+    if (isNaN(start) || isNaN(end) || end < start) return null;
+    const paused = totalPausedMs ?? 0;
+    return Math.max(0, (end - start - paused) / 60000 / wc);
+  })();
+  const adjEst = estimatedMinutes != null ? estimatedMinutes / wc : null;
+  const discrepancy = (elapsedMin != null && adjEst && adjEst > 0)
+    ? Math.abs(elapsedMin - adjEst) / adjEst
+    : 0;
+  const showDiscrepancyWarning = discrepancy > 0.25;
+  const isOver = elapsedMin != null && adjEst != null && elapsedMin > adjEst;
+  const fmt = (m: number) => {
+    const h = Math.floor(m / 60); const mm = Math.round(m % 60);
+    return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
+  };
 
   // Compute min for completedAt from startedAt
   const minCompletedAt = (() => {
@@ -107,6 +138,20 @@ export default function CompleteJobDialog({
                 <Text fontSize="sm" color="fg.muted">
                   Review details before marking this job as complete.
                 </Text>
+
+                {showDiscrepancyWarning && elapsedMin != null && adjEst != null && (
+                  <Box p={3} bg="orange.50" borderWidth="1px" borderColor="orange.300" rounded="md">
+                    <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
+                      ⚠ Time discrepancy: {Math.round(discrepancy * 100)}% {isOver ? "over" : "under"} estimate
+                    </Text>
+                    <Text fontSize="xs" color="orange.700">
+                      Actual: {fmt(elapsedMin)} · Estimate: {fmt(adjEst)}{wc > 1 ? ` (${wc} workers)` : ""}
+                    </Text>
+                    <Text fontSize="xs" color="orange.700" mt={1}>
+                      You can adjust the completion time above, or continue with the current time.
+                    </Text>
+                  </Box>
+                )}
 
                 {/* Summary */}
                 {occurrencePrice != null && (

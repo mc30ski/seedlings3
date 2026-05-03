@@ -198,10 +198,8 @@ export default async function clientRoutes(app: FastifyInstance) {
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
-        status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED"] },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED", "PROPOSAL_SUBMITTED"] },
         job: { propertyId: { in: propertyIds } },
-        workflow: { not: "ESTIMATE" },
-        isEstimate: false,
       },
       orderBy: { startAt: "asc" },
       take: 50,
@@ -213,8 +211,11 @@ export default async function clientRoutes(app: FastifyInstance) {
         startedAt: true,
         estimatedMinutes: true,
         workflow: true,
+        isEstimate: true,
         jobType: true,
         price: true,
+        proposalAmount: true,
+        proposalNotes: true,
         notes: true,
         job: {
           select: {
@@ -235,6 +236,12 @@ export default async function clientRoutes(app: FastifyInstance) {
           orderBy: { createdAt: "asc" },
           take: 5,
         },
+        changeRequests: {
+          where: { status: "PENDING" },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { id: true, kind: true, status: true, proposedStartAt: true, comment: true, createdAt: true },
+        },
       },
     });
 
@@ -254,15 +261,176 @@ export default async function clientRoutes(app: FastifyInstance) {
           startAt: occ.startAt,
           startedAt: occ.startedAt,
           estimatedMinutes: occ.estimatedMinutes,
+          workflow: occ.workflow,
+          isEstimate: occ.isEstimate,
           jobType: occ.jobType,
           price: occ.price,
-          property: occ.job.property,
+          proposalAmount: (occ as any).proposalAmount ?? null,
+          proposalNotes: (occ as any).proposalNotes ?? null,
+          property: occ.job?.property ?? null,
           workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
           photos: photos.filter(Boolean),
+          pendingChangeRequest: occ.changeRequests[0] ?? null,
         };
       })
     );
 
     return { items };
+  });
+
+  // ── Change Requests (reschedule / skip) ─────────────────────────────────
+
+  /** Resolve the User row for the current Clerk user. Auth plugin auto-provisions, so this should always exist. */
+  async function getMyUser(clerkUserId: string) {
+    return prisma.user.findUnique({ where: { clerkUserId } });
+  }
+
+  /** Verify the client may request changes on this occurrence (i.e. it belongs to one of their properties). */
+  async function verifyOccurrenceForClient(occurrenceId: string, clerkUserId: string) {
+    const contact = await getLinkedContact(clerkUserId);
+    if (!contact) throw app.httpErrors.forbidden("Account not linked to a client.");
+    const propertyIds = new Set(contact.client.properties.map((p) => p.id));
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: { id: true, status: true, startAt: true, workflow: true, isEstimate: true, job: { select: { propertyId: true } } },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found.");
+    if (!occ.job?.propertyId || !propertyIds.has(occ.job.propertyId)) {
+      throw app.httpErrors.forbidden("This occurrence is not on one of your properties.");
+    }
+    return occ;
+  }
+
+  app.post("/client/occurrences/:id/reschedule-request", clientGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const clerkUserId = req.auth.clerkUserId!;
+    const body = req.body || {};
+    if (!body.proposedStartAt) throw app.httpErrors.badRequest("proposedStartAt is required");
+    const proposed = new Date(String(body.proposedStartAt));
+    if (isNaN(proposed.getTime())) throw app.httpErrors.badRequest("proposedStartAt is invalid");
+    const occ = await verifyOccurrenceForClient(id, clerkUserId);
+    if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
+      throw app.httpErrors.badRequest("Only scheduled jobs can be rescheduled.");
+    }
+    const me = await getMyUser(clerkUserId);
+    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
+    // Prevent multiple pending requests on the same occurrence
+    const existing = await prisma.occurrenceChangeRequest.findFirst({
+      where: { occurrenceId: id, status: "PENDING" },
+    });
+    if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
+    return prisma.occurrenceChangeRequest.create({
+      data: {
+        occurrenceId: id,
+        requestedById: me.id,
+        kind: "RESCHEDULE",
+        proposedStartAt: proposed,
+        comment: body.comment ? String(body.comment).trim() : null,
+      },
+    });
+  });
+
+  app.post("/client/occurrences/:id/skip-request", clientGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const clerkUserId = req.auth.clerkUserId!;
+    const body = req.body || {};
+    const occ = await verifyOccurrenceForClient(id, clerkUserId);
+    if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
+      throw app.httpErrors.badRequest("Only scheduled jobs can be skipped.");
+    }
+    const me = await getMyUser(clerkUserId);
+    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
+    const existing = await prisma.occurrenceChangeRequest.findFirst({
+      where: { occurrenceId: id, status: "PENDING" },
+    });
+    if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
+    return prisma.occurrenceChangeRequest.create({
+      data: {
+        occurrenceId: id,
+        requestedById: me.id,
+        kind: "SKIP",
+        comment: body.comment ? String(body.comment).trim() : null,
+      },
+    });
+  });
+
+  app.delete("/client/change-requests/:id", clientGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const clerkUserId = req.auth.clerkUserId!;
+    const me = await getMyUser(clerkUserId);
+    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
+    const cr = await prisma.occurrenceChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw app.httpErrors.notFound("Request not found.");
+    if (cr.requestedById !== me.id) throw app.httpErrors.forbidden("Not your request.");
+    if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Only pending requests can be canceled.");
+    await prisma.occurrenceChangeRequest.update({
+      where: { id },
+      data: { status: "CANCELED", resolvedAt: new Date() },
+    });
+    return { canceled: true };
+  });
+
+  app.get("/client/change-requests", clientGuard, async (req: any) => {
+    const clerkUserId = req.auth.clerkUserId!;
+    const me = await getMyUser(clerkUserId);
+    if (!me) return { items: [] };
+    const list = await prisma.occurrenceChangeRequest.findMany({
+      where: { requestedById: me.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        occurrence: {
+          select: { id: true, startAt: true, job: { select: { property: { select: { displayName: true } } } } },
+        },
+      },
+    });
+    return { items: list };
+  });
+
+  // ── Estimate accept / decline (client) ──────────────────────────────────
+
+  /**
+   * Estimate accept/decline — records the client's decision as a comment on the
+   * occurrence. Admin sees the comment and proceeds with the existing
+   * accept-estimate / reject-estimate flows on their side.
+   */
+  app.post("/client/estimates/:id/accept", clientGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const clerkUserId = req.auth.clerkUserId!;
+    const body = req.body || {};
+    const occ = await verifyOccurrenceForClient(id, clerkUserId);
+    if (occ.workflow !== "ESTIMATE" && !occ.isEstimate) throw app.httpErrors.badRequest("Not an estimate.");
+    if (occ.status !== "PROPOSAL_SUBMITTED") throw app.httpErrors.badRequest("Only submitted estimates can be accepted.");
+    const me = await getMyUser(clerkUserId);
+    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
+    const note = body.comment ? String(body.comment).trim() : "";
+    await prisma.occurrenceComment.create({
+      data: {
+        occurrenceId: id,
+        authorId: me.id,
+        body: `✅ Client accepted the estimate.${note ? `\n\n${note}` : ""}`,
+      },
+    });
+    return { accepted: true };
+  });
+
+  app.post("/client/estimates/:id/decline", clientGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const clerkUserId = req.auth.clerkUserId!;
+    const body = req.body || {};
+    const occ = await verifyOccurrenceForClient(id, clerkUserId);
+    if (occ.workflow !== "ESTIMATE" && !occ.isEstimate) throw app.httpErrors.badRequest("Not an estimate.");
+    if (occ.status !== "PROPOSAL_SUBMITTED") throw app.httpErrors.badRequest("Only submitted estimates can be declined.");
+    const me = await getMyUser(clerkUserId);
+    if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
+    const reason = body.reason ? String(body.reason).trim() : "";
+    await prisma.occurrenceComment.create({
+      data: {
+        occurrenceId: id,
+        authorId: me.id,
+        body: `❌ Client declined the estimate.${reason ? `\n\nReason: ${reason}` : ""}`,
+      },
+    });
+    return { declined: true };
   });
 }

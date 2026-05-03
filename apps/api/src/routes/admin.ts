@@ -2804,7 +2804,283 @@ Respond ONLY with valid JSON in this exact format:
       results.push({ check: "missing_next_occurrence", label: "Missing Next Repeating Occurrence", issues });
     }
 
+    // 6. Time estimate mismatch on repeating jobs (avg actual differs from estimate by >25%)
+    if (checks.includes("time_estimate_mismatch")) {
+      const jobs = await prisma.job.findMany({
+        where: {
+          status: "ACCEPTED",
+          frequencyDays: { gt: 0 },
+          estimatedMinutes: { not: null, gt: 0 },
+        },
+        select: {
+          id: true,
+          estimatedMinutes: true,
+          property: { select: { displayName: true, client: { select: { displayName: true } } } },
+        },
+      });
+      const jobIds = jobs.map((j) => j.id);
+      const completedOccs = jobIds.length > 0 ? await prisma.jobOccurrence.findMany({
+        where: {
+          jobId: { in: jobIds },
+          status: { in: ["CLOSED", "COMPLETED", "PENDING_PAYMENT"] },
+          OR: [
+            { startedAt: { not: null }, completedAt: { not: null } },
+            { manualDurationMinutes: { not: null } },
+          ],
+        },
+        select: {
+          jobId: true,
+          startedAt: true,
+          completedAt: true,
+          totalPausedMs: true,
+          manualDurationMinutes: true,
+          assignees: { select: { role: true } },
+        },
+        orderBy: { completedAt: "desc" },
+      }) : [];
+      // Group per-worker durations by jobId, last 10 each
+      const byJob: Record<string, number[]> = {};
+      for (const o of completedOccs) {
+        if (!o.jobId) continue;
+        if (!byJob[o.jobId]) byJob[o.jobId] = [];
+        if (byJob[o.jobId].length >= 10) continue;
+        const wc = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
+        let mins: number | null = null;
+        if (o.manualDurationMinutes != null) {
+          mins = o.manualDurationMinutes / wc;
+        } else if (o.startedAt && o.completedAt) {
+          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000 / wc;
+        }
+        if (mins != null && mins > 0) byJob[o.jobId].push(mins);
+      }
+      const fmtDur = (m: number) => {
+        const h = Math.floor(m / 60); const mm = Math.round(m % 60);
+        return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
+      };
+      const issues: AuditIssue[] = [];
+      for (const job of jobs) {
+        const durations = byJob[job.id] ?? [];
+        // Need ≥3 completed occurrences to call it an "average"
+        if (durations.length < 3) continue;
+        const sorted = [...durations].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const median = sorted.length % 2 === 0
+          ? (sorted[mid - 1] + sorted[mid]) / 2
+          : sorted[mid];
+        const est = job.estimatedMinutes!;
+        const discrepancy = Math.abs(median - est) / est;
+        if (discrepancy <= 0.25) continue;
+        const isOver = median > est;
+        const propertyName = (job.property as any)?.displayName ?? "Unknown";
+        const clientName = (job.property as any)?.client?.displayName ?? "";
+        issues.push({
+          jobId: job.id,
+          description: `${propertyName}${clientName ? ` (${clientName})` : ""}: ${Math.round(discrepancy * 100)}% ${isOver ? "over" : "under"} estimate — avg actual ${fmtDur(median)} vs ${fmtDur(est)} est. (${durations.length} occurrences)`,
+        });
+      }
+      results.push({ check: "time_estimate_mismatch", label: "Time Estimate Mismatch", issues });
+    }
+
     return { results };
+  });
+
+  // ── Client Change Requests (admin) ──
+
+  app.get("/admin/change-requests", adminGuard, async (req: any) => {
+    const status = (req.query?.status as string | undefined)?.toUpperCase();
+    const where: any = {};
+    if (status && ["PENDING", "APPROVED", "DENIED", "CANCELED"].includes(status)) {
+      where.status = status;
+    } else {
+      where.status = "PENDING";
+    }
+    return prisma.occurrenceChangeRequest.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: {
+        occurrence: {
+          select: {
+            id: true, startAt: true, status: true, kind: true, jobType: true,
+            job: { select: { property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } } } },
+          },
+        },
+        requestedBy: { select: { id: true, displayName: true, email: true } },
+      },
+    });
+  });
+
+  app.post("/admin/change-requests/:id/approve", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    return prisma.$transaction(async (tx) => {
+      const cr = await tx.occurrenceChangeRequest.findUnique({
+        where: { id },
+        include: { occurrence: true },
+      });
+      if (!cr) throw app.httpErrors.notFound("Request not found.");
+      if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Already resolved.");
+      // Apply the change.
+      if (cr.kind === "RESCHEDULE") {
+        if (!cr.proposedStartAt) throw app.httpErrors.badRequest("No proposed time on this request.");
+        const orig = cr.occurrence.startAt ? new Date(cr.occurrence.startAt).getTime() : null;
+        const origEnd = cr.occurrence.endAt ? new Date(cr.occurrence.endAt).getTime() : null;
+        const newStart = cr.proposedStartAt;
+        const newEnd = orig != null && origEnd != null ? new Date(newStart.getTime() + (origEnd - orig)) : null;
+        await tx.jobOccurrence.update({
+          where: { id: cr.occurrenceId },
+          data: { startAt: newStart, ...(newEnd ? { endAt: newEnd } : {}) },
+        });
+      } else if (cr.kind === "SKIP") {
+        await tx.jobOccurrence.update({
+          where: { id: cr.occurrenceId },
+          data: { status: "CANCELED" },
+        });
+      }
+      const updated = await tx.occurrenceChangeRequest.update({
+        where: { id },
+        data: {
+          status: "APPROVED",
+          resolvedById: uid,
+          resolvedAt: new Date(),
+          resolutionNote: body.note ? String(body.note).trim() : null,
+        },
+      });
+      return updated;
+    });
+  });
+
+  app.post("/admin/change-requests/:id/deny", adminGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const cr = await prisma.occurrenceChangeRequest.findUnique({ where: { id } });
+    if (!cr) throw app.httpErrors.notFound("Request not found.");
+    if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Already resolved.");
+    return prisma.occurrenceChangeRequest.update({
+      where: { id },
+      data: {
+        status: "DENIED",
+        resolvedById: uid,
+        resolvedAt: new Date(),
+        resolutionNote: body.note ? String(body.note).trim() : null,
+      },
+    });
+  });
+
+  app.get("/admin/change-requests/pending-count", adminGuard, async (_req: any) => {
+    const count = await prisma.occurrenceChangeRequest.count({ where: { status: "PENDING" } });
+    return { count };
+  });
+
+  // ── Business Expenses (super only) ──
+
+  app.get("/admin/business-expenses", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { from?: string; to?: string; category?: string; q?: string };
+    const where: any = {};
+    if (q.from || q.to) {
+      where.date = {};
+      if (q.from) where.date.gte = new Date(q.from);
+      if (q.to) {
+        const t = new Date(q.to);
+        t.setHours(23, 59, 59, 999);
+        where.date.lte = t;
+      }
+    }
+    if (q.category) where.category = q.category;
+    if (q.q && q.q.trim()) {
+      const term = q.q.trim();
+      where.OR = [
+        { description: { contains: term, mode: "insensitive" } },
+        { vendor: { contains: term, mode: "insensitive" } },
+        { notes: { contains: term, mode: "insensitive" } },
+      ];
+    }
+    return prisma.businessExpense.findMany({
+      where,
+      orderBy: { date: "desc" },
+      include: { createdBy: { select: { id: true, displayName: true, email: true } } },
+    });
+  });
+
+  app.post("/admin/business-expenses", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    if (!b.description?.trim()) throw app.httpErrors.badRequest("description is required");
+    if (b.cost == null || isNaN(Number(b.cost))) throw app.httpErrors.badRequest("cost is required");
+    if (!b.date) throw app.httpErrors.badRequest("date is required");
+    return prisma.businessExpense.create({
+      data: {
+        createdById: uid,
+        description: String(b.description).trim(),
+        cost: Number(b.cost),
+        date: new Date(String(b.date)),
+        category: b.category ? String(b.category).trim() : null,
+        vendor: b.vendor ? String(b.vendor).trim() : null,
+        notes: b.notes ? String(b.notes).trim() : null,
+      },
+    });
+  });
+
+  app.patch("/admin/business-expenses/:id", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = req.body || {};
+    const data: any = {};
+    if ("description" in b) data.description = String(b.description ?? "").trim();
+    if ("cost" in b) data.cost = Number(b.cost);
+    if ("date" in b) data.date = b.date ? new Date(String(b.date)) : null;
+    if ("category" in b) data.category = b.category ? String(b.category).trim() : null;
+    if ("vendor" in b) data.vendor = b.vendor ? String(b.vendor).trim() : null;
+    if ("notes" in b) data.notes = b.notes ? String(b.notes).trim() : null;
+    return prisma.businessExpense.update({ where: { id }, data });
+  });
+
+  app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    await prisma.businessExpense.delete({ where: { id } });
+    return { deleted: true };
+  });
+
+  // Summary: totals by today, week, month, year, all time + grouped by category for current period
+  app.get("/admin/business-expenses/summary", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { from?: string; to?: string };
+    const now = new Date();
+    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const where: any = {};
+    if (q.from || q.to) {
+      where.date = {};
+      if (q.from) where.date.gte = new Date(q.from);
+      if (q.to) {
+        const t = new Date(q.to);
+        t.setHours(23, 59, 59, 999);
+        where.date.lte = t;
+      }
+    }
+    const all = await prisma.businessExpense.findMany({ where, select: { date: true, cost: true, category: true } });
+    let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, total = 0;
+    const byCategory: Record<string, number> = {};
+    for (const e of all) {
+      total += e.cost;
+      if (e.date >= startOfToday) today += e.cost;
+      if (e.date >= startOfWeek) thisWeek += e.cost;
+      if (e.date >= startOfMonth) thisMonth += e.cost;
+      if (e.date >= startOfYear) thisYear += e.cost;
+      const cat = e.category || "(Uncategorized)";
+      byCategory[cat] = (byCategory[cat] ?? 0) + e.cost;
+    }
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      today: round(today),
+      thisWeek: round(thisWeek),
+      thisMonth: round(thisMonth),
+      thisYear: round(thisYear),
+      total: round(total),
+      byCategory: Object.fromEntries(Object.entries(byCategory).map(([k, v]) => [k, round(v)])),
+      count: all.length,
+    };
   });
 
   // ── Full Data Export ──

@@ -19,6 +19,7 @@ import SettingsTab from "@/src/ui/tabs/SettingsTab";
 import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
+import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import WeatherBar from "@/src/ui/components/WeatherBar";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -101,6 +102,7 @@ export default function HomePage() {
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
+  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "System");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
@@ -132,6 +134,7 @@ export default function HomePage() {
   const superInnerTabRef = useRef(superInnerTab);
   const workerCategoryRef = useRef(workerCategory);
   const adminCategoryRef = useRef(adminCategory);
+  const superCategoryRef = useRef(superCategory);
   topTabRef.current = topTab;
   clientInnerTabRef.current = clientInnerTab;
   workerInnerTabRef.current = workerInnerTab;
@@ -139,6 +142,7 @@ export default function HomePage() {
   superInnerTabRef.current = superInnerTab;
   workerCategoryRef.current = workerCategory;
   adminCategoryRef.current = adminCategory;
+  superCategoryRef.current = superCategory;
 
   function getCurrentNavState(): NavState {
     const t = topTabRef.current;
@@ -146,7 +150,7 @@ export default function HomePage() {
       : t === "worker" ? workerInnerTabRef.current
       : t === "admin" ? adminInnerTabRef.current
       : superInnerTabRef.current;
-    const category = t === "worker" ? workerCategoryRef.current : t === "admin" ? adminCategoryRef.current : undefined;
+    const category = t === "worker" ? workerCategoryRef.current : t === "admin" ? adminCategoryRef.current : t === "super" ? superCategoryRef.current : undefined;
     return { outer: t, inner, category };
   }
 
@@ -168,12 +172,14 @@ export default function HomePage() {
     if (prev.outer === "client") clientInnerTabRef.current = prev.inner as any;
     else if (prev.outer === "worker") { workerInnerTabRef.current = prev.inner as any; if (prev.category) workerCategoryRef.current = prev.category; }
     else if (prev.outer === "admin") { adminInnerTabRef.current = prev.inner as any; if (prev.category) adminCategoryRef.current = prev.category; }
+    else if (prev.outer === "super") { superInnerTabRef.current = prev.inner as any; if (prev.category) superCategoryRef.current = prev.category; }
     else if (prev.outer === "super") superInnerTabRef.current = prev.inner as any;
     // Now set React state (no skipNextPush needed — onOuterChange/onInnerChange only fire from user clicks)
     setTopTab(prev.outer as any);
     if (prev.outer === "client") setClientInnerTab(prev.inner as any);
     else if (prev.outer === "worker") { setWorkerInnerTab(prev.inner as any); if (prev.category) setWorkerCategory(prev.category); }
     else if (prev.outer === "admin") { setAdminInnerTab(prev.inner as any); if (prev.category) setAdminCategory(prev.category); }
+    else if (prev.outer === "super") { setSuperInnerTab(prev.inner as any); if (prev.category) setSuperCategory(prev.category); }
     else if (prev.outer === "super") setSuperInnerTab(prev.inner as any);
   }
 
@@ -792,6 +798,14 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
           category: "System",
           categoryIcon: FiSettings,
+        },
+        {
+          value: "business-expenses",
+          label: "Expenses",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
         },
       ],
     },
@@ -1818,12 +1832,13 @@ export default function HomePage() {
             else if (outer === "admin") setAdminInnerTab(v as AdminTabs);
             else if (outer === "super") setSuperInnerTab(v as SuperTabs);
           }}
-          categoryValue={topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : undefined}
+          categoryValue={topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : topTab === "super" ? superCategory : undefined}
           onCategoryChange={(v: string) => {
-            const currentCat = topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : undefined;
+            const currentCat = topTab === "worker" ? workerCategory : topTab === "admin" ? adminCategory : topTab === "super" ? superCategory : undefined;
             if (v !== currentCat) pushNavHistory(getCurrentNavState());
             if (topTab === "worker") setWorkerCategory(v);
             else if (topTab === "admin") setAdminCategory(v);
+            else if (topTab === "super") setSuperCategory(v);
           }}
           headerLeft={
             <Box

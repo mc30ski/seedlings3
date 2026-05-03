@@ -114,6 +114,9 @@ model User {
   occurrenceAddons          OccurrenceAddon[]
   pinnedEquipment           PinnedEquipment[]
   likedEquipment            LikedEquipment[]
+  businessExpenses          BusinessExpense[]
+  changeRequestsCreated     OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
+  changeRequestsResolved    OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
 }
 
 model UserRole {
@@ -592,6 +595,7 @@ model JobOccurrence {
   comments         OccurrenceComment[]
   followupClients  FollowupClient[]
   followupJobs     FollowupJob[]
+  changeRequests   OccurrenceChangeRequest[]
 
   @@index([jobId, status])
   @@index([startAt])
@@ -727,6 +731,28 @@ model Expense {
   updatedAt     DateTime      @updatedAt
 
   @@index([occurrenceId])
+  @@index([createdById])
+}
+
+// Business expenses NOT tied to a specific job/occurrence — used for general bookkeeping (insurance, fuel, equipment purchases, etc.)
+model BusinessExpense {
+  id          String   @id @default(cuid())
+
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  date        DateTime
+  cost        Float
+  description String
+  category    String?
+  vendor      String?
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([date])
+  @@index([category])
   @@index([createdById])
 }
 
@@ -959,4 +985,41 @@ model OccurrenceInstruction {
   createdAt    DateTime      @default(now())
 
   @@index([occurrenceId])
+}
+
+// ── Client-initiated change requests on a scheduled occurrence ──────────────
+// Clients can request a reschedule (with proposed date) or skip a single
+// occurrence. Admins approve/deny — approval applies the change.
+enum ChangeRequestKind {
+  RESCHEDULE
+  SKIP
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  CANCELED
+}
+
+model OccurrenceChangeRequest {
+  id              String              @id @default(cuid())
+  occurrenceId    String
+  occurrence      JobOccurrence       @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  requestedById   String
+  requestedBy     User                @relation("ChangeRequestRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  kind            ChangeRequestKind
+  status          ChangeRequestStatus @default(PENDING)
+  proposedStartAt DateTime?
+  comment         String?
+  resolvedById    String?
+  resolvedBy      User?               @relation("ChangeRequestResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt      DateTime?
+  resolutionNote  String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([occurrenceId])
+  @@index([requestedById])
+  @@index([status])
 }

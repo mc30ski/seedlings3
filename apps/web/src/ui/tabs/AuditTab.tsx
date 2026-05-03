@@ -46,6 +46,11 @@ const AUDIT_CHECKS = [
     label: "Missing Next Repeating Occurrence",
     description: "Finds repeating jobs completed in the last 2 months that don't have a next SCHEDULED occurrence — the auto-create may have failed.",
   },
+  {
+    id: "time_estimate_mismatch",
+    label: "Time Estimate Mismatch",
+    description: "Finds repeating jobs whose average actual time differs from the estimate by more than 25%. Requires at least 3 completed occurrences for a meaningful average.",
+  },
 ] as const;
 
 type AuditIssue = { id?: string; description: string; clientId?: string; jobId?: string; occurrenceId?: string };

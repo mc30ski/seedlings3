@@ -72,6 +72,9 @@ export default function EquipmentDialog({
   const [requiresInsurance, setRequiresInsurance] = useState(false);
   const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
+  // After CREATE saves successfully, hold the new id so the dialog stays open
+  // to allow photo / instruction management without closing & reopening.
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const typeItems = useMemo(
     () =>
@@ -141,6 +144,7 @@ export default function EquipmentDialog({
       setRequiresInsurance(false);
       setInstructions([]);
     }
+    if (open) setCreatedId(null);
   }, [open, mode, initial]);
 
   async function handleSave() {
@@ -162,23 +166,28 @@ export default function EquipmentDialog({
     };
 
     setBusy(true);
+    let didCreate = false;
     try {
       let saved: Equipment;
-      if (mode === "CREATE") {
+      // Effectively UPDATE if we have an id (either from initial or just-created).
+      const existingId = initial?.id ?? createdId;
+      if (mode === "CREATE" && !existingId) {
         saved = await apiPost<Equipment>("/api/admin/equipment", payload);
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Property “${payload.shortDesc}” created.`,
+          text: `Equipment “${payload.shortDesc}” created. You can now add photos and instructions.`,
         });
+        setCreatedId(saved.id);
+        didCreate = true;
       } else {
-        if (!initial?.id) throw new Error("Missing equipment id");
+        if (!existingId) throw new Error("Missing equipment id");
         saved = await apiPatch<Equipment>(
-          `/api/admin/equipment/${initial.id}`,
+          `/api/admin/equipment/${existingId}`,
           payload
         );
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Property “${payload.shortDesc}” updated.`,
+          text: `Equipment “${payload.shortDesc}” updated.`,
         });
       }
       onSaved?.(saved);
@@ -193,7 +202,8 @@ export default function EquipmentDialog({
         ),
       });
     } finally {
-      onOpenChange(false);
+      // After CREATE, keep the dialog open so the user can manage photos / instructions.
+      if (!didCreate) onOpenChange(false);
       setBusy(false);
     }
   }
@@ -218,7 +228,7 @@ export default function EquipmentDialog({
             <Dialog.CloseTrigger />
             <Dialog.Header>
               <Dialog.Title>
-                {mode === "CREATE" ? "Create Property" : "Update Property"}
+                {mode === "CREATE" ? "Create Equipment" : "Update Equipment"}
               </Dialog.Title>
             </Dialog.Header>
 
@@ -403,35 +413,47 @@ export default function EquipmentDialog({
                     mb="2"
                   />
                 </div>
-                {mode === "UPDATE" && initial?.id && isAdmin && (
-                  <div>
-                    <HStack justify="space-between" alignItems="center" mb="1">
-                      <Text fontSize="sm" fontWeight="medium">Instructions</Text>
-                      <Button size="xs" variant="outline" onClick={() => setInstructionsDialogOpen(true)}>
-                        Manage Instructions
-                      </Button>
-                    </HStack>
-                    {instructions.length > 0 ? (
-                      <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                        <VStack align="stretch" gap="0.5">
-                          {instructions.map((inst) => (
-                            <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
-                              📌 {inst.text}
-                            </Text>
-                          ))}
-                        </VStack>
-                      </Box>
-                    ) : (
-                      <Text fontSize="xs" color="fg.muted">No instructions set.</Text>
-                    )}
-                  </div>
-                )}
-                {mode === "UPDATE" && initial?.id && (
-                  <div>
-                    <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
-                    <EquipmentPhotos equipmentId={initial.id} />
-                  </div>
-                )}
+                {isAdmin && (() => {
+                  const equipId = initial?.id ?? createdId;
+                  return (
+                    <div>
+                      <HStack justify="space-between" alignItems="center" mb="1">
+                        <Text fontSize="sm" fontWeight="medium">Instructions</Text>
+                        <Button size="xs" variant="outline" disabled={!equipId} onClick={() => setInstructionsDialogOpen(true)}>
+                          Manage Instructions
+                        </Button>
+                      </HStack>
+                      {!equipId ? (
+                        <Text fontSize="xs" color="fg.muted">Save the equipment first to add instructions.</Text>
+                      ) : instructions.length > 0 ? (
+                        <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                          <VStack align="stretch" gap="0.5">
+                            {instructions.map((inst) => (
+                              <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
+                                📌 {inst.text}
+                              </Text>
+                            ))}
+                          </VStack>
+                        </Box>
+                      ) : (
+                        <Text fontSize="xs" color="fg.muted">No instructions set.</Text>
+                      )}
+                    </div>
+                  );
+                })()}
+                {(() => {
+                  const equipId = initial?.id ?? createdId;
+                  return (
+                    <div>
+                      <Text mb="1" fontSize="sm" fontWeight="medium">Photos</Text>
+                      {equipId ? (
+                        <EquipmentPhotos equipmentId={equipId} />
+                      ) : (
+                        <Text fontSize="xs" color="fg.muted">Save the equipment first to add photos.</Text>
+                      )}
+                    </div>
+                  );
+                })()}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
@@ -442,31 +464,31 @@ export default function EquipmentDialog({
                   onClick={() => onOpenChange(false)}
                   disabled={busy}
                 >
-                  Cancel
+                  {createdId ? "Done" : "Cancel"}
                 </Button>
                 <Button
                   onClick={handleSave}
                   loading={busy}
                   disabled={!ableToSave()}
                 >
-                  {mode === "CREATE" ? "Create" : "Save"}
+                  {mode === "CREATE" && !createdId ? "Create" : "Save"}
                 </Button>
               </HStack>
             </Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>
       </Portal>
-      {mode === "UPDATE" && initial?.id && isAdmin && (
+      {(initial?.id || createdId) && isAdmin && (
         <EquipmentInstructionsDialog
           open={instructionsDialogOpen}
           onOpenChange={setInstructionsDialogOpen}
-          equipmentId={initial.id}
+          equipmentId={(initial?.id ?? createdId)!}
           currentInstructions={instructions}
           onSaved={(updated) => {
             setInstructions(updated);
             // Trigger parent reload so cards show the new instructions immediately
             // (they're already persisted via the inner dialog's API calls).
-            onSaved?.({ ...initial, instructions: updated });
+            if (initial) onSaved?.({ ...initial, instructions: updated });
           }}
         />
       )}

@@ -65,6 +65,7 @@ async function clearDatabase() {
   await prisma.jobPropertyPhoto.deleteMany();
   await prisma.paymentSplit.deleteMany();
   await prisma.expense.deleteMany();
+  await prisma.businessExpense.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
   await prisma.jobOccurrenceAssignee.deleteMany();
 
@@ -901,6 +902,45 @@ async function seedDatabase() {
   for (const e of expenseData) {
     await prisma.expense.create({
       data: { occurrenceId: e.occId, createdById: e.userId, cost: e.cost, description: e.desc },
+    });
+  }
+
+  // ── Business expenses (not tied to a specific job) ───────────────────────
+  console.log("  Creating business expenses...");
+
+  const businessExpenseData: { ago: number; cost: number; desc: string; category: string; vendor?: string; notes?: string }[] = [
+    // Today / this week
+    { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Fuel", vendor: "Shell" },
+    { ago: 1, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Software/Subscription", vendor: "Intuit" },
+    { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Equipment Repair", vendor: "Stihl Pro Dealer" },
+    // This month, prior weeks
+    { ago: 9, cost: 285.00, desc: "Q2 General liability insurance", category: "Insurance", vendor: "State Farm Commercial" },
+    { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Vehicle Maintenance", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
+    { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office Supplies", vendor: "Staples" },
+    { ago: 22, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Marketing", vendor: "Meta" },
+    // Earlier this year
+    { ago: 38, cost: 1250.00, desc: "New backpack blower (Echo PB-8010T)", category: "Equipment Purchase", vendor: "Pro Lawn Supply" },
+    { ago: 55, cost: 320.00, desc: "Annual business license renewal", category: "Tax/License", vendor: "City of Springfield" },
+    { ago: 72, cost: 215.85, desc: "Mower deck repair (welding + new blades)", category: "Equipment Repair", vendor: "Mike's Mower Shop" },
+    { ago: 96, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Software/Subscription", vendor: "Intuit" },
+    { ago: 124, cost: 75.00, desc: "Logo redesign (vector files)", category: "Marketing", vendor: "Fiverr designer" },
+    // Last year (for "all time" totals)
+    { ago: 200, cost: 285.00, desc: "Q4 General liability insurance", category: "Insurance", vendor: "State Farm Commercial" },
+    { ago: 240, cost: 12.50, desc: "Bank wire fee", category: "Bank Fees", vendor: "Chase Business" },
+    { ago: 320, cost: 595.00, desc: "Tax prep (small business return)", category: "Professional Services", vendor: "H&R Block" },
+  ];
+
+  for (const e of businessExpenseData) {
+    await prisma.businessExpense.create({
+      data: {
+        createdById: ADMIN_WORKER_ID,
+        date: daysAgo(e.ago, 12),
+        cost: e.cost,
+        description: e.desc,
+        category: e.category,
+        vendor: e.vendor ?? null,
+        notes: e.notes ?? null,
+      },
     });
   }
 

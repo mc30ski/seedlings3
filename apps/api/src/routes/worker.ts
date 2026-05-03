@@ -638,11 +638,12 @@ export default async function workerRoutes(app: FastifyInstance) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
+    // 1) Actual payments (already received) — use the user's payment split.
     const splits = await prisma.paymentSplit.findMany({
       where: { userId: uid },
       include: {
         payment: {
-          select: { createdAt: true, method: true, amountPaid: true },
+          select: { occurrenceId: true, createdAt: true, method: true, amountPaid: true },
         },
       },
     });
@@ -650,6 +651,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
     const byMethod: Record<string, number> = {};
     let jobCount = 0;
+    const paidOccIds = new Set<string>();
 
     for (const sp of splits) {
       allTime += sp.amount;
@@ -659,6 +661,54 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (d >= startOfMonth) thisMonth += sp.amount;
       if (d >= startOfYear) thisYear += sp.amount;
       byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+      jobCount++;
+      paidOccIds.add(sp.payment.occurrenceId);
+    }
+
+    // 2) Optimistic estimate for completed (or pending-payment) occurrences with no payment yet.
+    // Uses the same formula as JobsTab's "Est. payout" badge: (price + addons - expenses) * (1 - pct/100), split evenly.
+    const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
+    const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+    const settingKey = isEmployee ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
+    const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
+    const pct = Number(setting?.value ?? 0);
+
+    const myCompletedOccs = await prisma.jobOccurrence.findMany({
+      where: {
+        completedAt: { not: null },
+        status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] },
+        ...(paidOccIds.size > 0 ? { id: { notIn: [...paidOccIds] } } : {}),
+        assignees: { some: { userId: uid, role: { not: "observer" } } },
+      },
+      select: {
+        id: true,
+        completedAt: true,
+        price: true,
+        proposalAmount: true,
+        addons: { select: { price: true } },
+        expenses: { select: { cost: true } },
+        assignees: { select: { role: true } },
+      },
+    });
+
+    for (const occ of myCompletedOccs) {
+      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
+      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = basePrice + addonsTotal;
+      if (displayPrice <= 0) continue;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const deduction = Math.round(net * pct) / 100;
+      const payout = Math.max(0, net - deduction);
+      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
+      const myShare = payout / activeCount;
+      if (myShare <= 0 || !occ.completedAt) continue;
+      const d = occ.completedAt;
+      allTime += myShare;
+      if (d >= startOfToday) today += myShare;
+      if (d >= startOfWeek) thisWeek += myShare;
+      if (d >= startOfMonth) thisMonth += myShare;
+      if (d >= startOfYear) thisYear += myShare;
       jobCount++;
     }
 
