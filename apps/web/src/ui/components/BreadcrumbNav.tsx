@@ -259,8 +259,8 @@ export default function BreadcrumbNav({
               )}
             </Box>
 
-            {/* Level 3: Inner tab — only if category has multiple tabs */}
-            {!isSingleTabCategory && (
+            {/* Level 3: Inner tab — always shown so the full path (Outer → Category → Inner) is visible */}
+            {(true || !isSingleTabCategory) && (
               <>
                         <Box position="relative" ref={innerRef}>
                   <HStack

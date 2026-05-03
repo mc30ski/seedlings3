@@ -313,7 +313,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -337,7 +337,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid transparent", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: statusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: statusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -362,7 +362,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
             css={{ width: "auto", flex: "0 0 auto" }}
           >
             <Select.Control>
-              <Select.Trigger w="auto" minW="0" px="2" css={{ background: tagFilter !== "ALL" ? "var(--chakra-colors-red-200)" : "var(--chakra-colors-red-100)", border: tagFilter !== "ALL" ? "1px solid var(--chakra-colors-red-400)" : "1px solid transparent", borderRadius: "6px" }}>
+              <Select.Trigger w="auto" minW="0" px="2" css={{ background: tagFilter !== "ALL" ? "var(--chakra-colors-red-200)" : "var(--chakra-colors-red-100)", border: tagFilter !== "ALL" ? "1px solid var(--chakra-colors-red-400)" : "1px solid var(--chakra-colors-red-300)", borderRadius: "6px" }}>
                 <Tag size={14} />
                 <Select.Indicator display="none" />
               </Select.Trigger>

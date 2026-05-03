@@ -17,7 +17,7 @@ export type AdminTabs =
   | "settings"
   | "profile";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
