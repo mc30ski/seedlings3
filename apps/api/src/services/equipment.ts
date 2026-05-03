@@ -21,8 +21,14 @@ function computeRentalCost(
   if (!checkedOutAt) return null;
   const rate = workerType === "EMPLOYEE" ? employeeRate : contractorRate;
   if (!rate || rate <= 0) return null;
-  const msPerDay = 86_400_000;
-  const rentalDays = Math.max(1, Math.ceil((releasedAt.getTime() - checkedOutAt.getTime()) / msPerDay));
+  // Count distinct calendar days in Eastern Time, inclusive of both ends.
+  // Same day = 1 day; crossing one midnight = 2 days; etc.
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+  const toUtcNoon = (d: Date) => {
+    const [y, m, day] = fmt.format(d).split("-").map(Number);
+    return Date.UTC(y, m - 1, day, 12);
+  };
+  const rentalDays = Math.max(1, Math.round((toUtcNoon(releasedAt) - toUtcNoon(checkedOutAt)) / 86_400_000) + 1);
   return { rentalDays, rentalCost: rentalDays * rate };
 }
 

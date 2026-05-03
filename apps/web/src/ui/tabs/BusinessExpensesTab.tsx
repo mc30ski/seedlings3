@@ -46,7 +46,7 @@ type Summary = {
   count: number;
 };
 
-type CompareBucket = { platformFees: number; businessMargin: number; earnings: number; expenses: number; net: number };
+type CompareBucket = { platformFees: number; businessMargin: number; equipmentRentals: number; earnings: number; expenses: number; net: number };
 type Comparison = {
   today: CompareBucket;
   thisWeek: CompareBucket;
@@ -319,7 +319,7 @@ export default function BusinessExpensesTab() {
             <Card.Body p={3}>
               <Text fontSize="sm" fontWeight="semibold" mb={2}>Earnings vs Expenses</Text>
               <Text fontSize="xs" color="fg.muted" mb={3}>
-                Earnings = contractor platform fees + employee margin captured on payments. Net = earnings − business expenses.
+                Earnings = contractor platform fees + employee margin captured on payments + equipment rental charges (deducted from worker payouts). Net = earnings − business expenses.
               </Text>
               <Box overflowX="auto">
                 <Box as="table" w="full" fontSize="xs" style={{ borderCollapse: "collapse" }}>
@@ -344,6 +344,12 @@ export default function BusinessExpensesTab() {
                       <Box as="td" p={2} color="fg.muted">Margin (employees/trainees)</Box>
                       {periods.map((p) => (
                         <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].businessMargin)}</Box>
+                      ))}
+                    </Box>
+                    <Box as="tr">
+                      <Box as="td" p={2} color="fg.muted">Equipment rentals</Box>
+                      {periods.map((p) => (
+                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].equipmentRentals)}</Box>
                       ))}
                     </Box>
                     <Box as="tr" borderTopWidth="1px" borderColor="gray.200">

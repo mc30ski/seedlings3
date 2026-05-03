@@ -2316,6 +2316,32 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   Plan tomorrow →
                 </Badge>
               )}
+              {isWorkerView && group.label === "Today" && group.items.some((o) => (o.workflow === "STANDARD" || o.workflow === "ONE_OFF" || o.workflow === "ESTIMATE") && (o.assignees ?? []).some((a) => a.userId === myId)) && (
+                <Badge
+                  size="sm"
+                  variant="solid"
+                  bg="blue.400"
+                  color="white"
+                  ml="2"
+                  px="3"
+                  py="1"
+                  borderRadius="full"
+                  cursor="pointer"
+                  mb={3}
+                  _hover={{ opacity: 0.85 }}
+                  onClick={(e: any) => {
+                    e.stopPropagation();
+                    try {
+                      const today = new Date();
+                      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                      localStorage.setItem("seedlings_preview_targetDate", JSON.stringify(todayKey));
+                    } catch {}
+                    window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
+                  }}
+                >
+                  Plan route →
+                </Badge>
+              )}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {group.items.map((occ, occIdx) => {
             const assignees = occ.assignees ?? [];
@@ -3002,7 +3028,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               <Link2 size={10} style={{ marginRight: 3 }} /> Linked
                             </Badge>
                           )}
-                          {(occ.price ?? 0) >= highValueThreshold && <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></span>}
+                          {(occ.price ?? 0) >= highValueThreshold && <Box as="span" display="inline-flex" alignItems="center" title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></Box>}
                           {isWorkerView && occ.reminder && (
                             <Badge
                               colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
@@ -3256,6 +3282,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {isAdminOnlyOcc && <StatusBadge status="Administered" palette="red" variant="outline" />}
                           {needsConfirmation && <StatusBadge status="Unconfirmed" palette="orange" variant="solid" />}
                           {isConfirmed && occ.status === "SCHEDULED" && !isTaskOrReminder && <StatusBadge status="Confirmed" palette="green" variant="subtle" />}
+                          {(occ.price ?? 0) >= highValueThreshold && <Box as="span" display="inline-flex" alignItems="center" title="Only employees or insured contractors can claim this job"><StatusBadge status="Insured Only" palette="yellow" variant="solid" /></Box>}
+                          {isWorkerView && occ.reminder && (
+                            <Badge
+                              colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
+                              variant="subtle" fontSize="xs" borderRadius="full" px="2"
+                              cursor={occ.reminder.note ? "pointer" : undefined}
+                              onClick={occ.reminder.note ? (e: any) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(occ.reminder!.note!);
+                                publishInlineMessage({ type: "SUCCESS", text: "Copied!" });
+                              } : undefined}
+                              title={occ.reminder.note ? `${occ.reminder.note} (click to copy)` : undefined}
+                            >
+                              <Bell size={10} style={{ marginRight: 3 }} />
+                              {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
+                            </Badge>
+                          )}
                         </HStack>
                       </Box>
                     )}
@@ -3484,37 +3527,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     {isLightEstimate && occ.estimateAddress && (
                       <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
                     )}
-                    <HStack gap={1} flexWrap="wrap" alignItems="center">
-                      {occ.linkGroupId && (
-                        <Badge colorPalette="purple" variant="outline" fontSize="xs" px="1.5" borderRadius="full">
-                          <Link2 size={10} style={{ marginRight: 3 }} /> Linked
-                        </Badge>
-                      )}
-                      {(occ.price ?? 0) >= highValueThreshold && (
-                        <span title="Only employees or insured contractors can claim this job" style={{ display: "flex" }}>
-                          <StatusBadge status="Insured Only" palette="yellow" variant="solid" />
-                        </span>
-                      )}
-                      {isWorkerView && occ.reminder && (
-                        <HStack gap={1}>
-                          <Badge
-                            colorPalette={bizDateKey(occ.reminder.remindAt) <= bizDateKey(new Date()) ? "orange" : "gray"}
-                            variant="subtle" fontSize="xs" borderRadius="full" px="2"
-                          >
-                            <Bell size={10} style={{ marginRight: 3 }} />
-                            {fmtDate(occ.reminder.remindAt)}{occ.reminder.note ? ` — ${occ.reminder.note.length > 30 ? occ.reminder.note.slice(0, 30) + "…" : occ.reminder.note}` : ""}
-                          </Badge>
-                          {occ.reminder.note && (
-                            <Button size="xs" variant="ghost" px="1" minW="0"
-                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(occ.reminder!.note!); publishInlineMessage({ type: "SUCCESS", text: "Copied!" }); }}
-                              title="Copy reminder note"
-                            >
-                              <Copy size={12} style={{ display: "block" }} />
-                            </Button>
-                          )}
-                        </HStack>
-                      )}
-                    </HStack>
                     {occ.startAt && (
                       <Text fontSize="xs">
                         {fmtDate(occ.startAt)}
@@ -5498,8 +5510,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           startedAt={completeDialogOcc.startedAt}
           estimatedMinutes={completeDialogOcc.estimatedMinutes}
           totalPausedMs={completeDialogOcc.totalPausedMs}
+          pausedAt={completeDialogOcc.pausedAt}
+          existingCompletedAt={completeDialogOcc.completedAt}
           workerCount={(completeDialogOcc.assignees ?? []).filter((a) => a.role !== "observer").length}
-          onCompleted={(completedAt) => {
+          onCompleted={(completedAt, startedAt) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
             const completeWithLocation = async (recordLoc: boolean) => {
@@ -5507,6 +5521,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               try {
                 const body: Record<string, unknown> = {};
                 if (completedAt) body.completedAt = completedAt;
+                if (startedAt) body.startedAt = startedAt;
                 if (recordLoc) {
                   const loc = await getLocation();
                   if (loc) { body.lat = loc.lat; body.lng = loc.lng; }

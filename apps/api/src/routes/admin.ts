@@ -3055,17 +3055,21 @@ Respond ONLY with valid JSON in this exact format:
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-    const [payments, expenses] = await Promise.all([
+    const [payments, expenses, rentals] = await Promise.all([
       prisma.payment.findMany({
         select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true },
       }),
       prisma.businessExpense.findMany({
         select: { date: true, cost: true },
       }),
+      prisma.checkout.findMany({
+        where: { rentalCost: { not: null }, releasedAt: { not: null } },
+        select: { releasedAt: true, rentalCost: true },
+      }),
     ]);
 
-    type Bucket = { platformFees: number; businessMargin: number; expenses: number };
-    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, expenses: 0 });
+    type Bucket = { platformFees: number; businessMargin: number; equipmentRentals: number; expenses: number };
+    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, equipmentRentals: 0, expenses: 0 });
     const today = empty(), thisWeek = empty(), thisMonth = empty(), thisYear = empty(), allTime = empty();
 
     for (const p of payments) {
@@ -3078,6 +3082,15 @@ Respond ONLY with valid JSON in this exact format:
       if (p.createdAt >= startOfMonth) { thisMonth.platformFees += fee; thisMonth.businessMargin += margin; }
       if (p.createdAt >= startOfYear)  { thisYear.platformFees += fee; thisYear.businessMargin += margin; }
     }
+    for (const r of rentals) {
+      const cost = r.rentalCost ?? 0;
+      const at = r.releasedAt!;
+      allTime.equipmentRentals += cost;
+      if (at >= startOfToday) today.equipmentRentals += cost;
+      if (at >= startOfWeek)  thisWeek.equipmentRentals += cost;
+      if (at >= startOfMonth) thisMonth.equipmentRentals += cost;
+      if (at >= startOfYear)  thisYear.equipmentRentals += cost;
+    }
     for (const e of expenses) {
       allTime.expenses += e.cost;
       if (e.date >= startOfToday) today.expenses += e.cost;
@@ -3088,10 +3101,11 @@ Respond ONLY with valid JSON in this exact format:
 
     const round = (n: number) => Math.round(n * 100) / 100;
     const finalize = (b: Bucket) => {
-      const earnings = b.platformFees + b.businessMargin;
+      const earnings = b.platformFees + b.businessMargin + b.equipmentRentals;
       return {
         platformFees: round(b.platformFees),
         businessMargin: round(b.businessMargin),
+        equipmentRentals: round(b.equipmentRentals),
         earnings: round(earnings),
         expenses: round(b.expenses),
         net: round(earnings - b.expenses),

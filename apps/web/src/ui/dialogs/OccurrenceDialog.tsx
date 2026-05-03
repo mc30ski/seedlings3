@@ -486,7 +486,7 @@ export default function OccurrenceDialog({
                         onChange={(e) => setStatus(e.target.value)}
                       >
                         {JOB_OCCURRENCE_STATUS.map((s) => (
-                          <option key={s} value={s}>{prettyStatus(s)}</option>
+                          <option key={s} value={s}>{s === "CLOSED" ? "Closed" : prettyStatus(s)}</option>
                         ))}
                       </NativeSelect.Field>
                     </NativeSelect.Root>

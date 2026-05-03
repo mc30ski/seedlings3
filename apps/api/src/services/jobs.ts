@@ -1712,6 +1712,10 @@ export const jobs: ServicesJobs = {
       ) {
         data.completedAt = timestamps?.completedAt ? new Date(timestamps.completedAt) : new Date();
       }
+      // Allow caller to explicitly override startedAt (e.g., worker adjusting start time on complete).
+      if (timestamps?.startedAt) {
+        data.startedAt = new Date(timestamps.startedAt);
+      }
       if (notes !== undefined) data.notes = notes;
       if (location) {
         if (status === JobOccurrenceStatus.IN_PROGRESS) {
