@@ -33,7 +33,7 @@ type Props = {
   existingCompletedAt?: string | null;
   /** Number of non-observer assignees. */
   workerCount?: number;
-  onCompleted: (completedAt?: string, startedAt?: string) => void;
+  onCompleted: (completedAt?: string, startedAt?: string, totalPausedMs?: number) => void;
 };
 
 export default function CompleteJobDialog({
@@ -54,6 +54,8 @@ export default function CompleteJobDialog({
   const [busy, setBusy] = useState(false);
   const [completedAtTime, setCompletedAtTime] = useState("");
   const [startedAtTime, setStartedAtTime] = useState("");
+  const [offHours, setOffHours] = useState("0");
+  const [offMinutes, setOffMinutes] = useState("0");
   const [acknowledgedDiscrepancy, setAcknowledgedDiscrepancy] = useState(false);
 
   const toLocalInput = (d: Date) => {
@@ -81,6 +83,15 @@ export default function CompleteJobDialog({
     } else {
       setStartedAtTime("");
     }
+    // Off-the-clock = totalPausedMs + the in-progress pause (if currently paused) up to now.
+    let initialPausedMs = totalPausedMs ?? 0;
+    if (pausedAt) {
+      const pAt = new Date(pausedAt).getTime();
+      if (!isNaN(pAt)) initialPausedMs += Math.max(0, Date.now() - pAt);
+    }
+    const initialMin = Math.max(0, Math.round(initialPausedMs / 60000));
+    setOffHours(String(Math.floor(initialMin / 60)));
+    setOffMinutes(String(initialMin % 60));
     apiGet<Expense[]>(`/api/occurrences/${occurrenceId}/expenses`)
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
       .catch(() => setExpenses([]))
@@ -89,23 +100,21 @@ export default function CompleteJobDialog({
 
   const totalExpenses = expenses.reduce((s, e) => s + e.cost, 0);
 
-  // Compute elapsed time from current completedAtTime + startedAt + paused time, per worker.
-  // Compare to per-worker adjusted estimate. Show a warning if it differs by more than 25%.
+  // Wall-clock elapsed = (end - start) - off-the-clock. Compare to per-worker adjusted estimate.
   const wc = Math.max(1, workerCount ?? 1);
-  const elapsedMin: number | null = (() => {
-    if (!startedAtTime || !completedAtTime) return null;
-    const start = new Date(startedAtTime).getTime();
-    const end = new Date(completedAtTime).getTime();
-    if (isNaN(start) || isNaN(end) || end < start) return null;
-    let paused = totalPausedMs ?? 0;
-    // If currently paused, totalPausedMs hasn't yet been updated for the in-progress pause.
-    // Treat any time from pausedAt forward as paused.
-    if (pausedAt) {
-      const pausedAtMs = new Date(pausedAt).getTime();
-      if (!isNaN(pausedAtMs) && end > pausedAtMs) paused += end - pausedAtMs;
-    }
-    return Math.max(0, (end - start - paused) / 60000 / wc);
+  const offMs = (() => {
+    const h = parseInt(offHours || "0", 10) || 0;
+    const m = parseInt(offMinutes || "0", 10) || 0;
+    return Math.max(0, h * 60 + m) * 60000;
   })();
+  const startMs = startedAtTime ? new Date(startedAtTime).getTime() : NaN;
+  const endMs = completedAtTime ? new Date(completedAtTime).getTime() : NaN;
+  const spanMs = !isNaN(startMs) && !isNaN(endMs) ? endMs - startMs : null;
+  const endBeforeStart = spanMs != null && spanMs < 0;
+  const offTooLarge = spanMs != null && spanMs >= 0 && offMs > spanMs;
+  const elapsedMin: number | null = spanMs != null && spanMs >= 0 && !offTooLarge
+    ? Math.max(0, (spanMs - offMs) / 60000)
+    : null;
   const adjEst = estimatedMinutes != null ? estimatedMinutes / wc : null;
   const discrepancy = (elapsedMin != null && adjEst && adjEst > 0)
     ? Math.abs(elapsedMin - adjEst) / adjEst
@@ -119,11 +128,14 @@ export default function CompleteJobDialog({
 
   // Min for completedAt comes from the (editable) startedAtTime
   const minCompletedAt = startedAtTime || undefined;
-  const endBeforeStart = !!startedAtTime && !!completedAtTime && completedAtTime < startedAtTime;
 
   async function handleComplete() {
     if (endBeforeStart) {
       publishInlineMessage({ type: "WARNING", text: "End time cannot be before start time." });
+      return;
+    }
+    if (offTooLarge) {
+      publishInlineMessage({ type: "WARNING", text: "Off-the-clock time exceeds the span between start and end." });
       return;
     }
     setBusy(true);
@@ -133,7 +145,7 @@ export default function CompleteJobDialog({
       // Only forward startedAt if it actually changed from the original prop value.
       const origStartedIso = startedAt ? new Date(startedAt).toISOString() : undefined;
       const startedAtChanged = startedAtIso !== origStartedIso ? startedAtIso : undefined;
-      onCompleted(completedAtIso, startedAtChanged);
+      onCompleted(completedAtIso, startedAtChanged, offMs);
       onOpenChange(false);
     } finally {
       setBusy(false);
@@ -172,6 +184,40 @@ export default function CompleteJobDialog({
                   />
                   {endBeforeStart && (
                     <Text fontSize="xs" color="red.500" mt={1}>End time cannot be before start time.</Text>
+                  )}
+                </Box>
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Off-the-clock (Paused) time</Text>
+                  <HStack gap={2}>
+                    <Box flex="1">
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Hours</Text>
+                      <input
+                        type="number"
+                        min={0}
+                        value={offHours}
+                        onChange={(e) => { setOffHours(e.target.value); setAcknowledgedDiscrepancy(false); }}
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                      />
+                    </Box>
+                    <Box flex="1">
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Minutes</Text>
+                      <input
+                        type="number"
+                        min={0}
+                        max={59}
+                        value={offMinutes}
+                        onChange={(e) => { setOffMinutes(e.target.value); setAcknowledgedDiscrepancy(false); }}
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                      />
+                    </Box>
+                  </HStack>
+                  {offTooLarge && (
+                    <Text fontSize="xs" color="red.500" mt={1}>Off-the-clock time exceeds the span between start and end.</Text>
+                  )}
+                  {elapsedMin != null && (
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Working time: <Text as="span" fontWeight="semibold" color="fg.default">{fmt(elapsedMin)}</Text>
+                    </Text>
                   )}
                 </Box>
                 <Text fontSize="sm" color="fg.muted">
@@ -253,6 +299,7 @@ export default function CompleteJobDialog({
                   disabled={
                     !completedAtTime ||
                     endBeforeStart ||
+                    offTooLarge ||
                     (showDiscrepancyWarning && !acknowledgedDiscrepancy)
                   }
                 >

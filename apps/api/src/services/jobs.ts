@@ -956,6 +956,7 @@ export const jobs: ServicesJobs = {
       if ("jobTags" in patch) data.jobTags = patch.jobTags ?? null;
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
+      if ("totalPausedMs" in patch) data.totalPausedMs = patch.totalPausedMs != null ? Math.max(0, Math.round(Number(patch.totalPausedMs))) : 0;
       if ("title" in patch) data.title = patch.title ?? null;
       if ("contactName" in patch) data.contactName = patch.contactName ?? null;
       if ("contactPhone" in patch) data.contactPhone = patch.contactPhone ?? null;
@@ -1153,31 +1154,34 @@ export const jobs: ServicesJobs = {
         where: {
           jobId: { in: jobIds },
           status: { in: ["CLOSED", "COMPLETED", "PENDING_PAYMENT"] },
-          OR: [
-            { startedAt: { not: null }, completedAt: { not: null } },
-            { manualDurationMinutes: { not: null } },
-          ],
+          startedAt: { not: null },
+          completedAt: { not: null },
         },
-        select: { jobId: true, startedAt: true, completedAt: true, totalPausedMs: true, manualDurationMinutes: true, assignees: { select: { role: true } } },
+        select: {
+          jobId: true,
+          startedAt: true,
+          completedAt: true,
+          totalPausedMs: true,
+          assignees: { select: { role: true } },
+        },
         orderBy: { completedAt: "desc" },
       });
-      // Group by jobId, take last 10 per job
+      // Group by jobId, take last 8 per job. Median is in person-minutes
+      // (wall-clock × team size at completion) so it's comparable across runs
+      // with different team sizes; consumers divide by current team size for display.
       const byJob: Record<string, number[]> = {};
       for (const o of completedOccs) {
         if (!o.jobId) continue;
         if (!byJob[o.jobId]) byJob[o.jobId] = [];
-        if (byJob[o.jobId].length >= 10) continue;
-        const workerCount = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
-        let mins: number | null = null;
-        if (o.manualDurationMinutes != null) {
-          mins = o.manualDurationMinutes / workerCount;
-        } else if (o.startedAt && o.completedAt) {
-          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000 / workerCount;
-        }
-        if (mins != null && mins > 0) byJob[o.jobId].push(mins);
+        if (byJob[o.jobId].length >= 8) continue;
+        if (!o.startedAt || !o.completedAt) continue;
+        const wallclockMin = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
+        if (wallclockMin <= 0) continue;
+        const teamSize = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
+        byJob[o.jobId].push(wallclockMin * teamSize);
       }
       for (const [jobId, durations] of Object.entries(byJob)) {
-        if (durations.length === 0) continue;
+        if (durations.length < 3) continue; // need at least 3 samples for a meaningful average
         const sorted = durations.sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
         medianMap[jobId] = sorted.length % 2 === 0
@@ -1617,7 +1621,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string }) {
+  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }) {
     return prisma.$transaction(async (tx) => {
       const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
       const isAdmin = actionUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
@@ -1716,6 +1720,10 @@ export const jobs: ServicesJobs = {
       if (timestamps?.startedAt) {
         data.startedAt = new Date(timestamps.startedAt);
       }
+      // Allow caller to set totalPausedMs (e.g., off-the-clock time at completion).
+      if (timestamps?.totalPausedMs != null) {
+        data.totalPausedMs = Math.max(0, Math.round(timestamps.totalPausedMs));
+      }
       if (notes !== undefined) data.notes = notes;
       if (location) {
         if (status === JobOccurrenceStatus.IN_PROGRESS) {
@@ -1733,7 +1741,6 @@ export const jobs: ServicesJobs = {
         data.completedAt = null;
         data.pausedAt = null;
         data.totalPausedMs = 0;
-        data.manualDurationMinutes = null;
         data.startLat = null;
         data.startLng = null;
         data.completeLat = null;

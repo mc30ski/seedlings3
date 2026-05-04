@@ -76,23 +76,19 @@ function effectiveMinutes(occ: {
   completedAt?: string | null;
   pausedAt?: string | null;
   totalPausedMs?: number | null;
-  manualDurationMinutes?: number | null;
   status?: string;
-  assignees?: { role?: string | null }[];
 }): number | null {
-  const workerCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-  if (occ.manualDurationMinutes != null) return occ.manualDurationMinutes / workerCount;
   if (!occ.startedAt) return null;
   const startMs = new Date(occ.startedAt).getTime();
   const paused = occ.totalPausedMs ?? 0;
   if (occ.status === "PAUSED" && occ.pausedAt) {
-    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000 / workerCount;
+    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000;
   }
   if (occ.completedAt) {
-    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000 / workerCount;
+    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000;
   }
   // IN_PROGRESS
-  return (Date.now() - startMs - paused) / 60000 / workerCount;
+  return (Date.now() - startMs - paused) / 60000;
 }
 
 function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {
@@ -703,6 +699,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
+  const [editTimeForm, setEditTimeForm] = useState<{ startedAt: string; completedAt: string; offHours: string; offMinutes: string }>({ startedAt: "", completedAt: "", offHours: "0", offMinutes: "0" });
+  useEffect(() => {
+    if (!editTimeOcc) return;
+    const toLocal = (iso?: string | null) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const offMs = editTimeOcc.totalPausedMs ?? 0;
+    const offMinTotal = Math.max(0, Math.round(offMs / 60000));
+    setEditTimeForm({
+      startedAt: toLocal(editTimeOcc.startedAt),
+      completedAt: toLocal(editTimeOcc.completedAt),
+      offHours: String(Math.floor(offMinTotal / 60)),
+      offMinutes: String(offMinTotal % 60),
+    });
+  }, [editTimeOcc]);
   const [busyOccId, setBusyOccId] = useState<string | null>(null);
   const [addAddonOcc, setAddAddonOcc] = useState<WorkerOccurrence | null>(null);
   const [addonTag, setAddonTag] = useState<string>("");
@@ -3406,16 +3421,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         })()}
                         {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (() => {
                           const actual = effectiveMinutes(occ);
-                          const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
+                          const workerCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
                           const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
-                          const median = (occ as any).medianDurationMinutes as number | undefined;
+                          const medianPersonMin = (occ as any).medianDurationMinutes as number | undefined;
+                          const median = medianPersonMin != null ? Math.round(medianPersonMin / workerCount) : undefined;
                           const canEdit = (isClaimer || isActiveAssignee || forAdmin) && !!occ.completedAt;
                           const isPaused = occ.status === "PAUSED";
                           const parts: string[] = [];
-                          if (actual != null) parts.push(`${formatDuration(actual)} actual`);
-                          if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.`);
+                          if (actual != null) parts.push(`${formatDuration(actual)} actual${workerCount > 1 ? ` (${workerCount} workers)` : ""}`);
+                          if (adjEst != null) parts.push(`${formatDuration(adjEst)} est.${workerCount > 1 ? ` (${workerCount} workers)` : ""}`);
                           if (occ.workflow === "STANDARD" && median != null) {
-                            parts.push(`${formatDuration(median)} avg`);
+                            parts.push(`${formatDuration(median)} avg${workerCount > 1 ? ` (${workerCount} workers)` : ""}`);
                           }
                           if (isPaused) parts.push("paused");
                           if (parts.length === 0) return null;
@@ -3644,10 +3660,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                     {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (occ.estimatedMinutes != null || occ.startedAt || (occ as any).medianDurationMinutes != null) && (() => {
-                      const workerCount = (occ.assignees ?? []).filter((a) => a.role !== "observer").length;
+                      const workerCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
                       const adjEst = occ.estimatedMinutes && workerCount > 1 ? Math.round(occ.estimatedMinutes / workerCount) : occ.estimatedMinutes;
                       const actual = effectiveMinutes(occ);
-                      const median = (occ as any).medianDurationMinutes as number | undefined;
+                      const medianPersonMin = (occ as any).medianDurationMinutes as number | undefined;
+                      // medianDurationMinutes is stored as person-minutes. Display as wall-clock for current team size.
+                      const median = medianPersonMin != null ? Math.round(medianPersonMin / workerCount) : undefined;
                       const hasData = adjEst != null || actual != null || median != null || occ.startedAt;
                       if (!hasData) return null;
                       const estDiscrepancy = actual != null && adjEst ? Math.abs(actual - adjEst) / adjEst : 0;
@@ -3658,7 +3676,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <HStack gap={3} wrap="wrap">
                               {actual != null && (
                                 <Text color={occ.status === "PAUSED" ? "orange.600" : occ.completedAt && adjEst ? (actual <= adjEst ? "green.600" : "red.600") : "fg.default"} fontWeight="semibold">
-                                  Actual: {formatDuration(actual)}{occ.status === "PAUSED" ? " (paused)" : ""}{occ.manualDurationMinutes != null ? " (manual)" : ""}
+                                  Actual: {formatDuration(actual)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}{occ.status === "PAUSED" ? " (paused)" : ""}
                                 </Text>
                               )}
                               {adjEst != null && (
@@ -3668,7 +3686,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               )}
                               {(occ.workflow === "STANDARD") && (
                                 <Text color="fg.muted">
-                                  <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? formatDuration(median) : "n/a"}
+                                  <Text as="span" fontWeight="semibold">Avg:</Text> {median != null ? `${formatDuration(median)}${workerCount > 1 ? ` (${workerCount} workers)` : ""}` : "n/a"}
                                 </Text>
                               )}
                             </HStack>
@@ -5513,7 +5531,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           pausedAt={completeDialogOcc.pausedAt}
           existingCompletedAt={completeDialogOcc.completedAt}
           workerCount={(completeDialogOcc.assignees ?? []).filter((a) => a.role !== "observer").length}
-          onCompleted={(completedAt, startedAt) => {
+          onCompleted={(completedAt, startedAt, totalPausedMs) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
             const completeWithLocation = async (recordLoc: boolean) => {
@@ -5522,6 +5540,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 const body: Record<string, unknown> = {};
                 if (completedAt) body.completedAt = completedAt;
                 if (startedAt) body.startedAt = startedAt;
+                if (totalPausedMs != null) body.totalPausedMs = totalPausedMs;
                 if (recordLoc) {
                   const loc = await getLocation();
                   if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
@@ -5684,67 +5703,111 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               </Dialog.Header>
               <Dialog.Body>
                 {editTimeOcc && (() => {
-                  const current = Math.max(0, Math.round(effectiveMinutes(editTimeOcc) ?? 0));
-                  const defaultH = Math.floor(current / 60);
-                  const defaultM = current % 60;
+                  const startMs = editTimeForm.startedAt ? new Date(editTimeForm.startedAt).getTime() : NaN;
+                  const endMs = editTimeForm.completedAt ? new Date(editTimeForm.completedAt).getTime() : NaN;
+                  const offH = parseInt(editTimeForm.offHours || "0", 10) || 0;
+                  const offM = parseInt(editTimeForm.offMinutes || "0", 10) || 0;
+                  const offMinTotal = Math.max(0, offH * 60 + offM);
+                  const offMs = offMinTotal * 60000;
+                  const spanMs = !isNaN(startMs) && !isNaN(endMs) ? endMs - startMs : null;
+                  const endBeforeStart = spanMs != null && spanMs < 0;
+                  const offTooLarge = spanMs != null && spanMs >= 0 && offMs > spanMs;
+                  const durationMin = spanMs != null && spanMs >= 0 ? Math.max(0, Math.round((spanMs - offMs) / 60000)) : null;
                   return (
                     <VStack align="stretch" gap={3}>
-                      <Text fontSize="sm" color="fg.muted">
-                        {editTimeOcc.manualDurationMinutes != null ? "Currently using manual time." : `Tracked time: ${formatDuration(current)}`}
-                      </Text>
-                      <HStack gap={2}>
-                        <Box flex="1">
-                          <Text fontSize="xs" fontWeight="medium" mb={1}>Hours</Text>
-                          <input
-                            type="number"
-                            min={0}
-                            defaultValue={defaultH}
-                            id="edit-time-hours"
-                            style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
-                          />
-                        </Box>
-                        <Box flex="1">
-                          <Text fontSize="xs" fontWeight="medium" mb={1}>Minutes</Text>
-                          <input
-                            type="number"
-                            min={0}
-                            max={59}
-                            defaultValue={defaultM}
-                            id="edit-time-minutes"
-                            style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
-                          />
-                        </Box>
-                      </HStack>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>Start time</Text>
+                        <input
+                          type="datetime-local"
+                          value={editTimeForm.startedAt}
+                          onChange={(e) => setEditTimeForm((p) => ({ ...p, startedAt: e.target.value }))}
+                          style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                        />
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>End time</Text>
+                        <input
+                          type="datetime-local"
+                          value={editTimeForm.completedAt}
+                          onChange={(e) => setEditTimeForm((p) => ({ ...p, completedAt: e.target.value }))}
+                          style={{ width: "100%", padding: "6px 10px", fontSize: "16px", border: "1px solid #ccc", borderRadius: "6px" }}
+                        />
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>Off-the-clock (Paused) time</Text>
+                        <HStack gap={2}>
+                          <Box flex="1">
+                            <Text fontSize="xs" color="fg.muted" mb={1}>Hours</Text>
+                            <input
+                              type="number"
+                              min={0}
+                              value={editTimeForm.offHours}
+                              onChange={(e) => setEditTimeForm((p) => ({ ...p, offHours: e.target.value }))}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                            />
+                          </Box>
+                          <Box flex="1">
+                            <Text fontSize="xs" color="fg.muted" mb={1}>Minutes</Text>
+                            <input
+                              type="number"
+                              min={0}
+                              max={59}
+                              value={editTimeForm.offMinutes}
+                              onChange={(e) => setEditTimeForm((p) => ({ ...p, offMinutes: e.target.value }))}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "14px" }}
+                            />
+                          </Box>
+                        </HStack>
+                      </Box>
+                      {endBeforeStart && (
+                        <Text fontSize="xs" color="red.500">End time cannot be before start time.</Text>
+                      )}
+                      {offTooLarge && (
+                        <Text fontSize="xs" color="red.500">Off-the-clock time exceeds the span between start and end.</Text>
+                      )}
+                      {durationMin != null && !endBeforeStart && !offTooLarge && (
+                        <Text fontSize="sm" color="fg.muted">Working time: <Text as="span" fontWeight="semibold" color="fg.default">{formatDuration(durationMin)}</Text></Text>
+                      )}
                     </VStack>
                   );
                 })()}
               </Dialog.Body>
               <Dialog.Footer>
-                <HStack justify="space-between" w="full">
-                  {editTimeOcc?.manualDurationMinutes != null ? (
-                    <Button variant="ghost" size="sm" onClick={async () => {
+                <HStack justify="flex-end" w="full" gap={2}>
+                  <Button variant="ghost" onClick={() => setEditTimeOcc(null)}>Cancel</Button>
+                  <Button
+                    colorPalette="blue"
+                    disabled={(() => {
+                      if (!editTimeForm.startedAt || !editTimeForm.completedAt) return true;
+                      const s = new Date(editTimeForm.startedAt).getTime();
+                      const e = new Date(editTimeForm.completedAt).getTime();
+                      if (isNaN(s) || isNaN(e) || e < s) return true;
+                      const offH = parseInt(editTimeForm.offHours || "0", 10) || 0;
+                      const offM = parseInt(editTimeForm.offMinutes || "0", 10) || 0;
+                      const offMs = (offH * 60 + offM) * 60000;
+                      if (offMs > (e - s)) return true;
+                      return false;
+                    })()}
+                    onClick={async () => {
+                      const startedAtIso = editTimeForm.startedAt ? new Date(editTimeForm.startedAt).toISOString() : null;
+                      const completedAtIso = editTimeForm.completedAt ? new Date(editTimeForm.completedAt).toISOString() : null;
+                      const offH = parseInt(editTimeForm.offHours || "0", 10) || 0;
+                      const offM = parseInt(editTimeForm.offMinutes || "0", 10) || 0;
+                      const totalPausedMs = (offH * 60 + offM) * 60000;
                       try {
-                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/manual-duration`, { minutes: null });
-                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, manualDurationMinutes: undefined } as any : o));
-                        publishInlineMessage({ type: "SUCCESS", text: "Reset to tracked time." });
+                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/time`, {
+                          startedAt: startedAtIso,
+                          completedAt: completedAtIso,
+                          totalPausedMs,
+                        });
+                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, startedAt: startedAtIso ?? undefined, completedAt: completedAtIso ?? undefined, totalPausedMs } as any : o));
+                        publishInlineMessage({ type: "SUCCESS", text: "Time updated." });
                       } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) }); }
                       setEditTimeOcc(null);
-                    }}>Reset to tracked</Button>
-                  ) : <Box />}
-                  <HStack gap={2}>
-                    <Button variant="ghost" onClick={() => setEditTimeOcc(null)}>Cancel</Button>
-                    <Button colorPalette="blue" onClick={async () => {
-                      const h = parseInt((document.getElementById("edit-time-hours") as HTMLInputElement)?.value || "0", 10);
-                      const m = parseInt((document.getElementById("edit-time-minutes") as HTMLInputElement)?.value || "0", 10);
-                      const total = h * 60 + m;
-                      try {
-                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/manual-duration`, { minutes: total });
-                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, manualDurationMinutes: total } as any : o));
-                        publishInlineMessage({ type: "SUCCESS", text: `Time set to ${formatDuration(total)}.` });
-                      } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) }); }
-                      setEditTimeOcc(null);
-                    }}>Save</Button>
-                  </HStack>
+                    }}
+                  >
+                    Save
+                  </Button>
                 </HStack>
               </Dialog.Footer>
             </Dialog.Content>

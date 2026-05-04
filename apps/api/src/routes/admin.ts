@@ -1171,7 +1171,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       if ("notes" in body) patch.notes = body.notes;
       if ("price" in body) patch.price = body.price != null ? Number(body.price) : null;
       if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
-      if ("manualDurationMinutes" in body) patch.manualDurationMinutes = body.manualDurationMinutes != null ? Math.round(Number(body.manualDurationMinutes)) : null;
+      if ("totalPausedMs" in body) patch.totalPausedMs = body.totalPausedMs != null ? Math.max(0, Math.round(Number(body.totalPausedMs))) : 0;
       if ("isTentative" in body) patch.isTentative = !!body.isTentative;
       if ("isEstimate" in body) patch.isEstimate = !!body.isEstimate;
       if ("isAdminOnly" in body) patch.isAdminOnly = !!body.isAdminOnly;
@@ -2823,35 +2823,31 @@ Respond ONLY with valid JSON in this exact format:
         where: {
           jobId: { in: jobIds },
           status: { in: ["CLOSED", "COMPLETED", "PENDING_PAYMENT"] },
-          OR: [
-            { startedAt: { not: null }, completedAt: { not: null } },
-            { manualDurationMinutes: { not: null } },
-          ],
+          startedAt: { not: null },
+          completedAt: { not: null },
         },
         select: {
           jobId: true,
           startedAt: true,
           completedAt: true,
           totalPausedMs: true,
-          manualDurationMinutes: true,
           assignees: { select: { role: true } },
         },
         orderBy: { completedAt: "desc" },
       }) : [];
-      // Group per-worker durations by jobId, last 10 each
+      // Group person-minutes (wall-clock × team size) by jobId, last 8 each.
+      // Stored as person-minutes so the median is comparable across runs with
+      // different team sizes; consumers divide by current team size for display.
       const byJob: Record<string, number[]> = {};
       for (const o of completedOccs) {
         if (!o.jobId) continue;
         if (!byJob[o.jobId]) byJob[o.jobId] = [];
-        if (byJob[o.jobId].length >= 10) continue;
-        const wc = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
-        let mins: number | null = null;
-        if (o.manualDurationMinutes != null) {
-          mins = o.manualDurationMinutes / wc;
-        } else if (o.startedAt && o.completedAt) {
-          mins = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000 / wc;
-        }
-        if (mins != null && mins > 0) byJob[o.jobId].push(mins);
+        if (byJob[o.jobId].length >= 8) continue;
+        if (!o.startedAt || !o.completedAt) continue;
+        const wallclockMin = (new Date(o.completedAt).getTime() - new Date(o.startedAt).getTime() - (o.totalPausedMs ?? 0)) / 60000;
+        if (wallclockMin <= 0) continue;
+        const teamSize = Math.max(1, ((o as any).assignees ?? []).filter((a: any) => a.role !== "observer").length);
+        byJob[o.jobId].push(wallclockMin * teamSize);
       }
       const fmtDur = (m: number) => {
         const h = Math.floor(m / 60); const mm = Math.round(m % 60);
