@@ -464,7 +464,8 @@ export type ServicesJobs = {
     occurrenceId: string,
     status: JobOccurrenceStatus,
     notes?: string,
-    location?: { lat: number; lng: number }
+    location?: { lat: number; lng: number },
+    timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }
   ): Promise<JobOccurrence>;
 
   get(id: string): Promise<

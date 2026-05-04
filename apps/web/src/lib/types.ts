@@ -367,7 +367,6 @@ export type JobOccurrenceFull = {
   completedAt?: string | null;
   pausedAt?: string | null;
   totalPausedMs?: number | null;
-  manualDurationMinutes?: number | null;
   medianDurationMinutes?: number | null;
   startLat?: number | null;
   startLng?: number | null;
@@ -554,7 +553,6 @@ export type WorkerOccurrence = {
   completedAt?: string | null;
   pausedAt?: string | null;
   totalPausedMs?: number | null;
-  manualDurationMinutes?: number | null;
   medianDurationMinutes?: number | null;
   startLat?: number | null;
   startLng?: number | null;

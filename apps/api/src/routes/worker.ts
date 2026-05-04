@@ -405,9 +405,10 @@ export default async function workerRoutes(app: FastifyInstance) {
     const location = (body.lat != null && body.lng != null)
       ? { lat: Number(body.lat), lng: Number(body.lng) }
       : undefined;
-    const timestamps: { startedAt?: string; completedAt?: string } = {};
+    const timestamps: { startedAt?: string; completedAt?: string; totalPausedMs?: number } = {};
     if (body.completedAt) timestamps.completedAt = String(body.completedAt);
     if (body.startedAt) timestamps.startedAt = String(body.startedAt);
+    if (body.totalPausedMs != null) timestamps.totalPausedMs = Math.max(0, Math.round(Number(body.totalPausedMs)));
     return services.jobs.updateOccurrenceStatus(
       uid,
       String(req.params.id),
@@ -450,12 +451,11 @@ export default async function workerRoutes(app: FastifyInstance) {
     );
   });
 
-  // Manual duration override
-  app.patch("/occurrences/:id/manual-duration", workerGuard, async (req: any) => {
+  // Edit time tracking: start/end timestamps and off-the-clock (paused) ms.
+  app.patch("/occurrences/:id/time", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const occId = String(req.params.id);
     const body = req.body || {};
-    const minutes = body.minutes != null ? Number(body.minutes) : null;
 
     // Verify claimer or admin
     const occ = await prisma.jobOccurrence.findUniqueOrThrow({ where: { id: occId }, include: { assignees: true } });
@@ -464,10 +464,22 @@ export default async function workerRoutes(app: FastifyInstance) {
     const isAdmin = user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
     if (!isClaimer && !isAdmin) throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can edit time.", 403);
 
-    return prisma.jobOccurrence.update({
-      where: { id: occId },
-      data: { manualDurationMinutes: minutes },
-    });
+    const data: any = {};
+    if ("startedAt" in body) data.startedAt = body.startedAt ? new Date(String(body.startedAt)) : null;
+    if ("completedAt" in body) data.completedAt = body.completedAt ? new Date(String(body.completedAt)) : null;
+    if ("totalPausedMs" in body) data.totalPausedMs = body.totalPausedMs != null ? Math.max(0, Math.round(Number(body.totalPausedMs))) : 0;
+
+    // Validate that duration stays non-negative when both timestamps present
+    const newStart = data.startedAt ?? occ.startedAt;
+    const newEnd = data.completedAt ?? occ.completedAt;
+    const newPaused = "totalPausedMs" in data ? data.totalPausedMs : (occ.totalPausedMs ?? 0);
+    if (newStart && newEnd) {
+      const span = new Date(newEnd).getTime() - new Date(newStart).getTime();
+      if (span < 0) throw new ServiceError("INVALID_RANGE", "End time cannot be before start time.", 400);
+      if (newPaused > span) throw new ServiceError("INVALID_RANGE", "Off-the-clock time cannot exceed total span.", 400);
+    }
+
+    return prisma.jobOccurrence.update({ where: { id: occId }, data });
   });
 
   // Estimate workflow: submit proposal
