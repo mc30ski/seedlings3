@@ -115,6 +115,13 @@ export default function HomePage() {
     }
   }, []);
 
+  // Per-tab remount counters. Bumping a key forces React to unmount + remount the
+  // corresponding tab, which makes its `usePersistedState` reads pick up freshly-written
+  // localStorage values on first render (no flicker).
+  const [jobsRemountKey, setJobsRemountKey] = useState(0);
+  const [equipmentRemountKey, setEquipmentRemountKey] = useState(0);
+  const [paymentsRemountKey, setPaymentsRemountKey] = useState(0);
+
   // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
   useEffect(() => {
@@ -487,19 +494,19 @@ export default function HomePage() {
       value: "jobs",
       label: "Jobs",
       icon: FiClipboard,
-      content: wrapWithInlineMessage(<JobsTab me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(<JobsTab key={`wjobs-${jobsRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(<EquipmentTab key={`weq-${equipmentRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="WORKER" />),
+      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
       value: "routes",
@@ -1080,8 +1087,10 @@ export default function HomePage() {
       const fromStr = bizDateKey(monthAgo);
       const list = await apiGet<any[]>(`/api/occurrences?from=${fromStr}&to=${toStr}`);
       const excludeStatuses = new Set(["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"]);
+      // Match JobsTab's overdue filter — announcements are not "overdue" work
       const count = (Array.isArray(list) ? list : []).filter(
-        (o) => o.startAt && !excludeStatuses.has(o.status) &&
+        (o) => o.workflow !== "ANNOUNCEMENT" &&
+          o.startAt && !excludeStatuses.has(o.status) &&
           bizDateKey(o.startAt) < today &&
           bizDateKey(o.startAt) >= fromStr
       ).length;
@@ -1318,7 +1327,7 @@ export default function HomePage() {
   const programmaticNavRef = useRef(false);
   useEffect(() => {
     const onNav = (e: Event) => {
-      const { tab, category, autoAnalyze, filter } = (e as CustomEvent).detail || {};
+      const { tab, category, autoAnalyze, filter, remount } = (e as CustomEvent).detail || {};
       if (tab) {
         // Record the current location to history before navigating, so back button works
         const current = getCurrentNavState();
@@ -1329,11 +1338,19 @@ export default function HomePage() {
         setTopTab("worker");
         setWorkerInnerTab(tab);
         if (category) setWorkerCategory(category);
+        // Remount the destination tab so its persisted-state hooks re-read localStorage
+        // (which the caller has just pre-written with the desired filter values).
+        if (remount) {
+          if (tab === "jobs") setJobsRemountKey((k) => k + 1);
+          else if (tab === "equipment") setEquipmentRemountKey((k) => k + 1);
+          else if (tab === "payments") setPaymentsRemountKey((k) => k + 1);
+        }
         if (autoAnalyze && tab === "routes") {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
           }, 300);
         }
+        // Legacy: event-driven filter for flows that haven't switched to the remount pattern yet.
         if (filter && tab === "jobs") {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: filter }));
@@ -1342,6 +1359,11 @@ export default function HomePage() {
         if (filter && tab === "equipment") {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: filter }));
+          }, 300);
+        }
+        if (filter && tab === "payments") {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("payments:applyFilter", { detail: filter }));
           }, 300);
         }
         // Reset flag after React processes the state update

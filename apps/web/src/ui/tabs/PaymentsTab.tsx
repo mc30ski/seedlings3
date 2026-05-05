@@ -91,6 +91,29 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
     }
   }
 
+  // Listen for external filter requests (e.g., from HomeTab tiles).
+  // Reset filters first, then apply only what the event provides.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      setQ("");
+      setTypeFilter(["ALL"]);
+      if (typeof detail.datePreset === "string") {
+        applyPreset(detail.datePreset as DatePreset);
+      }
+      if (typeof detail.dateFrom === "string" || typeof detail.dateTo === "string") {
+        setDatePreset(null);
+        if (typeof detail.dateFrom === "string") setDateFrom(detail.dateFrom);
+        if (typeof detail.dateTo === "string") setDateTo(detail.dateTo);
+      }
+      if (typeof detail.q === "string") setQ(detail.q);
+      if (typeof detail.method === "string") setTypeFilter([detail.method]);
+    };
+    window.addEventListener("payments:applyFilter", handler as EventListener);
+    return () => window.removeEventListener("payments:applyFilter", handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Recompute dates from preset on each mount (so "last month" stays current)
   const quickDateItems = useMemo(() => [
     { label: "Today", value: "today" },

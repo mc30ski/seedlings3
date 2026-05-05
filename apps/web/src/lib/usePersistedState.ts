@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
 const PREFIX = "seedlings_";
 
@@ -16,7 +16,12 @@ export function clearAllPersistedState() {
 
 /**
  * useState wrapper that persists to localStorage.
- * Reads initial value from localStorage on mount (client-side only); writes on every change.
+ * Reads from localStorage in the useState initializer so the first render
+ * already has the correct value — no hydration re-render flicker.
+ *
+ * SSR-safe: returns the default value when window is undefined. The persisted-
+ * state-dependent UI in this app is gated behind a client-side `mounted` flag,
+ * so SSR never renders any value-dependent markup.
  */
 export function usePersistedState<T>(
   key: string,
@@ -25,34 +30,19 @@ export function usePersistedState<T>(
   const fullKey = PREFIX + key;
 
   const [value, setValueRaw] = useState<T>(() => {
-    return typeof defaultValue === "function"
-      ? (defaultValue as () => T)()
-      : defaultValue;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem(fullKey);
+        if (stored !== null) return JSON.parse(stored) as T;
+      } catch {}
+    }
+    return typeof defaultValue === "function" ? (defaultValue as () => T)() : defaultValue;
   });
 
-  // On client mount, re-read from localStorage in case SSR returned default
-  const hydrated = useRef(false);
+  // Write on changes. We don't track an "isFirst" flag because the initial
+  // value already matches localStorage (it was just read from there) — writing
+  // the same value back is a no-op for our purposes.
   useEffect(() => {
-    if (hydrated.current) return;
-    hydrated.current = true;
-    try {
-      const stored = localStorage.getItem(fullKey);
-      if (stored !== null) {
-        const parsed = JSON.parse(stored) as T;
-        if (JSON.stringify(parsed) !== JSON.stringify(value)) {
-          setValueRaw(parsed);
-        }
-      }
-    } catch {}
-  }, []);
-
-  // Write to localStorage on changes (skip the initial hydration write)
-  const isFirstWrite = useRef(true);
-  useEffect(() => {
-    if (isFirstWrite.current) {
-      isFirstWrite.current = false;
-      return;
-    }
     try {
       localStorage.setItem(fullKey, JSON.stringify(value));
     } catch {}

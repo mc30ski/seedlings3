@@ -33,9 +33,23 @@ export default async function workerRoutes(app: FastifyInstance) {
     const lookbackStart = new Date(todayMidnight);
     lookbackStart.setMonth(lookbackStart.getMonth() - 1);
 
-    // Start of this calendar week (Sunday) in local time, for the "Hours this week" tile.
-    const startOfWeek = new Date(now); startOfWeek.setHours(0, 0, 0, 0);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    // Rolling 7-day window in Eastern Time, ending at today (inclusive). Used by
+    // `actualWeekEarnings` (the "Earnings for the last 7 days" tile).
+    const todayEtParts = etToday().split("-").map(Number);
+    const todayUtcNoon = new Date(Date.UTC(todayEtParts[0], todayEtParts[1] - 1, todayEtParts[2], 12));
+    const sevenDaysAgoUtc = new Date(todayUtcNoon);
+    sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 6);
+    const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
+
+    // Sunday-of-this-week in Eastern Time. Used as the anchor for the weekly trend chart
+    // and the "Hours this week" tile.
+    const dayOfWeek = todayUtcNoon.getUTCDay();
+    const sowUtc = new Date(todayUtcNoon);
+    sowUtc.setUTCDate(sowUtc.getUTCDate() - dayOfWeek);
+    const startOfWeek = etMidnight(sowUtc.toISOString().slice(0, 10));
+
+    // 9-week window (~2 months) for the "Jobs completed" trend chart on the Home tab.
+    const trendStart = new Date(startOfWeek); trendStart.setDate(trendStart.getDate() - 8 * 7);
 
     // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED)
     const myAssignments = await prisma.jobOccurrenceAssignee.findMany({
@@ -53,18 +67,28 @@ export default async function workerRoutes(app: FastifyInstance) {
       return {
         overdue: 0, today: 0, tomorrow: 0, pendingPayment: 0, estimatesReady: 0,
         followUps: 0, planning: 0,
-        activeWork: 0, todayPotentialAmount: 0,
+        activeWork: 0, todayRemaining: 0, todayPotentialAmount: 0, todayEarnedAmount: 0,
+        tomorrowUnclaimedCount: 0, tomorrowUnclaimedPotential: 0,
+        tomorrowUnconfirmedClientCount: 0,
         equipmentCheckedOut, equipmentReserved,
         remindersPending: allRemindersPending,
         notices: 0,
+        noticesAnnouncements: 0,
+        noticesFollowups: 0,
+        noticesEvents: 0,
+        tasksDue: 0,
         minutesThisWeek: 0,
+        actualWeekEarnings: 0,
+        weekJobCount: 0,
+        weeklyCompleted: [] as { weekStart: string; count: number; earnings: number }[],
       };
     }
 
     const [
       overdue, todayCount, tomorrowCount, pendingPayment, estimatesReady, reminders,
-      activeWork, todayJobs, equipmentCheckedOut, equipmentReserved, allRemindersPending, notices,
-      thisWeekJobs,
+      activeWork, todayJobs, equipmentCheckedOut, equipmentReserved, allRemindersPending, noticesByWorkflow,
+      tasksDue, thisWeekJobs, weekSplits, todayRemaining, todayCompletedJobs, tomorrowUnclaimedJobs, trendJobs,
+      tomorrowUnconfirmedJobs,
     ] = await Promise.all([
       prisma.jobOccurrence.count({
         where: {
@@ -78,7 +102,9 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           id: { in: myOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
-          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          // All non-canceled / non-archived today (incl. completed). The tile is meant
+          // to reflect "how many jobs were for today" overall, not just remaining work.
+          status: { notIn: ["CANCELED", "ARCHIVED"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
         },
       }),
@@ -87,7 +113,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myOccIds },
           startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
           status: { in: ["SCHEDULED"] as any },
-          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
         },
       }),
       prisma.jobOccurrence.count({
@@ -137,26 +163,123 @@ export default async function workerRoutes(app: FastifyInstance) {
       prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: { not: null } } }),
       prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: null } }),
       prisma.reminder.count({ where: { userId: uid, dismissedAt: null } }),
-      prisma.jobOccurrence.count({
+      prisma.jobOccurrence.groupBy({
+        by: ["workflow"],
         where: {
           id: { in: myOccIds },
           status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
           workflow: { in: ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"] as any },
-          startAt: { gte: lookbackStart },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+        },
+        _count: { _all: true },
+      }),
+      // Tasks due — TASK-workflow occurrences scheduled today or earlier, not yet done.
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: "TASK",
+          startAt: { lt: tomorrowMidnight },
         },
       }),
-      // Hours this week: real jobs assigned to user, scheduled this week, finished.
-      // Filter by startAt (not completedAt) so the tile click-through (which filters JobsTab by startAt) matches.
+      // Jobs the user worked & completed in the last 7 days. Drives BOTH the Hours tile
+      // (sum wall-clock minutes) and the Earnings tile (sum the user's payout share),
+      // so the two tiles always refer to the same set of jobs.
       prisma.jobOccurrence.findMany({
         where: {
           id: { in: myOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-          startAt: { gte: startOfWeek },
           startedAt: { not: null },
-          completedAt: { not: null },
+          completedAt: { gte: sevenDaysAgo, not: null },
         },
-        select: { startedAt: true, completedAt: true, totalPausedMs: true },
+        select: {
+          startedAt: true,
+          completedAt: true,
+          totalPausedMs: true,
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { role: true } },
+        },
+      }),
+      // Placeholder — Earnings is now derived from the completed-jobs query above.
+      // Kept in the destructure tuple to preserve positional indexes downstream.
+      Promise.resolve([] as Array<{ amount: number }>),
+      // Today's remaining work (unfinished real jobs). Used by the Begin Work Day hero
+      // so the CTA only fires when there's actually work to do.
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+        },
+      }),
+      // Today's completed real jobs — used to compute "X earned" alongside "remaining potential".
+      prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+        },
+        select: {
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { role: true } },
+        },
+      }),
+      // Tomorrow's unclaimed jobs — open shifts the worker could pick up. Visible to all workers,
+      // not just user's assignments. Used by the "Plan tomorrow" hero to surface team-wide pickups.
+      prisma.jobOccurrence.findMany({
+        where: {
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          isAdminOnly: false,
+          assignees: { none: {} },
+        },
+        select: {
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+        },
+      }),
+      // Weekly trend: completed real jobs in the last 13 weeks (by completedAt).
+      // Also pull pricing fields so we can compute the worker's net share per week.
+      prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myOccIds },
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          completedAt: { gte: trendStart, not: null },
+        },
+        select: {
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { role: true } },
+        },
+      }),
+      // Tomorrow's unconfirmed jobs — fetch clientId so we can count UNIQUE clients
+      // needing confirmation (one client may have multiple jobs tomorrow).
+      prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          isClientConfirmed: false,
+          jobId: { not: null },
+        },
+        select: { job: { select: { property: { select: { clientId: true } } } } },
       }),
     ]);
 
@@ -167,37 +290,111 @@ export default async function workerRoutes(app: FastifyInstance) {
     const settingKeyForPct = isEmp ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
     const setting = await prisma.setting.findUnique({ where: { key: settingKeyForPct } });
     const pct = Number(setting?.value ?? 0);
-    const todayPotentialAmount = todayJobs.reduce((sum, occ) => {
+    function payoutShareForOcc(occ: { price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }): number {
       const base = occ.price ?? occ.proposalAmount ?? 0;
       const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
       const displayPrice = base + addons;
-      if (displayPrice <= 0) return sum;
+      if (displayPrice <= 0) return 0;
       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
       const net = Math.max(0, displayPrice - expTotal);
       const deduction = Math.round(net * pct) / 100;
       const payout = Math.max(0, net - deduction);
       const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-      return sum + payout / activeCount;
+      return payout / activeCount;
+    }
+    const todayPotentialAmount = todayJobs.reduce((sum, occ) => sum + payoutShareForOcc(occ), 0);
+    const todayEarnedAmount = todayCompletedJobs.reduce((sum: number, occ: any) => sum + payoutShareForOcc(occ), 0);
+
+    // Tomorrow's unconfirmed clients — unique client count for tomorrow's SCHEDULED jobs
+    // that haven't been client-confirmed yet. Drives the "confirm Y clients" hint in the
+    // Plan tomorrow hero.
+    const tomorrowUnconfirmedClientCount = new Set(
+      (tomorrowUnconfirmedJobs as any[])
+        .map((o) => o.job?.property?.clientId)
+        .filter((id): id is string => !!id)
+    ).size;
+
+    // Tomorrow's unclaimed potential — uses the same payout formula but assumes a single-worker
+    // claim (since no one is on it yet). The user's net share if they claimed it solo.
+    const tomorrowUnclaimedCount = tomorrowUnclaimedJobs.length;
+    const tomorrowUnclaimedPotential = tomorrowUnclaimedJobs.reduce((sum: number, occ: any) => {
+      // Reuse payoutShareForOcc but treat as 0 assignees (it'll clamp to 1 internally for solo claim).
+      return sum + payoutShareForOcc({ ...occ, assignees: [] });
     }, 0);
 
     const planning = overdue + todayCount + tomorrowCount + pendingPayment + estimatesReady + reminders;
 
-    // Total wall-clock minutes worked this week (completed real jobs).
+    // Total wall-clock minutes worked this week (jobs completed in the last 7 days).
     const minutesThisWeek = thisWeekJobs.reduce((sum: number, occ: any) => {
       if (!occ.startedAt || !occ.completedAt) return sum;
       const ms = new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime() - (occ.totalPausedMs ?? 0);
       return sum + Math.max(0, ms / 60000);
     }, 0);
 
+    // Bucket completed jobs into weekly counts for the trend chart (13 weeks, Sun-start).
+    const weekKey = (d: Date) => {
+      const w = new Date(d);
+      w.setHours(0, 0, 0, 0);
+      w.setDate(w.getDate() - w.getDay());
+      const y = w.getFullYear();
+      const m = String(w.getMonth() + 1).padStart(2, "0");
+      const dd = String(w.getDate()).padStart(2, "0");
+      return `${y}-${m}-${dd}`;
+    };
+    const weeklyMap: Record<string, { count: number; earnings: number }> = {};
+    for (let i = 0; i < 9; i++) {
+      const w = new Date(trendStart); w.setDate(w.getDate() + i * 7);
+      weeklyMap[weekKey(w)] = { count: 0, earnings: 0 };
+    }
+    // Same payout formula as todayPotentialAmount / earnings-summary.
+    for (const occ of trendJobs as Array<{ completedAt: Date | null; price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }>) {
+      if (!occ.completedAt) continue;
+      const k = weekKey(new Date(occ.completedAt));
+      if (!(k in weeklyMap)) continue;
+      weeklyMap[k].count++;
+      const base = occ.price ?? occ.proposalAmount ?? 0;
+      const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = base + addons;
+      if (displayPrice <= 0) continue;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const deduction = Math.round(net * pct) / 100;
+      const payout = Math.max(0, net - deduction);
+      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
+      weeklyMap[k].earnings += payout / activeCount;
+    }
+    const weeklyCompleted = Object.entries(weeklyMap)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([weekStart, v]) => ({ weekStart, count: v.count, earnings: Math.round(v.earnings * 100) / 100 }));
+
+    // Earnings = the user's payout share for the same jobs the Hours tile counts
+    // (i.e. jobs completed in the last 7 days). Uses the same payoutShareForOcc formula
+    // as the today/trend earnings, so the per-job math is consistent everywhere.
+    const actualWeekEarnings = (thisWeekJobs as any[]).reduce((sum: number, occ: any) => sum + payoutShareForOcc(occ), 0);
+    const weekJobCount = (thisWeekJobs as any[]).length;
+    void weekSplits;
+
     return {
       overdue, today: todayCount, tomorrow: tomorrowCount, pendingPayment, estimatesReady,
       followUps: reminders, planning,
       activeWork,
+      todayRemaining,
       todayPotentialAmount: Math.round(todayPotentialAmount * 100) / 100,
+      todayEarnedAmount: Math.round(todayEarnedAmount * 100) / 100,
+      tomorrowUnclaimedCount,
+      tomorrowUnclaimedPotential: Math.round(tomorrowUnclaimedPotential * 100) / 100,
+      tomorrowUnconfirmedClientCount,
       equipmentCheckedOut, equipmentReserved,
       remindersPending: allRemindersPending,
-      notices,
+      notices: (noticesByWorkflow as any[]).reduce((sum, g) => sum + (g._count?._all ?? 0), 0),
+      noticesAnnouncements: (noticesByWorkflow as any[]).find((g) => g.workflow === "ANNOUNCEMENT")?._count?._all ?? 0,
+      noticesFollowups: (noticesByWorkflow as any[]).find((g) => g.workflow === "FOLLOWUP")?._count?._all ?? 0,
+      noticesEvents: (noticesByWorkflow as any[]).find((g) => g.workflow === "EVENT")?._count?._all ?? 0,
+      tasksDue,
       minutesThisWeek: Math.round(minutesThisWeek),
+      actualWeekEarnings: Math.round(actualWeekEarnings * 100) / 100,
+      weekJobCount,
+      weeklyCompleted,
     };
   });
 

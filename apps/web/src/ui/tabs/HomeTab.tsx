@@ -4,8 +4,11 @@ import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
 import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiSun, FiTool } from "react-icons/fi";
 import { TfiMoney } from "react-icons/tfi";
+import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
+import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -21,27 +24,91 @@ type Summary = {
   estimatesReady: number;
   followUps: number;
   activeWork: number;
+  todayRemaining: number;
   todayPotentialAmount: number;
+  todayEarnedAmount: number;
+  tomorrowUnclaimedCount: number;
+  tomorrowUnclaimedPotential: number;
+  tomorrowUnconfirmedClientCount: number;
   equipmentCheckedOut: number;
   equipmentReserved: number;
   remindersPending: number;
   notices: number;
+  noticesAnnouncements: number;
+  noticesFollowups: number;
+  noticesEvents: number;
+  tasksDue: number;
   minutesThisWeek: number;
+  actualWeekEarnings: number;
+  weekJobCount: number;
+  weeklyCompleted: { weekStart: string; count: number; earnings: number }[];
 };
 
-type Earnings = { thisWeek: number };
+type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean; method?: string };
 
-function dispatchNav(tab: string, filter?: { status?: string; type?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean }) {
-  // JobsTab's filter listener treats every event as "clear, then apply" — so each tile
-  // only needs to send the fields it cares about; everything else is reset to defaults.
-  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab, ...(filter ? { filter } : {}) } }));
+const PFX = "seedlings_";
+const setLS = (key: string, val: unknown) => {
+  try { localStorage.setItem(PFX + key, JSON.stringify(val)); } catch {}
+};
+
+/** Pre-write filter values to a tab's localStorage so the tab opens with the right state on remount.
+ *  Resets every relevant key (so prior values can't leak across taps) and dispatches a `remount` flag
+ *  with the navigation event. The destination tab is force-remounted, reading its fresh state on first render. */
+function navigateWithFilter(tab: "jobs" | "equipment" | "payments", filter: TabFilter) {
+  // Always clear stale session keys that could trigger highlight/jump-to-occurrence behavior.
+  try {
+    sessionStorage.removeItem("open:remindersToJobsTabSearchOnce");
+    sessionStorage.removeItem("servicesTabToJobsNav");
+  } catch {}
+
+  if (tab === "jobs") {
+    // Worker JobsTab uses prefix "wjobs". Reset everything filterable.
+    const pfx = "wjobs";
+    setLS(`${pfx}_status`, [filter.status ?? "ALL"]);
+    setLS(`${pfx}_type`, [filter.type ?? "ALL"]);
+    setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
+    if (filter.dateFrom !== undefined || filter.dateTo !== undefined) {
+      // Explicit dates — clear preset
+      setLS(`${pfx}_datePreset`, null);
+      setLS(`${pfx}_dateFrom`, filter.dateFrom ?? "");
+      setLS(`${pfx}_dateTo`, filter.dateTo ?? "");
+    } else {
+      const dp = (filter.datePreset ?? "now") as DatePreset;
+      setLS(`${pfx}_datePreset`, dp);
+      const dates = computeDatesFromPreset(dp);
+      setLS(`${pfx}_dateFrom`, dates.from);
+      setLS(`${pfx}_dateTo`, dates.to);
+    }
+  } else if (tab === "payments") {
+    setLS(`pay_w_datePreset`, filter.datePreset ?? null);
+    setLS(`pay_w_dateFrom`, filter.dateFrom ?? "");
+    setLS(`pay_w_dateTo`, filter.dateTo ?? "");
+    setLS(`pay_w_type`, [filter.method ?? "ALL"]);
+  } else if (tab === "equipment") {
+    setLS(`equip_w_status`, [filter.status ?? "CLAIMED"]);
+    setLS(`equip_w_kind`, [filter.kind ?? "ALL"]);
+    setLS(`equip_w_likedOnly`, false);
+  }
+
+  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab, remount: true } }));
+}
+
+/** Plain navigation (no filter), used when the destination tab manages its own state. */
+function dispatchNavPlain(tab: string) {
+  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab } }));
 }
 
 function bizDateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+}
+
+function sevenDaysAgoKey(): string {
+  // Today minus 6 days (so the range is 7 days inclusive of today), in Eastern Time.
+  const todayKey = bizDateKey(new Date());
+  const [y, m, d] = todayKey.split("-").map(Number);
+  const todayUtcNoon = new Date(Date.UTC(y, m - 1, d, 12));
+  todayUtcNoon.setUTCDate(todayUtcNoon.getUTCDate() - 6);
+  return todayUtcNoon.toISOString().slice(0, 10);
 }
 
 function fmtMoney(n: number): string {
@@ -56,6 +123,7 @@ function Tile({
   color = "blue.500",
   bg = "blue.50",
   dimmed = false,
+  badge,
   onClick,
 }: {
   icon: any;
@@ -65,6 +133,7 @@ function Tile({
   color?: string;
   bg?: string;
   dimmed?: boolean;
+  badge?: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -72,30 +141,32 @@ function Tile({
       variant="outline"
       cursor="pointer"
       onClick={onClick}
+      borderColor="gray.300"
       _hover={{ shadow: "md", borderColor: color }}
       transition="all 0.15s"
       opacity={dimmed ? 0.65 : 1}
     >
       <Card.Body p={4}>
-        <HStack gap={3} align="start">
+        <HStack gap={3} align="center">
           <Box bg={bg} color={color} p={2} borderRadius="lg" flexShrink={0}>
             <Icon size={22} />
           </Box>
           <VStack align="start" gap={0} flex={1} minW={0}>
-            <Text fontSize="sm" fontWeight="semibold" color="fg.default">
+            <Text fontSize="sm" fontWeight="semibold" color="fg.default" w="full" truncate>
               {label}
             </Text>
-            {value != null && value !== "" && (
-              <Text fontSize="lg" fontWeight="bold" color={color}>
-                {value}
-              </Text>
-            )}
             {hint && (
               <Text fontSize="xs" color="fg.muted" truncate w="full">
                 {hint}
               </Text>
             )}
+            {badge && <Box mt={1}>{badge}</Box>}
           </VStack>
+          {value != null && value !== "" && (
+            <Text fontSize="lg" fontWeight="bold" color={color} flexShrink={0}>
+              {value}
+            </Text>
+          )}
         </HStack>
       </Card.Body>
     </Card.Root>
@@ -104,18 +175,13 @@ function Tile({
 
 export default function HomeTab({ me, onLaunchWorkflow }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [weekEarnings, setWeekEarnings] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const [s, e] = await Promise.all([
-        apiGet<Summary>("/api/dashboard-summary"),
-        apiGet<Earnings>("/api/payments/earnings-summary").catch(() => ({ thisWeek: 0 } as Earnings)),
-      ]);
+      const s = await apiGet<Summary>("/api/dashboard-summary");
       setSummary(s);
-      setWeekEarnings(e?.thisWeek ?? 0);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load dashboard.", err) });
     } finally {
@@ -155,7 +221,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
   const s = summary;
   if (!s) return null;
 
-  const hasJobsToday = s.today > 0;
+  const hasJobsToday = (s.todayRemaining ?? 0) > 0;
   const hasActive = s.activeWork > 0;
 
   // Hero CTA derived from time of day:
@@ -172,49 +238,57 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
     return hasJobsToday ? "begin" : (s.tomorrow > 0 ? "planTomorrow" : "wrap");
   })();
 
+  const greetingSubtitle = hasActive
+    ? "You have work in progress."
+    : isLateEvening && s.todayRemaining === 0
+      ? "Wrapped up for the day."
+      : s.todayRemaining > 0
+        ? `You have ${s.todayRemaining} job${s.todayRemaining === 1 ? "" : "s"} left today.`
+        : s.tomorrow > 0
+          ? `Nothing left today — ${s.tomorrow} tomorrow.`
+          : "You're caught up. Nothing on your plate.";
+
   return (
-    <Box w="full">
+    <Box w="full" position="relative">
+      {loading && summary && (
+        <>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>
+      )}
       <VStack align="stretch" gap={4}>
-        <Box>
-          <Text fontSize="lg" fontWeight="bold" color="fg.default">
-            {greeting}{firstName ? `, ${firstName}` : ""}
-          </Text>
-          <Text fontSize="sm" color="fg.muted">
-            {hasActive
-              ? "You have work in progress."
-              : isLateEvening && s.today === 0
-                ? "Wrapped up for the day."
-                : s.today > 0
-                  ? `You have ${s.today} job${s.today === 1 ? "" : "s"} scheduled today.`
-                  : s.tomorrow > 0
-                    ? `Nothing scheduled today — ${s.tomorrow} tomorrow.`
-                    : "You're caught up. Nothing on your plate."}
-          </Text>
-        </Box>
 
         {/* Hero CTA: Resume active work (any time) */}
         {heroMode === "resume" && (
           <Card.Root
             variant="elevated"
             cursor="pointer"
-            onClick={() => dispatchNav("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
+            onClick={() => navigateWithFilter("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
             _hover={{ shadow: "lg" }}
             bg="orange.500"
             color="white"
           >
             <Card.Body p={5}>
-              <HStack gap={4}>
-                <Box bg="white" color="orange.600" p={3} borderRadius="full">
-                  <FiPlay size={28} />
-                </Box>
-                <VStack align="start" gap={0} flex={1}>
-                  <Text fontSize="lg" fontWeight="bold">Resume active work</Text>
-                  <Text fontSize="sm" opacity={0.9}>
-                    {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
-                  </Text>
-                </VStack>
-                <Text fontSize="2xl">→</Text>
-              </HStack>
+              <VStack align="stretch" gap={3}>
+                <HStack gap={3} align="center">
+                  <Box bg="white" color="orange.600" p={3} borderRadius="full" flexShrink={0}>
+                    <FiPlay size={28} />
+                  </Box>
+                  <Box flex={1} minW={0}>
+                    <Text fontSize="lg" fontWeight="bold">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                    <Text fontSize="sm" opacity={0.9}>{greetingSubtitle}</Text>
+                  </Box>
+                </HStack>
+                <HStack gap={3}>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="md" fontWeight="bold">Resume active work</Text>
+                    <Text fontSize="sm" opacity={0.9}>
+                      {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
+                    </Text>
+                  </VStack>
+                  <Text fontSize="2xl">→</Text>
+                </HStack>
+              </VStack>
             </Card.Body>
           </Card.Root>
         )}
@@ -230,21 +304,31 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
             borderColor="green.300"
           >
             <Card.Body p={5}>
-              <HStack gap={4}>
-                <Box bg="green.500" color="white" p={3} borderRadius="full">
-                  <FiSun size={28} />
-                </Box>
-                <VStack align="start" gap={0} flex={1}>
-                  <Text fontSize="lg" fontWeight="bold" color="green.800">
-                    {heroMode === "begin" ? "Begin work day" : "Finish remaining jobs"}
-                  </Text>
-                  <Text fontSize="sm" color="green.700">
-                    {s.today} job{s.today === 1 ? "" : "s"} today
-                    {s.todayPotentialAmount > 0 ? ` · ${fmtMoney(s.todayPotentialAmount)} potential` : ""}
-                  </Text>
-                </VStack>
-                <Text fontSize="2xl" color="green.600">→</Text>
-              </HStack>
+              <VStack align="stretch" gap={3}>
+                <HStack gap={3} align="center">
+                  <Box bg="green.500" color="white" p={3} borderRadius="full" flexShrink={0}>
+                    <FiSun size={28} />
+                  </Box>
+                  <Box flex={1} minW={0}>
+                    <Text fontSize="lg" fontWeight="bold" color="green.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                    <Text fontSize="sm" color="green.700">{greetingSubtitle}</Text>
+                  </Box>
+                </HStack>
+                <HStack gap={3}>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="md" fontWeight="bold" color="green.800">
+                      {heroMode === "begin" ? "Begin work day" : "Finish remaining jobs"}
+                    </Text>
+                    <Text fontSize="sm" color="green.700">
+                      {s.todayRemaining} job{s.todayRemaining === 1 ? "" : "s"} left today
+                      {(s.todayEarnedAmount ?? 0) + (s.todayPotentialAmount ?? 0) > 0
+                        ? ` · ${fmtMoney(s.todayEarnedAmount ?? 0)} earned with ${fmtMoney(s.todayPotentialAmount ?? 0)} remaining potential`
+                        : ""}
+                    </Text>
+                  </VStack>
+                  <Text fontSize="2xl" color="green.600">→</Text>
+                </HStack>
+              </VStack>
             </Card.Body>
           </Card.Root>
         )}
@@ -260,23 +344,53 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
             borderColor="blue.300"
           >
             <Card.Body p={5}>
-              <HStack gap={4}>
-                <Box bg="blue.500" color="white" p={3} borderRadius="full">
-                  <FiMoon size={28} />
-                </Box>
-                <VStack align="start" gap={0} flex={1}>
-                  <Text fontSize="lg" fontWeight="bold" color="blue.800">Plan tomorrow</Text>
-                  <Text fontSize="sm" color="blue.700">
-                    {s.tomorrow} job{s.tomorrow === 1 ? "" : "s"} scheduled · confirm and notify clients
-                  </Text>
-                </VStack>
-                <Text fontSize="2xl" color="blue.600">→</Text>
-              </HStack>
+              <VStack align="stretch" gap={3}>
+                <HStack gap={3} align="center">
+                  <Box bg="blue.500" color="white" p={3} borderRadius="full" flexShrink={0}>
+                    <FiMoon size={28} />
+                  </Box>
+                  <Box flex={1} minW={0}>
+                    <Text fontSize="lg" fontWeight="bold" color="blue.800">{greeting}{firstName ? `, ${firstName}` : ""}</Text>
+                    <Text fontSize="sm" color="blue.700">{greetingSubtitle}</Text>
+                  </Box>
+                </HStack>
+                <HStack gap={3}>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="md" fontWeight="bold" color="blue.800">Plan tomorrow</Text>
+                    <Text fontSize="sm" color="blue.700">
+                      {s.tomorrow} job{s.tomorrow === 1 ? "" : "s"} scheduled
+                      {(s.tomorrowUnconfirmedClientCount ?? 0) > 0
+                        ? ` · confirm ${s.tomorrowUnconfirmedClientCount} client${s.tomorrowUnconfirmedClientCount === 1 ? "" : "s"}`
+                        : " · all clients confirmed"}
+                    </Text>
+                    {(s.tomorrowUnclaimedCount ?? 0) > 0 && (
+                      <Text
+                        fontSize="sm"
+                        color="blue.700"
+                        mt={1}
+                        textDecoration="underline"
+                        cursor="pointer"
+                        onClick={(e: any) => {
+                          e.stopPropagation();
+                          // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
+                          const today = new Date();
+                          const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+                          const tomorrowKey = bizDateKey(tomorrow);
+                          navigateWithFilter("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
+                        }}
+                      >
+                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""} →
+                      </Text>
+                    )}
+                  </VStack>
+                  <Text fontSize="2xl" color="blue.600">→</Text>
+                </HStack>
+              </VStack>
             </Card.Body>
           </Card.Root>
         )}
 
-        {/* Hero: Wrap up — quiet end-of-day state */}
+        {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
         {heroMode === "wrap" && (
           <Card.Root variant="outline" bg="gray.50" borderColor="gray.200">
             <Card.Body p={5}>
@@ -285,30 +399,80 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                   <FiMoon size={28} />
                 </Box>
                 <VStack align="start" gap={0} flex={1}>
-                  <Text fontSize="lg" fontWeight="bold" color="gray.800">All done</Text>
-                  <Text fontSize="sm" color="gray.700">
-                    {!hasJobsToday ? "Nothing on your plate." : `${s.today} unfinished job${s.today === 1 ? "" : "s"}.`}
+                  <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                    {greeting}{firstName ? `, ${firstName}` : ""}
                   </Text>
+                  <Text fontSize="sm" color="gray.700">{greetingSubtitle}</Text>
                 </VStack>
               </HStack>
             </Card.Body>
           </Card.Root>
         )}
 
+        {/* Weekly earnings trend over the last 2 months */}
+        {(s.weeklyCompleted ?? []).length > 0 && (() => {
+          const totalEarnings = s.weeklyCompleted.reduce((sum, w) => sum + (w.earnings ?? 0), 0);
+          const fmtWeek = (s: string) => {
+            const [, m, d] = s.split("-");
+            return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
+          };
+          return (
+            <Box p={3} bg="white" borderWidth="1px" borderColor="gray.200" rounded="md">
+              <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
+                <Text fontSize="sm" fontWeight="semibold" color="fg.default">Weekly Earnings (Jobs)</Text>
+                <Text fontSize="xs" color="fg.muted">Last 2 months · {fmtMoney(totalEarnings)}</Text>
+              </HStack>
+              <Box h="160px">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={s.weeklyCompleted} margin={{ top: 18, right: 12, bottom: 0, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="weekStart" tickFormatter={fmtWeek} fontSize={10} interval="preserveStartEnd" />
+                    <YAxis fontSize={10} width={56} tickFormatter={(v: number) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${v}`} />
+                    <Tooltip
+                      content={({ active, payload }: any) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const d = payload[0].payload as { weekStart: string; count: number; earnings: number };
+                        return (
+                          <Box bg="white" p={2} borderWidth="1px" borderColor="gray.200" rounded="md" fontSize="xs" shadow="sm">
+                            <Text fontWeight="semibold" mb={0.5}>Week of {fmtWeek(d.weekStart)}</Text>
+                            <Text color="fg.muted">Jobs: <Text as="span" color="fg.default" fontWeight="medium">{d.count}</Text></Text>
+                            <Text color="fg.muted">Earnings: <Text as="span" color="green.700" fontWeight="medium">${d.earnings.toFixed(2)}</Text></Text>
+                          </Box>
+                        );
+                      }}
+                    />
+                    <Line type="monotone" dataKey="earnings" stroke="var(--chakra-colors-green-600)" strokeWidth={2} dot={{ r: 3, fill: "var(--chakra-colors-green-600)" }}>
+                      <LabelList dataKey="count" position="top" offset={14} fontSize={10} fill="var(--chakra-colors-fg-default)" formatter={(v: any) => (v && v > 0 ? String(v) : "")} />
+                    </Line>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </Box>
+            </Box>
+          );
+        })()}
+
         <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3}>
-          {/* Today's jobs — always shown, dimmed if 0 */}
+          {/* Today's jobs — always shown, dimmed if 0.
+              Hint shows "$X earned with $Y remaining potential" matching the hero. */}
           <Tile
             icon={FiClipboard}
             label="Today's jobs"
             value={s.today}
-            hint={s.todayPotentialAmount > 0 ? `${fmtMoney(s.todayPotentialAmount)} potential` : undefined}
+            hint={(() => {
+              const earned = s.todayEarnedAmount ?? 0;
+              const remaining = s.todayPotentialAmount ?? 0;
+              if (earned + remaining <= 0) return undefined;
+              return `${fmtMoney(earned)} earned, ${fmtMoney(remaining)} potential`;
+            })()}
             color="blue.600"
             bg="blue.50"
             dimmed={s.today === 0}
-            onClick={() => dispatchNav("jobs", { datePreset: "today" })}
+            onClick={() => navigateWithFilter("jobs", { datePreset: "today" })}
           />
 
-          {/* Tomorrow's jobs — always shown, dimmed if 0 */}
+          {/* Tomorrow's jobs — always shown, dimmed if 0.
+              Adds a weather chip under the hint when tomorrow's forecast is inclement
+              (rain, thunderstorm, or snow) so workers can plan around it. */}
           <Tile
             icon={FiNavigation}
             label="Tomorrow's plan"
@@ -317,7 +481,8 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
             color="purple.600"
             bg="purple.50"
             dimmed={s.tomorrow === 0}
-            onClick={() => dispatchNav("reminders")}
+            badge={<TomorrowWeatherWarning size="sm" />}
+            onClick={() => dispatchNavPlain("reminders")}
           />
 
           {/* Equipment — directional based on time of day:
@@ -334,7 +499,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                   hint="Check out before heading out"
                   color="teal.600"
                   bg="teal.50"
-                  onClick={() => dispatchNav("equipment", { status: "MY_RESERVED" })}
+                  onClick={() => navigateWithFilter("equipment", { status: "MY_RESERVED" })}
                 />
               );
             }
@@ -347,7 +512,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                   hint="Check back in"
                   color="teal.600"
                   bg="teal.50"
-                  onClick={() => dispatchNav("equipment", { status: "MY_CHECKED_OUT" })}
+                  onClick={() => navigateWithFilter("equipment", { status: "MY_CHECKED_OUT" })}
                 />
               );
             }
@@ -355,94 +520,99 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
               <Tile
                 icon={FiTool}
                 label="Equipment"
+                value={0}
                 hint="No actions to take at the moment"
                 color="teal.600"
                 bg="teal.50"
                 dimmed
-                onClick={() => dispatchNav("equipment")}
+                onClick={() => dispatchNavPlain("equipment")}
               />
             );
           })()}
 
-          {/* Pending payments — only when present (last 30 days; matches dashboard count window) */}
-          {s.pendingPayment > 0 && (
-            <Tile
-              icon={TfiMoney}
-              label="Awaiting payment"
-              value={s.pendingPayment}
-              hint="Last month · tap to view"
-              color="orange.600"
-              bg="orange.50"
-              onClick={() => dispatchNav("jobs", { status: "PENDING_PAYMENT", datePreset: "lastMonth" })}
-            />
-          )}
+          {/* Pending payments — last month window */}
+          <Tile
+            icon={TfiMoney}
+            label="Awaiting payment"
+            value={s.pendingPayment}
+            hint="Last month · tap to view"
+            color="orange.600"
+            bg="orange.50"
+            dimmed={s.pendingPayment === 0}
+            onClick={() => navigateWithFilter("jobs", { status: "PENDING_PAYMENT", datePreset: "lastMonth" })}
+          />
 
-          {/* Notices — announcements, follow-ups, events (recent + upcoming) */}
-          {s.notices > 0 && (
-            <Tile
-              icon={FiInfo}
-              label="Notices"
-              value={s.notices}
-              hint="Announcements, follow-ups & events"
-              color="purple.700"
-              bg="purple.50"
-              onClick={() => dispatchNav("jobs", { type: "NOTICES", datePreset: "recent" })}
-            />
-          )}
+          {/* Notices — announcements, follow-ups, events scheduled for today */}
+          <Tile
+            icon={FiInfo}
+            label="Notices"
+            value={s.notices}
+            hint={(() => {
+              const a = s.noticesAnnouncements ?? 0;
+              const f = s.noticesFollowups ?? 0;
+              const e = s.noticesEvents ?? 0;
+              const parts: string[] = [];
+              if (a > 0) parts.push(`${a} announcement${a === 1 ? "" : "s"}`);
+              if (f > 0) parts.push(`${f} follow-up${f === 1 ? "" : "s"}`);
+              if (e > 0) parts.push(`${e} event${e === 1 ? "" : "s"}`);
+              return parts.length > 0 ? parts.join(" · ") : "Announcements, follow-ups & events";
+            })()}
+            color="purple.700"
+            bg="purple.50"
+            dimmed={s.notices === 0}
+            onClick={() => navigateWithFilter("jobs", { type: "NOTICES", datePreset: "today" })}
+          />
 
-          {/* Reminders due — only when due */}
-          {s.followUps > 0 && (
-            <Tile
-              icon={FiBell}
-              label="Reminders due"
-              value={s.followUps}
-              hint={s.remindersPending > s.followUps ? `${s.remindersPending} total pending` : undefined}
-              color="red.600"
-              bg="red.50"
-              onClick={() => dispatchNav("reminders")}
-            />
-          )}
+          {/* Reminders due — Reminder-table notifications + TASK-workflow occurrences scheduled today or earlier.
+              Click goes to JobsTab filtered to TASK workflow (the actionable subset). */}
+          <Tile
+            icon={FiBell}
+            label="Reminders"
+            value={(s.followUps ?? 0) + (s.tasksDue ?? 0)}
+            hint={(() => {
+              const r = s.followUps ?? 0;
+              const t = s.tasksDue ?? 0;
+              const parts: string[] = [];
+              if (r > 0) parts.push(`${r} reminder${r === 1 ? "" : "s"}`);
+              if (t > 0) parts.push(`${t} task${t === 1 ? "" : "s"}`);
+              return parts.length > 0 ? parts.join(" · ") : undefined;
+            })()}
+            color="red.600"
+            bg="red.50"
+            dimmed={(s.followUps ?? 0) + (s.tasksDue ?? 0) === 0}
+            onClick={() => navigateWithFilter("jobs", { type: "DUE", datePreset: "lastMonth" })}
+          />
 
-          {/* Hours worked this week — pairs with the earnings tile.
-              Window: Sunday-of-this-week → today (matches the backend's minutesThisWeek). */}
+          {/* Hours worked in the last 7 days — pairs with the earnings tile. */}
           <Tile
             icon={FiClock}
-            label="Hours this week"
+            label="Hours (last 7 days)"
             value={(() => {
               const m = s.minutesThisWeek ?? 0;
               const h = Math.floor(m / 60);
               const mm = Math.round(m % 60);
               return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
             })()}
-            hint="Completed real jobs"
+            hint={`Time spent on ${s.weekJobCount ?? 0} job${(s.weekJobCount ?? 0) === 1 ? "" : "s"}`}
             color="teal.700"
             bg="teal.50"
             dimmed={(s.minutesThisWeek ?? 0) === 0}
-            onClick={() => {
-              const today = new Date();
-              const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - today.getDay());
-              dispatchNav("jobs", { status: "FINISHED", dateFrom: bizDateKey(startOfWeek), dateTo: bizDateKey(today) });
-            }}
+            onClick={() => navigateWithFilter("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
           />
 
-          {/* This week's earnings — always shown */}
+          {/* Earnings for the last 7 days — payout share for jobs completed in the
+              last 7 days. Same set as the Hours tile so the two pair naturally. */}
           <Tile
             icon={TfiMoney}
-            label="This week's earnings"
-            value={weekEarnings != null ? fmtMoney(weekEarnings) : "—"}
-            hint="Net of fees and expenses"
+            label="Earnings (last 7 days)"
+            value={fmtMoney(s.actualWeekEarnings ?? 0)}
+            hint={`Earned for ${s.weekJobCount ?? 0} job${(s.weekJobCount ?? 0) === 1 ? "" : "s"}`}
             color="green.700"
             bg="green.50"
-            onClick={() => dispatchNav("payments")}
+            dimmed={(s.actualWeekEarnings ?? 0) === 0}
+            onClick={() => navigateWithFilter("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
           />
         </SimpleGrid>
-
-        {/* 1-month window note */}
-        <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
-          <Text fontSize="xs" color="yellow.800">
-            Counts on this page are limited to the last month. Older items still exist — open the Jobs tab and widen the date filter to find them.
-          </Text>
-        </Box>
 
         {/* Manual reload */}
         <HStack justify="center" pt={2}>
