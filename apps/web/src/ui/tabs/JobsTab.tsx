@@ -219,6 +219,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Event", value: "EVENT" },
       { label: "Followup", value: "FOLLOWUP" },
       { label: "Announcement", value: "ANNOUNCEMENT" },
+      { label: "Notices", value: "NOTICES" },
     ],
     []
   );
@@ -229,7 +230,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const [statusFilter, setStatusFilter] = usePersistedState<string[]>(`${pfx}_status`, ["ALL"]);
   const statusItems = useMemo(
-    () => statusStates.map((s) => ({ label: s === "ALL" ? "All Statuses" : s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s })),
+    () => [
+      ...statusStates.map((s) => ({ label: s === "ALL" ? "All Statuses" : s === "UNCLAIMED" ? "Unclaimed" : prettyStatus(s), value: s as string })),
+      { label: "Finished", value: "FINISHED" },
+    ].map((s) => ({ label: s.label, value: s.value })),
     []
   );
   const statusCollection = useMemo(
@@ -624,6 +628,53 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
+
+  // Listen for external filter requests (e.g., from HomeTab tiles).
+  // Semantics: clear all filters first, then apply only the values present in the event.
+  // This way, adding new filters in the future won't accidentally leak across taps.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      // Reset all "what's shown" filters to defaults
+      setStatusFilter(["ALL"]);
+      setTypeFilter(["ALL"]);
+      setKind(["ALL"]);
+      setOverdueActive(false);
+      setVipOnly(false);
+      setLikedOnly(false);
+      setQ("");
+      const defaultPreset: DatePreset = "now";
+      const defaultDates = computeDatesFromPreset(defaultPreset);
+      setDatePreset(defaultPreset);
+      setDateFrom(defaultDates.from);
+      setDateTo(defaultDates.to);
+
+      // Apply explicit overrides from the event detail
+      if (typeof detail.status === "string") setStatusFilter([detail.status]);
+      if (typeof detail.type === "string") setTypeFilter([detail.type]);
+      if (typeof detail.kind === "string") setKind([detail.kind]);
+      if (typeof detail.datePreset === "string") {
+        const dp = detail.datePreset as DatePreset;
+        setDatePreset(dp);
+        const dates = computeDatesFromPreset(dp);
+        setDateFrom(dates.from);
+        setDateTo(dates.to);
+      }
+      // Explicit from/to override the preset (so callers can pass exact ranges).
+      if (typeof detail.dateFrom === "string" || typeof detail.dateTo === "string") {
+        setDatePreset(null);
+        if (typeof detail.dateFrom === "string") setDateFrom(detail.dateFrom);
+        if (typeof detail.dateTo === "string") setDateTo(detail.dateTo);
+      }
+      if (detail.overdue === true) setOverdueActive(true);
+      if (detail.vipOnly === true) setVipOnly(true);
+      if (detail.likedOnly === true) setLikedOnly(true);
+      if (typeof detail.q === "string") setQ(detail.q);
+    };
+    window.addEventListener("jobs:applyFilter", handler as EventListener);
+    return () => window.removeEventListener("jobs:applyFilter", handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [vipOnly, setVipOnly] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
@@ -655,23 +706,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     } catch {}
   }, []);
 
-  // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset)
+  // Re-apply preset dates when preset changes (e.g., on mount or when user selects a preset).
+  // Worker date clamp is silently applied; no inline warning — the cap is intentional, not an error.
   useEffect(() => {
     if (overdueActive) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const monthAgo = new Date();
       monthAgo.setDate(monthAgo.getDate() - 60);
-      const { from, to, clamped } = clampWorkerDates(localDate(monthAgo), localDate(yesterday));
+      const { from, to } = clampWorkerDates(localDate(monthAgo), localDate(yesterday));
       setDateFrom(from);
       setDateTo(to);
-      if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
     } else if (datePreset) {
       const d = computeDatesFromPreset(datePreset);
-      const { from, to, clamped } = clampWorkerDates(d.from, d.to);
+      const { from, to } = clampWorkerDates(d.from, d.to);
       setDateFrom(from);
       setDateTo(to);
-      if (clamped) publishInlineMessage({ type: "WARNING", text: "Date range limited to 2 months." });
     }
   }, [datePreset, overdueActive]);
 
@@ -1319,11 +1369,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "EVENT") rows = rows.filter((occ) => occ.workflow === "EVENT");
     else if (tf === "FOLLOWUP") rows = rows.filter((occ) => occ.workflow === "FOLLOWUP");
     else if (tf === "ANNOUNCEMENT") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT");
+    else if (tf === "NOTICES") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT" || occ.workflow === "FOLLOWUP" || occ.workflow === "EVENT");
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
         const hasAssignees = (occ.assignees ?? []).length > 0;
         if (sf === "UNCLAIMED") return !hasAssignees;
+        if (sf === "FINISHED") return occ.status === "COMPLETED" || occ.status === "CLOSED" || occ.status === "PENDING_PAYMENT";
         return occ.status === sf;
       });
     } else {

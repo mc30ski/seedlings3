@@ -24,6 +24,7 @@ export type ClientTabs = "my-jobs" | "public" | "services";
 export type PreviewTabs = "routes";
 
 export type WorkerTabs =
+  | "home"
   | "tasks"
   | "reminders"
   | "routes"

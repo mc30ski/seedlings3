@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay, etToday, etTomorrow } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 
@@ -20,12 +20,22 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/dashboard-summary", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
+    // Use Eastern Time (business TZ) for "today"/"tomorrow" — UTC-based date strings
+    // would tip into the next day late evening ET and miscount.
+    const todayStr = etToday();
     const todayMidnight = etMidnight(todayStr);
-    const tomorrowDate = new Date(now); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const tomorrowStr = tomorrowDate.toISOString().slice(0, 10);
+    const tomorrowStr = etTomorrow();
     const tomorrowMidnight = etMidnight(tomorrowStr);
     const tomorrowEnd = etEndOfDay(tomorrowStr);
+    // 1-month rolling window for "stale" tiles (overdue, awaiting payment, active work, etc.).
+    // Matches the `lastMonth` date preset used by the Home tile click-throughs.
+    // Jobs older than this fall off Home tiles — they don't disappear, just stop bloating the dashboard.
+    const lookbackStart = new Date(todayMidnight);
+    lookbackStart.setMonth(lookbackStart.getMonth() - 1);
+
+    // Start of this calendar week (Sunday) in local time, for the "Hours this week" tile.
+    const startOfWeek = new Date(now); startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
 
     // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED)
     const myAssignments = await prisma.jobOccurrenceAssignee.findMany({
@@ -35,35 +45,56 @@ export default async function workerRoutes(app: FastifyInstance) {
     const myOccIds = myAssignments.map((a) => a.occurrenceId);
 
     if (myOccIds.length === 0) {
-      return { overdue: 0, today: 0, tomorrow: 0, pendingPayment: 0, estimatesReady: 0, followUps: 0, planning: 0 };
+      const [equipmentCheckedOut, equipmentReserved, allRemindersPending] = await Promise.all([
+        prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: { not: null } } }),
+        prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: null } }),
+        prisma.reminder.count({ where: { userId: uid, dismissedAt: null } }),
+      ]);
+      return {
+        overdue: 0, today: 0, tomorrow: 0, pendingPayment: 0, estimatesReady: 0,
+        followUps: 0, planning: 0,
+        activeWork: 0, todayPotentialAmount: 0,
+        equipmentCheckedOut, equipmentReserved,
+        remindersPending: allRemindersPending,
+        notices: 0,
+        minutesThisWeek: 0,
+      };
     }
 
-    const [overdue, todayCount, tomorrowCount, pendingPayment, estimatesReady, reminders] = await Promise.all([
+    const [
+      overdue, todayCount, tomorrowCount, pendingPayment, estimatesReady, reminders,
+      activeWork, todayJobs, equipmentCheckedOut, equipmentReserved, allRemindersPending, notices,
+      thisWeekJobs,
+    ] = await Promise.all([
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
-          startAt: { lt: todayMidnight },
-          status: { notIn: ["COMPLETED", "CLOSED", "ARCHIVED", "ACCEPTED", "REJECTED", "CANCELED"] as any },
+          startAt: { gte: lookbackStart, lt: todayMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
         },
       }),
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
-          status: { in: ["SCHEDULED", "IN_PROGRESS", "ACCEPTED"] as any },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
         },
       }),
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
           startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
-          status: { in: ["SCHEDULED", "ACCEPTED"] as any },
+          status: { in: ["SCHEDULED"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
         },
       }),
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
           status: "PENDING_PAYMENT" as any,
+          startAt: { gte: lookbackStart },
         },
       }),
       prisma.jobOccurrence.count({
@@ -71,6 +102,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myOccIds },
           status: "PROPOSAL_SUBMITTED" as any,
           workflow: "ESTIMATE",
+          startAt: { gte: lookbackStart },
         },
       }),
       prisma.reminder.count({
@@ -80,11 +112,93 @@ export default async function workerRoutes(app: FastifyInstance) {
           remindAt: { lte: now },
         },
       }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          status: { in: ["IN_PROGRESS", "PAUSED"] as any },
+          startAt: { gte: lookbackStart },
+        },
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myOccIds },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+        },
+        select: {
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { role: true } },
+        },
+      }),
+      prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: { not: null } } }),
+      prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: null } }),
+      prisma.reminder.count({ where: { userId: uid, dismissedAt: null } }),
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myOccIds },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"] as any },
+          startAt: { gte: lookbackStart },
+        },
+      }),
+      // Hours this week: real jobs assigned to user, scheduled this week, finished.
+      // Filter by startAt (not completedAt) so the tile click-through (which filters JobsTab by startAt) matches.
+      prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myOccIds },
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          startAt: { gte: startOfWeek },
+          startedAt: { not: null },
+          completedAt: { not: null },
+        },
+        select: { startedAt: true, completedAt: true, totalPausedMs: true },
+      }),
     ]);
+
+    // Today's potential = worker's projected NET share (after expenses, fees/margin, and team split).
+    // Same formula as the earnings-summary endpoint so the two displays agree.
+    const meUser = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
+    const isEmp = meUser?.workerType === "EMPLOYEE" || meUser?.workerType === "TRAINEE";
+    const settingKeyForPct = isEmp ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
+    const setting = await prisma.setting.findUnique({ where: { key: settingKeyForPct } });
+    const pct = Number(setting?.value ?? 0);
+    const todayPotentialAmount = todayJobs.reduce((sum, occ) => {
+      const base = occ.price ?? occ.proposalAmount ?? 0;
+      const addons = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = base + addons;
+      if (displayPrice <= 0) return sum;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const deduction = Math.round(net * pct) / 100;
+      const payout = Math.max(0, net - deduction);
+      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
+      return sum + payout / activeCount;
+    }, 0);
 
     const planning = overdue + todayCount + tomorrowCount + pendingPayment + estimatesReady + reminders;
 
-    return { overdue, today: todayCount, tomorrow: tomorrowCount, pendingPayment, estimatesReady, followUps: reminders, planning };
+    // Total wall-clock minutes worked this week (completed real jobs).
+    const minutesThisWeek = thisWeekJobs.reduce((sum: number, occ: any) => {
+      if (!occ.startedAt || !occ.completedAt) return sum;
+      const ms = new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime() - (occ.totalPausedMs ?? 0);
+      return sum + Math.max(0, ms / 60000);
+    }, 0);
+
+    return {
+      overdue, today: todayCount, tomorrow: tomorrowCount, pendingPayment, estimatesReady,
+      followUps: reminders, planning,
+      activeWork,
+      todayPotentialAmount: Math.round(todayPotentialAmount * 100) / 100,
+      equipmentCheckedOut, equipmentReserved,
+      remindersPending: allRemindersPending,
+      notices,
+      minutesThisWeek: Math.round(minutesThisWeek),
+    };
   });
 
   app.get("/equipment/all", workerGuard, async () => {
@@ -648,10 +762,14 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     const now = new Date();
     const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+    const startOfTomorrow = new Date(startOfToday); startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
+    const startOfNextWeek = new Date(startOfWeek); startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const startOfNextYear = new Date(now.getFullYear() + 1, 0, 1);
 
     // 1) Actual payments (already received) — use the user's payment split.
     const splits = await prisma.paymentSplit.findMany({
@@ -671,32 +789,48 @@ export default async function workerRoutes(app: FastifyInstance) {
     for (const sp of splits) {
       allTime += sp.amount;
       const d = sp.payment.createdAt;
-      if (d >= startOfToday) today += sp.amount;
-      if (d >= startOfWeek) thisWeek += sp.amount;
-      if (d >= startOfMonth) thisMonth += sp.amount;
-      if (d >= startOfYear) thisYear += sp.amount;
+      if (d >= startOfToday && d < startOfTomorrow) today += sp.amount;
+      if (d >= startOfWeek && d < startOfNextWeek) thisWeek += sp.amount;
+      if (d >= startOfMonth && d < startOfNextMonth) thisMonth += sp.amount;
+      if (d >= startOfYear && d < startOfNextYear) thisYear += sp.amount;
       byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
       jobCount++;
       paidOccIds.add(sp.payment.occurrenceId);
     }
 
-    // 2) Optimistic estimate for completed (or pending-payment) occurrences with no payment yet.
-    // Uses the same formula as JobsTab's "Est. payout" badge: (price + addons - expenses) * (1 - pct/100), split evenly.
+    // Helper for the "estimated payout" formula — same as JobsTab's "Est. payout" badge.
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
     const settingKey = isEmployee ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
     const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
     const pct = Number(setting?.value ?? 0);
 
-    const myCompletedOccs = await prisma.jobOccurrence.findMany({
+    function myShareOf(occ: { price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }): number {
+      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
+      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = basePrice + addonsTotal;
+      if (displayPrice <= 0) return 0;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const deduction = Math.round(net * pct) / 100;
+      const payout = Math.max(0, net - deduction);
+      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
+      return payout / activeCount;
+    }
+
+    // 2) Projected — assigned, unpaid, real jobs (STANDARD or ONE_OFF). Bucket by completedAt
+    // if completed, else startAt (so scheduled jobs project into the bucket they'll be done in).
+    // allTime gets projection too: a worker's pipeline counts toward their total.
+    const myProjectableOccs = await prisma.jobOccurrence.findMany({
       where: {
-        completedAt: { not: null },
-        status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] },
+        status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
         ...(paidOccIds.size > 0 ? { id: { notIn: [...paidOccIds] } } : {}),
         assignees: { some: { userId: uid, role: { not: "observer" } } },
       },
       select: {
         id: true,
+        startAt: true,
         completedAt: true,
         price: true,
         proposalAmount: true,
@@ -706,24 +840,17 @@ export default async function workerRoutes(app: FastifyInstance) {
       },
     });
 
-    for (const occ of myCompletedOccs) {
-      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
-      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
-      const displayPrice = basePrice + addonsTotal;
-      if (displayPrice <= 0) continue;
-      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
-      const deduction = Math.round(net * pct) / 100;
-      const payout = Math.max(0, net - deduction);
-      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-      const myShare = payout / activeCount;
-      if (myShare <= 0 || !occ.completedAt) continue;
-      const d = occ.completedAt;
+    for (const occ of myProjectableOccs) {
+      const myShare = myShareOf(occ);
+      if (myShare <= 0) continue;
+      // Use completion date when available (work already done), else scheduled start (work expected).
+      const d = occ.completedAt ?? occ.startAt;
+      if (!d) continue;
       allTime += myShare;
-      if (d >= startOfToday) today += myShare;
-      if (d >= startOfWeek) thisWeek += myShare;
-      if (d >= startOfMonth) thisMonth += myShare;
-      if (d >= startOfYear) thisYear += myShare;
+      if (d >= startOfToday && d < startOfTomorrow) today += myShare;
+      if (d >= startOfWeek && d < startOfNextWeek) thisWeek += myShare;
+      if (d >= startOfMonth && d < startOfNextMonth) thisMonth += myShare;
+      if (d >= startOfYear && d < startOfNextYear) thisYear += myShare;
       jobCount++;
     }
 
