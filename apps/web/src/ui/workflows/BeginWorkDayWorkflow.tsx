@@ -51,7 +51,8 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
       // Load today + any overdue
       const list = await apiGet<WorkerOccurrence[]>(`/api/occurrences?to=${today}`);
       const myJobs = (Array.isArray(list) ? list : []).filter((occ) => {
-        if (occ.workflow === "TASK") return false; // tasks shown separately
+        // Only real jobs — exclude TASK, REMINDER, EVENT, FOLLOWUP, ANNOUNCEMENT, ESTIMATE
+        if (occ.workflow !== "STANDARD" && occ.workflow !== "ONE_OFF") return false;
         const isAssigned = (occ.assignees ?? []).some((a) => a.userId === myId);
         if (!isAssigned) return false;
         const isActive = occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS";

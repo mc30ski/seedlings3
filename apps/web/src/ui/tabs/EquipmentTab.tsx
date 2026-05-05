@@ -97,6 +97,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Listen for external filter requests (e.g., from HomeTab tiles).
+  // Reset all "what's shown" filters first, then apply only the values present in the event.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      setStatusFilter(["ALL"]);
+      setKind(["ALL"]);
+      setLikedOnly(false);
+      setQ("");
+      if (typeof detail.status === "string") setStatusFilter([detail.status]);
+      if (typeof detail.kind === "string") setKind([detail.kind]);
+      if (detail.likedOnly === true) setLikedOnly(true);
+      if (typeof detail.q === "string") setQ(detail.q);
+    };
+    window.addEventListener("equipment:applyFilter", handler as EventListener);
+    return () => window.removeEventListener("equipment:applyFilter", handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Helper variable to disable other buttons while actions are in flight.
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
 
@@ -387,6 +406,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             break;
           case "UNAVAILABLE":
             want = ["RESERVED", "CHECKED_OUT", "MAINTENANCE"];
+            break;
+          case "MY_RESERVED":
+            // Filter to user's reserved-only items (not yet checked out)
+            rows = rows.filter((r) => r.status === "RESERVED" && !!me && r.holder?.userId === me.id);
+            break;
+          case "MY_CHECKED_OUT":
+            rows = rows.filter((r) => r.status === "CHECKED_OUT" && !!me && r.holder?.userId === me.id);
             break;
         }
       }

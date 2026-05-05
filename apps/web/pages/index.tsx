@@ -41,6 +41,7 @@ import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
+import HomeTab from "@/src/ui/tabs/HomeTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -113,6 +114,38 @@ export default function HomePage() {
       setWorkerCategory("Field");
     }
   }, []);
+
+  // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
+  // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
+  useEffect(() => {
+    // Only triggers for workers, on initial mount, and not on QR-deep-link
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem("equipmentQrSlug")) return;
+    if (!me?.workerType) return; // wait until me loads
+    try {
+      const now = new Date();
+      const lastRaw = localStorage.getItem("seedlings_lastAppOpenedAt");
+      const last = lastRaw ? new Date(lastRaw) : null;
+      const snoozeRaw = localStorage.getItem("seedlings_homeSnoozedUntil");
+      const snoozeUntil = snoozeRaw ? new Date(snoozeRaw) : null;
+      const etDayKey = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+      const etHour = parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(now), 10);
+      const isPastFiveEt = etHour >= 5;
+      const isLateEvening = etHour >= 22; // 10pm+ ET — don't take over the screen
+      const newDay = !last || etDayKey(last) !== etDayKey(now);
+      const snoozed = snoozeUntil && snoozeUntil > now;
+      // Only auto-show on the first open of a new ET day, after 5am, before 10pm.
+      const shouldShow = !snoozed && !isLateEvening && isPastFiveEt && newDay;
+      if (shouldShow) {
+        setTopTab("worker");
+        setWorkerInnerTab("home");
+        setWorkerCategory("Work");
+      }
+      localStorage.setItem("seedlings_lastAppOpenedAt", now.toISOString());
+    } catch {}
+    // Only run once per mount. Re-evaluating on every me change would re-trigger on every refreshMe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.workerType]);
 
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>(null);
   const [networkInfoOpen, setNetworkInfoOpen] = useState(false);
@@ -439,6 +472,12 @@ export default function HomePage() {
       content: <AdminTasksTab tasks={workerTasks} />,
     },
     {
+      value: "home",
+      label: "Home",
+      icon: FiHome,
+      content: wrapWithInlineMessage(<HomeTab me={me} onLaunchWorkflow={(name) => setActiveWorkflow(name)} />),
+    },
+    {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
@@ -710,6 +749,7 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
+          home: "Work",
           tasks: "Actions",
           reminders: "Work", jobs: "Work",
           equipment: "Field", routes: "Field",
@@ -1278,8 +1318,13 @@ export default function HomePage() {
   const programmaticNavRef = useRef(false);
   useEffect(() => {
     const onNav = (e: Event) => {
-      const { tab, category, autoAnalyze } = (e as CustomEvent).detail || {};
+      const { tab, category, autoAnalyze, filter } = (e as CustomEvent).detail || {};
       if (tab) {
+        // Record the current location to history before navigating, so back button works
+        const current = getCurrentNavState();
+        const targetCategory = category ?? (topTab === "worker" ? workerCategory : workerCategoryRef.current);
+        const wouldChange = current.outer !== "worker" || current.inner !== tab || (category && current.category !== category);
+        if (wouldChange) pushNavHistory(current);
         programmaticNavRef.current = true;
         setTopTab("worker");
         setWorkerInnerTab(tab);
@@ -1287,6 +1332,16 @@ export default function HomePage() {
         if (autoAnalyze && tab === "routes") {
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("routes:autoAnalyze"));
+          }, 300);
+        }
+        if (filter && tab === "jobs") {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: filter }));
+          }, 300);
+        }
+        if (filter && tab === "equipment") {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: filter }));
           }, 300);
         }
         // Reset flag after React processes the state update
@@ -1589,10 +1644,18 @@ export default function HomePage() {
               <Box
                 cursor="pointer"
                 onClick={() => {
+                  // Record current location before navigating, so the back button works.
+                  const current = getCurrentNavState();
                   if (isWorker || isAdmin) {
+                    if (current.outer !== "worker" || current.inner !== "jobs") pushNavHistory(current);
                     setTopTab("worker");
                     setWorkerInnerTab("jobs" as any);
+                    // Reset JobsTab filters to the default "Now (3 days)" view.
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail: { datePreset: "now" } }));
+                    }, 300);
                   } else {
+                    if (current.outer !== "client") pushNavHistory(current);
                     setTopTab("client");
                   }
                 }}
