@@ -81,14 +81,14 @@ function effectiveMinutes(occ: {
   if (!occ.startedAt) return null;
   const startMs = new Date(occ.startedAt).getTime();
   const paused = occ.totalPausedMs ?? 0;
-  if (occ.status === "PAUSED" && occ.pausedAt) {
-    return (new Date(occ.pausedAt).getTime() - startMs - paused) / 60000;
-  }
-  if (occ.completedAt) {
-    return (new Date(occ.completedAt).getTime() - startMs - paused) / 60000;
-  }
-  // IN_PROGRESS
-  return (Date.now() - startMs - paused) / 60000;
+  let endMs: number;
+  if (occ.status === "PAUSED" && occ.pausedAt) endMs = new Date(occ.pausedAt).getTime();
+  else if (occ.completedAt) endMs = new Date(occ.completedAt).getTime();
+  else endMs = Date.now();
+  // Clamp to 0 to avoid showing negative durations when data is invalid
+  // (e.g., completedAt before startedAt). The backend Hours-this-week sum also clamps,
+  // so the per-card display stays consistent with the tile total.
+  return Math.max(0, (endMs - startMs - paused) / 60000);
 }
 
 function assigneeSortOrder(a: { assignedById?: string | null; userId: string; role?: string | null }): number {
@@ -220,6 +220,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Followup", value: "FOLLOWUP" },
       { label: "Announcement", value: "ANNOUNCEMENT" },
       { label: "Notices", value: "NOTICES" },
+      { label: "Due (Tasks + Reminders)", value: "DUE" },
     ],
     []
   );
@@ -643,6 +644,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       setVipOnly(false);
       setLikedOnly(false);
       setQ("");
+      setHighlightOccId(null);
+      setFilterJobId(null);
       const defaultPreset: DatePreset = "now";
       const defaultDates = computeDatesFromPreset(defaultPreset);
       setDatePreset(defaultPreset);
@@ -942,7 +945,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return { from, to, clamped: false };
   }
 
+  // Load sequence guard — prevents stale async results from overwriting newer ones.
+  const loadSeqRef = useRef(0);
+
   async function load(displayLoading = true, overrideDates?: { from?: string; to?: string }, keepOccId?: string) {
+    const seq = ++loadSeqRef.current;
     setLoading(displayLoading);
     try {
       const qs = new URLSearchParams();
@@ -955,6 +962,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (keepOccId) qs.set("includeOccId", keepOccId);
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
+      // If a newer load() started while this one was in flight, drop these results.
+      if (seq !== loadSeqRef.current) return;
       if (!Array.isArray(list)) list = [];
       if (viewAsUserIds?.length) {
         // Admin "View as" — show ONLY jobs the selected worker(s) are assigned to
@@ -987,16 +996,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           });
         }
       }
+      // Re-check seq before mutating state in case state-deriving filters above were async.
+      if (seq !== loadSeqRef.current) return;
       setItems(list);
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       publishInlineMessage({
         type: "ERROR",
         text: getErrorMessage("Failed to load jobs.", err),
       });
       setItems([]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }
 
@@ -1345,11 +1357,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const filtered = useMemo(() => {
     let rows = items;
     // Enforce date range — items outside the range should not appear in the feed
-    // Exception: pinned and liked items (they have their own sections / filter)
+    // Exception: pinned, liked, and reminded items bypass the date filter so they're never hidden.
     if (dateFrom || dateTo) {
       rows = rows.filter((occ) => {
-        // Pinned and liked items bypass date filter (shown in dedicated sections)
         if (pinnedIds.has(occ.id) || likedIds.has(occ.id)) return true;
+        if ((occ as any).reminder) return true;
         const day = occ.startAt ? bizDateKey(occ.startAt) : null;
         if (!day) return true; // no date — include
         if (dateFrom && day < dateFrom) return false;
@@ -1370,11 +1382,29 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "FOLLOWUP") rows = rows.filter((occ) => occ.workflow === "FOLLOWUP");
     else if (tf === "ANNOUNCEMENT") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT");
     else if (tf === "NOTICES") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT" || occ.workflow === "FOLLOWUP" || occ.workflow === "EVENT");
+    else if (tf === "DUE") {
+      const todayKey = bizDateKey(new Date());
+      rows = rows.filter((occ) => {
+        // TASK-workflow occurrences not yet done
+        if (occ.workflow === "TASK" && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS")) return true;
+        // Any occurrence with a Reminder whose remindAt is today or earlier
+        if (occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey) return true;
+        return false;
+      });
+    }
     const sf = statusFilter[0];
     if (sf !== "ALL") {
       rows = rows.filter((occ) => {
         const hasAssignees = (occ.assignees ?? []).length > 0;
-        if (sf === "UNCLAIMED") return !hasAssignees;
+        if (sf === "UNCLAIMED") {
+          // Only claimable work counts as "unclaimed". Reminders/tasks/events/
+          // announcements/followups have no claim semantics and would otherwise
+          // pollute the feed since they default to no assignees.
+          if ((occ as any)._isReminderGhost) return false;
+          const w = occ.workflow;
+          const claimable = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+          return claimable && !hasAssignees;
+        }
         if (sf === "FINISHED") return occ.status === "COMPLETED" || occ.status === "CLOSED" || occ.status === "PENDING_PAYMENT";
         return occ.status === sf;
       });
@@ -1465,12 +1495,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       return fmtDateWeekday(d, { year: d.getFullYear() !== todayD.getFullYear() });
     };
 
-    // Separate pinned and reminder-due items into their own groups (worker view only)
+    // Separate pinned and reminder-due items into their own groups (worker view only).
+    // When the user is filtering by UNCLAIMED they're looking for claimable work, so
+    // suppress the Reminders Due group and future-reminder ghost cards entirely —
+    // otherwise unclaimed jobs that happen to have reminders attached get rendered
+    // as reminder-themed visuals and look like reminders in the feed.
     const pinnedGroup: WorkerOccurrence[] = [];
     const reminderDueGroup: WorkerOccurrence[] = [];
     const pinnedIds_ = new Set(pinnedIds);
     const reminderDueIds = new Set<string>();
     const rest: WorkerOccurrence[] = [];
+    const suppressReminderVisuals = statusFilter[0] === "UNCLAIMED";
 
     if (isWorkerView) {
       for (const occ of filtered) {
@@ -1485,13 +1520,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           if (occDay && (!dateFrom || occDay >= dateFrom) && (!dateTo || occDay <= dateTo)) {
             rest.push({ ...occ, _isPinnedGhost: true } as any);
           }
-        } else if (hasReminderDue) {
+        } else if (hasReminderDue && !suppressReminderVisuals) {
           reminderDueGroup.push(occ);
           reminderDueIds.add(occ.id);
         } else {
           rest.push(occ);
           // Future reminders — add a ghost at the reminder date if it's a different ET day than the occurrence AND within date range
-          if (hasReminder) {
+          if (hasReminder && !suppressReminderVisuals) {
             const remKey = bizDateKey(occ.reminder!.remindAt);
             const occKey = occ.startAt ? bizDateKey(occ.startAt) : "";
             if (remKey !== occKey && (!dateFrom || remKey >= dateFrom) && (!dateTo || remKey <= dateTo)) {

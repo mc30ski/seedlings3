@@ -102,8 +102,14 @@ export default function WeatherBar() {
         if (!cancelled) {
           setData(result);
           setLoading(false);
-          // Broadcast current temp for title bar
-          window.dispatchEvent(new CustomEvent("seedlings:weather", { detail: { temp: result.current.temp, icon: result.current.icon } }));
+          // Cache the latest weather on window so consumers that mount after
+          // the fetch completes can read it synchronously.
+          (window as any).__seedlingsWeather = { forecast: result.forecast };
+          // Broadcast current temp for title bar plus the full forecast so
+          // tiles can show tomorrow's inclement-weather indicator.
+          window.dispatchEvent(new CustomEvent("seedlings:weather", {
+            detail: { temp: result.current.temp, icon: result.current.icon, forecast: result.forecast },
+          }));
         }
       } catch (err: any) {
         console.error("[WeatherBar] Failed to load weather:", err);
