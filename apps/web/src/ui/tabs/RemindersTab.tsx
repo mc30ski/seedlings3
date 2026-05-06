@@ -74,15 +74,24 @@ function assigneeSummary(assignees: WorkerOccurrence["assignees"]): string {
 }
 
 /** Switch to the Jobs tab (admin or worker) and highlight a specific occurrence.
- *  Used by every "View →" link in the Planning tab. */
+ *  Used by every "View →" link in the Planning tab.
+ *
+ *  Polls for `window.__jobsTabReady` before dispatching `jobsTab:highlightOcc`
+ *  so the highlight fires only once JobsTab's listener is registered. A fixed
+ *  setTimeout would race the destination tab's mount on slower devices. */
 function viewOnJobs(occId: string, forAdmin?: boolean) {
   const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
   const tab = forAdmin ? "admin-jobs" : "jobs";
   window.dispatchEvent(new CustomEvent(eventName, { detail: { tab } }));
-  // Small delay lets the destination JobsTab mount before we ask it to highlight.
-  setTimeout(() => {
-    window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
-  }, 200);
+  let attempts = 0;
+  const maxAttempts = 30; // 30 × 100ms = 3 seconds max
+  const interval = setInterval(() => {
+    attempts++;
+    if ((window as any).__jobsTabReady || attempts >= maxAttempts) {
+      clearInterval(interval);
+      window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
+    }
+  }, 100);
 }
 
 /** Does this occurrence need client confirmation? */
