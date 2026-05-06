@@ -356,6 +356,8 @@ All API environment variables live in `apps/api/.env` (gitignored). They must al
 | `TWILIO_PHONE_NUMBER` | Your Twilio SMS number in E.164 format (e.g. `+19196944750`) | Twilio Console → Phone Numbers → Manage → Active Numbers |
 | `RESEND_API_KEY`      | Resend email API key (starts with `re_...`)                  | [Resend](https://resend.com) → API Keys → Create         |
 
+- Test with: curl -s -X POST http://localhost:8080/cron/test-notification -H "Content-Type: application/json" -d '{"userId": "cmexiwrfs003kvdysrjteo2hy"}'
+
 **Twilio (SMS) Setup:**
 
 - Sign up at [twilio.com](https://www.twilio.com)
