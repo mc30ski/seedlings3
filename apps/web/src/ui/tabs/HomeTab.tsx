@@ -492,7 +492,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
               </HStack>
               <Box h="160px">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={s.weeklyCompleted} margin={{ top: 18, right: 12, bottom: 0, left: 8 }}>
+                  <ComposedChart data={s.weeklyCompleted} margin={{ top: 28, right: 12, bottom: 0, left: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="weekStart" tickFormatter={fmtWeek} fontSize={10} interval="preserveStartEnd" />
                     <YAxis fontSize={10} width={56} tickFormatter={(v: number) => v >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : `$${v}`} />

@@ -21,6 +21,7 @@ export type DatePreset =
   | "yesterday"
   | "lastWeek"
   | "lastMonth"
+  | "thisYear"
   | "all"
   | null; // null = custom dates
 
@@ -97,6 +98,12 @@ export function computeDatesFromPreset(preset: DatePreset): { from: string; to: 
       d.setMonth(d.getMonth() - 1);
       return { from: localDate(d), to: localDate(today) };
     }
+    case "thisYear": {
+      // Forward-looking, matching thisWeek (today → +6 days) and thisMonth (today → +1 month).
+      const d = new Date(today);
+      d.setFullYear(d.getFullYear() + 1);
+      return { from: localDate(today), to: localDate(d) };
+    }
     case "all":
       return { from: "", to: "" };
     default:
@@ -124,5 +131,6 @@ export const PRESET_LABELS: Record<string, string> = {
   yesterday: "Yesterday",
   lastWeek: "Last week",
   lastMonth: "Last month",
+  thisYear: "This year",
   all: "All time",
 };
