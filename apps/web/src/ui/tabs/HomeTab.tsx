@@ -22,6 +22,16 @@ type Props = {
   // Admin-only: display name + first name for the impersonated worker (drives the
   // greeting copy "Good morning, Bob" instead of using the admin's identity).
   viewAsDisplayName?: string;
+  // Admin-only: company-wide aggregate mode. Hits a different endpoint that sums
+  // values across the whole team. Hero is replaced with a single team-summary
+  // banner; tile click-throughs go to admin tabs WITHOUT a worker filter.
+  // Mutually exclusive with viewAsUserId.
+  aggregate?: boolean;
+  // Admin-only: subset team mode. Same shape as aggregate but restricted to the
+  // listed workers — uses the aggregate endpoint with a workerIds filter, and
+  // tile click-throughs pre-filter destination tabs to those workers. Mutually
+  // exclusive with viewAsUserId and aggregate.
+  subsetUserIds?: string[];
 };
 
 type Summary = {
@@ -63,15 +73,24 @@ const setLS = (key: string, val: unknown) => {
  *  Resets every relevant key (so prior values can't leak across taps) and dispatches a `remount` flag
  *  with the navigation event. The destination tab is force-remounted, reading its fresh state on first render.
  *
- *  When `adminViewAsUserId` is provided, the filter writes to ADMIN tab keys (ajobs_*, pay_a_*, equip_a_*)
- *  and dispatches `navigate:adminTab` instead of `navigate:workerTab`. Worker-impersonation keys
- *  (`adminjobs_workers`, `pay_a_persons`) are also pre-written so the destination admin tab is
- *  filtered to that single worker.
+ *  Three modes:
+ *  - default (no opts): worker mode. Writes wjobs_, equip_w_, pay_w_ keys, dispatches navigate:workerTab.
+ *  - opts.adminViewAsUserId: admin-impersonation mode. Writes admin keys + worker-scope filters
+ *    (adminjobs_workers, pay_a_persons, equip_a_workers), dispatches navigate:adminTab.
+ *  - opts.adminAggregate: admin company-wide mode. Writes admin keys, CLEARS worker-scope filters,
+ *    dispatches navigate:adminTab.
  */
+type NavOpts = {
+  adminViewAsUserId?: string;
+  adminAggregate?: boolean;
+  // When provided (and non-empty), navigation pre-writes this list of worker IDs
+  // to the destination tab's worker filter, so the destination shows the same subset.
+  adminSubsetUserIds?: string[];
+};
 function navigateWithFilter(
   tab: "jobs" | "equipment" | "payments",
   filter: TabFilter,
-  adminViewAsUserId?: string,
+  opts?: NavOpts,
 ) {
   // Always clear stale session keys that could trigger highlight/jump-to-occurrence behavior.
   try {
@@ -79,7 +98,17 @@ function navigateWithFilter(
     sessionStorage.removeItem("servicesTabToJobsNav");
   } catch {}
 
-  const adminMode = !!adminViewAsUserId;
+  const adminViewAsUserId = opts?.adminViewAsUserId;
+  const adminAggregate = !!opts?.adminAggregate;
+  const adminSubsetUserIds = opts?.adminSubsetUserIds;
+  const adminMode = !!adminViewAsUserId || adminAggregate || (!!adminSubsetUserIds && adminSubsetUserIds.length > 0);
+  // For destination-tab worker filters: subset takes precedence (use the list),
+  // then impersonation (single worker), then aggregate (clear it).
+  const destWorkerIds: string[] = adminSubsetUserIds && adminSubsetUserIds.length > 0
+    ? adminSubsetUserIds
+    : adminViewAsUserId
+      ? [adminViewAsUserId]
+      : [];
 
   if (tab === "jobs") {
     // Worker JobsTab uses prefix "wjobs", admin uses "ajobs". Reset everything filterable.
@@ -105,8 +134,8 @@ function navigateWithFilter(
     // wrote, leaving the user with default filters and "everything" in the feed.
     try { localStorage.setItem(`${pfx}_lastUsedDate`, new Date().toISOString().slice(0, 10)); } catch {}
     if (adminMode) {
-      // AdminJobsTab reads `adminjobs_workers` to scope its inner JobsTab to a worker.
-      setLS(`adminjobs_workers`, [adminViewAsUserId]);
+      // Worker filter for destination AdminJobsTab: subset list, single worker, or empty.
+      setLS(`adminjobs_workers`, destWorkerIds);
     }
   } else if (tab === "payments") {
     const pfx = adminMode ? "pay_a" : "pay_w";
@@ -115,7 +144,8 @@ function navigateWithFilter(
     setLS(`${pfx}_dateTo`, filter.dateTo ?? "");
     if (adminMode) {
       setLS(`${pfx}_method`, [filter.method ?? "ALL"]);
-      setLS(`${pfx}_persons`, [adminViewAsUserId]);
+      // Person filter: subset list, single worker, or empty.
+      setLS(`${pfx}_persons`, destWorkerIds);
     } else {
       setLS(`${pfx}_type`, [filter.method ?? "ALL"]);
     }
@@ -134,8 +164,8 @@ function navigateWithFilter(
     setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
     setLS(`${pfx}_likedOnly`, false);
     if (adminMode) {
-      // Scope the admin EquipmentTab to this worker's holdings.
-      setLS(`${pfx}_workers`, [adminViewAsUserId]);
+      // Worker filter: subset list, single worker, or empty.
+      setLS(`${pfx}_workers`, destWorkerIds);
     }
   }
 
@@ -146,10 +176,30 @@ function navigateWithFilter(
   window.dispatchEvent(new CustomEvent(eventName, { detail: { tab: destTab, remount: true } }));
 }
 
-/** Plain navigation (no filter), used when the destination tab manages its own state. */
-function dispatchNavPlain(tab: string, adminViewAsUserId?: string) {
-  const eventName = adminViewAsUserId ? "navigate:adminTab" : "navigate:workerTab";
-  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab } }));
+/** Plain navigation (no filter), used when the destination tab manages its own state.
+ *  Carries impersonation/aggregate mode forward — admin clicks set or clear the
+ *  destination tab's worker selector accordingly. */
+function dispatchNavPlain(tab: string, opts?: NavOpts) {
+  const adminViewAsUserId = opts?.adminViewAsUserId;
+  const adminAggregate = !!opts?.adminAggregate;
+  const adminSubsetUserIds = opts?.adminSubsetUserIds;
+  const adminMode = !!adminViewAsUserId || adminAggregate || (!!adminSubsetUserIds && adminSubsetUserIds.length > 0);
+  // Same precedence as navigateWithFilter: subset > impersonation > aggregate.
+  const destWorkerIds: string[] = adminSubsetUserIds && adminSubsetUserIds.length > 0
+    ? adminSubsetUserIds
+    : adminViewAsUserId
+      ? [adminViewAsUserId]
+      : [];
+  const eventName = adminMode ? "navigate:adminTab" : "navigate:workerTab";
+  let remount = false;
+  if (adminMode) {
+    if (tab === "reminders") {
+      // AdminRemindersTab uses usePersistedState<string[]>("adminreminders_workers").
+      setLS(`adminreminders_workers`, destWorkerIds);
+      remount = true;
+    }
+  }
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount } }));
 }
 
 function bizDateKey(d: Date): string {
@@ -229,22 +279,39 @@ function Tile({
   );
 }
 
-export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisplayName }: Props) {
+export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisplayName, aggregate, subsetUserIds }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const isViewingOther = !!viewAsUserId;
-  // Local nav helpers that fold in the impersonation context. Always reach for these
-  // from inside the component instead of the module-level ones.
+  // Subset mode: aggregate-style view restricted to a list of workers. Treated like
+  // aggregate for hero suppression and tile layout, but click-throughs scope to the subset.
+  const isSubset = !!subsetUserIds && subsetUserIds.length > 0 && !viewAsUserId;
+  const isAggregate = (!!aggregate || isSubset) && !viewAsUserId;
+  // Stable cache key for subset list to avoid re-fetching on identical arrays.
+  const subsetKey = (subsetUserIds ?? []).join(",");
+  // Local nav helpers that fold in impersonation/aggregate/subset context. Always reach
+  // for these from inside the component instead of the module-level ones.
+  const navOpts: NavOpts | undefined = isSubset
+    ? { adminAggregate: true, adminSubsetUserIds: subsetUserIds }
+    : aggregate && !viewAsUserId
+      ? { adminAggregate: true }
+      : viewAsUserId
+        ? { adminViewAsUserId: viewAsUserId }
+        : undefined;
   const navTo = (tab: "jobs" | "equipment" | "payments", filter: TabFilter) =>
-    navigateWithFilter(tab, filter, viewAsUserId);
-  const navPlain = (tab: string) => dispatchNavPlain(tab, viewAsUserId);
+    navigateWithFilter(tab, filter, navOpts);
+  const navPlain = (tab: string) => dispatchNavPlain(tab, navOpts);
 
   async function load() {
     setLoading(true);
     try {
-      const url = viewAsUserId
-        ? `/api/dashboard-summary?viewAsUserId=${encodeURIComponent(viewAsUserId)}`
-        : "/api/dashboard-summary";
+      const url = isSubset
+        ? `/api/dashboard-summary/aggregate?workerIds=${encodeURIComponent((subsetUserIds ?? []).join(","))}`
+        : aggregate && !viewAsUserId
+          ? `/api/dashboard-summary/aggregate`
+          : viewAsUserId
+            ? `/api/dashboard-summary?viewAsUserId=${encodeURIComponent(viewAsUserId)}`
+            : "/api/dashboard-summary";
       const s = await apiGet<Summary>(url);
       setSummary(s);
     } catch (err) {
@@ -259,7 +326,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
     const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     window.addEventListener("visibilitychange", onVisible);
     return () => window.removeEventListener("visibilitychange", onVisible);
-  }, [viewAsUserId]);
+  }, [viewAsUserId, aggregate, subsetKey]);
 
   // Hour in Eastern Time (the business timezone) — drives the hero CTA framing.
   const etHour = (() => {
@@ -326,8 +393,26 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
       )}
       <VStack align="stretch" gap={4}>
 
+        {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
+        {isAggregate && (
+          <Card.Root variant="outline" bg="gray.50" borderColor="gray.300">
+            <Card.Body p={5}>
+              <VStack align="start" gap={1}>
+                <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                  {isSubset ? `Selected workers (${subsetUserIds?.length ?? 0})` : "Team overview"}
+                </Text>
+                <Text fontSize="sm" color="gray.700">
+                  {s.today} job{s.today === 1 ? "" : "s"} scheduled today
+                  {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
+                  {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
+                </Text>
+              </VStack>
+            </Card.Body>
+          </Card.Root>
+        )}
+
         {/* Hero CTA: Resume active work (any time) */}
-        {heroMode === "resume" && (
+        {!isAggregate && heroMode === "resume" && (
           <Card.Root
             variant="elevated"
             cursor="pointer"
@@ -362,7 +447,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         )}
 
         {/* Hero CTA: Begin / Finish — same workflow, different framing by time-of-day */}
-        {(heroMode === "begin" || heroMode === "finish") && (
+        {!isAggregate && (heroMode === "begin" || heroMode === "finish") && (
           <Card.Root
             variant="outline"
             cursor={isViewingOther ? "default" : "pointer"}
@@ -402,7 +487,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         )}
 
         {/* Hero CTA: Plan tomorrow — evening pivot, no work left today */}
-        {heroMode === "planTomorrow" && (
+        {!isAggregate && heroMode === "planTomorrow" && (
           <Card.Root
             variant="outline"
             cursor={isViewingOther ? "default" : "pointer"}
@@ -459,7 +544,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         )}
 
         {/* Hero: Wrap up — quiet end-of-day state. Combines greeting + status into one card. */}
-        {heroMode === "wrap" && (
+        {!isAggregate && heroMode === "wrap" && (
           <Card.Root variant="outline" bg="gray.50" borderColor="gray.200">
             <Card.Body p={5}>
               <HStack gap={4}>
@@ -553,11 +638,70 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             onClick={() => navPlain("reminders")}
           />
 
-          {/* Equipment — directional based on time of day:
+          {/* Equipment — in aggregate mode, show team totals (reserved + checked out).
+              Otherwise directional based on time of day:
               morning/midday → reserved you need to check out;
               evening/night → checked out you need to return;
               otherwise → generic "no actions" tile that links to the Equipment tab. */}
           {(() => {
+            if (isAggregate) {
+              const reserved = s.equipmentReserved ?? 0;
+              const checkedOut = s.equipmentCheckedOut ?? 0;
+              // Mirror per-person directional logic for the team:
+              // morning/midday → focus on reserved (gear awaiting checkout);
+              // evening → focus on checked out (gear that needs return).
+              if (!isEvening && reserved > 0) {
+                return (
+                  <Tile
+                    icon={FiTool}
+                    label="Reserved equipment"
+                    value={reserved}
+                    hint={checkedOut > 0 ? `${checkedOut} also checked out` : "Awaiting checkout"}
+                    color="teal.600"
+                    bg="teal.50"
+                    onClick={() => navTo("equipment", { status: "RESERVED" })}
+                  />
+                );
+              }
+              if (isEvening && checkedOut > 0) {
+                return (
+                  <Tile
+                    icon={FiTool}
+                    label="Equipment out"
+                    value={checkedOut}
+                    hint={reserved > 0 ? `${reserved} also reserved` : "Currently in workers' hands"}
+                    color="teal.600"
+                    bg="teal.50"
+                    onClick={() => navTo("equipment", { status: "CHECKED_OUT" })}
+                  />
+                );
+              }
+              // Combined fallback view. Click filters to whichever bucket has items
+              // (so a "0 reserved · 5 checked out" tile filters to CHECKED_OUT, not the
+              // empty RESERVED bucket). When both have items, time-of-day breaks the tie.
+              // navTo also clears the worker-scope filter on the destination tab.
+              const total = reserved + checkedOut;
+              const hint = total > 0
+                ? `${reserved} reserved · ${checkedOut} checked out`
+                : "Nothing in workers' hands right now";
+              const fallbackStatus =
+                reserved > 0 && checkedOut === 0 ? "RESERVED"
+                : checkedOut > 0 && reserved === 0 ? "CHECKED_OUT"
+                : isEvening ? "CHECKED_OUT"
+                : "RESERVED";
+              return (
+                <Tile
+                  icon={FiTool}
+                  label="Equipment"
+                  value={total}
+                  hint={hint}
+                  color="teal.600"
+                  bg="teal.50"
+                  dimmed={total === 0}
+                  onClick={() => navTo("equipment", { status: fallbackStatus })}
+                />
+              );
+            }
             if (!isEvening && s.equipmentReserved > 0) {
               return (
                 <Tile

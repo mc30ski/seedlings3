@@ -1666,6 +1666,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
+      {/* Admin "View as" worker selector — always visible above the search/filter
+          toolbar. Worker mode doesn't pass headerSlot so this row collapses. */}
+      {headerSlot && (
+        <HStack mb={2} gap={2} wrap="nowrap" pl="1">
+          {headerSlot}
+        </HStack>
+      )}
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
@@ -1945,11 +1952,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         </HStack>
       )}
       {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
-      {headerSlot && (
-        <HStack mb={2} gap={2} wrap="nowrap">
-          {headerSlot}
-        </HStack>
-      )}
       <HStack mb={2} gap={1} wrap="nowrap" pl="1">
         <Select.Root
           collection={kindCollection}

@@ -423,6 +423,343 @@ export default async function workerRoutes(app: FastifyInstance) {
     };
   });
 
+  // Company-wide aggregate dashboard. Used by AdminHomeTab when no worker is selected.
+  // Mirrors the per-worker /dashboard-summary shape (so the same Summary type works on
+  // the frontend), but every value is computed across the entire team — no myOccIds
+  // restriction. Money figures are total worker payouts (sum across active assignees,
+  // each weighted by their workerType's fee/margin). Hours are person-hours (each
+  // assignee on a multi-worker job contributes the job's full wall-clock).
+  app.get("/dashboard-summary/aggregate", workerGuard, async (req: any) => {
+    const callerUid = await currentUserId(req);
+    const caller = await prisma.user.findUnique({ where: { id: callerUid }, include: { roles: true } });
+    const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view the aggregate dashboard.");
+
+    // Optional `workerIds=id1,id2,...` parameter restricts the aggregate to a subset
+    // of workers. When omitted/empty: whole-team aggregate. When populated: counts
+    // include only occurrences touching at least one of those workers, and money/
+    // hours sum only those workers' shares.
+    const workerIdsParam = (req.query?.workerIds as string | undefined) ?? "";
+    const subsetIds = workerIdsParam
+      ? workerIdsParam.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const isSubset = subsetIds.length > 0;
+    const subsetSet = new Set(subsetIds);
+
+    const todayStr = etToday();
+    const todayMidnight = etMidnight(todayStr);
+    const tomorrowStr = etTomorrow();
+    const tomorrowMidnight = etMidnight(tomorrowStr);
+    const tomorrowEnd = etEndOfDay(tomorrowStr);
+    const lookbackStart = new Date(todayMidnight); lookbackStart.setMonth(lookbackStart.getMonth() - 1);
+    const sevenDaysAgoUtc = new Date(todayMidnight); sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 6);
+    const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
+    const startOfWeek = (() => {
+      const d = new Date(todayMidnight);
+      const day = d.getUTCDay();
+      d.setUTCDate(d.getUTCDate() - day);
+      return etMidnight(d.toISOString().slice(0, 10));
+    })();
+    const trendStart = new Date(startOfWeek); trendStart.setDate(trendStart.getDate() - 8 * 7);
+
+    // Pull margin/fee settings — used when summing total worker payouts per occurrence.
+    const empSetting = await prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } });
+    const conSetting = await prisma.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } });
+    const empPct = Number(empSetting?.value ?? 0);
+    const conPct = Number(conSetting?.value ?? 0);
+    const workerPct = (type: string | null | undefined) =>
+      type === "EMPLOYEE" || type === "TRAINEE" ? empPct : conPct;
+
+    // Sum of all workers' payouts for one occurrence — accounts for each assignee's
+    // worker type (employee margin vs contractor fee). Returns 0 if no active workers.
+    type AggOcc = {
+      price: number | null;
+      proposalAmount: number | null;
+      addons: { price: number | null }[];
+      expenses: { cost: number }[];
+      assignees: { role: string | null; userId: string; user: { workerType: string | null } | null }[];
+    };
+    // In subset mode, only sum payouts for workers in the selected set. The share-per-
+    // worker math still uses the FULL active count (so e.g. a 3-person job with 1
+    // selected worker contributes one share, not the entire pool).
+    function totalWorkerPayouts(occ: AggOcc): number {
+      const base = occ.price ?? occ.proposalAmount ?? 0;
+      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = base + addonsTotal;
+      if (displayPrice <= 0) return 0;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+      if (active.length === 0) return 0;
+      const sharePer = net / active.length;
+      let total = 0;
+      for (const a of active) {
+        if (isSubset && !subsetSet.has(a.userId)) continue;
+        const pct = workerPct(a.user?.workerType);
+        const deduction = Math.round(sharePer * pct) / 100;
+        total += Math.max(0, sharePer - deduction);
+      }
+      return total;
+    }
+    // In subset mode, count only selected active assignees on a job (so person-hours
+    // for a 60-min job with 1 selected worker out of 3 = 60 min, not 180).
+    function activeAssigneeCount(occ: { assignees?: { role: string | null; userId?: string }[] }): number {
+      return (occ.assignees ?? []).filter((a) =>
+        a.role !== "observer" && (!isSubset || (!!a.userId && subsetSet.has(a.userId)))
+      ).length;
+    }
+
+    const moneySelect = {
+      price: true,
+      proposalAmount: true,
+      addons: { select: { price: true } },
+      expenses: { select: { cost: true } },
+      assignees: { select: { role: true, userId: true, user: { select: { workerType: true } } } },
+    } as const;
+
+    // Reused for every "occurrences touching the subset" query. Empty in whole-team mode.
+    const assigneeSubsetFilter = isSubset
+      ? { assignees: { some: { userId: { in: subsetIds } } } }
+      : {};
+    const userSubsetFilter = isSubset
+      ? { userId: { in: subsetIds } }
+      : {};
+
+    const [
+      todayCount, tomorrowCount, pendingPayment, estimatesReady,
+      noticesByWorkflow, tasksDue, activeWork, todayRemaining,
+      todayJobs, todayCompletedJobs, tomorrowUnclaimedJobs,
+      thisWeekJobs, trendJobs, tomorrowUnconfirmedJobs,
+      remindersDueOccs, allRemindersPending,
+      equipmentCheckedOut, equipmentReserved,
+    ] = await Promise.all([
+      prisma.jobOccurrence.count({
+        where: {
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { notIn: ["CANCELED", "ARCHIVED"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          status: "PENDING_PAYMENT" as any,
+          startAt: { gte: lookbackStart },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          status: "PROPOSAL_SUBMITTED" as any,
+          workflow: "ESTIMATE",
+          startAt: { gte: lookbackStart },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.groupBy({
+        by: ["workflow"],
+        where: {
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["ANNOUNCEMENT", "FOLLOWUP", "EVENT"] as any },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          ...assigneeSubsetFilter,
+        },
+        _count: { _all: true },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: "TASK",
+          startAt: { lt: tomorrowMidnight },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          status: { in: ["IN_PROGRESS", "PAUSED"] as any },
+          startAt: { gte: lookbackStart },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.count({
+        where: {
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          ...assigneeSubsetFilter,
+        },
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          ...assigneeSubsetFilter,
+        },
+        select: moneySelect,
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          ...assigneeSubsetFilter,
+        },
+        select: moneySelect,
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          isAdminOnly: false,
+          assignees: { none: {} },
+        },
+        select: { price: true, proposalAmount: true, addons: { select: { price: true } }, expenses: { select: { cost: true } } },
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          startedAt: { not: null },
+          completedAt: { gte: sevenDaysAgo, not: null },
+          ...assigneeSubsetFilter,
+        },
+        select: {
+          startedAt: true,
+          completedAt: true,
+          totalPausedMs: true,
+          ...moneySelect,
+        },
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          completedAt: { gte: trendStart, not: null },
+          ...assigneeSubsetFilter,
+        },
+        select: { completedAt: true, ...moneySelect },
+      }),
+      prisma.jobOccurrence.findMany({
+        where: {
+          startAt: { gte: tomorrowMidnight, lte: tomorrowEnd },
+          status: "SCHEDULED" as any,
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+          isClientConfirmed: false,
+          jobId: { not: null },
+          ...assigneeSubsetFilter,
+        },
+        select: { job: { select: { property: { select: { clientId: true } } } } },
+      }),
+      // Distinct occurrences with at least one actionable, non-dismissed reminder due.
+      // Use groupBy on occurrenceId to dedupe across users.
+      prisma.reminder.groupBy({
+        by: ["occurrenceId"],
+        where: {
+          ...userSubsetFilter,
+          dismissedAt: null,
+          remindAt: { lte: new Date() },
+          occurrence: {
+            status: { notIn: ["COMPLETED", "CLOSED", "PENDING_PAYMENT", "ARCHIVED", "CANCELED"] as any },
+          },
+        },
+      }),
+      prisma.reminder.count({ where: { dismissedAt: null, ...userSubsetFilter } }),
+      prisma.checkout.count({ where: { releasedAt: null, checkedOutAt: { not: null }, ...userSubsetFilter } }),
+      prisma.checkout.count({ where: { releasedAt: null, checkedOutAt: null, ...userSubsetFilter } }),
+    ]);
+
+    const todayPotentialAmount = (todayJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
+    const todayEarnedAmount = (todayCompletedJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
+    const tomorrowUnclaimedCount = tomorrowUnclaimedJobs.length;
+    const tomorrowUnclaimedPotential = (tomorrowUnclaimedJobs as any[]).reduce((s: number, o: any) => {
+      // Solo claim assumption: net × (1 − contractor pct).
+      const base = o.price ?? o.proposalAmount ?? 0;
+      const addonsTotal = (o.addons ?? []).reduce((sum: number, a: any) => sum + (a.price ?? 0), 0);
+      const displayPrice = base + addonsTotal;
+      if (displayPrice <= 0) return s;
+      const expTotal = (o.expenses ?? []).reduce((sum: number, e: any) => sum + (e.cost ?? 0), 0);
+      const net = Math.max(0, displayPrice - expTotal);
+      const deduction = Math.round(net * conPct) / 100;
+      return s + Math.max(0, net - deduction);
+    }, 0);
+
+    const tomorrowUnconfirmedClientCount = new Set(
+      (tomorrowUnconfirmedJobs as any[]).map((o) => o.job?.property?.clientId).filter((id): id is string => !!id)
+    ).size;
+
+    // Person-hours: each active assignee on a completed job contributes the full wall-clock.
+    let minutesThisWeek = 0;
+    for (const occ of thisWeekJobs as any[]) {
+      if (!occ.startedAt || !occ.completedAt) continue;
+      const ms = new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime() - (occ.totalPausedMs ?? 0);
+      const wall = Math.max(0, ms / 60000);
+      minutesThisWeek += wall * activeAssigneeCount(occ);
+    }
+    const actualWeekEarnings = (thisWeekJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
+    const weekJobCount = (thisWeekJobs as any[]).length;
+
+    // Weekly trend (13 weeks) — distinct job count + total worker payouts per week.
+    const weekKey = (d: Date) => {
+      const w = new Date(d);
+      w.setHours(0, 0, 0, 0);
+      w.setDate(w.getDate() - w.getDay());
+      return `${w.getFullYear()}-${String(w.getMonth() + 1).padStart(2, "0")}-${String(w.getDate()).padStart(2, "0")}`;
+    };
+    const weeklyMap: Record<string, { count: number; earnings: number }> = {};
+    for (let i = 0; i < 9; i++) {
+      const w = new Date(trendStart); w.setDate(w.getDate() + i * 7);
+      weeklyMap[weekKey(w)] = { count: 0, earnings: 0 };
+    }
+    for (const occ of trendJobs as any[]) {
+      if (!occ.completedAt) continue;
+      const k = weekKey(new Date(occ.completedAt));
+      if (!(k in weeklyMap)) continue;
+      weeklyMap[k].count++;
+      weeklyMap[k].earnings += totalWorkerPayouts(occ);
+    }
+    const weeklyCompleted = Object.entries(weeklyMap)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([weekStart, v]) => ({ weekStart, count: v.count, earnings: Math.round(v.earnings * 100) / 100 }));
+
+    return {
+      overdue: 0, // not used in aggregate UI
+      today: todayCount,
+      tomorrow: tomorrowCount,
+      pendingPayment,
+      estimatesReady,
+      followUps: remindersDueOccs.length,
+      activeWork,
+      todayRemaining,
+      todayPotentialAmount: Math.round(todayPotentialAmount * 100) / 100,
+      todayEarnedAmount: Math.round(todayEarnedAmount * 100) / 100,
+      tomorrowUnclaimedCount,
+      tomorrowUnclaimedPotential: Math.round(tomorrowUnclaimedPotential * 100) / 100,
+      tomorrowUnconfirmedClientCount,
+      equipmentCheckedOut,
+      equipmentReserved,
+      remindersPending: allRemindersPending,
+      notices: (noticesByWorkflow as any[]).reduce((sum, g) => sum + (g._count?._all ?? 0), 0),
+      noticesAnnouncements: (noticesByWorkflow as any[]).find((g) => g.workflow === "ANNOUNCEMENT")?._count?._all ?? 0,
+      noticesFollowups: (noticesByWorkflow as any[]).find((g) => g.workflow === "FOLLOWUP")?._count?._all ?? 0,
+      noticesEvents: (noticesByWorkflow as any[]).find((g) => g.workflow === "EVENT")?._count?._all ?? 0,
+      tasksDue,
+      minutesThisWeek: Math.round(minutesThisWeek),
+      actualWeekEarnings: Math.round(actualWeekEarnings * 100) / 100,
+      weekJobCount,
+      weeklyCompleted,
+    };
+  });
+
   app.get("/equipment/all", workerGuard, async () => {
     return services.equipment.listAllAdmin();
   });

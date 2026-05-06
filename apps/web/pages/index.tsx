@@ -128,6 +128,7 @@ export default function HomePage() {
   const [adminJobsRemountKey, setAdminJobsRemountKey] = useState(0);
   const [adminEquipmentRemountKey, setAdminEquipmentRemountKey] = useState(0);
   const [adminPaymentsRemountKey, setAdminPaymentsRemountKey] = useState(0);
+  const [adminRemindersRemountKey, setAdminRemindersRemountKey] = useState(0);
 
   // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
@@ -573,7 +574,7 @@ export default function HomePage() {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
-      content: wrapWithInlineMessage(<AdminRemindersTab me={me} />),
+      content: wrapWithInlineMessage(<AdminRemindersTab key={`arem-${adminRemindersRemountKey}`} me={me} />),
     },
     {
       value: "admin-jobs",
@@ -1390,7 +1391,18 @@ export default function HomePage() {
   // Mirror handler for admin tab navigation. Used by AdminHomeTab's tile click-throughs
   // (which target admin tabs filtered to the impersonated worker). Same remount-on-demand
   // pattern as the worker version — caller pre-writes localStorage, we bump the key.
+  // Also updates adminCategory when the destination tab lives in a different category
+  // than the current one — otherwise the category nav stays on the old category and
+  // the inner-tab bar can render the wrong set of tabs.
   useEffect(() => {
+    const adminCatMap: Record<string, string> = {
+      tasks: "Actions",
+      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
+      equipment: "Field", routes: "Field",
+      payments: "Money", statistics: "Money",
+      clients: "Directory", properties: "Directory", users: "Directory",
+      profile: "System", activity: "System", history: "System", settings: "System",
+    };
     const onNav = (e: Event) => {
       const { tab, remount } = (e as CustomEvent).detail || {};
       if (!tab) return;
@@ -1400,10 +1412,13 @@ export default function HomePage() {
       programmaticNavRef.current = true;
       setTopTab("admin");
       setAdminInnerTab(tab as any);
+      const destCategory = adminCatMap[tab];
+      if (destCategory) setAdminCategory(destCategory);
       if (remount) {
         if (tab === "admin-jobs") setAdminJobsRemountKey((k) => k + 1);
         else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
         else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
+        else if (tab === "reminders") setAdminRemindersRemountKey((k) => k + 1);
       }
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };

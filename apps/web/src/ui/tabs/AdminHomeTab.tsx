@@ -9,13 +9,13 @@ import { type Me } from "@/src/lib/types";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null };
 
-// Mirror of AdminRemindersTab's worker-selector. Wraps HomeTab so admins can
-// inspect what each worker is seeing on their Home dashboard. The wrapped
-// HomeTab is rendered with a viewAsUserId override so the dashboard-summary
-// endpoint computes results for the selected worker.
+// Wraps HomeTab so admins can inspect what each worker (or the team) is seeing on
+// their Home dashboard. Multi-select — empty = whole-team aggregate, one = per-worker
+// impersonation (unchanged from the original behavior), more than one = subset team
+// view (aggregate computed across just the selected workers).
 export default function AdminHomeTab({ me }: { me?: Me | null }) {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [selectedWorker, setSelectedWorker] = usePersistedState<string | null>("adminhome_worker", null);
+  const [selectedWorkers, setSelectedWorkers] = usePersistedState<string[]>("adminhome_workers", []);
   const [searchText, setSearchText] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -44,12 +44,24 @@ export default function AdminHomeTab({ me }: { me?: Me | null }) {
     return map;
   }, [workers]);
 
+  const workerItems = useMemo(
+    () => workers.map((w) => ({
+      label: w.displayName || w.email || w.id,
+      value: w.id,
+    })),
+    [workers]
+  );
+
   const searchLc = searchText.toLowerCase();
   const filtered = searchText
-    ? workers.filter((w) => (w.displayName || w.email || "").toLowerCase().includes(searchLc))
-    : workers;
+    ? workerItems.filter((it) => it.label.toLowerCase().includes(searchLc))
+    : workerItems;
   const limited = filtered.slice(0, 10);
   const hasMore = filtered.length > 10;
+
+  // Routing: 1 worker → existing impersonation view (no behavioral change).
+  // 0 → whole-team aggregate. >1 → subset team view.
+  const isPerWorker = selectedWorkers.length === 1;
 
   return (
     <Box w="full">
@@ -61,7 +73,10 @@ export default function AdminHomeTab({ me }: { me?: Me | null }) {
           <Input
             size="sm"
             w="full"
-            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "Select a worker..."}
+            placeholder={selectedWorkers.length > 0
+              ? selectedWorkers.map((id) => workerNameMap[id] || "Loading…").join(", ")
+              : "All Workers"
+            }
             value={searchText}
             onChange={(e) => {
               setSearchText(e.target.value);
@@ -93,25 +108,27 @@ export default function AdminHomeTab({ me }: { me?: Me | null }) {
               }}
             >
               <Box maxH="250px" overflowY="auto">
-                {limited.map((w) => (
+                {limited.map((it) => (
                   <Box
-                    key={w.id}
+                    key={it.value}
                     px="3"
                     py="1.5"
                     fontSize="sm"
                     cursor="pointer"
-                    bg={selectedWorker === w.id ? "blue.50" : undefined}
+                    bg={selectedWorkers.includes(it.value) ? "blue.50" : undefined}
                     _hover={{ bg: "gray.100" }}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setSelectedWorker(w.id);
-                      setDropOpen(false);
-                      setSearchText("");
+                      setSelectedWorkers((prev) =>
+                        prev.includes(it.value)
+                          ? prev.filter((id) => id !== it.value)
+                          : [...prev, it.value]
+                      );
                     }}
                   >
                     <HStack gap={2}>
-                      <Text flex="1">{w.displayName || w.email || w.id}</Text>
-                      {selectedWorker === w.id && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                      <Text flex="1">{it.label}</Text>
+                      {selectedWorkers.includes(it.value) && <Text color="blue.500" fontWeight="bold">✓</Text>}
                     </HStack>
                   </Box>
                 ))}
@@ -128,39 +145,51 @@ export default function AdminHomeTab({ me }: { me?: Me | null }) {
           )}
         </Box>
       </HStack>
-      {selectedWorker && (
+      {selectedWorkers.length > 0 && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
-          <Badge size="sm" colorPalette="blue" variant="solid">
-            {workerNameMap[selectedWorker] || "Loading…"}
-          </Badge>
+          {selectedWorkers.map((id) => (
+            <Badge key={id} size="sm" colorPalette="blue" variant="solid">
+              {workerNameMap[id] || "Loading…"}
+            </Badge>
+          ))}
           <Badge
             size="sm"
             colorPalette="red"
             variant="outline"
             cursor="pointer"
-            onClick={() => { setSelectedWorker(null); setSearchText(""); }}
+            onClick={() => { setSelectedWorkers([]); setSearchText(""); }}
           >
             ✕ Clear
           </Badge>
         </HStack>
       )}
 
-      {selectedWorker ? (
+      {isPerWorker ? (
+        // Exactly one worker → original per-worker view, unchanged behavior.
         <HomeTab
-          key={selectedWorker}
+          key={`single-${selectedWorkers[0]}`}
           me={me}
-          viewAsUserId={selectedWorker}
-          viewAsDisplayName={workerNameMap[selectedWorker]}
-          // Admin-as-worker view doesn't run worker workflows — the admin shouldn't
-          // be triggering "begin-workday" on the selected worker's behalf. HomeTab
-          // disables those specific hero CTAs when viewAsUserId is set; this onLaunch
-          // remains as a no-op fallback.
+          viewAsUserId={selectedWorkers[0]}
+          viewAsDisplayName={workerNameMap[selectedWorkers[0]]}
+          // Admin-as-worker view doesn't run worker workflows — no-op fallback.
+          onLaunchWorkflow={() => {}}
+        />
+      ) : selectedWorkers.length > 1 ? (
+        // Subset team view: aggregate computed across the selected workers only.
+        <HomeTab
+          key={`subset-${selectedWorkers.join(",")}`}
+          me={me}
+          subsetUserIds={selectedWorkers}
           onLaunchWorkflow={() => {}}
         />
       ) : (
-        <Box py={10} textAlign="center">
-          <Text color="fg.muted" fontSize="sm">Select a worker above to view their Home dashboard.</Text>
-        </Box>
+        // No worker picked → whole-team aggregate.
+        <HomeTab
+          key="aggregate"
+          me={me}
+          aggregate
+          onLaunchWorkflow={() => {}}
+        />
       )}
     </Box>
   );

@@ -11,7 +11,10 @@ type Worker = { id: string; displayName?: string | null; email?: string | null }
 
 export default function AdminRemindersTab({ me }: { me?: Me | null }) {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [selectedWorker, setSelectedWorker] = usePersistedState<string | null>("adminreminders_worker", null);
+  // Multi-select. Empty = team view (all workers). One = per-worker view (unchanged
+  // from the original behavior). More than one = team-styled view filtered to those
+  // workers only.
+  const [selectedWorkers, setSelectedWorkers] = usePersistedState<string[]>("adminreminders_workers", []);
   const [searchText, setSearchText] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -40,12 +43,24 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
     return map;
   }, [workers]);
 
+  const workerItems = useMemo(
+    () => workers.map((w) => ({
+      label: w.displayName || w.email || w.id,
+      value: w.id,
+    })),
+    [workers]
+  );
+
   const searchLc = searchText.toLowerCase();
   const filtered = searchText
-    ? workers.filter((w) => (w.displayName || w.email || "").toLowerCase().includes(searchLc))
-    : workers;
+    ? workerItems.filter((it) => it.label.toLowerCase().includes(searchLc))
+    : workerItems;
   const limited = filtered.slice(0, 10);
   const hasMore = filtered.length > 10;
+
+  // Routing decision: exactly one worker → existing per-worker view, identical to
+  // the prior behavior. Zero or many → new team-styled view.
+  const isPerWorker = selectedWorkers.length === 1;
 
   return (
     <Box w="full">
@@ -57,7 +72,10 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
           <Input
             size="sm"
             w="full"
-            placeholder={selectedWorker ? workerNameMap[selectedWorker] || "Loading…" : "Select a worker..."}
+            placeholder={selectedWorkers.length > 0
+              ? selectedWorkers.map((id) => workerNameMap[id] || "Loading…").join(", ")
+              : "All Workers"
+            }
             value={searchText}
             onChange={(e) => {
               setSearchText(e.target.value);
@@ -89,25 +107,27 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
               }}
             >
               <Box maxH="250px" overflowY="auto">
-                {limited.map((w) => (
+                {limited.map((it) => (
                   <Box
-                    key={w.id}
+                    key={it.value}
                     px="3"
                     py="1.5"
                     fontSize="sm"
                     cursor="pointer"
-                    bg={selectedWorker === w.id ? "blue.50" : undefined}
+                    bg={selectedWorkers.includes(it.value) ? "blue.50" : undefined}
                     _hover={{ bg: "gray.100" }}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setSelectedWorker(w.id);
-                      setDropOpen(false);
-                      setSearchText("");
+                      setSelectedWorkers((prev) =>
+                        prev.includes(it.value)
+                          ? prev.filter((id) => id !== it.value)
+                          : [...prev, it.value]
+                      );
                     }}
                   >
                     <HStack gap={2}>
-                      <Text flex="1">{w.displayName || w.email || w.id}</Text>
-                      {selectedWorker === w.id && <Text color="blue.500" fontWeight="bold">✓</Text>}
+                      <Text flex="1">{it.label}</Text>
+                      {selectedWorkers.includes(it.value) && <Text color="blue.500" fontWeight="bold">✓</Text>}
                     </HStack>
                   </Box>
                 ))}
@@ -124,29 +144,44 @@ export default function AdminRemindersTab({ me }: { me?: Me | null }) {
           )}
         </Box>
       </HStack>
-      {selectedWorker && (
+      {selectedWorkers.length > 0 && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
-          <Badge size="sm" colorPalette="blue" variant="solid">
-            {workerNameMap[selectedWorker] || "Loading…"}
-          </Badge>
+          {selectedWorkers.map((id) => (
+            <Badge key={id} size="sm" colorPalette="blue" variant="solid">
+              {workerNameMap[id] || "Loading…"}
+            </Badge>
+          ))}
           <Badge
             size="sm"
             colorPalette="red"
             variant="outline"
             cursor="pointer"
-            onClick={() => { setSelectedWorker(null); setSearchText(""); }}
+            onClick={() => { setSelectedWorkers([]); setSearchText(""); }}
           >
             ✕ Clear
           </Badge>
         </HStack>
       )}
 
-      {selectedWorker ? (
-        <RemindersTab myId={selectedWorker} me={me} showAll={false} forAdmin />
+      {isPerWorker ? (
+        // Exactly one worker selected — render the original per-worker view unchanged.
+        <RemindersTab
+          key={`single-${selectedWorkers[0]}`}
+          myId={selectedWorkers[0]}
+          me={me}
+          showAll={false}
+          forAdmin
+        />
       ) : (
-        <Box py={10} textAlign="center">
-          <Text color="fg.muted" fontSize="sm">Select a worker above to view their planning items.</Text>
-        </Box>
+        // Team view: 0 selected → all workers, multiple selected → just those.
+        <RemindersTab
+          key={`team-${selectedWorkers.join(",")}`}
+          me={me}
+          showAll
+          forAdmin
+          teamView
+          visibleUserIds={selectedWorkers}
+        />
       )}
     </Box>
   );
