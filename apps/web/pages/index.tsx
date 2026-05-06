@@ -1461,6 +1461,96 @@ export default function HomePage() {
     }
   }, [router.query.workflow, me?.isApproved, meLoading]);
 
+  // In-app workflow launcher — components dispatch `launch:workflow` with a
+  // detail.workflow string to kick off a guided flow without going through a URL.
+  useEffect(() => {
+    const onLaunch = (e: Event) => {
+      const wf = (e as CustomEvent<{ workflow?: string }>).detail?.workflow;
+      if (wf) setActiveWorkflow(wf);
+    };
+    window.addEventListener("launch:workflow", onLaunch as EventListener);
+    return () => window.removeEventListener("launch:workflow", onLaunch as EventListener);
+  }, []);
+
+  // Deep-link to a specific tab via `?tab=<outer>-<category>-<inner>` (e.g.
+  // `worker-work-planning`). Client tabs (no categories) use 2 segments instead:
+  // `client-community`. Slugs derive from the inner tab's label (lowercased,
+  // hyphenated) — the inner tab's `value` field is also accepted as a fallback so
+  // existing internal IDs work too. Auth gating is delegated to each outer tab's
+  // `visible` predicate; if the user can't access the outer tab the param is just
+  // stripped. Like `?occ=`, the param is left intact while signed out so it
+  // survives Clerk's auth redirect.
+  useEffect(() => {
+    if (meLoading) return;
+    const tabSlug = router.query.tab as string | undefined;
+    if (!tabSlug) return;
+    if (!isSignedIn) return; // Wait for auth; URL stays intact across redirect.
+
+    const slugify = (s: string): string =>
+      (s || "").toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+    const parts = tabSlug.split("-");
+    if (parts.length < 2) {
+      router.replace("/", undefined, { shallow: true });
+      return;
+    }
+
+    const outerValue = parts[0];
+    const outer = navTabs.find((t) => t.value === outerValue);
+    if (!outer) {
+      router.replace("/", undefined, { shallow: true });
+      return;
+    }
+    // Auth gate using the outer tab's visible predicate.
+    const outerVisible = typeof outer.visible === "function" ? outer.visible() : outer.visible;
+    if (!outerVisible) {
+      router.replace("/", undefined, { shallow: true });
+      return;
+    }
+
+    // Try 3-part format (<outer>-<category>-<inner>) first, then 2-part fallback.
+    let matched: { value: string; category?: string } | null = null;
+    if (parts.length >= 3) {
+      const categorySlug = parts[1];
+      const innerSlug = parts.slice(2).join("-");
+      for (const t of outer.innerTabs) {
+        if (slugify(t.category ?? "") !== categorySlug) continue;
+        if (slugify(t.label) === innerSlug || t.value === innerSlug) {
+          matched = { value: t.value, category: t.category };
+          break;
+        }
+      }
+    }
+    if (!matched) {
+      const innerSlug = parts.slice(1).join("-");
+      for (const t of outer.innerTabs) {
+        if (slugify(t.label) === innerSlug || t.value === innerSlug) {
+          matched = { value: t.value, category: t.category };
+          break;
+        }
+      }
+    }
+    if (!matched) {
+      router.replace("/", undefined, { shallow: true });
+      return;
+    }
+
+    setTopTab(outerValue as any);
+    if (outerValue === "worker") {
+      setWorkerInnerTab(matched.value as any);
+      if (matched.category) setWorkerCategory(matched.category);
+    } else if (outerValue === "admin") {
+      setAdminInnerTab(matched.value as any);
+      if (matched.category) setAdminCategory(matched.category);
+    } else if (outerValue === "super") {
+      setSuperInnerTab(matched.value as any);
+      if (matched.category) setSuperCategory(matched.category);
+    } else if (outerValue === "client") {
+      setClientInnerTab(matched.value as any);
+    }
+    router.replace("/", undefined, { shallow: true });
+  }, [router.query.tab, isSignedIn, meLoading]);
+
   // Deep-link to a specific occurrence (e.g., ?occ=OCCURRENCE_ID or ?occ=OCCURRENCE_ID&view=admin)
   // Uses localStorage (not sessionStorage) so it survives OAuth redirects and page reloads.
   // Only strips the URL params after the user is authenticated and the deep link is consumed.

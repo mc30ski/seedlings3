@@ -85,10 +85,15 @@ type NotifyResult = {
 /**
  * Notify a worker by their best available contact method.
  * Checks phone first (SMS), then email.
+ *
+ * `message` can be a single string (used for both channels) or an object with
+ * separate `sms` and `email` bodies — useful when SMS needs to be terse and
+ * email can be long-form. If only one is provided in the object the other
+ * falls back to it.
  */
 export async function notifyWorker(
   userId: string,
-  message: string,
+  message: string | { sms?: string; email?: string },
   options?: { subject?: string; link?: string },
 ): Promise<NotifyResult> {
   const user = await prisma.user.findUnique({
@@ -98,14 +103,15 @@ export async function notifyWorker(
 
   if (!user) return { method: "none", ok: false, error: "User not found" };
 
-  const fullMessage = options?.link
-    ? `${message}\n\nOpen the app: ${options.link}`
-    : message;
+  const smsBase = typeof message === "string" ? message : (message.sms ?? message.email ?? "");
+  const emailBase = typeof message === "string" ? message : (message.email ?? message.sms ?? "");
+  const smsBody = options?.link ? `${smsBase}\n\nOpen: ${options.link}` : smsBase;
+  const emailBody = options?.link ? `${emailBase}\n\nOpen the app: ${options.link}` : emailBase;
 
   // Prefer SMS if phone available
   if (user.phone) {
     const phone = user.phone.replace(/[^\d+]/g, "");
-    const smsResult = await sendSMS(phone.startsWith("+") ? phone : `+1${phone}`, fullMessage);
+    const smsResult = await sendSMS(phone.startsWith("+") ? phone : `+1${phone}`, smsBody);
     if (smsResult.ok) return { method: "sms", ...smsResult };
     // SMS failed — fall back to email
     console.warn(`SMS failed for user ${userId}, falling back to email:`, smsResult.error);
@@ -115,7 +121,7 @@ export async function notifyWorker(
     const result = await sendEmail(
       user.email,
       options?.subject ?? "Seedlings Lawn Care — Reminder",
-      fullMessage,
+      emailBody,
     );
     return { method: "email", ...result };
   }

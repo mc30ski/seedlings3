@@ -10,7 +10,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Check, CheckCircle2, Circle, Copy, Mail, MessageCircle, Navigation } from "lucide-react";
+import { Bell, Check, CheckCircle2, Circle, Copy, ListChecks, Mail, MessageCircle, Megaphone, Navigation, Play, Repeat } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { openEventSearch } from "@/src/lib/bus";
 import { type Me, type WorkerOccurrence } from "@/src/lib/types";
@@ -73,6 +73,18 @@ function assigneeSummary(assignees: WorkerOccurrence["assignees"]): string {
   return sorted.map((a) => a.user?.displayName ?? a.user?.email ?? "").filter(Boolean).join(", ");
 }
 
+/** Switch to the Jobs tab (admin or worker) and highlight a specific occurrence.
+ *  Used by every "View →" link in the Planning tab. */
+function viewOnJobs(occId: string, forAdmin?: boolean) {
+  const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
+  const tab = forAdmin ? "admin-jobs" : "jobs";
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab } }));
+  // Small delay lets the destination JobsTab mount before we ask it to highlight.
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
+  }, 200);
+}
+
 /** Does this occurrence need client confirmation? */
 function needsConfirm(occ: WorkerOccurrence): boolean {
   if (!occ.jobId) return false;
@@ -87,6 +99,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [routeViewed, setRouteViewed] = useState(false);
+  const [workflowLaunched, setWorkflowLaunched] = useState(false);
 
   async function loadItems() {
     try {
@@ -115,18 +128,29 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
   const tomorrowItems = useMemo(() => {
     let rows = items.filter((occ) => !occ._isReminderGhost && !occ._isPinnedGhost);
 
-    // Filter to my assignments (or all if showAll)
+    // Filter to my assignments (or all if showAll). ANNOUNCEMENTs bypass the
+    // assignee check — they're company-wide and visible to everyone.
     if (!showAll && myId) {
-      rows = rows.filter((occ) => (occ.assignees ?? []).some((a) => a.userId === myId));
+      rows = rows.filter((occ) =>
+        occ.workflow === "ANNOUNCEMENT" ||
+        (occ.assignees ?? []).some((a) => a.userId === myId)
+      );
     } else if (showAll) {
-      rows = rows.filter((occ) => (occ.assignees ?? []).length > 0);
+      rows = rows.filter((occ) =>
+        occ.workflow === "ANNOUNCEMENT" ||
+        (occ.assignees ?? []).length > 0
+      );
     }
 
     // Team-view: optional restriction to a specific subset of workers (multi-select).
-    // Empty/absent visibleUserIds means "no restriction" (all workers).
+    // Empty/absent visibleUserIds means "no restriction" (all workers). Announcements
+    // bypass this too since they aren't worker-scoped.
     if (teamView && visibleUserIds && visibleUserIds.length > 0) {
       const ids = new Set(visibleUserIds);
-      rows = rows.filter((occ) => (occ.assignees ?? []).some((a) => ids.has(a.userId)));
+      rows = rows.filter((occ) =>
+        occ.workflow === "ANNOUNCEMENT" ||
+        (occ.assignees ?? []).some((a) => ids.has(a.userId))
+      );
     }
 
     // Tomorrow + SCHEDULED/ACCEPTED only
@@ -136,9 +160,6 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
       return occ.status === "SCHEDULED" || occ.status === "ACCEPTED";
     });
 
-    // Exclude announcements
-    rows = rows.filter((occ) => occ.workflow !== "ANNOUNCEMENT");
-
     return rows;
   }, [items, myId, showAll, tomorrowKey, teamView, visibleUserIds]);
 
@@ -146,34 +167,55 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
   const jobs = tomorrowItems.filter((occ) => occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || !occ.workflow);
   const estimates = tomorrowItems.filter((occ) => occ.workflow === "ESTIMATE" || occ.isEstimate);
   const events = tomorrowItems.filter((occ) => occ.workflow === "EVENT");
+  // "Other" bundle — non-actionable types (Tasks, Reminders, Follow-ups, Announcements).
+  // No confirmation step; the cards render with a "View →" link to the Jobs tab.
+  const others = tomorrowItems.filter((occ) =>
+    occ.workflow === "TASK" ||
+    occ.workflow === "REMINDER" ||
+    occ.workflow === "FOLLOWUP" ||
+    occ.workflow === "ANNOUNCEMENT"
+  );
 
-  // Team view: single combined list sorted by start time, with no-startAt items at the bottom.
-  const teamList = useMemo(() => {
-    if (!teamView) return [];
-    return [...tomorrowItems].sort((a, b) => {
+  // Sort helper: items with startAt first (earliest first), then no-startAt at the bottom.
+  function sortByStart<T extends { startAt?: string | null }>(arr: T[]): T[] {
+    return [...arr].sort((a, b) => {
       const aHas = !!a.startAt;
       const bHas = !!b.startAt;
       if (aHas !== bHas) return aHas ? -1 : 1;
       if (!aHas) return 0;
       return new Date(a.startAt as any).getTime() - new Date(b.startAt as any).getTime();
     });
-  }, [teamView, tomorrowItems]);
+  }
 
-  const hasItems = teamView ? teamList.length > 0 : (jobs.length > 0 || estimates.length > 0 || events.length > 0);
+  // Team view also uses the same sectioned structure; sorting within each section
+  // makes the order predictable when items are spread across the day. The earlier
+  // single-combined-list approach was too cluttered once Tasks/Reminders/etc. were
+  // added — sectioning keeps similar item types grouped while preserving time order.
+  const sortedJobs = useMemo(() => sortByStart(jobs), [jobs]);
+  const sortedEstimates = useMemo(() => sortByStart(estimates), [estimates]);
+  const sortedEvents = useMemo(() => sortByStart(events), [events]);
+  const sortedOthers = useMemo(() => sortByStart(others), [others]);
 
-  // Progress tracking. Team view tracks team-wide confirmation progress only —
-  // no route step (routes are per-worker). Per-worker view keeps the existing
-  // jobs+estimates+events+route progression so its UI is unchanged.
-  const totalItems = teamView
-    ? teamList.length
-    : jobs.length + estimates.length + events.length + (hasItems ? 1 : 0);
+  const hasItems = jobs.length > 0 || estimates.length > 0 || events.length > 0 || others.length > 0;
+
+  // Progress tracking. Only items with an actual action button count toward
+  // "X of Y ready":
+  //   - Jobs / Estimates: have a Confirm button
+  //   - Route: has a Plan Route button (per-worker only)
+  //   - Workflow: has a Start Workflow button (per-worker only)
+  // Events and the Other section (Tasks/Reminders/Follow-ups/Announcements) only
+  // have a "View →" link, which is navigation rather than action — so they
+  // intentionally do NOT count.
   const checkedJobs = jobs.filter((occ) => !needsConfirm(occ)).length;
   const checkedEstimates = estimates.filter((occ) => !needsConfirm(occ)).length;
-  const checkedEvents = events.length; // always checked
   const checkedRoute = routeViewed ? 1 : 0;
+  const checkedWorkflow = workflowLaunched ? 1 : 0;
+  const totalItems = teamView
+    ? jobs.length + estimates.length
+    : jobs.length + estimates.length + (hasItems ? 2 : 0); // +1 route, +1 workflow
   const checkedCount = teamView
-    ? teamList.filter((occ) => !needsConfirm(occ)).length
-    : checkedJobs + checkedEstimates + checkedEvents + (hasItems ? checkedRoute : 0);
+    ? checkedJobs + checkedEstimates
+    : checkedJobs + checkedEstimates + (hasItems ? checkedRoute + checkedWorkflow : 0);
   const allDone = hasItems && checkedCount === totalItems;
 
   async function handleConfirm(occ: WorkerOccurrence) {
@@ -196,6 +238,15 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
     window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes" } }));
   }
 
+  function launchPlanWorkdayWorkflow() {
+    setWorkflowLaunched(true);
+    // Trainees get the read-only variant of the workflow.
+    const isTrainee = me?.workerType === "TRAINEE";
+    const workflow = isTrainee ? "plan-workday-trainee" : "plan-workday";
+    // pages/index.tsx listens for this and calls setActiveWorkflow(workflow).
+    window.dispatchEvent(new CustomEvent("launch:workflow", { detail: { workflow } }));
+  }
+
   if (loading) {
     return (
       <Box py={10} textAlign="center">
@@ -214,9 +265,12 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
         <Text fontSize="sm" color="fg.muted">
           {tomorrowLabel}
         </Text>
-        {hasItems && (
-          <Text fontSize="xs" color={allDone ? "green.600" : "fg.muted"} mt={1} fontWeight={allDone ? "semibold" : "normal"}>
-            {allDone ? "All set for tomorrow!" : `${checkedCount} of ${totalItems} ready`}
+        {/* Global completion banner — stays in the header. The per-section progress
+            ("X of Y confirmed") lives under each section header where the action
+            buttons actually are. */}
+        {hasItems && allDone && (
+          <Text fontSize="xs" color="green.600" mt={1} fontWeight="semibold">
+            All set for tomorrow!
           </Text>
         )}
         {/* Inclement-weather chip — only renders when tomorrow is rainy/stormy/snowy. */}
@@ -246,69 +300,65 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
         </Box>
       )}
 
-      {/* Team view: single combined list sorted by start time */}
-      {teamView && teamList.length > 0 && (
+      {/* Sections (Jobs / Estimates / Events / Other) — used by both per-worker
+          and team views. In team view, cards show worker labels via showTeam. */}
+      {sortedJobs.length > 0 && (
         <Box mb={4}>
+          <HStack mb={2} gap={2} wrap="wrap" align="baseline">
+            <Text fontSize="xs" fontWeight="semibold" color="blue.600" textTransform="uppercase" letterSpacing="wide">
+              Jobs ({sortedJobs.length})
+            </Text>
+            <Text fontSize="xs" color={checkedJobs === sortedJobs.length ? "green.600" : "fg.muted"} fontWeight={checkedJobs === sortedJobs.length ? "semibold" : "normal"}>
+              {checkedJobs} of {sortedJobs.length} confirmed
+            </Text>
+          </HStack>
           <VStack align="stretch" gap={1}>
-            {teamList.map((occ) => (
+            {sortedJobs.map((occ) => (
               <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
             ))}
           </VStack>
         </Box>
       )}
 
-      {/* Per-worker view: grouped sections (Jobs / Estimates / Events) */}
-      {!teamView && jobs.length > 0 && (
+      {sortedEstimates.length > 0 && (
         <Box mb={4}>
-          <Text fontSize="xs" fontWeight="semibold" color="blue.600" mb={2} textTransform="uppercase" letterSpacing="wide">
-            Jobs ({jobs.length})
-          </Text>
+          <HStack mb={2} gap={2} wrap="wrap" align="baseline">
+            <Text fontSize="xs" fontWeight="semibold" color="pink.600" textTransform="uppercase" letterSpacing="wide">
+              Estimates ({sortedEstimates.length})
+            </Text>
+            <Text fontSize="xs" color={checkedEstimates === sortedEstimates.length ? "green.600" : "fg.muted"} fontWeight={checkedEstimates === sortedEstimates.length ? "semibold" : "normal"}>
+              {checkedEstimates} of {sortedEstimates.length} confirmed
+            </Text>
+          </HStack>
           <VStack align="stretch" gap={1}>
-            {jobs.map((occ) => (
+            {sortedEstimates.map((occ) => (
               <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
             ))}
           </VStack>
         </Box>
       )}
 
-      {/* Estimates section */}
-      {!teamView && estimates.length > 0 && (
-        <Box mb={4}>
-          <Text fontSize="xs" fontWeight="semibold" color="pink.600" mb={2} textTransform="uppercase" letterSpacing="wide">
-            Estimates ({estimates.length})
-          </Text>
-          <VStack align="stretch" gap={1}>
-            {estimates.map((occ) => (
-              <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
-            ))}
-          </VStack>
-        </Box>
-      )}
-
-      {/* Events section */}
-      {!teamView && events.length > 0 && (
+      {sortedEvents.length > 0 && (
         <Box mb={4}>
           <Text fontSize="xs" fontWeight="semibold" color="yellow.700" mb={2} textTransform="uppercase" letterSpacing="wide">
-            Events ({events.length})
+            Events ({sortedEvents.length})
           </Text>
           <VStack align="stretch" gap={1}>
-            {events.map((occ) => (
-              <HStack
-                key={occ.id}
-                gap={2}
-                px={3}
-                py={2}
-                bg="green.50"
-                borderWidth="1px"
-                borderColor="green.200"
-                borderRadius="md"
-                align="center"
-              >
-                <CheckCircle2 size={16} color="var(--chakra-colors-green-500)" />
-                <VStack align="start" gap={0} flex="1" minW={0}>
-                  <Text fontSize="sm" fontWeight="medium">{occ.title || "Event"}</Text>
-                </VStack>
-              </HStack>
+            {sortedEvents.map((occ) => (
+              <OtherItem key={occ.id} occ={occ} forAdmin={forAdmin} showTeam={teamView} />
+            ))}
+          </VStack>
+        </Box>
+      )}
+
+      {sortedOthers.length > 0 && (
+        <Box mb={4}>
+          <Text fontSize="xs" fontWeight="semibold" color="gray.700" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Other ({sortedOthers.length})
+          </Text>
+          <VStack align="stretch" gap={1}>
+            {sortedOthers.map((occ) => (
+              <OtherItem key={occ.id} occ={occ} forAdmin={forAdmin} showTeam={teamView} />
             ))}
           </VStack>
         </Box>
@@ -344,6 +394,44 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
                 onClick={goToRoutes}
               >
                 <Navigation size={12} /> {routeViewed ? "View Again" : "Plan Route"}
+              </Button>
+            )}
+          </HStack>
+        </Box>
+      )}
+
+      {/* Workflow section — quick launcher for the guided "Plan Next Work Day"
+          workflow. Per-worker only (admins viewing a worker's planning shouldn't
+          launch the worker's workflow). */}
+      {!teamView && hasItems && (
+        <Box mb={4}>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={2} textTransform="uppercase" letterSpacing="wide">
+            Workflow
+          </Text>
+          <HStack
+            gap={2}
+            px={3}
+            py={2}
+            bg={workflowLaunched ? "green.50" : "gray.50"}
+            borderWidth="1px"
+            borderColor={workflowLaunched ? "green.200" : "gray.200"}
+            borderRadius="md"
+            align="center"
+          >
+            {workflowLaunched ? (
+              <CheckCircle2 size={16} color="var(--chakra-colors-green-500)" />
+            ) : (
+              <Circle size={16} color="var(--chakra-colors-gray-400)" />
+            )}
+            <Text fontSize="sm" fontWeight="medium" flex="1">Walk through Plan Next Work Day</Text>
+            {!forAdmin && (
+              <Button
+                size="xs"
+                variant={workflowLaunched ? "ghost" : "solid"}
+                colorPalette="blue"
+                onClick={launchPlanWorkdayWorkflow}
+              >
+                <Play size={12} /> {workflowLaunched ? "Launch Again" : "Start Workflow"}
               </Button>
             )}
           </HStack>
@@ -399,16 +487,56 @@ function ChecklistItem({
           {clientName && <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(clientName)}</Text>}
         </Text>
         <Text fontSize="xs" color="fg.muted">{team}</Text>
-        {confirmed ? (
-          <Badge size="xs" colorPalette="green" variant="subtle">Confirmed</Badge>
-        ) : (
-          <Badge size="xs" colorPalette="orange" variant="solid">Needs confirmation</Badge>
-        )}
+        <HStack gap={1.5} wrap="wrap">
+          {confirmed ? (
+            <Badge size="xs" colorPalette="green" variant="subtle">Confirmed</Badge>
+          ) : (
+            <Badge size="xs" colorPalette="orange" variant="solid">Needs confirmation</Badge>
+          )}
+          {/* Messaging icons sit next to the "Needs confirmation" badge so the
+              copy + text/email actions are right where the user looks first. */}
+          {!confirmed && !forAdmin && (
+            <>
+              <Button
+                size="xs"
+                variant="ghost"
+                px="1"
+                minW="0"
+                title="Copy message"
+                onClick={() => { navigator.clipboard.writeText(msg); publishInlineMessage({ type: "SUCCESS", text: "Message copied." }); }}
+              >
+                <Copy size={12} />
+              </Button>
+              {contact?.phone ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="green"
+                  onClick={() => window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self")}
+                  title={`Text ${contact.phone}`}
+                >
+                  <MessageCircle size={12} /> Message
+                </Button>
+              ) : contact?.email ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="blue"
+                  onClick={() => window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self")}
+                  title={`Email ${contact.email}`}
+                >
+                  <Mail size={12} /> Message
+                </Button>
+              ) : null}
+            </>
+          )}
+        </HStack>
       </VStack>
 
-      {/* Actions */}
-      {!confirmed && !forAdmin && (
-        <VStack gap={1} flexShrink={0} align="end">
+      {/* Right column — Confirm (when needed) sits above the always-present View →
+          link, mirroring the right-side button layout used by OtherItem cards. */}
+      <VStack gap={1} flexShrink={0} align="end">
+        {!confirmed && !forAdmin && (
           <Button
             size="xs"
             variant="solid"
@@ -418,41 +546,67 @@ function ChecklistItem({
           >
             <Check size={12} /> Confirm
           </Button>
-          <HStack gap={1}>
-            <Button
-              size="xs"
-              variant="ghost"
-              px="1"
-              minW="0"
-              title="Copy message"
-              onClick={() => { navigator.clipboard.writeText(msg); publishInlineMessage({ type: "SUCCESS", text: "Message copied." }); }}
-            >
-              <Copy size={12} />
-            </Button>
-            {contact?.phone ? (
-              <Button
-                size="xs"
-                variant="outline"
-                colorPalette="green"
-                onClick={() => window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self")}
-                title={`Text ${contact.phone}`}
-              >
-                <MessageCircle size={12} /> Message
-              </Button>
-            ) : contact?.email ? (
-              <Button
-                size="xs"
-                variant="outline"
-                colorPalette="blue"
-                onClick={() => window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self")}
-                title={`Email ${contact.email}`}
-              >
-                <Mail size={12} /> Message
-              </Button>
-            ) : null}
-          </HStack>
-        </VStack>
-      )}
+        )}
+        <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)}>
+          View →
+        </Button>
+      </VStack>
+    </HStack>
+  );
+}
+
+/** Visual config per workflow type for the Other-section card. EVENT is included
+ *  here so the team view can render events through the same simple-card path. */
+function otherTypeConfig(workflow: string | null | undefined) {
+  switch (workflow) {
+    case "TASK":
+      return { label: "Task", Icon: ListChecks, palette: "blue" as const, bg: "blue.50", border: "blue.200", color: "var(--chakra-colors-blue-500)" };
+    case "REMINDER":
+      return { label: "Reminder", Icon: Bell, palette: "purple" as const, bg: "purple.50", border: "purple.200", color: "var(--chakra-colors-purple-500)" };
+    case "FOLLOWUP":
+      return { label: "Follow-up", Icon: Repeat, palette: "red" as const, bg: "red.50", border: "red.200", color: "var(--chakra-colors-red-500)" };
+    case "ANNOUNCEMENT":
+      return { label: "Announcement", Icon: Megaphone, palette: "purple" as const, bg: "purple.50", border: "purple.300", color: "var(--chakra-colors-purple-600)" };
+    case "EVENT":
+      return { label: "Event", Icon: CheckCircle2, palette: "yellow" as const, bg: "green.50", border: "green.200", color: "var(--chakra-colors-green-500)" };
+    default:
+      return { label: "Item", Icon: ListChecks, palette: "gray" as const, bg: "gray.50", border: "gray.200", color: "var(--chakra-colors-gray-500)" };
+  }
+}
+
+/** Simple non-actionable card for Tasks / Reminders / Follow-ups / Announcements. */
+function OtherItem({ occ, forAdmin, showTeam }: { occ: WorkerOccurrence; forAdmin?: boolean; showTeam?: boolean }) {
+  const cfg = otherTypeConfig(occ.workflow);
+  const propertyName = occ.job?.property?.displayName ?? null;
+  const title = occ.title ?? propertyName ?? "(untitled)";
+  const subtitle = occ.title && propertyName ? propertyName : null;
+  const team = showTeam ? assigneeSummary(occ.assignees) : null;
+
+  return (
+    <HStack
+      gap={2}
+      px={3}
+      py={2}
+      bg={cfg.bg}
+      borderWidth="1px"
+      borderColor={cfg.border}
+      borderRadius="md"
+      align="center"
+    >
+      <Box flexShrink={0}>
+        <cfg.Icon size={16} color={cfg.color} />
+      </Box>
+      <VStack align="start" gap={0} flex="1" minW={0}>
+        <HStack gap={1.5} wrap="wrap">
+          <Badge size="xs" colorPalette={cfg.palette} variant="subtle">{cfg.label}</Badge>
+          <Text fontSize="sm" fontWeight="medium" truncate>{title}</Text>
+        </HStack>
+        {subtitle && <Text fontSize="xs" color="fg.muted" truncate>{subtitle}</Text>}
+        {team && team !== "Unassigned" && <Text fontSize="xs" color="fg.muted" truncate>{team}</Text>}
+      </VStack>
+      <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)}>
+        View →
+      </Button>
     </HStack>
   );
 }
