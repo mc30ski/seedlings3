@@ -122,6 +122,12 @@ export default function HomePage() {
   const [jobsRemountKey, setJobsRemountKey] = useState(0);
   const [equipmentRemountKey, setEquipmentRemountKey] = useState(0);
   const [paymentsRemountKey, setPaymentsRemountKey] = useState(0);
+  // Admin-side remount counters — used by AdminHomeTab (which impersonates a worker)
+  // when its tile click-throughs route into admin tabs that need to re-read fresh
+  // localStorage filters.
+  const [adminJobsRemountKey, setAdminJobsRemountKey] = useState(0);
+  const [adminEquipmentRemountKey, setAdminEquipmentRemountKey] = useState(0);
+  const [adminPaymentsRemountKey, setAdminPaymentsRemountKey] = useState(0);
 
   // Auto-show worker Home tab on first open of the day (after 5am ET) or after ≥6h idle.
   // Updates `seedlings_lastAppOpenedAt` on every app load. Respects "snooze until next 5am ET".
@@ -573,7 +579,7 @@ export default function HomePage() {
       value: "admin-jobs",
       label: "Jobs",
       icon: FiClipboard,
-      content: wrapWithInlineMessage(<AdminJobsTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(<AdminJobsTab key={`ajobs-${adminJobsRemountKey}`} me={me} purpose="ADMIN" />),
     },
     {
       value: "jobs",
@@ -585,13 +591,13 @@ export default function HomePage() {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(<EquipmentTab key={`aeq-${adminEquipmentRemountKey}`} me={me} purpose="ADMIN" />),
     },
     {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="ADMIN" />),
+      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" />),
     },
     {
       value: "clients",
@@ -1379,6 +1385,30 @@ export default function HomePage() {
     };
     window.addEventListener("navigate:workerTab", onNav as EventListener);
     return () => window.removeEventListener("navigate:workerTab", onNav as EventListener);
+  }, []);
+
+  // Mirror handler for admin tab navigation. Used by AdminHomeTab's tile click-throughs
+  // (which target admin tabs filtered to the impersonated worker). Same remount-on-demand
+  // pattern as the worker version — caller pre-writes localStorage, we bump the key.
+  useEffect(() => {
+    const onNav = (e: Event) => {
+      const { tab, remount } = (e as CustomEvent).detail || {};
+      if (!tab) return;
+      const current = getCurrentNavState();
+      const wouldChange = current.outer !== "admin" || current.inner !== tab;
+      if (wouldChange) pushNavHistory(current);
+      programmaticNavRef.current = true;
+      setTopTab("admin");
+      setAdminInnerTab(tab as any);
+      if (remount) {
+        if (tab === "admin-jobs") setAdminJobsRemountKey((k) => k + 1);
+        else if (tab === "equipment") setAdminEquipmentRemountKey((k) => k + 1);
+        else if (tab === "payments") setAdminPaymentsRemountKey((k) => k + 1);
+      }
+      setTimeout(() => { programmaticNavRef.current = false; }, 50);
+    };
+    window.addEventListener("navigate:adminTab", onNav as EventListener);
+    return () => window.removeEventListener("navigate:adminTab", onNav as EventListener);
   }, []);
 
   // Listen for "launch New Job Setup with estimate defaults" from JobsTab

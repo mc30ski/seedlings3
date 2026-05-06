@@ -119,7 +119,9 @@ export default async function workerRoutes(app: FastifyInstance) {
           // All non-canceled / non-archived today (incl. completed). The tile is meant
           // to reflect "how many jobs were for today" overall, not just remaining work.
           status: { notIn: ["CANCELED", "ARCHIVED"] as any },
-          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          // Include STANDARD/ONE_OFF/ESTIMATE to match the JobsTab feed click-through —
+          // an ESTIMATE today is still "a job today" from the worker's perspective.
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
         },
       }),
       prisma.jobOccurrence.count({
@@ -145,11 +147,16 @@ export default async function workerRoutes(app: FastifyInstance) {
           startAt: { gte: lookbackStart },
         },
       }),
+      // Reminders due — exclude reminders attached to finished occurrences (the work is
+      // already done; those reminders are stale until the user dismisses them).
       prisma.reminder.count({
         where: {
           userId: uid,
           dismissedAt: null,
           remindAt: { lte: now },
+          occurrence: {
+            status: { notIn: ["COMPLETED", "CLOSED", "PENDING_PAYMENT", "ARCHIVED", "CANCELED"] as any },
+          },
         },
       }),
       prisma.jobOccurrence.count({
@@ -165,7 +172,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myWorkingOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
-          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
         },
         select: {
           price: true,
@@ -230,7 +237,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
-          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
         },
       }),
       // Today's completed real jobs — used to compute "X earned" alongside "remaining potential".
@@ -240,7 +247,7 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myWorkingOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
-          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
         },
         select: {
           price: true,
@@ -587,11 +594,22 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
-    const { from, to, includeOccId } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string };
+    const { from, to, includeOccId, viewAsUserId } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string };
     const occs = await services.jobs.listAllOccurrences({ from, to });
 
     // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
-    const uid = await currentUserId(req);
+    const callerUid = await currentUserId(req);
+    // Admin override: when an admin requests jobs filtered to a specific worker (e.g.
+    // from AdminHomeTab → AdminJobsTab impersonation), load that worker's pins/likes/
+    // reminders/observerships instead of the admin's. Otherwise reminder ghosts and
+    // attached-reminder badges would belong to the admin and miss what the worker sees.
+    let uid = callerUid;
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({ where: { id: callerUid }, include: { roles: true } });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's occurrences.");
+      uid = viewAsUserId;
+    }
     const [pins, likes, reminders, observedAssignments] = await Promise.all([
       prisma.pinnedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),
       prisma.likedOccurrence.findMany({ where: { userId: uid }, select: { occurrenceId: true } }),

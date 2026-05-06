@@ -150,9 +150,10 @@ export default function AdminHomeTab({ me }: { me?: Me | null }) {
           key={selectedWorker}
           me={me}
           viewAsUserId={selectedWorker}
+          viewAsDisplayName={workerNameMap[selectedWorker]}
           // Admin-as-worker view doesn't run worker workflows — the admin shouldn't
           // be triggering "begin-workday" on the selected worker's behalf. HomeTab
-          // already disables click-throughs when viewAsUserId is set; this onLaunch
+          // disables those specific hero CTAs when viewAsUserId is set; this onLaunch
           // remains as a no-op fallback.
           onLaunchWorkflow={() => {}}
         />
