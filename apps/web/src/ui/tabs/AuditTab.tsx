@@ -12,7 +12,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, CheckCircle2, ExternalLink, Search } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Info, Search } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -20,38 +20,52 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
 
-const AUDIT_CHECKS = [
+type Severity = "issue" | "warning" | "info";
+
+const AUDIT_CHECKS: ReadonlyArray<{ id: string; label: string; description: string; severity: Severity }> = [
   {
     id: "duplicate_clients",
     label: "Duplicate Client Names",
     description: "Finds clients with the same name that may be duplicates.",
+    severity: "issue",
   },
   {
     id: "duplicate_properties",
     label: "Duplicate Properties",
     description: "Finds properties with the same address that may be duplicates.",
+    severity: "issue",
   },
   {
     id: "duplicate_jobs",
     label: "Duplicate Service Jobs",
     description: "Finds multiple active jobs of the same type on the same property.",
+    severity: "issue",
   },
   {
     id: "duplicate_occurrences",
     label: "Duplicate Repeating Occurrences",
     description: "Finds SCHEDULED occurrences on the same job within 2 days of each other that may be accidental duplicates.",
+    severity: "issue",
   },
   {
     id: "missing_next_occurrence",
     label: "Missing Next Repeating Occurrence",
     description: "Finds repeating jobs completed in the last 2 months that don't have a next SCHEDULED occurrence — the auto-create may have failed.",
+    severity: "warning",
   },
   {
     id: "time_estimate_mismatch",
     label: "Time Estimate Mismatch",
     description: "Finds repeating jobs whose average actual time differs from the estimate by more than 25%. Requires at least 3 completed occurrences for a meaningful average.",
+    severity: "warning",
   },
-] as const;
+  {
+    id: "unclaimed_no_guidance",
+    label: "Unclaimed Jobs Without Guidance",
+    description: "Finds unclaimed SCHEDULED jobs that don't have any property photos with descriptions. Adding guidance helps workers know what to do when they pick up a job.",
+    severity: "info",
+  },
+];
 
 type AuditIssue = { id?: string; description: string; clientId?: string; jobId?: string; occurrenceId?: string };
 type AuditResult = {
@@ -112,7 +126,18 @@ export default function AuditTab() {
     }
   }
 
-  const totalIssues = results?.reduce((sum, r) => sum + r.issues.length, 0) ?? 0;
+  // Helpers to bucket by severity. Lookups against AUDIT_CHECKS — falls back to
+  // "issue" if the server returns a check id we don't recognize (defensive).
+  function severityFor(checkId: string): Severity {
+    return AUDIT_CHECKS.find((c) => c.id === checkId)?.severity ?? "issue";
+  }
+  const issueResults = (results ?? []).filter((r) => severityFor(r.check) === "issue");
+  const warningResults = (results ?? []).filter((r) => severityFor(r.check) === "warning");
+  const infoResults = (results ?? []).filter((r) => severityFor(r.check) === "info");
+  const issueCount = issueResults.reduce((s, r) => s + r.issues.length, 0);
+  const warningCount = warningResults.reduce((s, r) => s + r.issues.length, 0);
+  const infoCount = infoResults.reduce((s, r) => s + r.issues.length, 0);
+  const totalIssues = issueCount + warningCount + infoCount;
 
   return (
     <Box>
@@ -155,7 +180,16 @@ export default function AuditTab() {
                   </Checkbox.Control>
                 </Checkbox.Root>
                 <Box flex="1">
-                  <Text fontSize="sm" fontWeight="medium">{check.label}</Text>
+                  <HStack gap={2} mb={0.5}>
+                    <Text fontSize="sm" fontWeight="medium">{check.label}</Text>
+                    <Badge
+                      size="xs"
+                      colorPalette={check.severity === "info" ? "blue" : check.severity === "warning" ? "yellow" : "orange"}
+                      variant="subtle"
+                    >
+                      {check.severity === "info" ? "Info" : check.severity === "warning" ? "Warning" : "Issue"}
+                    </Badge>
+                  </HStack>
                   <Text fontSize="xs" color="fg.muted">{check.description}</Text>
                 </Box>
               </HStack>
@@ -179,16 +213,30 @@ export default function AuditTab() {
       {/* Results */}
       {results && (
         <Box>
-          <HStack gap={2} mb={1}>
+          <HStack gap={2} mb={1} wrap="wrap">
             <Text fontWeight="bold" fontSize="md">Results</Text>
             {totalIssues === 0 ? (
               <Badge colorPalette="green" variant="solid" fontSize="xs" px="2" borderRadius="full">
                 <CheckCircle2 size={12} style={{ marginRight: 4 }} /> All Clear
               </Badge>
             ) : (
-              <Badge colorPalette="red" variant="solid" fontSize="xs" px="2" borderRadius="full">
-                <AlertTriangle size={12} style={{ marginRight: 4 }} /> {totalIssues} issue{totalIssues !== 1 ? "s" : ""} found
-              </Badge>
+              <>
+                {issueCount > 0 && (
+                  <Badge colorPalette="red" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                    <AlertTriangle size={12} style={{ marginRight: 4 }} /> {issueCount} issue{issueCount !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+                {warningCount > 0 && (
+                  <Badge colorPalette="yellow" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                    <AlertCircle size={12} style={{ marginRight: 4 }} /> {warningCount} warning{warningCount !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+                {infoCount > 0 && (
+                  <Badge colorPalette="blue" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                    <Info size={12} style={{ marginRight: 4 }} /> {infoCount} info
+                  </Badge>
+                )}
+              </>
             )}
           </HStack>
           {ranAt && (
@@ -197,25 +245,85 @@ export default function AuditTab() {
             </Text>
           )}
 
-          <VStack align="stretch" gap={3}>
-            {results.map((r) => (
-              <Card.Root key={r.check} variant="outline" borderColor={r.issues.length > 0 ? "orange.300" : "green.300"}>
+          {issueResults.length > 0 && (
+            <Box mb={4}>
+              <HStack gap={2} mb={2}>
+                <AlertTriangle size={14} color="var(--chakra-colors-orange-500)" />
+                <Text fontWeight="semibold" fontSize="sm" color="orange.700">Issues</Text>
+                <Text fontSize="xs" color="fg.muted">— things that may need fixing</Text>
+              </HStack>
+              <VStack align="stretch" gap={3}>
+                {issueResults.map((r) => renderResultCard(r))}
+              </VStack>
+            </Box>
+          )}
+          {warningResults.length > 0 && (
+            <Box mb={4}>
+              <HStack gap={2} mb={2}>
+                <AlertCircle size={14} color="var(--chakra-colors-yellow-600)" />
+                <Text fontWeight="semibold" fontSize="sm" color="yellow.700">Warnings</Text>
+                <Text fontSize="xs" color="fg.muted">— heads-up items worth a look</Text>
+              </HStack>
+              <VStack align="stretch" gap={3}>
+                {warningResults.map((r) => renderResultCard(r))}
+              </VStack>
+            </Box>
+          )}
+          {infoResults.length > 0 && (
+            <Box>
+              <HStack gap={2} mb={2}>
+                <Info size={14} color="var(--chakra-colors-blue-500)" />
+                <Text fontWeight="semibold" fontSize="sm" color="blue.700">Information</Text>
+                <Text fontSize="xs" color="fg.muted">— FYI, not problems</Text>
+              </HStack>
+              <VStack align="stretch" gap={3}>
+                {infoResults.map((r) => renderResultCard(r))}
+              </VStack>
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+
+  function renderResultCard(r: AuditResult) {
+    const severity = AUDIT_CHECKS.find((c) => c.id === r.check)?.severity ?? "issue";
+    // Per-severity visual config — keeps the rest of the rendering palette-agnostic.
+    const cfg = severity === "info"
+      ? { palette: "blue", border: "blue.300", bg: "blue.50", iconColor: "var(--chakra-colors-blue-500)", Icon: Info, label: "Info", noun: "info" }
+      : severity === "warning"
+        ? { palette: "yellow", border: "yellow.300", bg: "yellow.50", iconColor: "var(--chakra-colors-yellow-600)", Icon: AlertCircle, label: "Warning", noun: "warning" }
+        : { palette: "orange", border: "orange.300", bg: "orange.50", iconColor: "var(--chakra-colors-orange-500)", Icon: AlertTriangle, label: "Issue", noun: "issue" };
+    const palette = r.issues.length === 0 ? "green" : cfg.palette;
+    const borderColor = r.issues.length === 0 ? "green.300" : cfg.border;
+    const issueBg = cfg.bg;
+    const iconColor = cfg.iconColor;
+    const IssueIcon = cfg.Icon;
+    return (
+              <Card.Root key={r.check} variant="outline" borderColor={borderColor}>
                 <Card.Body p={4}>
                   <HStack justify="space-between" mb={r.issues.length > 0 ? 2 : 0}>
-                    <Text fontWeight="semibold" fontSize="sm">{r.label}</Text>
+                    <HStack gap={2}>
+                      <Text fontWeight="semibold" fontSize="sm">{r.label}</Text>
+                      <Badge size="xs" colorPalette={cfg.palette} variant="subtle">
+                        {cfg.label}
+                      </Badge>
+                    </HStack>
                     {r.issues.length === 0 ? (
-                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">No issues</Badge>
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        None
+                      </Badge>
                     ) : (
-                      <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                        {r.issues.length} issue{r.issues.length !== 1 ? "s" : ""}
+                      <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {r.issues.length} {cfg.noun}{cfg.noun === "info" ? "" : (r.issues.length !== 1 ? "s" : "")}
                       </Badge>
                     )}
                   </HStack>
                   {r.issues.length > 0 && (
                     <VStack align="stretch" gap={1}>
                       {r.issues.map((issue, i) => (
-                        <HStack key={i} gap={2} p={2} bg="orange.50" rounded="sm" fontSize="xs">
-                          <AlertTriangle size={12} style={{ flexShrink: 0, color: "var(--chakra-colors-orange-500)" }} />
+                        <HStack key={i} gap={2} p={2} bg={issueBg} rounded="sm" fontSize="xs">
+                          <IssueIcon size={12} style={{ flexShrink: 0, color: iconColor }} />
                           <Text flex="1">{issue.description}</Text>
                           <HStack gap={1} flexShrink={0}>
                             {issue.clientId && (
@@ -266,10 +374,6 @@ export default function AuditTab() {
                   )}
                 </Card.Body>
               </Card.Root>
-            ))}
-          </VStack>
-        </Box>
-      )}
-    </Box>
-  );
+    );
+  }
 }

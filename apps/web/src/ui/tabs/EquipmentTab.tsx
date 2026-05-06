@@ -986,13 +986,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           {!highlightId && isWorkerView && likedOnly && (
             <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
           )}
-          {!highlightId && forAdmin && workerFilter.length > 0 && (
-            <Badge size="sm" colorPalette="blue" variant="solid">
-              {workerFilter.length === 1
-                ? `Worker: ${adminWorkerName(workerFilter[0])}`
-                : `${workerFilter.length} workers`}
+          {!highlightId && forAdmin && workerFilter.map((id) => (
+            <Badge key={id} size="sm" colorPalette="blue" variant="solid">
+              {adminWorkerName(id)}
             </Badge>
-          )}
+          ))}
           <Badge
             size="sm"
             colorPalette="red"

@@ -2877,6 +2877,46 @@ Respond ONLY with valid JSON in this exact format:
       results.push({ check: "time_estimate_mismatch", label: "Time Estimate Mismatch", issues });
     }
 
+    if (checks.includes("unclaimed_no_guidance")) {
+      // Unclaimed (no assignees) SCHEDULED real jobs with no guidance — guidance is
+      // defined as at least one OccurrencePropertyPhoto whose underlying PropertyPhoto
+      // has a non-empty description (the photo+description pattern that explains how
+      // to do the job).
+      const occurrences = await prisma.jobOccurrence.findMany({
+        where: {
+          status: "SCHEDULED",
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          isAdminOnly: false,
+          assignees: { none: {} },
+        },
+        include: {
+          job: {
+            include: {
+              property: { select: { displayName: true, client: { select: { displayName: true } } } },
+            },
+          },
+          propertyPhotos: {
+            include: { propertyPhoto: { select: { description: true } } },
+          },
+        },
+      });
+      const issues: AuditIssue[] = [];
+      for (const occ of occurrences) {
+        const hasGuidance = (occ.propertyPhotos ?? []).some(
+          (pp) => !!pp.propertyPhoto?.description?.trim(),
+        );
+        if (hasGuidance) continue;
+        const propertyName = (occ.job?.property as any)?.displayName ?? "Unknown property";
+        const clientName = (occ.job?.property as any)?.client?.displayName ?? "";
+        issues.push({
+          jobId: occ.jobId ?? undefined,
+          occurrenceId: occ.id,
+          description: `${propertyName}${clientName ? ` (${clientName})` : ""}: unclaimed and no guidance (photos with descriptions) set.`,
+        });
+      }
+      results.push({ check: "unclaimed_no_guidance", label: "Unclaimed Jobs Without Guidance", issues });
+    }
+
     return { results };
   });
 

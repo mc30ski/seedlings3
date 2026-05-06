@@ -23,6 +23,13 @@ type Props = {
   me?: Me | null;
   showAll?: boolean;
   forAdmin?: boolean;
+  // Admin team-overview mode. Renders a single combined list sorted by start time
+  // (instead of the per-worker Jobs/Estimates/Events sections). When `visibleUserIds`
+  // is non-empty, the list is further filtered to those assignees; otherwise all
+  // assigned tomorrow occurrences are shown. The per-worker view (no `teamView`)
+  // is unchanged.
+  teamView?: boolean;
+  visibleUserIds?: string[];
 };
 
 function tomorrowDate(): { key: string; label: string } {
@@ -75,7 +82,7 @@ function needsConfirm(occ: WorkerOccurrence): boolean {
   return w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
 }
 
-export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
+export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, visibleUserIds }: Props) {
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -115,6 +122,13 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
       rows = rows.filter((occ) => (occ.assignees ?? []).length > 0);
     }
 
+    // Team-view: optional restriction to a specific subset of workers (multi-select).
+    // Empty/absent visibleUserIds means "no restriction" (all workers).
+    if (teamView && visibleUserIds && visibleUserIds.length > 0) {
+      const ids = new Set(visibleUserIds);
+      rows = rows.filter((occ) => (occ.assignees ?? []).some((a) => ids.has(a.userId)));
+    }
+
     // Tomorrow + SCHEDULED/ACCEPTED only
     rows = rows.filter((occ) => {
       if (!occ.startAt) return false;
@@ -126,22 +140,40 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
     rows = rows.filter((occ) => occ.workflow !== "ANNOUNCEMENT");
 
     return rows;
-  }, [items, myId, showAll, tomorrowKey]);
+  }, [items, myId, showAll, tomorrowKey, teamView, visibleUserIds]);
 
-  // Group by type
+  // Group by type (per-worker view)
   const jobs = tomorrowItems.filter((occ) => occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF" || !occ.workflow);
   const estimates = tomorrowItems.filter((occ) => occ.workflow === "ESTIMATE" || occ.isEstimate);
   const events = tomorrowItems.filter((occ) => occ.workflow === "EVENT");
 
-  const hasItems = jobs.length > 0 || estimates.length > 0 || events.length > 0;
+  // Team view: single combined list sorted by start time, with no-startAt items at the bottom.
+  const teamList = useMemo(() => {
+    if (!teamView) return [];
+    return [...tomorrowItems].sort((a, b) => {
+      const aHas = !!a.startAt;
+      const bHas = !!b.startAt;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (!aHas) return 0;
+      return new Date(a.startAt as any).getTime() - new Date(b.startAt as any).getTime();
+    });
+  }, [teamView, tomorrowItems]);
 
-  // Progress tracking
-  const totalItems = jobs.length + estimates.length + events.length + (hasItems ? 1 : 0); // +1 for route
+  const hasItems = teamView ? teamList.length > 0 : (jobs.length > 0 || estimates.length > 0 || events.length > 0);
+
+  // Progress tracking. Team view tracks team-wide confirmation progress only —
+  // no route step (routes are per-worker). Per-worker view keeps the existing
+  // jobs+estimates+events+route progression so its UI is unchanged.
+  const totalItems = teamView
+    ? teamList.length
+    : jobs.length + estimates.length + events.length + (hasItems ? 1 : 0);
   const checkedJobs = jobs.filter((occ) => !needsConfirm(occ)).length;
   const checkedEstimates = estimates.filter((occ) => !needsConfirm(occ)).length;
   const checkedEvents = events.length; // always checked
   const checkedRoute = routeViewed ? 1 : 0;
-  const checkedCount = checkedJobs + checkedEstimates + checkedEvents + (hasItems ? checkedRoute : 0);
+  const checkedCount = teamView
+    ? teamList.filter((occ) => !needsConfirm(occ)).length
+    : checkedJobs + checkedEstimates + checkedEvents + (hasItems ? checkedRoute : 0);
   const allDone = hasItems && checkedCount === totalItems;
 
   async function handleConfirm(occ: WorkerOccurrence) {
@@ -205,13 +237,28 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
       {/* No items */}
       {!hasItems && (
         <Box p={6} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md" textAlign="center">
-          <Text fontSize="md" fontWeight="semibold" color="fg.muted">All clear for tomorrow</Text>
-          <Text fontSize="sm" color="fg.muted" mt={1}>No jobs, estimates, or events scheduled.</Text>
+          <Text fontSize="md" fontWeight="semibold" color="fg.muted">
+            {teamView ? "No team jobs scheduled tomorrow" : "All clear for tomorrow"}
+          </Text>
+          <Text fontSize="sm" color="fg.muted" mt={1}>
+            {teamView ? "No assignments across the team for tomorrow." : "No jobs, estimates, or events scheduled."}
+          </Text>
         </Box>
       )}
 
-      {/* Jobs section */}
-      {jobs.length > 0 && (
+      {/* Team view: single combined list sorted by start time */}
+      {teamView && teamList.length > 0 && (
+        <Box mb={4}>
+          <VStack align="stretch" gap={1}>
+            {teamList.map((occ) => (
+              <ChecklistItem key={occ.id} occ={occ} forAdmin={forAdmin} onConfirm={handleConfirm} busy={busyId === occ.id} />
+            ))}
+          </VStack>
+        </Box>
+      )}
+
+      {/* Per-worker view: grouped sections (Jobs / Estimates / Events) */}
+      {!teamView && jobs.length > 0 && (
         <Box mb={4}>
           <Text fontSize="xs" fontWeight="semibold" color="blue.600" mb={2} textTransform="uppercase" letterSpacing="wide">
             Jobs ({jobs.length})
@@ -225,7 +272,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
       )}
 
       {/* Estimates section */}
-      {estimates.length > 0 && (
+      {!teamView && estimates.length > 0 && (
         <Box mb={4}>
           <Text fontSize="xs" fontWeight="semibold" color="pink.600" mb={2} textTransform="uppercase" letterSpacing="wide">
             Estimates ({estimates.length})
@@ -239,7 +286,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
       )}
 
       {/* Events section */}
-      {events.length > 0 && (
+      {!teamView && events.length > 0 && (
         <Box mb={4}>
           <Text fontSize="xs" fontWeight="semibold" color="yellow.700" mb={2} textTransform="uppercase" letterSpacing="wide">
             Events ({events.length})
@@ -267,8 +314,8 @@ export default function RemindersTab({ myId, me, showAll, forAdmin }: Props) {
         </Box>
       )}
 
-      {/* Route section */}
-      {hasItems && (
+      {/* Route section — per-worker only; routes are individual, no team-wide route */}
+      {!teamView && hasItems && (
         <Box mb={4}>
           <Text fontSize="xs" fontWeight="semibold" color="cyan.700" mb={2} textTransform="uppercase" letterSpacing="wide">
             Route
