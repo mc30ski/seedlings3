@@ -732,7 +732,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const quickDateItems = useMemo(
     () =>
       forAdmin
-        ? [...quickDateItemsBase, { label: "All time", value: "all" }]
+        ? [...quickDateItemsBase, { label: "This year", value: "thisYear" }, { label: "All time", value: "all" }]
         : quickDateItemsBase,
     [forAdmin]
   );
