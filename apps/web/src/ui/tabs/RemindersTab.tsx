@@ -393,7 +393,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
                 colorPalette="cyan"
                 onClick={goToRoutes}
               >
-                <Navigation size={12} /> {routeViewed ? "View Again" : "Plan Route"}
+                <Navigation size={12} /> Plan
               </Button>
             )}
           </HStack>
@@ -423,7 +423,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
             ) : (
               <Circle size={16} color="var(--chakra-colors-gray-400)" />
             )}
-            <Text fontSize="sm" fontWeight="medium" flex="1">Walk through Plan Next Work Day</Text>
+            <Text fontSize="sm" fontWeight="medium" flex="1">Plan next work day</Text>
             {!forAdmin && (
               <Button
                 size="xs"
@@ -431,7 +431,7 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
                 colorPalette="blue"
                 onClick={launchPlanWorkdayWorkflow}
               >
-                <Play size={12} /> {workflowLaunched ? "Launch Again" : "Start Workflow"}
+                <Play size={12} /> Start
               </Button>
             )}
           </HStack>
@@ -512,20 +512,24 @@ function ChecklistItem({
                   size="xs"
                   variant="outline"
                   colorPalette="green"
+                  px="1"
+                  minW="0"
                   onClick={() => window.open(`sms:${contact.phone}?body=${encodeURIComponent(msg)}`, "_self")}
                   title={`Text ${contact.phone}`}
                 >
-                  <MessageCircle size={12} /> Message
+                  <MessageCircle size={12} />
                 </Button>
               ) : contact?.email ? (
                 <Button
                   size="xs"
                   variant="outline"
                   colorPalette="blue"
+                  px="1"
+                  minW="0"
                   onClick={() => window.open(`mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Service Confirmation")}&body=${encodeURIComponent(msg)}`, "_self")}
                   title={`Email ${contact.email}`}
                 >
-                  <Mail size={12} /> Message
+                  <Mail size={12} />
                 </Button>
               ) : null}
             </>
@@ -597,14 +601,14 @@ function OtherItem({ occ, forAdmin, showTeam }: { occ: WorkerOccurrence; forAdmi
         <cfg.Icon size={16} color={cfg.color} />
       </Box>
       <VStack align="start" gap={0} flex="1" minW={0}>
-        <HStack gap={1.5} wrap="wrap">
-          <Badge size="xs" colorPalette={cfg.palette} variant="subtle">{cfg.label}</Badge>
-          <Text fontSize="sm" fontWeight="medium" truncate>{title}</Text>
+        <HStack gap={1.5} w="full" minW={0}>
+          <Badge size="xs" colorPalette={cfg.palette} variant="subtle" flexShrink={0}>{cfg.label}</Badge>
+          <Text fontSize="sm" fontWeight="medium" truncate flex="1" minW={0}>{title}</Text>
         </HStack>
-        {subtitle && <Text fontSize="xs" color="fg.muted" truncate>{subtitle}</Text>}
-        {team && team !== "Unassigned" && <Text fontSize="xs" color="fg.muted" truncate>{team}</Text>}
+        {subtitle && <Text fontSize="xs" color="fg.muted" truncate w="full">{subtitle}</Text>}
+        {team && team !== "Unassigned" && <Text fontSize="xs" color="fg.muted" truncate w="full">{team}</Text>}
       </VStack>
-      <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)}>
+      <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)} flexShrink={0}>
         View →
       </Button>
     </HStack>
