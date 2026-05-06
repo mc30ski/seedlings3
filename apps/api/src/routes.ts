@@ -145,8 +145,13 @@ export async function registerRoutes(app: FastifyInstance) {
     done();
   });
 
-  // ---------- Cron routes (registered at both /api/cron/* and /cron/* for Vercel compatibility)
+  // ---------- Cron routes — registered at BOTH `/cron/*` and `/api/cron/*` so
+  // local testing can hit either path and Vercel Cron's expected `/api/cron/*`
+  // path (per vercel.json) actually resolves. cronRoutes registers child routes
+  // at `/cron/<name>`, so the second registration uses prefix `/api` to make
+  // them resolvable at `/api/cron/<name>`.
   await app.register(cronRoutes);
+  await app.register(cronRoutes, { prefix: "/api" });
 
   // ---------- Register all API endpoints
   await app.register(
