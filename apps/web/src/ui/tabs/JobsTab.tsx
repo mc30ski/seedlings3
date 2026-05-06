@@ -1138,33 +1138,73 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showAnnouncements", onShow);
   }, [applyAnnouncements]);
 
+  // Apply the highlight: clear filters, set a date range covering the occurrence,
+  // fetch with includeOccId. Shared by both the legacy event listener (OAuth
+  // deep-link path) and the localStorage handoff from in-app "View →" links.
+  //
+  // We use a NARROW range (anchorAt ± 30 days) when an anchor date is known,
+  // because worker mode's clampWorkerDates caps any range over 62 days — a wide
+  // ±1 year range would clamp to the wrong window and miss the occurrence even
+  // with includeOccId, since the follow-up `[dateFrom, dateTo, ...]` effect
+  // would re-load with the clamped range and wipe the result. A 60-day window
+  // stays under the cap and survives that re-load. When no anchor is known we
+  // fall back to the wide range (the OAuth deep-link case).
+  function applyHighlight(occId: string, anchorAt?: string | null) {
+    setHighlightOccId(occId);
+    setExpandedCards(new Set([occId]));
+    setFilterJobId(null);
+    setQ("");
+    setOverdueActive(false);
+    setDatePreset(null);
+    let fromStr: string;
+    let toStr: string;
+    if (anchorAt) {
+      const anchor = new Date(anchorAt);
+      const from = new Date(anchor); from.setDate(from.getDate() - 30);
+      const to = new Date(anchor); to.setDate(to.getDate() + 30);
+      fromStr = bizDateKey(from);
+      toStr = bizDateKey(to);
+    } else {
+      const from = new Date(); from.setFullYear(from.getFullYear() - 1);
+      const to = new Date(); to.setFullYear(to.getFullYear() + 1);
+      fromStr = bizDateKey(from);
+      toStr = bizDateKey(to);
+    }
+    setDateFrom(fromStr);
+    setDateTo(toStr);
+    void load(true, { from: fromStr, to: toStr }, occId);
+  }
+
   // Deep-link: highlight a specific occurrence (from calendar feed URL or share link)
   useEffect(() => {
     (window as any).__jobsTabReady = true;
     const handler = (e: Event) => {
       const occId = (e as CustomEvent<{ occId: string }>).detail?.occId;
       if (!occId) return;
-      setHighlightOccId(occId);
-      setExpandedCards(new Set([occId]));
-      setFilterJobId(null);
-      setQ("");
-      setOverdueActive(false);
-      setDatePreset(null);
-      // Use a very wide date range to ensure we find the occurrence regardless of when it was scheduled
-      // For admin, no clamping. For worker, clampWorkerDates will cap at ~2 months so we also pass keepOccId.
-      const from = new Date(); from.setFullYear(from.getFullYear() - 1);
-      const to = new Date(); to.setFullYear(to.getFullYear() + 1);
-      const fromStr = bizDateKey(from);
-      const toStr = bizDateKey(to);
-      setDateFrom(fromStr);
-      setDateTo(toStr);
-      void load(true, { from: fromStr, to: toStr }, occId);
+      applyHighlight(occId);
     };
     window.addEventListener("jobsTab:highlightOcc", handler);
     return () => {
       (window as any).__jobsTabReady = false;
       window.removeEventListener("jobsTab:highlightOcc", handler);
     };
+  }, []);
+
+  // In-app handoff: RemindersTab's "View →" links pre-write `<occId>|<startAt>`
+  // to localStorage and force a remount. This effect runs once on every fresh
+  // mount, consumes the key, and applies the highlight with a narrow date range
+  // anchored on startAt — that prevents clampWorkerDates from clobbering the
+  // range. The OAuth deep-link path keeps using the event listener above.
+  useEffect(() => {
+    let pending: string | null = null;
+    try { pending = localStorage.getItem("seedlings_jobs_pendingHighlight"); } catch {}
+    if (!pending) return;
+    try { localStorage.removeItem("seedlings_jobs_pendingHighlight"); } catch {}
+    const sepIdx = pending.indexOf("|");
+    const occId = sepIdx >= 0 ? pending.slice(0, sepIdx) : pending;
+    const anchor = sepIdx >= 0 ? pending.slice(sepIdx + 1) : "";
+    applyHighlight(occId, anchor || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refreshOverdueCount() {

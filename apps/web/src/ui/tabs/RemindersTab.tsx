@@ -76,22 +76,18 @@ function assigneeSummary(assignees: WorkerOccurrence["assignees"]): string {
 /** Switch to the Jobs tab (admin or worker) and highlight a specific occurrence.
  *  Used by every "View →" link in the Planning tab.
  *
- *  Polls for `window.__jobsTabReady` before dispatching `jobsTab:highlightOcc`
- *  so the highlight fires only once JobsTab's listener is registered. A fixed
- *  setTimeout would race the destination tab's mount on slower devices. */
-function viewOnJobs(occId: string, forAdmin?: boolean) {
+ *  Encodes `<occId>|<startAt>` in localStorage so JobsTab's mount-time consumer
+ *  can use a NARROW date range (startAt ± a few days) for the fetch — that
+ *  matters for workers because the JobsTab `clampWorkerDates` helper clamps any
+ *  range over 62 days, and a wide range gets clamped to the wrong window. The
+ *  narrow range stays within the cap, fetches the right day, and survives the
+ *  follow-up `[dateFrom, dateTo, ...]` re-load that would otherwise wipe a
+ *  wide-range result. */
+function viewOnJobs(occId: string, startAt: string | null | undefined, forAdmin?: boolean) {
+  try { localStorage.setItem("seedlings_jobs_pendingHighlight", `${occId}|${startAt ?? ""}`); } catch {}
   const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
   const tab = forAdmin ? "admin-jobs" : "jobs";
-  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab } }));
-  let attempts = 0;
-  const maxAttempts = 30; // 30 × 100ms = 3 seconds max
-  const interval = setInterval(() => {
-    attempts++;
-    if ((window as any).__jobsTabReady || attempts >= maxAttempts) {
-      clearInterval(interval);
-      window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId } }));
-    }
-  }, 100);
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab, remount: true } }));
 }
 
 /** Does this occurrence need client confirmation? */
@@ -560,7 +556,7 @@ function ChecklistItem({
             <Check size={12} /> Confirm
           </Button>
         )}
-        <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)}>
+        <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, occ.startAt, forAdmin)}>
           View →
         </Button>
       </VStack>
@@ -617,7 +613,7 @@ function OtherItem({ occ, forAdmin, showTeam }: { occ: WorkerOccurrence; forAdmi
         {subtitle && <Text fontSize="xs" color="fg.muted" truncate w="full">{subtitle}</Text>}
         {team && team !== "Unassigned" && <Text fontSize="xs" color="fg.muted" truncate w="full">{team}</Text>}
       </VStack>
-      <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, forAdmin)} flexShrink={0}>
+      <Button size="xs" variant="ghost" colorPalette="blue" onClick={() => viewOnJobs(occ.id, occ.startAt, forAdmin)} flexShrink={0}>
         View →
       </Button>
     </HStack>
