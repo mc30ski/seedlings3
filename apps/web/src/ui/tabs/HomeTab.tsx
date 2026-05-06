@@ -15,9 +15,13 @@ type Props = {
   me: Me | null | undefined;
   onLaunchWorkflow: (name: string) => void;
   // Admin-only: when set, the dashboard is computed for this worker instead of the
-  // logged-in user. Hero CTAs are non-actionable in this mode (no startWorkday etc.)
-  // since the actions belong to the viewed worker, not the admin.
+  // logged-in user. Hero CTAs that launch worker workflows (begin/plan workday) are
+  // disabled in this mode since the actions belong to the viewed worker. Tile click-
+  // throughs are rerouted to the admin's equivalent tabs, pre-filtered to the worker.
   viewAsUserId?: string;
+  // Admin-only: display name + first name for the impersonated worker (drives the
+  // greeting copy "Good morning, Bob" instead of using the admin's identity).
+  viewAsDisplayName?: string;
 };
 
 type Summary = {
@@ -57,17 +61,29 @@ const setLS = (key: string, val: unknown) => {
 
 /** Pre-write filter values to a tab's localStorage so the tab opens with the right state on remount.
  *  Resets every relevant key (so prior values can't leak across taps) and dispatches a `remount` flag
- *  with the navigation event. The destination tab is force-remounted, reading its fresh state on first render. */
-function navigateWithFilter(tab: "jobs" | "equipment" | "payments", filter: TabFilter) {
+ *  with the navigation event. The destination tab is force-remounted, reading its fresh state on first render.
+ *
+ *  When `adminViewAsUserId` is provided, the filter writes to ADMIN tab keys (ajobs_*, pay_a_*, equip_a_*)
+ *  and dispatches `navigate:adminTab` instead of `navigate:workerTab`. Worker-impersonation keys
+ *  (`adminjobs_workers`, `pay_a_persons`) are also pre-written so the destination admin tab is
+ *  filtered to that single worker.
+ */
+function navigateWithFilter(
+  tab: "jobs" | "equipment" | "payments",
+  filter: TabFilter,
+  adminViewAsUserId?: string,
+) {
   // Always clear stale session keys that could trigger highlight/jump-to-occurrence behavior.
   try {
     sessionStorage.removeItem("open:remindersToJobsTabSearchOnce");
     sessionStorage.removeItem("servicesTabToJobsNav");
   } catch {}
 
+  const adminMode = !!adminViewAsUserId;
+
   if (tab === "jobs") {
-    // Worker JobsTab uses prefix "wjobs". Reset everything filterable.
-    const pfx = "wjobs";
+    // Worker JobsTab uses prefix "wjobs", admin uses "ajobs". Reset everything filterable.
+    const pfx = adminMode ? "ajobs" : "wjobs";
     setLS(`${pfx}_status`, [filter.status ?? "ALL"]);
     setLS(`${pfx}_type`, [filter.type ?? "ALL"]);
     setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
@@ -83,23 +99,57 @@ function navigateWithFilter(tab: "jobs" | "equipment" | "payments", filter: TabF
       setLS(`${pfx}_dateFrom`, dates.from);
       setLS(`${pfx}_dateTo`, dates.to);
     }
+    // JobsTab has a "daily reset" useEffect that wipes filters on the first mount of a
+    // new day. It reads the marker as a RAW localStorage key (no seedlings_ prefix), so
+    // we write it raw too — otherwise the reset still fires and clobbers what we just
+    // wrote, leaving the user with default filters and "everything" in the feed.
+    try { localStorage.setItem(`${pfx}_lastUsedDate`, new Date().toISOString().slice(0, 10)); } catch {}
+    if (adminMode) {
+      // AdminJobsTab reads `adminjobs_workers` to scope its inner JobsTab to a worker.
+      setLS(`adminjobs_workers`, [adminViewAsUserId]);
+    }
   } else if (tab === "payments") {
-    setLS(`pay_w_datePreset`, filter.datePreset ?? null);
-    setLS(`pay_w_dateFrom`, filter.dateFrom ?? "");
-    setLS(`pay_w_dateTo`, filter.dateTo ?? "");
-    setLS(`pay_w_type`, [filter.method ?? "ALL"]);
+    const pfx = adminMode ? "pay_a" : "pay_w";
+    setLS(`${pfx}_datePreset`, filter.datePreset ?? null);
+    setLS(`${pfx}_dateFrom`, filter.dateFrom ?? "");
+    setLS(`${pfx}_dateTo`, filter.dateTo ?? "");
+    if (adminMode) {
+      setLS(`${pfx}_method`, [filter.method ?? "ALL"]);
+      setLS(`${pfx}_persons`, [adminViewAsUserId]);
+    } else {
+      setLS(`${pfx}_type`, [filter.method ?? "ALL"]);
+    }
   } else if (tab === "equipment") {
-    setLS(`equip_w_status`, [filter.status ?? "CLAIMED"]);
-    setLS(`equip_w_kind`, [filter.kind ?? "ALL"]);
-    setLS(`equip_w_likedOnly`, false);
+    const pfx = adminMode ? "equip_a" : "equip_w";
+    // Worker view supports "MY_RESERVED" / "MY_CHECKED_OUT" virtual statuses that are
+    // implicitly scoped to the current user. In admin mode the equivalent is the global
+    // RESERVED/CHECKED_OUT status combined with the worker filter set below — translate
+    // here so admin tile clicks land on a meaningful Equipment view.
+    let adminStatus = filter.status ?? "ALL";
+    if (adminMode) {
+      if (filter.status === "MY_RESERVED") adminStatus = "RESERVED";
+      else if (filter.status === "MY_CHECKED_OUT") adminStatus = "CHECKED_OUT";
+    }
+    setLS(`${pfx}_status`, [adminMode ? adminStatus : (filter.status ?? "CLAIMED")]);
+    setLS(`${pfx}_kind`, [filter.kind ?? "ALL"]);
+    setLS(`${pfx}_likedOnly`, false);
+    if (adminMode) {
+      // Scope the admin EquipmentTab to this worker's holdings.
+      setLS(`${pfx}_workers`, [adminViewAsUserId]);
+    }
   }
 
-  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab, remount: true } }));
+  // Admin destination tab values: jobs → "admin-jobs", payments → "payments", equipment → "equipment".
+  // Worker destination tab values match the worker tab values exactly.
+  const destTab = adminMode && tab === "jobs" ? "admin-jobs" : tab;
+  const eventName = adminMode ? "navigate:adminTab" : "navigate:workerTab";
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab: destTab, remount: true } }));
 }
 
 /** Plain navigation (no filter), used when the destination tab manages its own state. */
-function dispatchNavPlain(tab: string) {
-  window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab } }));
+function dispatchNavPlain(tab: string, adminViewAsUserId?: string) {
+  const eventName = adminViewAsUserId ? "navigate:adminTab" : "navigate:workerTab";
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tab } }));
 }
 
 function bizDateKey(d: Date): string {
@@ -179,10 +229,15 @@ function Tile({
   );
 }
 
-export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
+export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisplayName }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const isViewingOther = !!viewAsUserId;
+  // Local nav helpers that fold in the impersonation context. Always reach for these
+  // from inside the component instead of the module-level ones.
+  const navTo = (tab: "jobs" | "equipment" | "payments", filter: TabFilter) =>
+    navigateWithFilter(tab, filter, viewAsUserId);
+  const navPlain = (tab: string) => dispatchNavPlain(tab, viewAsUserId);
 
   async function load() {
     setLoading(true);
@@ -218,7 +273,10 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
   const greeting = etHour < 12 ? "Good morning"
     : etHour < 17 ? "Good afternoon"
     : "Good evening";
-  const firstName = me?.displayName?.split(" ")[0] || me?.email?.split("@")[0] || "";
+  // When impersonating, the greeting names the viewed worker, not the admin.
+  const firstName = isViewingOther
+    ? (viewAsDisplayName?.split(" ")[0] || "")
+    : (me?.displayName?.split(" ")[0] || me?.email?.split("@")[0] || "");
 
   if (loading && !summary) {
     return (
@@ -272,9 +330,9 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
         {heroMode === "resume" && (
           <Card.Root
             variant="elevated"
-            cursor={isViewingOther ? "default" : "pointer"}
-            onClick={isViewingOther ? undefined : () => navigateWithFilter("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
-            _hover={isViewingOther ? undefined : { shadow: "lg" }}
+            cursor="pointer"
+            onClick={() => navTo("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
+            _hover={{ shadow: "lg" }}
             bg="orange.500"
             color="white"
           >
@@ -296,7 +354,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
                       {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
                     </Text>
                   </VStack>
-                  {!isViewingOther && <Text fontSize="2xl">→</Text>}
+                  <Text fontSize="2xl">→</Text>
                 </HStack>
               </VStack>
             </Card.Body>
@@ -378,18 +436,18 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
                         fontSize="sm"
                         color="blue.700"
                         mt={1}
-                        textDecoration={isViewingOther ? undefined : "underline"}
-                        cursor={isViewingOther ? "default" : "pointer"}
-                        onClick={isViewingOther ? undefined : (e: any) => {
+                        textDecoration="underline"
+                        cursor="pointer"
+                        onClick={(e: any) => {
                           e.stopPropagation();
                           // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
                           const today = new Date();
                           const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
                           const tomorrowKey = bizDateKey(tomorrow);
-                          navigateWithFilter("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
+                          navTo("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
                         }}
                       >
-                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""}{isViewingOther ? "" : " →"}
+                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""} →
                       </Text>
                     )}
                   </VStack>
@@ -461,9 +519,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
           );
         })()}
 
-        {/* When viewing another worker's home, suppress tile interactivity — the
-            click-throughs would land on the admin's own tabs and not the worker's. */}
-        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3} pointerEvents={isViewingOther ? "none" : "auto"}>
+        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3}>
           {/* Today's jobs — always shown, dimmed if 0.
               Hint shows "$X earned with $Y remaining potential" matching the hero. */}
           <Tile
@@ -479,7 +535,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="blue.600"
             bg="blue.50"
             dimmed={s.today === 0}
-            onClick={() => navigateWithFilter("jobs", { datePreset: "today" })}
+            onClick={() => navTo("jobs", { datePreset: "today", type: "JOBS" })}
           />
 
           {/* Tomorrow's jobs — always shown, dimmed if 0.
@@ -494,7 +550,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             bg="purple.50"
             dimmed={s.tomorrow === 0}
             badge={<TomorrowWeatherWarning size="sm" />}
-            onClick={() => dispatchNavPlain("reminders")}
+            onClick={() => navPlain("reminders")}
           />
 
           {/* Equipment — directional based on time of day:
@@ -511,7 +567,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
                   hint="Check out before heading out"
                   color="teal.600"
                   bg="teal.50"
-                  onClick={() => navigateWithFilter("equipment", { status: "MY_RESERVED" })}
+                  onClick={() => navTo("equipment", { status: "MY_RESERVED" })}
                 />
               );
             }
@@ -524,7 +580,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
                   hint="Check back in"
                   color="teal.600"
                   bg="teal.50"
-                  onClick={() => navigateWithFilter("equipment", { status: "MY_CHECKED_OUT" })}
+                  onClick={() => navTo("equipment", { status: "MY_CHECKED_OUT" })}
                 />
               );
             }
@@ -537,7 +593,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
                 color="teal.600"
                 bg="teal.50"
                 dimmed
-                onClick={() => dispatchNavPlain("equipment")}
+                onClick={() => navPlain("equipment")}
               />
             );
           })()}
@@ -551,7 +607,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="orange.600"
             bg="orange.50"
             dimmed={s.pendingPayment === 0}
-            onClick={() => navigateWithFilter("jobs", { status: "PENDING_PAYMENT", datePreset: "lastMonth" })}
+            onClick={() => navTo("jobs", { status: "PENDING_PAYMENT", datePreset: "lastMonth" })}
           />
 
           {/* Notices — announcements, follow-ups, events scheduled for today */}
@@ -572,7 +628,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="purple.700"
             bg="purple.50"
             dimmed={s.notices === 0}
-            onClick={() => navigateWithFilter("jobs", { type: "NOTICES", datePreset: "today" })}
+            onClick={() => navTo("jobs", { type: "NOTICES", datePreset: "today" })}
           />
 
           {/* Reminders due — Reminder-table notifications + TASK-workflow occurrences scheduled today or earlier.
@@ -592,7 +648,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="red.600"
             bg="red.50"
             dimmed={(s.followUps ?? 0) + (s.tasksDue ?? 0) === 0}
-            onClick={() => navigateWithFilter("jobs", { type: "DUE", datePreset: "lastMonth" })}
+            onClick={() => navTo("jobs", { type: "DUE", datePreset: "lastMonth" })}
           />
 
           {/* Hours worked in the last 7 days — pairs with the earnings tile. */}
@@ -609,7 +665,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="teal.700"
             bg="teal.50"
             dimmed={(s.minutesThisWeek ?? 0) === 0}
-            onClick={() => navigateWithFilter("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
+            onClick={() => navTo("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
           />
 
           {/* Earnings for the last 7 days — payout share for jobs completed in the
@@ -622,7 +678,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
             color="green.700"
             bg="green.50"
             dimmed={(s.actualWeekEarnings ?? 0) === 0}
-            onClick={() => navigateWithFilter("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
+            onClick={() => navTo("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
           />
         </SimpleGrid>
 

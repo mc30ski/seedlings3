@@ -74,6 +74,12 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   );
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
   const [likedOnly, setLikedOnly] = usePersistedState<boolean>(`${pfx}_likedOnly`, false);
+  // Admin-only "filter to a specific worker" — pre-set externally from AdminHomeTab tile
+  // click-throughs so the Equipment tab shows only what that worker has reserved/checked
+  // out. Multi-select array to mirror AdminJobsTab's pattern.
+  const [workerFilter, setWorkerFilter] = usePersistedState<string[]>(
+    `${pfx}_workers`, [],
+  );
 
   const isWorkerView = purpose === "WORKER";
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
@@ -84,6 +90,18 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  // Workers list — only used by the admin worker-filter chip to look up names.
+  const [adminWorkers, setAdminWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
+  useEffect(() => {
+    if (!forAdmin) return;
+    apiGet<Array<{ id: string; displayName?: string | null; email?: string | null }>>("/api/workers")
+      .then((list) => setAdminWorkers(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [forAdmin]);
+  const adminWorkerName = (id: string) => {
+    const w = adminWorkers.find((x) => x.id === id);
+    return w?.displayName || w?.email || id.slice(0, 6);
+  };
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Equipment | null>(null);
@@ -450,8 +468,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       rows = rows.filter((r) => likedIds.has(r.id));
     }
 
+    // Worker filter (admin) — show only equipment whose current holder is one of the
+    // selected workers. Items with no holder fall out, since the filter is "what does
+    // worker X have right now."
+    if (forAdmin && workerFilter.length > 0) {
+      const ids = new Set(workerFilter);
+      rows = rows.filter((r) => !!r.holder?.userId && ids.has(r.holder.userId));
+    }
+
     return rows;
-  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId]);
+  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId, workerFilter]);
 
   // Split into Pinned + Claimed + Available + Unavailable groups (worker view only).
   const groups = useMemo(() => {
@@ -942,7 +968,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Button>
         )}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || highlightId) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
           {highlightId && (
             <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 item</Badge>
@@ -960,6 +986,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           {!highlightId && isWorkerView && likedOnly && (
             <Badge size="sm" colorPalette="red" variant="subtle">Liked</Badge>
           )}
+          {!highlightId && forAdmin && workerFilter.length > 0 && (
+            <Badge size="sm" colorPalette="blue" variant="solid">
+              {workerFilter.length === 1
+                ? `Worker: ${adminWorkerName(workerFilter[0])}`
+                : `${workerFilter.length} workers`}
+            </Badge>
+          )}
           <Badge
             size="sm"
             colorPalette="red"
@@ -970,6 +1003,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               setKind(["ALL"]);
               setStatusFilter(["ALL"]);
               if (isWorkerView) setLikedOnly(false);
+              if (forAdmin) setWorkerFilter([]);
             }}
           >
             ✕ Clear

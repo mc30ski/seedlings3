@@ -211,6 +211,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const typeItems = useMemo(
     () => [
       { label: "All Types", value: "ALL" },
+      { label: "Jobs", value: "JOBS" },
       { label: "One-off", value: "ONE_OFF" },
       { label: "Estimate", value: "ESTIMATE" },
       { label: "Tentative", value: "TENTATIVE" },
@@ -960,6 +961,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       if (qFrom) qs.set("from", qFrom);
       if (qTo) qs.set("to", qTo);
       if (keepOccId) qs.set("includeOccId", keepOccId);
+      // When admin is impersonating a single worker, ask the API to attach that
+      // worker's reminders/pins/likes instead of the admin's. Without this the DUE
+      // filter (which keys off attached reminders) would show the admin's reminders
+      // on the worker's jobs — usually nothing matches.
+      if (forAdmin && viewAsUserIds?.length === 1) {
+        qs.set("viewAsUserId", viewAsUserIds[0]);
+      }
       const url = `/api/occurrences${qs.toString() ? `?${qs}` : ""}`;
       let list = await apiGet<WorkerOccurrence[]>(url);
       // If a newer load() started while this one was in flight, drop these results.
@@ -1356,12 +1364,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   const filtered = useMemo(() => {
     let rows = items;
-    // Enforce date range — items outside the range should not appear in the feed
-    // Exception: pinned, liked, and reminded items bypass the date filter so they're never hidden.
+    // Enforce date range — items outside the range should not appear in the feed.
+    // Exception: pinned, liked, and ACTIONABLE reminded items bypass the date filter so
+    // they're never hidden in the default view. The bypass is suppressed when the user
+    // explicitly picked "JOBS" type — they want jobs scheduled in this date range only,
+    // not pinned/reminded items from other dates leaking through.
+    const reminderBypassFinished = new Set(["COMPLETED", "CLOSED", "PENDING_PAYMENT", "ARCHIVED", "CANCELED"]);
+    const allowDateBypass = typeFilter[0] !== "JOBS";
     if (dateFrom || dateTo) {
       rows = rows.filter((occ) => {
-        if (pinnedIds.has(occ.id) || likedIds.has(occ.id)) return true;
-        if ((occ as any).reminder) return true;
+        if (allowDateBypass && (pinnedIds.has(occ.id) || likedIds.has(occ.id))) return true;
+        if (allowDateBypass && (occ as any).reminder && !reminderBypassFinished.has(occ.status as string)) return true;
         const day = occ.startAt ? bizDateKey(occ.startAt) : null;
         if (!day) return true; // no date — include
         if (dateFrom && day < dateFrom) return false;
@@ -1373,7 +1386,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     if (isTrainee) rows = rows.filter((occ) => !occ.isTentative);
     if (kind[0] !== "ALL") rows = rows.filter((occ) => occ.kind === kind[0]);
     const tf = typeFilter[0];
-    if (tf === "ONE_OFF") rows = rows.filter((occ) => occ.isOneOff);
+    // "JOBS" = real jobs only (STANDARD / ONE_OFF / ESTIMATE / untyped legacy). Used by
+    // tile click-throughs (Today's jobs, Tomorrow's plan, etc.) so the feed matches the
+    // dashboard count instead of also showing tasks/reminders/events. Also strips ghost
+    // reminder cards the API injects (occurrences from other dates pulled in because
+    // they have a reminder attached) — those aren't "jobs scheduled today".
+    if (tf === "JOBS") {
+      rows = rows.filter((occ) => {
+        if ((occ as any)._isReminderGhost) return false;
+        const w = occ.workflow;
+        return w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+      });
+    }
+    else if (tf === "ONE_OFF") rows = rows.filter((occ) => occ.isOneOff);
     else if (tf === "ESTIMATE") rows = rows.filter((occ) => occ.isEstimate);
     else if (tf === "TENTATIVE") rows = rows.filter((occ) => occ.isTentative);
     else if (tf === "TASK") rows = rows.filter((occ) => occ.workflow === "TASK");
@@ -1384,11 +1409,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "NOTICES") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT" || occ.workflow === "FOLLOWUP" || occ.workflow === "EVENT");
     else if (tf === "DUE") {
       const todayKey = bizDateKey(new Date());
+      // A reminder attached to an already-finished job is stale (the work is done) —
+      // exclude those so the DUE list only shows actionable items.
+      const finishedStatuses = new Set(["COMPLETED", "CLOSED", "PENDING_PAYMENT", "ARCHIVED", "CANCELED"]);
       rows = rows.filter((occ) => {
         // TASK-workflow occurrences not yet done
         if (occ.workflow === "TASK" && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS")) return true;
-        // Any occurrence with a Reminder whose remindAt is today or earlier
-        if (occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey) return true;
+        // Any occurrence with a Reminder whose remindAt is today or earlier — but only
+        // if the underlying occurrence is still actionable (not completed/closed/etc).
+        if (occ.reminder && bizDateKey(occ.reminder.remindAt) <= todayKey && !finishedStatuses.has(occ.status as string)) return true;
         return false;
       });
     }
@@ -1405,7 +1434,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           const claimable = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
           return claimable && !hasAssignees;
         }
-        if (sf === "FINISHED") return occ.status === "COMPLETED" || occ.status === "CLOSED" || occ.status === "PENDING_PAYMENT";
+        if (sf === "FINISHED") {
+          // FINISHED = completed *real jobs* (STANDARD/ONE_OFF/ESTIMATE) only. Tasks,
+          // reminders, events, follow-ups, and announcements have their own lifecycles
+          // and aren't meaningful here — and Hours/Earnings tiles point at this filter,
+          // so including non-job workflows would inflate what looks like "finished work."
+          const w = occ.workflow;
+          const isJob = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
+          return isJob && (occ.status === "COMPLETED" || occ.status === "CLOSED" || occ.status === "PENDING_PAYMENT");
+        }
         return occ.status === sf;
       });
     } else {
@@ -1505,7 +1542,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const pinnedIds_ = new Set(pinnedIds);
     const reminderDueIds = new Set<string>();
     const rest: WorkerOccurrence[] = [];
-    const suppressReminderVisuals = statusFilter[0] === "UNCLAIMED";
+    // When the user is viewing UNCLAIMED or filtered to JOBS, suppress reminder-themed
+    // visuals (Reminders Due group + future-reminder ghost cards) — those reframe regular
+    // jobs as reminders, which is wrong for these views.
+    const suppressReminderVisuals = statusFilter[0] === "UNCLAIMED" || typeFilter[0] === "JOBS";
 
     if (isWorkerView) {
       for (const occ of filtered) {
