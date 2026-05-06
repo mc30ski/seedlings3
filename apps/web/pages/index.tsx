@@ -33,6 +33,7 @@ import ClientMyJobsTab from "@/src/ui/tabs/ClientMyJobsTab";
 import ClientServicesTab from "@/src/ui/tabs/ClientServicesTab";
 import RemindersTab from "@/src/ui/tabs/RemindersTab";
 import AdminRemindersTab from "@/src/ui/tabs/AdminRemindersTab";
+import AdminHomeTab from "@/src/ui/tabs/AdminHomeTab";
 import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
@@ -557,6 +558,12 @@ export default function HomePage() {
       content: <AdminTasksTab tasks={adminTasks} />,
     },
     {
+      value: "admin-home",
+      label: "Home",
+      icon: FiHome,
+      content: wrapWithInlineMessage(<AdminHomeTab me={me} />),
+    },
+    {
       value: "reminders",
       label: "Planning",
       icon: FiBell,
@@ -803,7 +810,7 @@ export default function HomePage() {
       innerTabs: (() => {
         const catMap: Record<string, string> = {
           tasks: "Actions",
-          reminders: "Work", "admin-jobs": "Work", jobs: "Work",
+          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
           equipment: "Field", routes: "Field",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",

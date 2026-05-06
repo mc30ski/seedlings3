@@ -14,6 +14,10 @@ import type { Me } from "@/src/lib/types";
 type Props = {
   me: Me | null | undefined;
   onLaunchWorkflow: (name: string) => void;
+  // Admin-only: when set, the dashboard is computed for this worker instead of the
+  // logged-in user. Hero CTAs are non-actionable in this mode (no startWorkday etc.)
+  // since the actions belong to the viewed worker, not the admin.
+  viewAsUserId?: string;
 };
 
 type Summary = {
@@ -123,6 +127,7 @@ function Tile({
   color = "blue.500",
   bg = "blue.50",
   dimmed = false,
+  disabled = false,
   badge,
   onClick,
 }: {
@@ -133,16 +138,17 @@ function Tile({
   color?: string;
   bg?: string;
   dimmed?: boolean;
+  disabled?: boolean;
   badge?: React.ReactNode;
   onClick: () => void;
 }) {
   return (
     <Card.Root
       variant="outline"
-      cursor="pointer"
-      onClick={onClick}
+      cursor={disabled ? "default" : "pointer"}
+      onClick={disabled ? undefined : onClick}
       borderColor="gray.300"
-      _hover={{ shadow: "md", borderColor: color }}
+      _hover={disabled ? undefined : { shadow: "md", borderColor: color }}
       transition="all 0.15s"
       opacity={dimmed ? 0.65 : 1}
     >
@@ -173,14 +179,18 @@ function Tile({
   );
 }
 
-export default function HomeTab({ me, onLaunchWorkflow }: Props) {
+export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  const isViewingOther = !!viewAsUserId;
 
   async function load() {
     setLoading(true);
     try {
-      const s = await apiGet<Summary>("/api/dashboard-summary");
+      const url = viewAsUserId
+        ? `/api/dashboard-summary?viewAsUserId=${encodeURIComponent(viewAsUserId)}`
+        : "/api/dashboard-summary";
+      const s = await apiGet<Summary>(url);
       setSummary(s);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load dashboard.", err) });
@@ -194,7 +204,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
     const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     window.addEventListener("visibilitychange", onVisible);
     return () => window.removeEventListener("visibilitychange", onVisible);
-  }, []);
+  }, [viewAsUserId]);
 
   // Hour in Eastern Time (the business timezone) — drives the hero CTA framing.
   const etHour = (() => {
@@ -262,9 +272,9 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
         {heroMode === "resume" && (
           <Card.Root
             variant="elevated"
-            cursor="pointer"
-            onClick={() => navigateWithFilter("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
-            _hover={{ shadow: "lg" }}
+            cursor={isViewingOther ? "default" : "pointer"}
+            onClick={isViewingOther ? undefined : () => navigateWithFilter("jobs", { status: "IN_PROGRESS", datePreset: "lastMonth" })}
+            _hover={isViewingOther ? undefined : { shadow: "lg" }}
             bg="orange.500"
             color="white"
           >
@@ -286,7 +296,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                       {s.activeWork} job{s.activeWork === 1 ? "" : "s"} in progress or paused
                     </Text>
                   </VStack>
-                  <Text fontSize="2xl">→</Text>
+                  {!isViewingOther && <Text fontSize="2xl">→</Text>}
                 </HStack>
               </VStack>
             </Card.Body>
@@ -297,9 +307,9 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
         {(heroMode === "begin" || heroMode === "finish") && (
           <Card.Root
             variant="outline"
-            cursor="pointer"
-            onClick={() => onLaunchWorkflow("begin-workday")}
-            _hover={{ shadow: "md", borderColor: "green.400" }}
+            cursor={isViewingOther ? "default" : "pointer"}
+            onClick={isViewingOther ? undefined : () => onLaunchWorkflow("begin-workday")}
+            _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "green.400" }}
             bg="green.50"
             borderColor="green.300"
           >
@@ -326,7 +336,7 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                         : ""}
                     </Text>
                   </VStack>
-                  <Text fontSize="2xl" color="green.600">→</Text>
+                  {!isViewingOther && <Text fontSize="2xl" color="green.600">→</Text>}
                 </HStack>
               </VStack>
             </Card.Body>
@@ -337,9 +347,9 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
         {heroMode === "planTomorrow" && (
           <Card.Root
             variant="outline"
-            cursor="pointer"
-            onClick={() => onLaunchWorkflow("plan-workday")}
-            _hover={{ shadow: "md", borderColor: "blue.400" }}
+            cursor={isViewingOther ? "default" : "pointer"}
+            onClick={isViewingOther ? undefined : () => onLaunchWorkflow("plan-workday")}
+            _hover={isViewingOther ? undefined : { shadow: "md", borderColor: "blue.400" }}
             bg="blue.50"
             borderColor="blue.300"
           >
@@ -368,9 +378,9 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                         fontSize="sm"
                         color="blue.700"
                         mt={1}
-                        textDecoration="underline"
-                        cursor="pointer"
-                        onClick={(e: any) => {
+                        textDecoration={isViewingOther ? undefined : "underline"}
+                        cursor={isViewingOther ? "default" : "pointer"}
+                        onClick={isViewingOther ? undefined : (e: any) => {
                           e.stopPropagation();
                           // Navigate to JobsTab filtered to tomorrow's unclaimed jobs.
                           const today = new Date();
@@ -379,11 +389,11 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
                           navigateWithFilter("jobs", { status: "UNCLAIMED", dateFrom: tomorrowKey, dateTo: tomorrowKey });
                         }}
                       >
-                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""} →
+                        {s.tomorrowUnclaimedCount} unclaimed{s.tomorrowUnclaimedPotential > 0 ? ` · ${fmtMoney(s.tomorrowUnclaimedPotential)} potential` : ""}{isViewingOther ? "" : " →"}
                       </Text>
                     )}
                   </VStack>
-                  <Text fontSize="2xl" color="blue.600">→</Text>
+                  {!isViewingOther && <Text fontSize="2xl" color="blue.600">→</Text>}
                 </HStack>
               </VStack>
             </Card.Body>
@@ -451,7 +461,9 @@ export default function HomeTab({ me, onLaunchWorkflow }: Props) {
           );
         })()}
 
-        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3}>
+        {/* When viewing another worker's home, suppress tile interactivity — the
+            click-throughs would land on the admin's own tabs and not the worker's. */}
+        <SimpleGrid columns={{ base: 1, sm: 2 }} gap={3} pointerEvents={isViewingOther ? "none" : "auto"}>
           {/* Today's jobs — always shown, dimmed if 0.
               Hint shows "$X earned with $Y remaining potential" matching the hero. */}
           <Tile

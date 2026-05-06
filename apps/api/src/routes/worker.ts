@@ -16,9 +16,19 @@ export default async function workerRoutes(app: FastifyInstance) {
       app.requireRole(req, reply, RoleVal.WORKER),
   };
 
-  // Dashboard summary — single endpoint for all badge counts
+  // Dashboard summary — single endpoint for all badge counts.
+  // Admins can pass ?viewAsUserId=<id> to compute the summary for another worker
+  // (used by the Admin Home view to inspect what each worker is seeing).
   app.get("/dashboard-summary", workerGuard, async (req: any) => {
-    const uid = await currentUserId(req);
+    const callerUid = await currentUserId(req);
+    const { viewAsUserId } = (req.query || {}) as { viewAsUserId?: string };
+    let uid = callerUid;
+    if (viewAsUserId && viewAsUserId !== callerUid) {
+      const caller = await prisma.user.findUnique({ where: { id: callerUid }, include: { roles: true } });
+      const isAdmin = caller?.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+      if (!isAdmin) throw app.httpErrors.forbidden("Only admins can view another worker's dashboard.");
+      uid = viewAsUserId;
+    }
     const now = new Date();
     // Use Eastern Time (business TZ) for "today"/"tomorrow" — UTC-based date strings
     // would tip into the next day late evening ET and miscount.
@@ -51,12 +61,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     // 9-week window (~2 months) for the "Jobs completed" trend chart on the Home tab.
     const trendStart = new Date(startOfWeek); trendStart.setDate(trendStart.getDate() - 8 * 7);
 
-    // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED)
+    // Get user's assigned occurrences (SCHEDULED/IN_PROGRESS/PENDING_PAYMENT/PROPOSAL_SUBMITTED).
+    // Pull role so we can carve out a working-only subset — observer assignments must NOT
+    // count toward the user's Hours/Earnings tallies, since observers don't work the job
+    // and don't take a payout share.
     const myAssignments = await prisma.jobOccurrenceAssignee.findMany({
       where: { userId: uid },
-      select: { occurrenceId: true },
+      select: { occurrenceId: true, role: true },
     });
     const myOccIds = myAssignments.map((a) => a.occurrenceId);
+    const myWorkingOccIds = myAssignments.filter((a) => a.role !== "observer").map((a) => a.occurrenceId);
 
     if (myOccIds.length === 0) {
       const [equipmentCheckedOut, equipmentReserved, allRemindersPending] = await Promise.all([
@@ -147,7 +161,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       }),
       prisma.jobOccurrence.findMany({
         where: {
-          id: { in: myOccIds },
+          // Working assignments only — observer roles don't earn a payout share.
+          id: { in: myWorkingOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["SCHEDULED", "IN_PROGRESS"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
@@ -184,10 +199,11 @@ export default async function workerRoutes(app: FastifyInstance) {
       }),
       // Jobs the user worked & completed in the last 7 days. Drives BOTH the Hours tile
       // (sum wall-clock minutes) and the Earnings tile (sum the user's payout share),
-      // so the two tiles always refer to the same set of jobs.
+      // so the two tiles always refer to the same set of jobs. Observer-only assignments
+      // are excluded — observers don't work the job and don't earn a payout share.
       prisma.jobOccurrence.findMany({
         where: {
-          id: { in: myOccIds },
+          id: { in: myWorkingOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
           startedAt: { not: null },
@@ -218,9 +234,10 @@ export default async function workerRoutes(app: FastifyInstance) {
         },
       }),
       // Today's completed real jobs — used to compute "X earned" alongside "remaining potential".
+      // Working assignments only — observer roles don't earn a payout share.
       prisma.jobOccurrence.findMany({
         where: {
-          id: { in: myOccIds },
+          id: { in: myWorkingOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
@@ -252,9 +269,10 @@ export default async function workerRoutes(app: FastifyInstance) {
       }),
       // Weekly trend: completed real jobs in the last 13 weeks (by completedAt).
       // Also pull pricing fields so we can compute the worker's net share per week.
+      // Working assignments only — observer roles don't earn a payout share.
       prisma.jobOccurrence.findMany({
         where: {
-          id: { in: myOccIds },
+          id: { in: myWorkingOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
           completedAt: { gte: trendStart, not: null },
