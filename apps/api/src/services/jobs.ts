@@ -183,6 +183,10 @@ export const jobs: ServicesJobs = {
           },
         },
         schedule: true,
+        defaultAssignees: {
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+          include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
         occurrences: {
           select: {
             id: true,
@@ -383,7 +387,12 @@ export const jobs: ServicesJobs = {
     return prisma.$transaction(async (tx) => {
       const job = await tx.job.findUniqueOrThrow({
         where: { id: jobId },
-        include: { defaultAssignees: true },
+        include: {
+          // Order by sortOrder so the chosen claimer (lowest sortOrder, set
+          // via the make-claimer route) lands first and becomes the
+          // occurrence's claimer.
+          defaultAssignees: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+        },
       });
 
       const occ = await tx.jobOccurrence.create({
@@ -1790,7 +1799,12 @@ export const jobs: ServicesJobs = {
     return prisma.$transaction(async (tx) => {
       const job = await tx.job.findUniqueOrThrow({
         where: { id: jobId },
-        include: { schedule: true, defaultAssignees: true },
+        include: {
+          schedule: true,
+          // Order by sortOrder so the chosen claimer is honored when
+          // generating new occurrences from the schedule.
+          defaultAssignees: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+        },
       });
 
       const sch = job.schedule;

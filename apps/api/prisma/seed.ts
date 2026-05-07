@@ -700,7 +700,8 @@ async function seedDatabase() {
     { jobId: sunriseWeekly.id, userId: ADMIN_WORKER_ID, role: "primary" },
     { jobId: sunriseWeekly.id, userId: EMPLOYEE_ID, role: "helper" },
     { jobId: sunriseWeekly.id, userId: CONTRACTOR_ID, role: "helper" },
-    { jobId: patelMow.id, userId: TRAINEE_ID, role: "primary" },
+    { jobId: patelMow.id, userId: EMPLOYEE_ID, role: "primary" },
+    { jobId: patelMow.id, userId: TRAINEE_ID, role: "helper" },
     { jobId: riverBendWeekly.id, userId: ADMIN_WORKER_ID, role: "primary" },
     { jobId: riverBendWeekly.id, userId: CONTRACTOR_ID, role: "helper" },
     { jobId: kimMow.id, userId: EMPLOYEE_ID, role: "primary" },
@@ -780,7 +781,7 @@ async function seedDatabase() {
   );
   const cPatel7 = await occ(
     { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
-    [{ userId: TRAINEE_ID, role: "primary" }],
+    [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cRiverBend7 = await occ(
     { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
@@ -822,7 +823,7 @@ async function seedDatabase() {
   // Overdue — assigned to trainee, still scheduled
   await occ(
     { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(2, 15), endAt: addMinutes(daysAgo(2, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 },
-    [{ userId: TRAINEE_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
+    [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
 
   // ─── TODAY / TOMORROW ─────────────────────────────────────────────────────
@@ -837,7 +838,7 @@ async function seedDatabase() {
   );
   await occ(
     { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysFromNow(0, 15), endAt: addMinutes(daysFromNow(0, 15), 25), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25 },
-    [{ userId: TRAINEE_ID, role: "primary" }],
+    [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const todayRiverBend = await occ(
     { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysFromNow(0, 6), endAt: addMinutes(daysFromNow(0, 6), 150), status: "SCHEDULED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, isClientConfirmed: true, pinnedNote: "Bag clippings — client event this weekend", pinnedNoteRepeats: false },
