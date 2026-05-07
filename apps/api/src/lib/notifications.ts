@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "../db/prisma";
+import { sendPushToUser, type PushPayload } from "./push";
 
 // ── SMS via Twilio ──
 
@@ -80,6 +81,7 @@ type NotifyResult = {
   method: "sms" | "email" | "none";
   ok: boolean;
   error?: string;
+  push?: { delivered: number; pruned: number; failed: number };
 };
 
 /**
@@ -93,7 +95,7 @@ type NotifyResult = {
  */
 export async function notifyWorker(
   userId: string,
-  message: string | { sms?: string; email?: string },
+  message: string | { sms?: string; email?: string; push?: PushPayload },
   options?: { subject?: string; link?: string },
 ): Promise<NotifyResult> {
   const user = await prisma.user.findUnique({
@@ -108,11 +110,36 @@ export async function notifyWorker(
   const smsBody = options?.link ? `${smsBase}\n\nOpen: ${options.link}` : smsBase;
   const emailBody = options?.link ? `${emailBase}\n\nOpen the app: ${options.link}` : emailBase;
 
+  // Push is a bonus channel — fire alongside SMS/email, never as a substitute.
+  // Defaults to a generic title/body derived from the message if no explicit
+  // push payload is provided.
+  const pushPayload: PushPayload | null = (() => {
+    if (typeof message === "string") {
+      return { title: options?.subject ?? "Seedlings", body: message, url: options?.link };
+    }
+    if (message.push) return { ...message.push, url: message.push.url ?? options?.link };
+    if (message.sms || message.email) {
+      return {
+        title: options?.subject ?? "Seedlings",
+        body: message.sms ?? message.email ?? "",
+        url: options?.link,
+      };
+    }
+    return null;
+  })();
+  const pushPromise = pushPayload
+    ? sendPushToUser(userId, pushPayload).catch((err) => {
+        console.warn(`Push send threw for user ${userId}:`, err?.message);
+        return { attempted: 0, delivered: 0, pruned: 0, failed: 0 };
+      })
+    : Promise.resolve({ attempted: 0, delivered: 0, pruned: 0, failed: 0 });
+
   // Prefer SMS if phone available
   if (user.phone) {
     const phone = user.phone.replace(/[^\d+]/g, "");
     const smsResult = await sendSMS(phone.startsWith("+") ? phone : `+1${phone}`, smsBody);
-    if (smsResult.ok) return { method: "sms", ...smsResult };
+    const push = await pushPromise;
+    if (smsResult.ok) return { method: "sms", ...smsResult, push };
     // SMS failed — fall back to email
     console.warn(`SMS failed for user ${userId}, falling back to email:`, smsResult.error);
   }
@@ -123,10 +150,12 @@ export async function notifyWorker(
       options?.subject ?? "Seedlings Lawn Care — Reminder",
       emailBody,
     );
-    return { method: "email", ...result };
+    const push = await pushPromise;
+    return { method: "email", ...result, push };
   }
 
-  return { method: "none", ok: false, error: "No contact method available" };
+  const push = await pushPromise;
+  return { method: "none", ok: false, error: "No contact method available", push };
 }
 
 /**

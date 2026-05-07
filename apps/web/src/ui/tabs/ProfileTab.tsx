@@ -23,6 +23,7 @@ import {
 import { type Me } from "@/src/lib/types";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
+import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOverride } from "@/src/lib/season";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
@@ -498,12 +499,180 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
           {/* Self-only sections — shown on any tab when viewing your own profile.
               Gate on `isSelf` for features any user gets.
               Gate on `isSelf && me?.roles?.includes(...)` for role-restricted features. */}
+          {isSelf && <NotificationsSection />}
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
           {isSelf && me?.roles?.includes("ADMIN") && <SeasonSection />}
         </VStack>
       )}
     </Box>
+  );
+}
+
+function NotificationsSection() {
+  const push = usePushNotifications();
+
+  const fmtDate = (s?: string | null) => {
+    if (!s) return "";
+    try { return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
+    catch { return s; }
+  };
+
+  // Best-effort label from user-agent — short, recognizable.
+  const deviceLabel = (ua?: string | null, label?: string | null) => {
+    if (label) return label;
+    const u = ua || "";
+    if (/iPhone/.test(u)) return "iPhone";
+    if (/iPad/.test(u)) return "iPad";
+    if (/Android/.test(u)) return "Android";
+    if (/Mac OS X/.test(u)) return "Mac";
+    if (/Windows/.test(u)) return "Windows";
+    return "Device";
+  };
+
+  // Track whether the Home-tab banner was dismissed, so we can offer a one-tap
+  // "restore" button right here in the Profile notifications section.
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("seedlings_pushBannerDismissed") === "1"; } catch { return false; }
+  });
+
+  // Detect this-device row so we can label it and disable the disable-button.
+  const [thisEndpoint, setThisEndpoint] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const s = await reg.pushManager.getSubscription();
+        if (!cancelled) setThisEndpoint(s?.endpoint ?? null);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [push.devices.length]);
+
+  return (
+    <Card.Root variant="outline" mt={4}>
+      <Card.Header py="2" px="3" pb="0">
+        <Text fontWeight="semibold">Notifications</Text>
+      </Card.Header>
+      <Card.Body py="2" px="3">
+        <VStack align="stretch" gap={3}>
+          {push.status === "unsupported" && (
+            <Text fontSize="xs" color="fg.muted">
+              Your browser doesn't support push notifications.
+            </Text>
+          )}
+
+          {push.status === "needs-pwa-install" && (
+            <Text fontSize="xs" color="fg.muted">
+              Add Seedlings to your iPhone Home Screen first, then open it from there to enable notifications.
+            </Text>
+          )}
+
+          {push.status === "denied" && (
+            <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+              <Text fontSize="xs" color="yellow.800">
+                Notifications are blocked in your browser. To turn them back on:
+                {/iPhone|iPad|iPod/.test(navigator.userAgent || "")
+                  ? " open the iPhone Settings app → Notifications → Seedlings → Allow Notifications."
+                  : /Android/.test(navigator.userAgent || "")
+                    ? " long-press the Seedlings icon → App info → Notifications → On."
+                    : " click the lock icon in your address bar and allow notifications, or remove the block in your browser's site settings."}
+              </Text>
+            </Box>
+          )}
+
+          {(push.status === "default" || push.status === "granted-no-sub") && (
+            <VStack align="stretch" gap={2}>
+              <HStack justify="space-between" align="center">
+                <Text fontSize="xs" color="fg.muted">
+                  Get a push notification on this device for daily plan reminders.
+                </Text>
+                <Button
+                  size="xs"
+                  colorPalette="blue"
+                  loading={push.busy}
+                  onClick={async () => {
+                    const r = await push.subscribe();
+                    if (r.ok) publishInlineMessage({ type: "SUCCESS", text: "Notifications enabled. If you don't see them, check Settings → Notifications on your device." });
+                    else publishInlineMessage({ type: "ERROR", text: r.error ?? "Could not enable" });
+                  }}
+                >
+                  Enable on this device
+                </Button>
+              </HStack>
+              {bannerDismissed && (
+                <HStack justify="space-between" align="center">
+                  <Text fontSize="xs" color="fg.muted">
+                    You dismissed the reminder on the Home tab.
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => {
+                      try { localStorage.removeItem("seedlings_pushBannerDismissed"); } catch {}
+                      setBannerDismissed(false);
+                      publishInlineMessage({ type: "SUCCESS", text: "Reminder will show on the Home tab again." });
+                    }}
+                  >
+                    Show on Home
+                  </Button>
+                </HStack>
+              )}
+            </VStack>
+          )}
+
+          {push.status === "granted" && (
+            <VStack align="stretch" gap={2}>
+              <Text fontSize="xs" color="fg.muted">
+                Notifications are on. You'll get a push for each daily plan reminder.
+              </Text>
+              <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+                <Text fontSize="xs" color="yellow.800">
+                  If you don't see notifications, check Settings → Notifications and verify it's enabled for your browser (e.g. Chrome, Safari, etc.).
+                </Text>
+              </Box>
+            </VStack>
+          )}
+
+          {push.devices.length > 0 && (
+            <VStack align="stretch" gap={2}>
+              {push.devices.map((d) => {
+                const isThis = !!thisEndpoint && d.endpoint === thisEndpoint;
+                return (
+                  <Box key={d.id} p={2} borderWidth="1px" borderRadius="md" fontSize="xs">
+                    <HStack justify="space-between" align="start">
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <HStack gap={2}>
+                          <Text fontWeight="medium">{deviceLabel(d.userAgent, d.label)}</Text>
+                          {isThis && <Badge size="sm" colorPalette="blue">This device</Badge>}
+                        </HStack>
+                        <Text color="fg.muted">Added: {fmtDate(d.createdAt)}</Text>
+                        {d.lastUsedAt && <Text color="fg.muted">Last used: {fmtDate(d.lastUsedAt)}</Text>}
+                      </VStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        loading={push.busy}
+                        onClick={async () => {
+                          await push.removeDevice(d.id);
+                          publishInlineMessage({ type: "SUCCESS", text: "Device removed." });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </HStack>
+                  </Box>
+                );
+              })}
+            </VStack>
+          )}
+        </VStack>
+      </Card.Body>
+    </Card.Root>
   );
 }
 

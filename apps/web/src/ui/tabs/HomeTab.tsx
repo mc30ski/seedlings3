@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, Card, HStack, SimpleGrid, Spinner, Text, VStack } from "@chakra-ui/react";
-import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiSun, FiTool } from "react-icons/fi";
+import { FiBell, FiClipboard, FiClock, FiInfo, FiMoon, FiNavigation, FiPlay, FiSun, FiTool, FiX } from "react-icons/fi";
 import { TfiMoney } from "react-icons/tfi";
 import { ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
 import { computeDatesFromPreset, type DatePreset } from "@/src/lib/datePresets";
 import { apiGet } from "@/src/lib/api";
+import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
 import type { Me } from "@/src/lib/types";
@@ -283,6 +284,18 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const isViewingOther = !!viewAsUserId;
+  const push = usePushNotifications();
+  const [pushBannerDismissed, setPushBannerDismissed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("seedlings_pushBannerDismissed") === "1"; } catch { return false; }
+  });
+  // Session-only help shown right after the user enables. Component state
+  // resets when the tab unmounts, so this naturally disappears on the next
+  // return to Home — and the X button closes it manually.
+  const [showJustEnabledHelp, setShowJustEnabledHelp] = useState(false);
+  // Same pattern, but for the post-Dismiss state: a one-shot reminder that
+  // the user can still re-enable from Profile.
+  const [showJustDismissedHelp, setShowJustDismissedHelp] = useState(false);
   // Subset mode: aggregate-style view restricted to a list of workers. Treated like
   // aggregate for hero suppression and tile layout, but click-throughs scope to the subset.
   const isSubset = !!subsetUserIds && subsetUserIds.length > 0 && !viewAsUserId;
@@ -392,6 +405,124 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         </>
       )}
       <VStack align="stretch" gap={4}>
+
+        {/* Enable-notifications banner — about the logged-in user's own
+            device. Hidden only in impersonation (admin viewing-as worker);
+            shown in aggregate/subset because the admin still wants push for
+            themselves. Dismissible per-device.
+
+            After a successful enable, the pink banner is replaced by a yellow
+            help-text box (session-only, dismissible) reminding the user where
+            to look if notifications don't appear. */}
+        {!isViewingOther && showJustEnabledHelp && (
+          <Card.Root variant="outline" bg="yellow.50" borderColor="yellow.300" borderWidth="1px">
+            <Card.Body p={3}>
+              <HStack align="center" gap={3}>
+                <Text fontSize="xs" color="yellow.800" flex={1} minW={0}>
+                  If you don't see notifications, check Settings → Notifications and verify it's enabled for your browser (e.g. Chrome, Safari, etc.).
+                </Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  aria-label="Dismiss notifications help"
+                  onClick={() => setShowJustEnabledHelp(false)}
+                >
+                  <FiX size={14} />
+                </Button>
+              </HStack>
+            </Card.Body>
+          </Card.Root>
+        )}
+
+        {!isViewingOther && showJustDismissedHelp && (
+          <Card.Root variant="outline" bg="yellow.50" borderColor="yellow.300" borderWidth="1px">
+            <Card.Body p={3}>
+              <HStack align="center" gap={3}>
+                <Text fontSize="xs" color="yellow.800" flex={1} minW={0}>
+                  You can re-enable notifications anytime from your{" "}
+                  <Text
+                    as="span"
+                    color="yellow.900"
+                    fontWeight="semibold"
+                    textDecoration="underline"
+                    cursor="pointer"
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent("navigate:profile", { detail: { userId: me?.id } }));
+                    }}
+                  >
+                    Profile
+                  </Text>
+                  .
+                </Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  aria-label="Dismiss"
+                  onClick={() => setShowJustDismissedHelp(false)}
+                >
+                  <FiX size={14} />
+                </Button>
+              </HStack>
+            </Card.Body>
+          </Card.Root>
+        )}
+
+        {!isViewingOther && !showJustEnabledHelp && !pushBannerDismissed && (push.status === "default" || push.status === "needs-pwa-install" || (push.status === "granted-no-sub" && push.explicitlyDisabled)) && (
+          <Card.Root
+            variant="outline"
+            bg="pink.50"
+            borderColor="pink.400"
+            borderWidth="2px"
+            style={{ animation: "seedlings-pulse 2.5s ease-in-out infinite" }}
+          >
+            <Card.Body p={4}>
+              <HStack align="center" gap={3}>
+                <Box bg="pink.200" color="pink.800" p={2} borderRadius="lg" flexShrink={0}>
+                  <FiBell size={18} />
+                </Box>
+                <VStack align="start" gap={0} flex={1} minW={0}>
+                  <Text fontSize="sm" fontWeight="semibold" color="pink.900">
+                    Get a phone alert for tomorrow's plan
+                  </Text>
+                  <Text fontSize="xs" color="pink.800">
+                    {push.status === "needs-pwa-install"
+                      ? "Add Seedlings to your Home Screen to enable notifications."
+                      : "Tap Enable to receive a push notification each evening."}
+                  </Text>
+                </VStack>
+                {push.status !== "needs-pwa-install" && (
+                  <Button
+                    size="sm"
+                    colorPalette="pink"
+                    loading={push.busy}
+                    onClick={async () => {
+                      const r = await push.subscribe();
+                      if (r.ok) {
+                        publishInlineMessage({ type: "SUCCESS", text: "Notifications enabled." });
+                        setShowJustEnabledHelp(true);
+                      } else {
+                        publishInlineMessage({ type: "ERROR", text: r.error ?? "Could not enable notifications" });
+                      }
+                    }}
+                  >
+                    Enable
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    try { localStorage.setItem("seedlings_pushBannerDismissed", "1"); } catch {}
+                    setPushBannerDismissed(true);
+                    setShowJustDismissedHelp(true);
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </HStack>
+            </Card.Body>
+          </Card.Root>
+        )}
 
         {/* Aggregate mode: a single team-summary banner replaces the per-worker hero. */}
         {isAggregate && (

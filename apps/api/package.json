@@ -32,11 +32,13 @@
     "fastify": "4.28.1",
     "resend": "^6.12.3",
     "twilio": "^6.0.1",
+    "web-push": "^3.6.7",
     "ws": "^8.18.3",
     "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.19.15",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "prisma": "^6.16.2",
     "ts-node": "^10.9.2",

@@ -6,3 +6,9 @@
     font-size: 16px !important;
   }
 }
+
+/* Soft attention pulse for opt-in banners (push notifications, etc.) */
+@keyframes seedlings-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(236, 72, 153, 0); }
+}

@@ -15,6 +15,7 @@ import { clearAllPersistedState } from "../src/lib/usePersistedState";
 import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
+import { refreshPushSubscription } from "../src/lib/usePushNotifications";
 import "../src/styles/globals.css";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
@@ -45,6 +46,13 @@ function AppInner({ Component, pageProps }: AppProps) {
     registerServiceWorker();
     initOfflineExecutor();
   }, []);
+
+  // Self-heal push subscription on every PWA launch (only fires if user has
+  // already granted notification permission — no-op for everyone else).
+  useEffect(() => {
+    if (!userId) return;
+    void refreshPushSubscription();
+  }, [userId]);
 
   // Update favicon/icons based on season
   useEffect(() => {

@@ -123,11 +123,17 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
 // Register the service worker
 export function registerServiceWorker() {
   if (typeof window === "undefined") return;
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("SW registration failed:", err);
-      });
+  if (!("serviceWorker" in navigator)) return;
+  const doRegister = () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("SW registration failed:", err);
     });
+  };
+  // If the document already finished loading (HMR re-renders, fast loads),
+  // the `load` event has already fired and a listener would never run.
+  if (document.readyState === "complete") {
+    doRegister();
+  } else {
+    window.addEventListener("load", doRegister, { once: true });
   }
 }
