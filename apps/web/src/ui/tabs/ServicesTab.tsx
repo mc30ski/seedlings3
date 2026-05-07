@@ -1276,23 +1276,27 @@ export default function ServicesTab({
                   {job.notes && (
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
-                  {detail?.defaultAssignees && detail.defaultAssignees.length > 0 ? (
-                    <Text fontSize="xs" color="teal.600">
-                      Default team: {detail.defaultAssignees.map((a, i) => (
-                        <span key={a.userId}>
-                          {i > 0 && ", "}
-                          <span
-                            style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                            onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                          >
-                            {a.user?.displayName ?? a.user?.email ?? a.userId}
-                          </span>
-                        </span>
-                      ))}
-                    </Text>
-                  ) : (
-                    <Text fontSize="xs" color="fg.muted">Default team: not set</Text>
-                  )}
+                  {(() => {
+                    const teamSource = detail?.defaultAssignees ?? (job as any).defaultAssignees;
+                    if (teamSource && teamSource.length > 0) {
+                      return (
+                        <Text fontSize="xs" color="teal.600">
+                          Default team: {teamSource.map((a: any, i: number) => (
+                            <span key={a.userId}>
+                              {i > 0 && ", "}
+                              <span
+                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                              >
+                                {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              </span>
+                            </span>
+                          ))}
+                        </Text>
+                      );
+                    }
+                    return <Text fontSize="xs" color="fg.muted">Default team: not set</Text>;
+                  })()}
                   {((job as any).assigneeCount > 0 || (detail?.defaultAssignees && detail.defaultAssignees.length > 0)) && (
                     <Box px={2} py={1} mt={1} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" rounded="md">
                       <Text fontSize="2xs" color="yellow.700">
@@ -1321,7 +1325,7 @@ export default function ServicesTab({
                       label="Default Team"
                       onClick={async () => {
                         setDefaultCrewJobId(job.id);
-                        setDefaultCrewCurrent(detail?.defaultAssignees ?? []);
+                        setDefaultCrewCurrent(detail?.defaultAssignees ?? (job as any).defaultAssignees ?? []);
                         setDefaultCrewDialogOpen(true);
                       }}
                       variant="outline"

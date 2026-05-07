@@ -407,6 +407,7 @@ export type JobListItem = {
     kind: string;
   } | null;
   assigneeCount: number;
+  defaultAssignees?: { id: string; userId: string; role?: string | null; user?: { id: string; displayName?: string | null; email?: string | null } }[];
   occurrenceCount?: number;
   description?: string | null;
   notes?: string | null;
