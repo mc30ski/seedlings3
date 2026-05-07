@@ -10,10 +10,12 @@ import {
   HStack,
   Input,
   Portal,
+  Select,
   Spinner,
   Text,
   Textarea,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { Download, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
@@ -414,16 +416,11 @@ export default function BusinessExpensesTab() {
                 style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
               />
             </HStack>
-            <select
+            <CategoryFilterSelect
               value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px", background: "white" }}
-            >
-              <option value="">All categories</option>
-              {usedCategories.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+              onChange={setFilterCategory}
+              categories={usedCategories}
+            />
             {hasFilters && (
               <Button size="xs" variant="ghost" onClick={clearFilters}>
                 <X size={12} /> Clear
@@ -634,5 +631,46 @@ export default function BusinessExpensesTab() {
         </Portal>
       </Dialog.Root>
     </Box>
+  );
+}
+
+function CategoryFilterSelect(props: { value: string; onChange: (v: string) => void; categories: string[] }) {
+  const { value, onChange, categories } = props;
+  const items = useMemo(
+    () => [
+      { label: "All categories", value: "__ALL__" },
+      ...categories.map((c) => ({ label: c, value: c })),
+    ],
+    [categories],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  const current = value === "" ? "__ALL__" : value;
+  return (
+    <Select.Root
+      collection={collection}
+      value={[current]}
+      onValueChange={(e) => {
+        const v = e.value?.[0] ?? "__ALL__";
+        onChange(v === "__ALL__" ? "" : v);
+      }}
+      size="sm"
+      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+      css={{ width: "auto", flex: "0 0 auto" }}
+    >
+      <Select.Control>
+        <Select.Trigger w="auto" minW="0" px="2">
+          <Select.ValueText placeholder="All categories" />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
   );
 }

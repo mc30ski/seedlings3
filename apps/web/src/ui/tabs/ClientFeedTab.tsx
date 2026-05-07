@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
+  Button,
   Card,
   HStack,
+  SimpleGrid,
   Text,
   VStack,
   Spinner,
 } from "@chakra-ui/react";
+import { LayoutGrid, List as ListIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 
 type FeedPhoto = {
   id: string;
@@ -98,11 +102,12 @@ export default function ClientFeedTab() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [daysShown, setDaysShown] = useState(3);
+  const [daysShown, setDaysShown] = useState(7);
   const [loadingMore, setLoadingMore] = useState(false);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
   const [viewerPhotos, setViewerPhotos] = useState<FeedPhoto[]>([]);
   const [viewerIdx, setViewerIdx] = useState(0);
+  const [viewMode, setViewMode] = usePersistedState<"list" | "tiles">("clientFeed_viewMode", "list");
 
   // Global keyboard handler for photo viewer
   const viewerIdxRef = useRef(viewerIdx);
@@ -139,8 +144,8 @@ export default function ClientFeedTab() {
   }
 
   useEffect(() => {
-    loadFeed(3, false).then((items) => {
-      if (items.length === 0) void loadFeed(7, false);
+    loadFeed(7, false).then((items) => {
+      if (items.length === 0) void loadFeed(14, false);
     });
   }, []);
 
@@ -178,14 +183,57 @@ export default function ClientFeedTab() {
 
       {items.length > 0 && (
         <Box mb={5}>
-          <Text fontSize="xs" fontWeight="semibold" color={daysShown <= 3 ? "blue.500" : "green.600"} mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            {daysShown <= 3 ? "Happening Now" : `Recent Activity — Last ${daysShown} days`}
-          </Text>
-          <VStack align="stretch" gap={2}>
-            {items.map((item) => (
-              <FeedCard key={item.id} item={item} onPhotoClick={openViewer} />
-            ))}
-          </VStack>
+          <HStack justify="space-between" mb={2} px={1}>
+            <Text fontSize="xs" fontWeight="semibold" color={daysShown <= 7 ? "blue.500" : "green.600"} textTransform="uppercase" letterSpacing="wide">
+              {daysShown <= 7 ? "Recent Activity — Last week" : daysShown <= 14 ? "Recent Activity — Last 2 weeks" : daysShown <= 30 ? "Recent Activity — Last month" : `Recent Activity — Last ${daysShown} days`}
+            </Text>
+            <HStack gap={1}>
+              <Button
+                size="xs"
+                variant={viewMode === "list" ? "solid" : "outline"}
+                colorPalette={viewMode === "list" ? "blue" : "gray"}
+                px={2}
+                onClick={() => setViewMode("list")}
+                aria-label="List view"
+              >
+                <ListIcon size={12} />
+              </Button>
+              <Button
+                size="xs"
+                variant={viewMode === "tiles" ? "solid" : "outline"}
+                colorPalette={viewMode === "tiles" ? "blue" : "gray"}
+                px={2}
+                onClick={() => setViewMode("tiles")}
+                aria-label="Tile view"
+              >
+                <LayoutGrid size={12} />
+              </Button>
+            </HStack>
+          </HStack>
+          {viewMode === "tiles" ? (() => {
+            const tilesItems = items.filter((it) => it.photos.length > 0);
+            if (tilesItems.length === 0) {
+              return (
+                <Box textAlign="center" py={6} color="fg.muted">
+                  <Text fontSize="sm">No photos yet for this period.</Text>
+                  <Text fontSize="xs" mt={1}>Switch to list view to see updates without photos.</Text>
+                </Box>
+              );
+            }
+            return (
+              <SimpleGrid columns={{ base: 1, md: 2 }} gap={3}>
+                {tilesItems.map((item) => (
+                  <TileCard key={item.id} item={item} onPhotoClick={openViewer} />
+                ))}
+              </SimpleGrid>
+            );
+          })() : (
+            <VStack align="stretch" gap={2}>
+              {items.map((item) => (
+                <FeedCard key={item.id} item={item} onPhotoClick={openViewer} />
+              ))}
+            </VStack>
+          )}
         </Box>
       )}
 
@@ -198,10 +246,10 @@ export default function ClientFeedTab() {
             color="blue.600"
             fontWeight="medium"
             cursor="pointer"
-            onClick={() => void loadFeed(daysShown === 3 ? 7 : 30)}
+            onClick={() => void loadFeed(daysShown < 14 ? 14 : 30)}
             _hover={{ textDecoration: "underline" }}
           >
-            {loadingMore ? "Loading..." : daysShown === 3 ? "Show more — last 7 days" : "Show more — last 30 days"}
+            {loadingMore ? "Loading..." : daysShown < 14 ? "Show more — last 2 weeks" : "Show more — last month"}
           </Text>
         </Box>
       )}
@@ -328,6 +376,119 @@ function LazyImage({ src, alt, onClick }: { src: string; alt: string; onClick?: 
               background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
               backgroundSize: "200% 100%",
               animation: "img-shimmer 1.5s ease-in-out infinite",
+            }}
+          />
+        </>
+      )}
+      {inView && (
+        <img
+          src={src}
+          alt={alt}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: loaded ? 1 : 0,
+            transition: "opacity 0.3s ease",
+          }}
+          onLoad={() => setLoaded(true)}
+        />
+      )}
+    </Box>
+  );
+}
+
+function TileCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photos: FeedPhoto[], idx: number) => void }) {
+  const style = typeStyle[item.type];
+  const isUpcoming = item.type === "upcoming";
+  const hero = item.photos[0];
+  const extraCount = Math.max(0, item.photos.length - 1);
+
+  return (
+    <Card.Root
+      variant="outline"
+      borderColor={style.borderColor}
+      bg={style.bg}
+      overflow="hidden"
+    >
+      {hero ? (
+        <Box
+          position="relative"
+          bg="gray.100"
+          cursor="pointer"
+          onClick={() => onPhotoClick(item.photos, 0)}
+        >
+          <HeroImage src={hero.url} alt="Job photo" />
+          {extraCount > 0 && (
+            <Box
+              position="absolute"
+              top={2}
+              right={2}
+              bg="blackAlpha.700"
+              color="white"
+              fontSize="xs"
+              fontWeight="semibold"
+              px={2}
+              py={1}
+              borderRadius="md"
+            >
+              +{extraCount} more
+            </Box>
+          )}
+        </Box>
+      ) : (
+        <Box h="160px" bg="gray.100" display="flex" alignItems="center" justifyContent="center">
+          <Text fontSize="xs" color="fg.muted">No photo yet</Text>
+        </Box>
+      )}
+      <Card.Body py="3" px="3">
+        <HStack align="start" gap={2}>
+          <Box w="8px" h="8px" borderRadius="full" bg={style.dot} mt="6px" flexShrink={0} />
+          <VStack align="start" gap={0.5} flex="1" minW={0}>
+            <Text fontSize="sm" fontWeight="medium" color={style.color}>
+              {feedMessage(item)}
+            </Text>
+            <Text fontSize="xs" color="fg.muted">
+              {isUpcoming ? relativeTime(item.timestamp) : timeAgo(item.timestamp)}
+            </Text>
+          </VStack>
+        </HStack>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+function HeroImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [inView, setInView] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
+      { rootMargin: "300px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <Box ref={ref} position="relative" w="full" h="240px" bg="gray.200" overflow="hidden">
+      {!loaded && (
+        <>
+          <style>{`
+            @keyframes hero-shimmer {
+              0% { background-position: 200% 0; }
+              100% { background-position: -200% 0; }
+            }
+          `}</style>
+          <Box
+            position="absolute"
+            inset="0"
+            style={{
+              background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
+              backgroundSize: "200% 100%",
+              animation: "hero-shimmer 1.5s ease-in-out infinite",
             }}
           />
         </>

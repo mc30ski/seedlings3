@@ -845,6 +845,14 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
+          value: "business-expenses",
+          label: "Expenses",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
           value: "operations",
           label: "Operations",
           icon: FiBarChart2,
@@ -867,14 +875,6 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
           category: "System",
           categoryIcon: FiSettings,
-        },
-        {
-          value: "business-expenses",
-          label: "Expenses",
-          icon: TfiMoney,
-          content: wrapWithInlineMessage(<BusinessExpensesTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
         },
       ],
     },
