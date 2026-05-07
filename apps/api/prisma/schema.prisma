@@ -30,6 +30,7 @@ enum AuditScope {
   JOB
   PROPERTY
   SETTING
+  NOTIFICATION
   // add more scopes as you expand the schema
 }
 
@@ -56,6 +57,7 @@ enum AuditVerb {
   INSURANCE_UPLOADED
   CONTRACTOR_AGREED
   W9_COLLECTED
+  SENT
   // add new verbs as needed
 }
 
@@ -118,6 +120,18 @@ model User {
   changeRequestsCreated     OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
   changeRequestsResolved    OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
   pushSubscriptions         PushSubscription[]
+}
+
+model NotificationTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  title     String?
+  body      String   @db.Text
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder, name])
 }
 
 model PushSubscription {

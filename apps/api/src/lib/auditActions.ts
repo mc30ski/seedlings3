@@ -75,6 +75,9 @@ export const AUDIT = {
   SETTING: {
     UPDATED: [AuditScope.SETTING, AuditVerb.SETTING_UPDATED] as const,
   },
+  NOTIFICATION: {
+    SENT: [AuditScope.NOTIFICATION, AuditVerb.SENT] as const,
+  },
 } as const;
 
 // Useful types
