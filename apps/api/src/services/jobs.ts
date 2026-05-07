@@ -227,6 +227,7 @@ export const jobs: ServicesJobs = {
         property: true,
         schedule: true,
         defaultAssignees: {
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
           include: { user: { select: { id: true, displayName: true, email: true } } },
         },
         occurrences: {
@@ -1098,6 +1099,10 @@ export const jobs: ServicesJobs = {
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
+            recommendedCollections: {
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+              select: { collectionId: true },
+            },
           },
         },
         assignees: {
@@ -1210,6 +1215,10 @@ export const jobs: ServicesJobs = {
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
+            recommendedCollections: {
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+              select: { collectionId: true },
+            },
           },
         },
         assignees: {
@@ -1268,6 +1277,10 @@ export const jobs: ServicesJobs = {
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
+            recommendedCollections: {
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+              select: { collectionId: true },
+            },
           },
         },
         assignees: {
@@ -1305,6 +1318,10 @@ export const jobs: ServicesJobs = {
                 client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
+            },
+            recommendedCollections: {
+              orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+              select: { collectionId: true },
             },
           },
         },
