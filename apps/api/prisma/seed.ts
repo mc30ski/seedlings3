@@ -1151,6 +1151,23 @@ async function seedDatabase() {
     update: { value: serviceTypesValue, description: "Service types with labels and optional equipment mapping. Array of {key, label, equipmentKind?}. Order determines UI display.", updatedById: MICHAEL_ID },
   });
 
+  // ── Notification templates ────────────────────────────────────────────────
+  console.log("  Creating notification templates...");
+  const notifTemplates = [
+    { name: "Cancelled — weather", title: "Today is cancelled", body: "Today's jobs are cancelled due to weather. Stay home — we'll reschedule.", sortOrder: 10 },
+    { name: "Schedule change", title: "Schedule update", body: "Your schedule has changed. Please open Seedlings and review your upcoming jobs.", sortOrder: 20 },
+    { name: "Equipment notice", title: "Equipment reminder", body: "Please return any checked-out equipment by end of day.", sortOrder: 30 },
+    { name: "All hands meeting", title: "Team meeting", body: "Quick team meeting tomorrow at 9am at HQ. See you there.", sortOrder: 40 },
+  ];
+  for (const t of notifTemplates) {
+    const existing = await prisma.notificationTemplate.findFirst({ where: { name: t.name } });
+    if (existing) {
+      await prisma.notificationTemplate.update({ where: { id: existing.id }, data: t });
+    } else {
+      await prisma.notificationTemplate.create({ data: t });
+    }
+  }
+
   // ── Pricing settings ───────────────────────────────────────────────────────
   console.log("  Creating pricing entries...");
 

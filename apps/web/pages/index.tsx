@@ -43,6 +43,7 @@ import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
+import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -636,6 +637,13 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<StatisticsTab />),
     },
     {
+      value: "notify",
+      label: "Notify",
+      icon: FiBell,
+
+      content: wrapWithInlineMessage(<AdminNotifyTab />),
+    },
+    {
       value: "profile",
       label: "Profile",
       icon: FiUser,
@@ -821,7 +829,7 @@ export default function HomePage() {
           equipment: "Field", routes: "Field",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",
-          profile: "System", activity: "System", history: "System", settings: "System",
+          profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
           Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
@@ -1401,7 +1409,7 @@ export default function HomePage() {
       equipment: "Field", routes: "Field",
       payments: "Money", statistics: "Money",
       clients: "Directory", properties: "Directory", users: "Directory",
-      profile: "System", activity: "System", history: "System", settings: "System",
+      profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
     };
     const onNav = (e: Event) => {
       const { tab, remount } = (e as CustomEvent).detail || {};
