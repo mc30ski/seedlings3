@@ -108,7 +108,12 @@ export default function BreadcrumbNav({
   const categoryTabs = hasCategories
     ? visibleInner.filter((t) => t.category === activeCat)
     : visibleInner;
-  const isSingleTabCategory = hasCategories && categoryTabs.length === 1;
+  // Hide the inner level only when the category has one tab AND that tab's
+  // label is the same as the category label (otherwise the inner adds info).
+  const isSingleTabCategory =
+    hasCategories
+    && categoryTabs.length === 1
+    && (categoryTabs[0]?.label ?? "").trim().toLowerCase() === (activeCat ?? "").trim().toLowerCase();
 
   // Resolve active inner tab within the category
   const activeInnerResolved = categoryTabs.find((t) => t.value === innerValue) ?? categoryTabs[0] ?? activeInner ?? visibleInner[0];
