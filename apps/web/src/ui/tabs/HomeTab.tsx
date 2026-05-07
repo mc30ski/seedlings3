@@ -476,50 +476,59 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             style={{ animation: "seedlings-pulse 2.5s ease-in-out infinite" }}
           >
             <Card.Body p={4}>
-              <HStack align="center" gap={3}>
-                <Box bg="pink.200" color="pink.800" p={2} borderRadius="lg" flexShrink={0}>
-                  <FiBell size={18} />
-                </Box>
-                <VStack align="start" gap={0} flex={1} minW={0}>
-                  <Text fontSize="sm" fontWeight="semibold" color="pink.900">
-                    Get a phone alert for tomorrow's plan
-                  </Text>
-                  <Text fontSize="xs" color="pink.800">
-                    {push.status === "needs-pwa-install"
-                      ? "Add Seedlings to your Home Screen to enable notifications."
-                      : "Tap Enable to receive a push notification each evening."}
-                  </Text>
-                </VStack>
-                {push.status !== "needs-pwa-install" && (
+              <Box
+                display="flex"
+                flexDirection={{ base: "column", sm: "row" }}
+                alignItems={{ base: "stretch", sm: "center" }}
+                gap={3}
+              >
+                <HStack flex={1} minW={0} gap={3} align="center">
+                  <Box bg="pink.200" color="pink.800" p={2} borderRadius="lg" flexShrink={0}>
+                    <FiBell size={18} />
+                  </Box>
+                  <VStack align="start" gap={0} flex={1} minW={0}>
+                    <Text fontSize="sm" fontWeight="semibold" color="pink.900">
+                      Get a phone alert for tomorrow's plan
+                    </Text>
+                    <Text fontSize="xs" color="pink.800">
+                      {push.status === "needs-pwa-install"
+                        ? "Add Seedlings to your Home Screen to enable notifications."
+                        : "Tap Enable to receive a push notification each evening."}
+                    </Text>
+                  </VStack>
+                </HStack>
+                <HStack gap={2} justifyContent="flex-end" flexShrink={0}>
+                  {push.status !== "needs-pwa-install" && (
+                    <Button
+                      size="sm"
+                      colorPalette="pink"
+                      loading={push.busy}
+                      onClick={async () => {
+                        const r = await push.subscribe();
+                        if (r.ok) {
+                          publishInlineMessage({ type: "SUCCESS", text: "Notifications enabled." });
+                          setShowJustEnabledHelp(true);
+                        } else {
+                          publishInlineMessage({ type: "ERROR", text: r.error ?? "Could not enable notifications" });
+                        }
+                      }}
+                    >
+                      Enable
+                    </Button>
+                  )}
                   <Button
                     size="sm"
-                    colorPalette="pink"
-                    loading={push.busy}
-                    onClick={async () => {
-                      const r = await push.subscribe();
-                      if (r.ok) {
-                        publishInlineMessage({ type: "SUCCESS", text: "Notifications enabled." });
-                        setShowJustEnabledHelp(true);
-                      } else {
-                        publishInlineMessage({ type: "ERROR", text: r.error ?? "Could not enable notifications" });
-                      }
+                    variant="ghost"
+                    onClick={() => {
+                      try { localStorage.setItem("seedlings_pushBannerDismissed", "1"); } catch {}
+                      setPushBannerDismissed(true);
+                      setShowJustDismissedHelp(true);
                     }}
                   >
-                    Enable
+                    Dismiss
                   </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    try { localStorage.setItem("seedlings_pushBannerDismissed", "1"); } catch {}
-                    setPushBannerDismissed(true);
-                    setShowJustDismissedHelp(true);
-                  }}
-                >
-                  Dismiss
-                </Button>
-              </HStack>
+                </HStack>
+              </Box>
             </Card.Body>
           </Card.Root>
         )}
