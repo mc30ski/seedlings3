@@ -17,7 +17,8 @@ export type AdminTabs =
   | "history"
   | "settings"
   | "profile"
-  | "notify";
+  | "notify"
+  | "collections";
 
 export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses";
 

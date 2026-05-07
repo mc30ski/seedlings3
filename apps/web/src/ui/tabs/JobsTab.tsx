@@ -269,6 +269,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [marginPercent, setMarginPercent] = useState(0);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  // Equipment collections — for surfacing the job's "recommended kits" on
+  // expanded cards. Loaded once; lookup by collectionId.
+  type CollectionLite = { id: string; name: string; items: { equipmentId: string; equipment: { status?: string | null; retiredAt?: string | null } }[] };
+  const [equipmentCollections, setEquipmentCollections] = useState<CollectionLite[]>([]);
   const jobTagLabel = (tag: string) => _jobTagLabel(tag, serviceTypes);
 
   // Build a rich label for offline queue entries
@@ -1038,6 +1042,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (ek?.value) { const parsed = parseEquipmentKindsConfig(ek.value); if (parsed) setEquipmentKinds(parsed); }
       })
       .catch(() => {});
+    apiGet<CollectionLite[]>("/api/equipment-collections")
+      .then((list) => setEquipmentCollections(Array.isArray(list) ? list : []))
+      .catch(() => setEquipmentCollections([]));
   }, [dateFrom, dateTo, viewAsUserIds, isTrainee]);
 
   // Re-fetch data after offline queue syncs
@@ -4172,6 +4179,44 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 {s.label} →
                               </Button>
                             ))}
+                          </HStack>
+                        </Box>
+                      );
+                    })()}
+                    {/* Recommended kits — collections the admin attached to this job. */}
+                    {!isTaskOrReminder && (() => {
+                      const recIds: string[] = ((occ.job as any)?.recommendedCollections ?? []).map((r: any) => r.collectionId);
+                      if (recIds.length === 0) return null;
+                      const recs = recIds.map((id) => equipmentCollections.find((c) => c.id === id)).filter(Boolean) as CollectionLite[];
+                      if (recs.length === 0) return null;
+                      return (
+                        <Box mt={1} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="purple.700" mb={1}>Recommended Collections</Text>
+                          <HStack gap={1.5} wrap="wrap">
+                            {recs.map((c) => {
+                              const total = c.items.length;
+                              const available = c.items.filter((i) => !i.equipment.retiredAt && i.equipment.status === "AVAILABLE").length;
+                              return (
+                                <Button
+                                  key={c.id}
+                                  size="xs"
+                                  variant="solid"
+                                  colorPalette="purple"
+                                  px="2"
+                                  borderRadius="full"
+                                  fontWeight="medium"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    // Send the worker to the Equipment tab where the collections strip
+                                    // is rendered with a Reserve button. Highlights via session flag.
+                                    try { window.sessionStorage.setItem("highlightCollectionId", c.id); } catch {}
+                                    window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                  }}
+                                >
+                                  {c.name} ({available}/{total}) →
+                                </Button>
+                              );
+                            })}
                           </HStack>
                         </Box>
                       );

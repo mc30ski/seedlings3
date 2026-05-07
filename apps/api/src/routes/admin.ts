@@ -815,6 +815,34 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { updated: true };
   });
 
+  // Reassign the default-team claimer. Promotes the chosen user to first
+  // (lowest sortOrder). If they were an observer, also clears that role so
+  // they qualify as the claimer.
+  app.post("/admin/jobs/:id/default-assignees/:userId/make-claimer", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const userId = String(req.params.userId);
+
+    const existing = await prisma.jobAssigneeDefault.findUnique({
+      where: { jobId_userId: { jobId, userId } },
+    });
+    if (!existing) throw app.httpErrors.notFound("Not found");
+
+    // Find the lowest sortOrder currently in this job's defaults; we want
+    // the claimer strictly less.
+    const lowest = await prisma.jobAssigneeDefault.findFirst({
+      where: { jobId },
+      orderBy: { sortOrder: "asc" },
+      select: { sortOrder: true },
+    });
+    const newSortOrder = (lowest?.sortOrder ?? 100) - 1;
+
+    await prisma.jobAssigneeDefault.update({
+      where: { id: existing.id },
+      data: { sortOrder: newSortOrder, role: null, active: true },
+    });
+    return { updated: true };
+  });
+
   // Job schedule: upsert schedule + generate occurrences
 
   app.put("/admin/jobs/:id/schedule", adminGuard, async (req: any) => {

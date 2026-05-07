@@ -44,6 +44,7 @@ import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
+import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -58,6 +59,7 @@ import {
   FiBriefcase,
   FiClipboard,
   FiTool,
+  FiPackage,
   FiUser,
   FiUsers,
   FiFileText,
@@ -113,7 +115,7 @@ export default function HomePage() {
     if (sessionStorage.getItem("equipmentQrSlug")) {
       setTopTab("worker");
       setWorkerInnerTab("equipment");
-      setWorkerCategory("Field");
+      setWorkerCategory("Inventory");
     }
   }, []);
 
@@ -584,16 +586,17 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminJobsTab key={`ajobs-${adminJobsRemountKey}`} me={me} purpose="ADMIN" />),
     },
     {
-      value: "jobs",
-      label: "Services",
-      icon: FiBriefcase,
-      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
-    },
-    {
       value: "equipment",
       label: "Equipment",
       icon: FiTool,
       content: wrapWithInlineMessage(<EquipmentTab key={`aeq-${adminEquipmentRemountKey}`} me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "collections",
+      label: "Collections",
+      icon: FiPackage,
+
+      content: wrapWithInlineMessage(<AdminCollectionsTab />),
     },
     {
       value: "payments",
@@ -621,6 +624,12 @@ export default function HomePage() {
       icon: FiNavigation,
 
       content: wrapWithInlineMessage(<AdminRoutesTab />),
+    },
+    {
+      value: "jobs",
+      label: "Services",
+      icon: FiBriefcase,
+      content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
     },
     {
       value: "users",
@@ -780,13 +789,13 @@ export default function HomePage() {
         const catMap: Record<string, string> = {
           home: "Work",
           tasks: "Actions",
-          reminders: "Work", jobs: "Work",
-          equipment: "Field", routes: "Field",
+          reminders: "Work", jobs: "Work", routes: "Work",
+          equipment: "Inventory",
           payments: "Money", statistics: "Money",
           clients: "Info", properties: "Info", profile: "Info",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Info: FiUsers,
+          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Info: FiUsers,
         };
         const highlightCats = new Set(["Actions"]);
         return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
@@ -825,14 +834,14 @@ export default function HomePage() {
       innerTabs: (() => {
         const catMap: Record<string, string> = {
           tasks: "Actions",
-          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
-          equipment: "Field", routes: "Field",
+          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
+          equipment: "Inventory", collections: "Inventory",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",
           profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Actions: FiPlus, Work: FiClipboard, Field: FiTool, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
+          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
         };
         const highlightCats = new Set(["Actions"]);
         return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
@@ -1405,8 +1414,8 @@ export default function HomePage() {
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
       tasks: "Actions",
-      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work",
-      equipment: "Field", routes: "Field",
+      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
+      equipment: "Inventory", collections: "Inventory",
       payments: "Money", statistics: "Money",
       clients: "Directory", properties: "Directory", users: "Directory",
       profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
@@ -1681,7 +1690,7 @@ export default function HomePage() {
     } else {
       setTopTab("worker");
       setWorkerInnerTab("equipment");
-      setWorkerCategory("Field");
+      setWorkerCategory("Inventory");
     }
     const savedId = equipmentId;
     let attempts = 0;

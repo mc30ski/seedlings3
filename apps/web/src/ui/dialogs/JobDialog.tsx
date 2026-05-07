@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -77,6 +78,12 @@ export default function JobDialog({
   const [defaultPrice, setDefaultPrice] = useState("");
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
   const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
+  // Recommended equipment collections — admin can attach kits to a job so
+  // workers see them as suggested checkouts on the job/occurrence view.
+  type CollectionLite = { id: string; name: string; items: { equipmentId: string }[] };
+  const [allCollections, setAllCollections] = useState<CollectionLite[]>([]);
+  const [recommendedCollectionIds, setRecommendedCollectionIds] = useState<string[]>([]);
+  const [recommendedDirty, setRecommendedDirty] = useState(false);
 
   // Load active properties when dialog opens
   useEffect(() => {
@@ -97,6 +104,23 @@ export default function JobDialog({
       }
     })();
   }, [open]);
+
+  // Load all collections for the recommendation picker, and the current
+  // recommendations for this job (UPDATE mode only).
+  useEffect(() => {
+    if (!open) return;
+    apiGet<CollectionLite[]>("/api/equipment-collections")
+      .then((list) => setAllCollections(Array.isArray(list) ? list : []))
+      .catch(() => setAllCollections([]));
+    if (mode === "UPDATE" && initial?.id) {
+      apiGet<{ collectionId: string }[]>(`/api/admin/jobs/${initial.id}/recommended-collections`)
+        .then((rows) => setRecommendedCollectionIds(Array.isArray(rows) ? rows.map((r) => r.collectionId) : []))
+        .catch(() => setRecommendedCollectionIds([]));
+    } else {
+      setRecommendedCollectionIds([]);
+    }
+    setRecommendedDirty(false);
+  }, [open, mode, initial?.id]);
 
   // Seed form state
   useEffect(() => {
@@ -201,6 +225,12 @@ export default function JobDialog({
         // Save property photo selections if changed
         if (propertyPhotoIds !== null) {
           await apiPut(`/api/admin/jobs/${initial.id}/property-photos`, { propertyPhotoIds });
+        }
+        // Save recommended collections if changed
+        if (recommendedDirty) {
+          await apiPut(`/api/admin/jobs/${initial.id}/recommended-collections`, {
+            collectionIds: recommendedCollectionIds,
+          });
         }
         publishInlineMessage({ type: "SUCCESS", text: "Job updated." });
         onOpenChange(false);
@@ -372,6 +402,47 @@ export default function JobDialog({
                 {mode === "UPDATE" && initial?.id && initial?.propertyId && (
                   <div>
                     <JobPropertyPhotosPicker jobId={initial.id} propertyId={initial.propertyId} onSelectionChange={setPropertyPhotoIds} />
+                  </div>
+                )}
+
+                {mode === "UPDATE" && initial?.id && (
+                  <div>
+                    <Text mb="1">Recommended collections</Text>
+                    {allCollections.length === 0 ? (
+                      <Text fontSize="xs" color="fg.muted">
+                        No equipment collections defined yet. Create some under Inventory → Collections.
+                      </Text>
+                    ) : (
+                      <Box borderWidth="1px" borderRadius="md" p={2} bg="bg.subtle">
+                        <HStack flexWrap="wrap" gap={1.5}>
+                          {allCollections.map((c) => {
+                            const selected = recommendedCollectionIds.includes(c.id);
+                            return (
+                              <Badge
+                                key={c.id}
+                                size="md"
+                                colorPalette={selected ? "blue" : "gray"}
+                                variant={selected ? "solid" : "outline"}
+                                cursor="pointer"
+                                px={2}
+                                py={1}
+                                onClick={() => {
+                                  setRecommendedCollectionIds((prev) =>
+                                    prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                                  );
+                                  setRecommendedDirty(true);
+                                }}
+                              >
+                                {c.name} ({c.items.length})
+                              </Badge>
+                            );
+                          })}
+                        </HStack>
+                        <Text fontSize="xs" color="fg.muted" mt={2}>
+                          Workers will see these as suggested collections to grab when starting this job.
+                        </Text>
+                      </Box>
+                    )}
                   </div>
                 )}
 

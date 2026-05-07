@@ -183,6 +183,7 @@ model Equipment {
   pins         PinnedEquipment[]
   likes        LikedEquipment[]
   instructions EquipmentInstruction[]
+  collections  EquipmentCollectionItem[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -488,6 +489,7 @@ model Job {
   defaultAssignees      JobAssigneeDefault[]
   defaultPropertyPhotos JobPropertyPhoto[]
   followups             FollowupJob[]
+  recommendedCollections JobRecommendedCollection[]
 }
 
 model JobContact {
@@ -660,6 +662,9 @@ model JobAssigneeDefault {
 
   role      String?  // "observer" for observer role, null for worker
   active    Boolean  @default(true)
+  // Lower sortOrder = appears first. The first non-observer (sorted asc) is
+  // treated as the default claimer when generating occurrences.
+  sortOrder Int      @default(100)
 
   createdAt DateTime @default(now())
 
@@ -868,6 +873,56 @@ model EquipmentInstruction {
   createdAt    DateTime  @default(now())
 
   @@index([equipmentId])
+}
+
+// Admin-defined groupings of equipment ("Mowing Kit", "Spring Cleanup Kit", etc.).
+// Soft-membership: equipment can belong to multiple collections, retired pieces
+// remain attached. Used as templates/recommendations — they don't constrain
+// individual equipment lifecycles. Workers check out individual pieces; the
+// collection just gives them a one-tap shortcut.
+model EquipmentCollection {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  sortOrder   Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items                EquipmentCollectionItem[]
+  jobRecommendations   JobRecommendedCollection[]
+
+  @@index([sortOrder, name])
+}
+
+model EquipmentCollectionItem {
+  id           String   @id @default(cuid())
+  collectionId String
+  equipmentId  String
+  sortOrder    Int      @default(100)
+
+  collection   EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  equipment    Equipment           @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime @default(now())
+
+  @@unique([collectionId, equipmentId])
+  @@index([equipmentId])
+  @@index([collectionId, sortOrder])
+}
+
+model JobRecommendedCollection {
+  id           String   @id @default(cuid())
+  jobId        String
+  collectionId String
+  sortOrder    Int      @default(100)
+
+  job          Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  collection   EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime @default(now())
+
+  @@unique([jobId, collectionId])
+  @@index([jobId, sortOrder])
 }
 
 model OccurrenceComment {

@@ -11,6 +11,7 @@ import {
   Dialog,
   HStack,
   Portal,
+  SimpleGrid,
   Text,
   VStack,
   Select,
@@ -90,6 +91,23 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<Equipment[]>([]);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
+  // Equipment Collections — kits the admin has defined. Workers see them at
+  // the top of the tab as "Reserve kit" shortcuts; the action loops the
+  // existing per-piece reserve() call.
+  type CollectionItem = { id: string; equipmentId: string; equipment: { id: string; shortDesc?: string | null; type?: string | null; status?: string | null; retiredAt?: string | null } };
+  type Collection = { id: string; name: string; description?: string | null; items: CollectionItem[] };
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [reservingKitId, setReservingKitId] = useState<string | null>(null);
+  const [collectionsCollapsed, setCollectionsCollapsed] = usePersistedState<boolean>(`${pfx}_collectionsCollapsed`, false);
+  const [highlightCollectionId, setHighlightCollectionId] = useState<string | null>(null);
+  const [equipmentCollapsed, setEquipmentCollapsed] = usePersistedState<boolean>(`${pfx}_equipmentCollapsed`, false);
+  // Track filter-active transitions so we can auto-collapse the Collections
+  // strip when the user starts narrowing the equipment list.
+  const filtersActiveRef = useRef(false);
+  // Filter the equipment list to members of a single collection. Workers use
+  // it to drill into "what's in this kit"; admins use it to scope bulk actions
+  // like force-release.
+  const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   // Workers list — only used by the admin worker-filter chip to look up names.
   const [adminWorkers, setAdminWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
   useEffect(() => {
@@ -194,6 +212,20 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         if (ek?.value) { const parsed = parseEquipmentKindsConfig(ek.value); if (parsed) setEquipmentKinds(parsed); }
       })
       .catch(() => {});
+    apiGet<Collection[]>("/api/equipment-collections")
+      .then((list) => setCollections(Array.isArray(list) ? list : []))
+      .catch(() => setCollections([]));
+    // Pick up a "show me this collection" hand-off from JobsTab: ensures the
+    // strip is uncollapsed and pulses the matching card.
+    try {
+      const hl = window.sessionStorage.getItem("highlightCollectionId");
+      if (hl) {
+        window.sessionStorage.removeItem("highlightCollectionId");
+        setHighlightCollectionId(hl);
+        setCollectionsCollapsed(false);
+        setTimeout(() => setHighlightCollectionId(null), 2500);
+      }
+    } catch {}
   }, [forAdmin]);
 
   // Worker-only: load pinned + liked equipment
@@ -376,7 +408,34 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       setKind(["ALL"]);
       setStatusFilter(["ALL"]);
     }
+    // Hand-off from other surfaces (e.g. AdminCollectionsTab chip click) —
+    // filter to a single equipment item by id.
+    const highlight = window.sessionStorage.getItem("equipmentHighlightId");
+    if (highlight) {
+      window.sessionStorage.removeItem("equipmentHighlightId");
+      setHighlightId(highlight);
+      setKind(["ALL"]);
+      setStatusFilter(["ALL"]);
+    }
   }, []);
+
+  // Auto-collapse the Collections strip when the user starts filtering.
+  // Triggers on the no-filters → any-filters transition; the user can still
+  // manually re-expand and that override sticks until filters are cleared.
+  useEffect(() => {
+    const hasFilters =
+      !!q.trim()
+      || kind[0] !== "ALL"
+      || statusFilter[0] !== "ALL"
+      || (isWorkerView && likedOnly)
+      || (forAdmin && workerFilter.length > 0)
+      || !!collectionFilter
+      || !!highlightId;
+    if (hasFilters && !filtersActiveRef.current) {
+      setCollectionsCollapsed(true);
+    }
+    filtersActiveRef.current = hasFilters;
+  }, [q, kind, statusFilter, likedOnly, workerFilter, collectionFilter, highlightId, isWorkerView, forAdmin]);
   // Once items are loaded, match the slug and show action dialog
   useEffect(() => {
     if (!qrSlugPending.current || items.length === 0) return;
@@ -476,8 +535,15 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       rows = rows.filter((r) => !!r.holder?.userId && ids.has(r.holder.userId));
     }
 
+    // Restrict to members of the selected collection (worker + admin).
+    if (collectionFilter) {
+      const c = collections.find((x) => x.id === collectionFilter);
+      const memberIds = new Set((c?.items ?? []).map((i) => i.equipmentId));
+      rows = rows.filter((r) => memberIds.has(r.id));
+    }
+
     return rows;
-  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId, workerFilter]);
+  }, [items, q, kind, statusFilter, forAdmin, isWorkerView, likedOnly, likedIds, highlightId, workerFilter, collectionFilter, collections]);
 
   // Split into Pinned + Claimed + Available + Unavailable groups (worker view only).
   const groups = useMemo(() => {
@@ -562,6 +628,68 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         type: "ERROR",
         text: getErrorMessage(`Equipment '${e.qrSlug}' reserved failed.`, err),
       });
+    }
+  }
+
+  // Reserve every available member of a collection. Captures the actual reason
+  // each member couldn't be reserved (insurance, already in use, retired, etc.)
+  // and surfaces those reasons in the toast — workers shouldn't have to read
+  // the console to figure out why a kit only partially reserved.
+  async function reserveKit(collection: Collection) {
+    setReservingKitId(collection.id);
+    try {
+      // Aggregate human-readable reasons → count
+      const reasons: Record<string, number> = {};
+      const addReason = (raw: string) => {
+        const k = raw.replace(/\.+$/, "").trim() || "could not reserve";
+        reasons[k] = (reasons[k] ?? 0) + 1;
+      };
+
+      let reserved = 0;
+      for (const i of collection.items) {
+        const live = items.find((eq) => eq.id === i.equipmentId);
+        if (!live) {
+          addReason("equipment not found");
+          continue;
+        }
+        if (live.retiredAt) {
+          addReason("retired");
+          continue;
+        }
+        if (live.status !== "AVAILABLE") {
+          if (live.status === "RESERVED" || live.status === "CHECKED_OUT") addReason("already in use");
+          else if (live.status === "MAINTENANCE") addReason("in maintenance");
+          else addReason("not available");
+          continue;
+        }
+        try {
+          await apiPost(`/api/equipment/${i.equipmentId}/reserve`);
+          reserved++;
+        } catch (err: any) {
+          addReason(err?.message || "could not reserve");
+        }
+      }
+
+      notifyEquipmentUpdated();
+      await load(false);
+      apiGet<Collection[]>("/api/equipment-collections").then((list) => setCollections(Array.isArray(list) ? list : []));
+
+      const totalUnavail = Object.values(reasons).reduce((a, b) => a + b, 0);
+      const reasonEntries = Object.entries(reasons).sort(([, a], [, b]) => b - a);
+      // If only one reason, just show it. If multiple, show "(count)" suffixes.
+      const reasonText = reasonEntries.length === 1
+        ? reasonEntries[0][0]
+        : reasonEntries.map(([msg, n]) => `${msg} (${n})`).join(", ");
+
+      if (totalUnavail === 0) {
+        publishInlineMessage({ type: "SUCCESS", text: `${collection.name}: ${reserved} reserved` });
+      } else if (reserved === 0) {
+        publishInlineMessage({ type: "WARNING", text: `${collection.name}: nothing reserved — ${reasonText}` });
+      } else {
+        publishInlineMessage({ type: "WARNING", text: `${collection.name}: ${reserved} reserved · ${totalUnavail} unable to reserve — ${reasonText}` });
+      }
+    } finally {
+      setReservingKitId(null);
     }
   }
   async function cancel(e: Equipment) {
@@ -968,8 +1096,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Button>
         )}
       </HStack>
-      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || highlightId) && (
+      {(kind[0] !== "ALL" || statusFilter[0] !== "ALL" || (isWorkerView && likedOnly) || (forAdmin && workerFilter.length > 0) || !!collectionFilter || highlightId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="2">
+          {collectionFilter && (() => {
+            const c = collections.find((x) => x.id === collectionFilter);
+            return (
+              <Badge size="sm" colorPalette="blue" variant="solid" cursor="pointer" onClick={() => setCollectionFilter(null)}>
+                Collection: {c?.name ?? collectionFilter} ✕
+              </Badge>
+            );
+          })()}
           {highlightId && (
             <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 item</Badge>
           )}
@@ -1000,6 +1136,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               setHighlightId(null);
               setKind(["ALL"]);
               setStatusFilter(["ALL"]);
+              setCollectionFilter(null);
               if (isWorkerView) setLikedOnly(false);
               if (forAdmin) setWorkerFilter([]);
             }}
@@ -1008,11 +1145,100 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Badge>
         </HStack>
       )}
+      {collections.length > 0 && (
+        <Box mb={3}>
+          <HStack
+            gap={2}
+            align="center"
+            mb={2}
+            cursor="pointer"
+            onClick={() => setCollectionsCollapsed(!collectionsCollapsed)}
+            _hover={{ opacity: 0.7 }}
+          >
+            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Collections</Text>
+            <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
+            <Text fontSize="xs" color="gray.400">{collectionsCollapsed ? "▶" : "▼"}</Text>
+          </HStack>
+          {!collectionsCollapsed && (
+            <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} gap={2}>
+              {collections.map((c) => {
+                const total = c.items.length;
+                // Compute availability from live `items` state so releasing,
+                // reserving, or retiring a piece is reflected immediately
+                // without re-fetching the collections list.
+                const available = c.items.filter((i) => {
+                  const live = items.find((eq) => eq.id === i.equipmentId);
+                  return !!live && !live.retiredAt && live.status === "AVAILABLE";
+                }).length;
+                const allAvail = total > 0 && available === total;
+                const someAvail = available > 0;
+                return (
+                  <Card.Root
+                    key={c.id}
+                    variant="outline"
+                    borderColor={highlightCollectionId === c.id ? "purple.500" : (allAvail ? "green.300" : someAvail ? "yellow.300" : "gray.300")}
+                    borderWidth={highlightCollectionId === c.id ? "2px" : "1px"}
+                    style={highlightCollectionId === c.id ? { animation: "seedlings-pulse 2.5s ease-in-out infinite" } : undefined}
+                  >
+                    <Card.Body py="2" px="3">
+                      <HStack justify="space-between" align="start" gap={2}>
+                        <VStack align="start" gap={0} flex={1} minW={0}>
+                          <Text fontSize="sm" fontWeight="semibold">{c.name}</Text>
+                          <Text fontSize="xs" color="fg.muted">
+                            {available} of {total} available
+                          </Text>
+                        </VStack>
+                        <HStack gap={1.5} flexShrink={0}>
+                          <Button
+                            size="xs"
+                            variant={collectionFilter === c.id ? "solid" : "outline"}
+                            colorPalette={collectionFilter === c.id ? "blue" : "gray"}
+                            onClick={() =>
+                              setCollectionFilter((cur) => (cur === c.id ? null : c.id))
+                            }
+                          >
+                            {collectionFilter === c.id ? "Filtered" : "Filter"}
+                          </Button>
+                          {isWorkerView && (
+                            <Button
+                              size="xs"
+                              colorPalette={allAvail ? "green" : someAvail ? "yellow" : "gray"}
+                              disabled={available === 0}
+                              loading={reservingKitId === c.id}
+                              onClick={() => void reserveKit(c)}
+                            >
+                              Reserve{available > 0 && available < total ? ` (${available})` : ""}
+                            </Button>
+                          )}
+                        </HStack>
+                      </HStack>
+                    </Card.Body>
+                  </Card.Root>
+                );
+              })}
+            </SimpleGrid>
+          )}
+        </Box>
+      )}
+
       <Box position="relative">
         {loading && items.length > 0 && (<>
           <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
         </>)}
+      <HStack
+        gap={2}
+        align="center"
+        mb={2}
+        cursor="pointer"
+        onClick={() => setEquipmentCollapsed(!equipmentCollapsed)}
+        _hover={{ opacity: 0.7 }}
+      >
+        <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Equipment</Text>
+        <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{filtered.length}</Badge>
+        <Text fontSize="xs" color="gray.400">{equipmentCollapsed ? "▶" : "▼"}</Text>
+      </HStack>
+      {!equipmentCollapsed && (
       <VStack align="stretch" gap={3}>
         {filtered.length === 0 && (
           <Box p="8" color="fg.muted">
@@ -1082,7 +1308,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {(() => {
                         if (canWorkerReserve(e)) {
                           return (
-                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Reserve" onClick={(ev: any) => {
+                            <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.400" color="green.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.500" }} title="Reserve" onClick={(ev: any) => {
                               ev.stopPropagation();
                               setReserveConfirmEquip(e);
                               setReserveChecked(false);
@@ -1358,7 +1584,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     label={"Reserve"}
                     onClick={async () => { setReserveConfirmEquip(e); setReserveChecked(false); }}
                     variant={"solid"}
-                    colorPalette={"yellow"}
+                    colorPalette={"green"}
                     disabled={loading}
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
@@ -1488,6 +1714,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Box>
         ))}
       </VStack>
+      )}
       </Box>
 
       <QRScannerDialog

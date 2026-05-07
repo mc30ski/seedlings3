@@ -87,6 +87,26 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
     } finally { setBusyId(""); }
   }
 
+  async function handleMakeClaimer(userId: string) {
+    setBusyId(userId);
+    try {
+      await apiPost(`/api/admin/jobs/${jobId}/default-assignees/${userId}/make-claimer`, {});
+      // Move chosen user to the front, drop observer role if they had one,
+      // and stamp assignedById = userId so TeamMemberList highlights them.
+      setMembers((prev) => {
+        const target = prev.find((m) => m.userId === userId);
+        if (!target) return prev;
+        const updated = { ...target, role: null, assignedById: userId };
+        const rest = prev.filter((m) => m.userId !== userId).map((m) => ({ ...m, assignedById: m.role === "observer" ? m.assignedById ?? null : null }));
+        return [updated, ...rest];
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Default claimer updated." });
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to set claimer.", err) });
+    } finally { setBusyId(""); }
+  }
+
   return (
     <Dialog.Root open={open} onOpenChange={(e) => onOpenChange(e.open)} initialFocusEl={() => cancelRef.current}>
       <Portal>
@@ -112,8 +132,9 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                   onAdd={handleAdd}
                   onRemove={handleRemove}
                   onToggleRole={handleToggleRole}
+                  onMakeClaimer={handleMakeClaimer}
                   showRoleControls
-                  showMakeClaimer={false}
+                  showMakeClaimer
                   listTitle="Default team"
                   addTitle="Add to default team"
                   emptyText="No default team set. Occurrences will be unassigned (claimable)."

@@ -86,6 +86,7 @@ async function clearDatabase() {
 
   console.log("  Clearing equipment...");
   await prisma.checkout.deleteMany();
+  await prisma.equipmentCollection.deleteMany();
   await prisma.equipment.deleteMany();
 
   console.log("  Clearing properties...");
@@ -375,6 +376,86 @@ async function seedDatabase() {
     data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, qrSlug: "gorilla-gor1200-001" },
   });
 
+  // ── Equipment Collections ─────────────────────────────────────────────────
+  console.log("  Creating equipment collections...");
+
+  // Look up unnamed equipment by slug for kits that mix battery/quiet variants.
+  const egoMower    = await prisma.equipment.findUnique({ where: { qrSlug: "ego-lm2135-001" } });
+  const egoBlower   = await prisma.equipment.findUnique({ where: { qrSlug: "ego-lb6504-001" } });
+  const echoTrimmer = await prisma.equipment.findUnique({ where: { qrSlug: "echo-srm2620-001" } });
+  const mclaneEdger = await prisma.equipment.findUnique({ where: { qrSlug: "mclane-101-001" } });
+  const ryanAerator = await prisma.equipment.findUnique({ where: { qrSlug: "ryan-lawnaire5-001" } });
+  const earthwaySpreader = await prisma.equipment.findUnique({ where: { qrSlug: "earthway-2150-001" } });
+  const echoHedger  = await prisma.equipment.findUnique({ where: { qrSlug: "echo-hc2810-001" } });
+  const polePruner  = await prisma.equipment.findUnique({ where: { qrSlug: "stihl-ht135-001" } });
+
+  type CollectionSeed = { name: string; description: string; sortOrder: number; equipmentIds: string[] };
+  const collectionSeeds: CollectionSeed[] = [
+    {
+      name: "Standard Mowing",
+      description: "Most common combo for residential mow + trim + edge + clean. Grab this one when in doubt.",
+      sortOrder: 10,
+      equipmentIds: [mower2.id, trimmer1.id, edger1.id, blower2.id],
+    },
+    {
+      name: "Tight Spaces Mowing",
+      description: "For properties with narrow gates, fenced backyards, or anywhere the stand-on won't fit.",
+      sortOrder: 20,
+      equipmentIds: [mower3.id, trimmer2.id, edger2.id, blower3.id],
+    },
+    {
+      name: "Quiet / Early Morning",
+      description: "Battery-powered for noise-sensitive properties, schools, hospitals, or pre-7am jobs.",
+      sortOrder: 30,
+      equipmentIds: [egoMower, echoTrimmer, edger2, egoBlower].filter(Boolean).map((e) => e!.id),
+    },
+    {
+      name: "Hedge & Trim",
+      description: "Hedge maintenance, formal shrubs, and detail work. Pair with the cleanup blower.",
+      sortOrder: 40,
+      equipmentIds: [trimmer3.id, ...(echoHedger ? [echoHedger.id] : []), blower3.id],
+    },
+    {
+      name: "Spring Cleanup",
+      description: "Heavy debris, branch removal, and post-winter property restoration.",
+      sortOrder: 50,
+      equipmentIds: [blower1.id, blower2.id, chainsawEquip.id],
+    },
+    {
+      name: "Fall Cleanup",
+      description: "Leaf cleanup, gutter prep, and overhead branch trimming heading into winter.",
+      sortOrder: 60,
+      equipmentIds: [blower1.id, blower2.id, ...(polePruner ? [polePruner.id] : [])],
+    },
+    {
+      name: "Aeration & Seeding",
+      description: "Spring/fall aeration with overseeding and starter fertilizer.",
+      sortOrder: 70,
+      equipmentIds: [aerator.id, ...(ryanAerator ? [ryanAerator.id] : []), spreader.id, ...(earthwaySpreader ? [earthwaySpreader.id] : [])],
+    },
+    {
+      name: "Long-Edge Cleanup",
+      description: "Properties with very long curb or driveway edges (300+ ft) where a stick edger gets fatiguing.",
+      sortOrder: 80,
+      equipmentIds: [...(mclaneEdger ? [mclaneEdger.id] : []), trimmer1.id, blower2.id],
+    },
+  ];
+
+  const collectionIdByName: Record<string, string> = {};
+  for (const c of collectionSeeds) {
+    const created = await prisma.equipmentCollection.create({
+      data: {
+        name: c.name,
+        description: c.description,
+        sortOrder: c.sortOrder,
+        items: {
+          create: c.equipmentIds.map((id, idx) => ({ equipmentId: id, sortOrder: 100 + idx })),
+        },
+      },
+    });
+    collectionIdByName[c.name] = created.id;
+  }
+
   // ── Equipment instructions ─────────────────────────────────────────────────
   console.log("  Creating equipment instructions...");
 
@@ -522,6 +603,42 @@ async function seedDatabase() {
 
   for (const { job, client } of allJobs) {
     await prisma.jobClient.create({ data: { jobId: job.id, clientId: client.id, role: "owner" } });
+  }
+
+  // ── JobRecommendedCollections ─────────────────────────────────────────────
+  console.log("  Creating job-recommended-collection links...");
+
+  type JobCollectionLink = { jobId: string; collectionName: string; sortOrder?: number };
+  const jobCollectionLinks: JobCollectionLink[] = [
+    // VIP residential — premium combo
+    { jobId: harringtonMow.id, collectionName: "Standard Mowing" },
+    { jobId: harringtonLakeMow.id, collectionName: "Standard Mowing" },
+    // Standard biweekly residential
+    { jobId: martinezBiweekly.id, collectionName: "Standard Mowing" },
+    // HOAs
+    { jobId: willowbrookWeekly.id, collectionName: "Standard Mowing" },
+    { jobId: willowbrookWeekly.id, collectionName: "Long-Edge Cleanup", sortOrder: 110 },
+    { jobId: sunriseWeekly.id, collectionName: "Standard Mowing" },
+    { jobId: riverBendWeekly.id, collectionName: "Standard Mowing" },
+    // Tight-spaces / fenced backyard pool area
+    { jobId: willowbrookPoolMow.id, collectionName: "Tight Spaces Mowing" },
+    // Leaf cleanup
+    { jobId: chenLeafCleanup.id, collectionName: "Fall Cleanup" },
+    // Aeration job
+    { jobId: patelAeration.id, collectionName: "Aeration & Seeding" },
+    // Church grounds — extra cleanup since it's a public space
+    { jobId: churchWeekly.id, collectionName: "Standard Mowing" },
+    { jobId: churchWeekly.id, collectionName: "Hedge & Trim", sortOrder: 110 },
+    // Quiet collection for early-morning HOA
+    { jobId: thompsonMow.id, collectionName: "Quiet / Early Morning" },
+  ];
+
+  for (const link of jobCollectionLinks) {
+    const collectionId = collectionIdByName[link.collectionName];
+    if (!collectionId) continue;
+    await prisma.jobRecommendedCollection.create({
+      data: { jobId: link.jobId, collectionId, sortOrder: link.sortOrder ?? 100 },
+    });
   }
 
   // ── JobContacts ───────────────────────────────────────────────────────────
