@@ -1,5 +1,5 @@
-// Seedlings Service Worker — Tier 1 (read-only offline)
-const CACHE_NAME = "seedlings-v1";
+// Seedlings Service Worker — offline cache + web-push handlers
+const CACHE_NAME = "seedlings-v2";
 const APP_SHELL = [
   "/",
   "/seedlings-icon.png",
@@ -114,5 +114,54 @@ self.addEventListener("fetch", (event) => {
         return new Response("Offline", { status: 503 });
       });
     })
+  );
+});
+
+// ── Push notifications ────────────────────────────────────────────────
+// Server posts JSON payload { title, body, url?, tag? }. We display it as
+// a native notification; tapping it focuses an existing PWA window or opens
+// a new one at the provided url.
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "Seedlings", body: event.data ? event.data.text() : "" };
+  }
+
+  const title = data.title || "Seedlings";
+  const options = {
+    body: data.body || "",
+    icon: "/seedlings-icon.png",
+    badge: "/seedlings-icon.png",
+    tag: data.tag || undefined,
+    data: { url: data.url || "/" },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      // If a Seedlings window is already open, focus it and navigate.
+      for (const client of clientList) {
+        try {
+          const u = new URL(client.url);
+          if (u.origin === self.location.origin) {
+            return client.focus().then((c) => {
+              if (c && "navigate" in c) return c.navigate(targetUrl).catch(() => c);
+              return c;
+            });
+          }
+        } catch {}
+      }
+      // No window open — launch a new one.
+      return self.clients.openWindow(targetUrl);
+    }),
   );
 });

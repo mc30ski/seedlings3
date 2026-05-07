@@ -3040,6 +3040,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           }
                           return null;
                         })()}
+                        {likedIds.has(occ.id) && (
+                          <Box flexShrink={0} display="flex" alignItems="center" title="Liked">
+                            <Heart size={14} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
+                          </Box>
+                        )}
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isReminder ? (
                             <>{occ.title || "Reminder"}</>
@@ -3236,6 +3241,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                       <Box display="flex" flexDirection="column" gap="4px" w="full">
                         <HStack justifyContent="space-between" alignItems="center">
+                          {likedIds.has(occ.id) && (
+                            <Box flexShrink={0} display="flex" alignItems="center" title="Liked">
+                              <Heart size={16} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
+                            </Box>
+                          )}
                           <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">
                             {isReminder ? (
                               <>{occ.title || "Reminder"}</>

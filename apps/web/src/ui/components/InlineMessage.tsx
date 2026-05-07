@@ -169,7 +169,7 @@ export default function InlineMessage({
             <HStack justify="space-between" align="center" gap="3" minH="44px">
               <HStack align="center" gap="3" minW={0}>
                 <Icon as={msg?.icon ?? palette.icon} boxSize={5} flexShrink={0} />
-                <Text fontSize="md" fontWeight="semibold" lineClamp={4}>
+                <Text fontSize="md" fontWeight="semibold">
                   {msg?.text ?? ""}
                 </Text>
               </HStack>

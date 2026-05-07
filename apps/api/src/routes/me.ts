@@ -71,4 +71,66 @@ export default async function meRoutes(app: FastifyInstance) {
 
     return { ok: true, synced: Object.keys(updates).filter(k => k !== "updatedAt") };
   });
+
+  // ── Push subscriptions ──────────────────────────────────────────────
+  // Per-device web-push subscriptions for the current user. Self-healing:
+  // the web app re-subscribes on every PWA launch and POSTs the result;
+  // the unique constraint on `endpoint` makes that a no-op when valid and
+  // a fresh insert when iOS/Android quietly invalidated the old one.
+
+  app.get("/me/push-subscriptions", async (req: any, reply: FastifyReply) => {
+    const clerkUserId = req.auth?.clerkUserId;
+    if (!clerkUserId) return reply.code(401).send({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { clerkUserId }, select: { id: true } });
+    if (!user) return reply.code(404).send({ error: "User not found" });
+    const subs = await prisma.pushSubscription.findMany({
+      where: { userId: user.id },
+      select: { id: true, endpoint: true, userAgent: true, label: true, createdAt: true, lastUsedAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return subs;
+  });
+
+  app.post("/me/push-subscriptions", async (req: any, reply: FastifyReply) => {
+    const clerkUserId = req.auth?.clerkUserId;
+    if (!clerkUserId) return reply.code(401).send({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { clerkUserId }, select: { id: true } });
+    if (!user) return reply.code(404).send({ error: "User not found" });
+
+    const body = req.body || {};
+    const endpoint = String(body.endpoint || "").trim();
+    const p256dh = String(body.p256dh || "").trim();
+    const auth = String(body.auth || "").trim();
+    const userAgent = body.userAgent ? String(body.userAgent).slice(0, 200) : null;
+    const label = body.label ? String(body.label).slice(0, 60) : null;
+
+    if (!endpoint || !p256dh || !auth) {
+      return reply.code(400).send({ error: "endpoint, p256dh, and auth are required" });
+    }
+
+    // Upsert on endpoint — same browser hitting subscribe() returns the same
+    // endpoint, so re-subscribe-on-launch is a no-op when nothing changed.
+    const sub = await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      create: { userId: user.id, endpoint, p256dh, auth, userAgent, label },
+      update: { userId: user.id, p256dh, auth, userAgent, label, lastUsedAt: new Date() },
+      select: { id: true, endpoint: true, userAgent: true, label: true, createdAt: true, lastUsedAt: true },
+    });
+    return sub;
+  });
+
+  app.delete("/me/push-subscriptions/:id", async (req: any, reply: FastifyReply) => {
+    const clerkUserId = req.auth?.clerkUserId;
+    if (!clerkUserId) return reply.code(401).send({ error: "Unauthorized" });
+    const user = await prisma.user.findUnique({ where: { clerkUserId }, select: { id: true } });
+    if (!user) return reply.code(404).send({ error: "User not found" });
+
+    const id = String((req.params as any)?.id || "");
+    const sub = await prisma.pushSubscription.findUnique({ where: { id }, select: { userId: true } });
+    if (!sub) return reply.code(404).send({ error: "Not found" });
+    if (sub.userId !== user.id) return reply.code(403).send({ error: "Forbidden" });
+
+    await prisma.pushSubscription.delete({ where: { id } });
+    return { ok: true };
+  });
 }
