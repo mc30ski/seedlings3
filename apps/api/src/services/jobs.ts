@@ -250,7 +250,10 @@ export const jobs: ServicesJobs = {
               },
             },
             expenses: {
-              include: { createdBy: { select: { id: true, displayName: true } } },
+              include: {
+                createdBy: { select: { id: true, displayName: true } },
+                businessExpense: { select: { category: true, vendor: true, date: true } },
+              },
               orderBy: { createdAt: "asc" as const },
             },
             addons: {
@@ -1124,7 +1127,10 @@ export const jobs: ServicesJobs = {
           },
         },
         expenses: {
-          include: { createdBy: { select: { id: true, displayName: true } } },
+          include: {
+            createdBy: { select: { id: true, displayName: true } },
+            businessExpense: { select: { category: true, vendor: true, date: true } },
+          },
           orderBy: { createdAt: "asc" as const },
         },
         propertyPhotos: {
@@ -1240,7 +1246,10 @@ export const jobs: ServicesJobs = {
           },
         },
         expenses: {
-          include: { createdBy: { select: { id: true, displayName: true } } },
+          include: {
+            createdBy: { select: { id: true, displayName: true } },
+            businessExpense: { select: { category: true, vendor: true, date: true } },
+          },
           orderBy: { createdAt: "asc" as const },
         },
         propertyPhotos: {
@@ -1302,7 +1311,10 @@ export const jobs: ServicesJobs = {
           },
         },
         expenses: {
-          include: { createdBy: { select: { id: true, displayName: true } } },
+          include: {
+            createdBy: { select: { id: true, displayName: true } },
+            businessExpense: { select: { category: true, vendor: true, date: true } },
+          },
           orderBy: { createdAt: "asc" as const },
         },
         _count: { select: { photos: true, comments: true } },

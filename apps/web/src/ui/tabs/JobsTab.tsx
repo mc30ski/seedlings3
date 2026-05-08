@@ -181,8 +181,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const { isOffline } = useOffline();
 
-  function shareOccurrenceLink(occId: string) {
-    const url = `${window.location.origin}/?occ=${occId}${forAdmin ? "&view=admin" : ""}`;
+  function shareOccurrenceLink(occId: string, startAt?: string | null) {
+    // Embed the occurrence's startAt so the recipient's JobsTab can anchor its
+    // date range on the job — without it, a worker's 60-day clamp can hide
+    // future jobs (e.g. tomorrow) when the default range is "today".
+    const at = startAt ? `&at=${encodeURIComponent(startAt)}` : "";
+    const url = `${window.location.origin}/?occ=${occId}${at}${forAdmin ? "&view=admin" : ""}`;
     navigator.clipboard.writeText(url).then(() => {
       publishInlineMessage({ type: "SUCCESS", text: "Link copied to clipboard." });
     }).catch(() => {
@@ -1149,13 +1153,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // fetch with includeOccId. Shared by both the legacy event listener (OAuth
   // deep-link path) and the localStorage handoff from in-app "View →" links.
   //
-  // We use a NARROW range (anchorAt ± 30 days) when an anchor date is known,
-  // because worker mode's clampWorkerDates caps any range over 62 days — a wide
-  // ±1 year range would clamp to the wrong window and miss the occurrence even
-  // with includeOccId, since the follow-up `[dateFrom, dateTo, ...]` effect
-  // would re-load with the clamped range and wipe the result. A 60-day window
-  // stays under the cap and survives that re-load. When no anchor is known we
-  // fall back to the wide range (the OAuth deep-link case).
+  // When an anchor date is known, set the date filter to that single day —
+  // the recipient sees a Custom range pinned to the job's date instead of
+  // their default ("Now"). Without an anchor (older share links), fall back
+  // to a wide range so includeOccId can still locate the row.
   function applyHighlight(occId: string, anchorAt?: string | null) {
     setHighlightOccId(occId);
     setExpandedCards(new Set([occId]));
@@ -1166,11 +1167,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     let fromStr: string;
     let toStr: string;
     if (anchorAt) {
-      const anchor = new Date(anchorAt);
-      const from = new Date(anchor); from.setDate(from.getDate() - 30);
-      const to = new Date(anchor); to.setDate(to.getDate() + 30);
-      fromStr = bizDateKey(from);
-      toStr = bizDateKey(to);
+      const day = bizDateKey(new Date(anchorAt));
+      fromStr = day;
+      toStr = day;
     } else {
       const from = new Date(); from.setFullYear(from.getFullYear() - 1);
       const to = new Date(); to.setFullYear(to.getFullYear() + 1);
@@ -1186,9 +1185,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   useEffect(() => {
     (window as any).__jobsTabReady = true;
     const handler = (e: Event) => {
-      const occId = (e as CustomEvent<{ occId: string }>).detail?.occId;
+      const detail = (e as CustomEvent<{ occId: string; anchorAt?: string | null }>).detail;
+      const occId = detail?.occId;
       if (!occId) return;
-      applyHighlight(occId);
+      applyHighlight(occId, detail?.anchorAt ?? null);
     };
     window.addEventListener("jobsTab:highlightOcc", handler);
     return () => {
@@ -3163,7 +3163,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     </Button>
                                   </>
                                 )}
-                                <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id); }}>
+                                <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
                                   <Share2 size={14} />
                                   <Box as="span" ml={2}>Share link</Box>
                                 </Button>
@@ -3366,7 +3366,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       </Button>
                                     </>
                                   )}
-                                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id); }}>
+                                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
                                     <Share2 size={14} />
                                     <Box as="span" ml={2}>Share link</Box>
                                   </Button>

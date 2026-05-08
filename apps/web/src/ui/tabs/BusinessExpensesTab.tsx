@@ -34,9 +34,29 @@ type BusinessExpense = {
   vendor?: string | null;
   invoiceNumber?: string | null;
   notes?: string | null;
+  equipmentId?: string | null;
+  equipment?: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; qrSlug?: string | null } | null;
+  occurrenceId?: string | null;
+  occurrence?: { id: string; startAt?: string | null; job?: { id: string; property?: { id: string; displayName?: string | null; client?: { displayName?: string | null } | null } | null } | null } | null;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null; email?: string | null };
 };
+
+type EquipmentLite = {
+  id: string;
+  shortDesc?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  qrSlug?: string | null;
+  retiredAt?: string | null;
+};
+
+function equipmentLabel(e: EquipmentLite): string {
+  const parts = [e.brand, e.model].filter(Boolean);
+  if (e.shortDesc) return `${e.shortDesc}${parts.length ? ` (${parts.join(" ")})` : ""}`;
+  if (parts.length) return parts.join(" ");
+  return e.qrSlug || e.id.slice(-6);
+}
 
 type Summary = {
   today: number;
@@ -57,20 +77,31 @@ type Comparison = {
   allTime: CompareBucket;
 };
 
-const COMMON_CATEGORIES = [
-  "Insurance",
-  "Fuel",
-  "Vehicle Maintenance",
-  "Equipment Purchase",
-  "Equipment Repair",
-  "Office Supplies",
-  "Software/Subscription",
-  "Marketing",
-  "Professional Services",
-  "Tax/License",
-  "Bank Fees",
-  "Other",
+// Categories aligned to Schedule C (Form 1040). The label is what gets stored
+// in the DB so it imports cleanly into tax software; the line number is shown
+// in the picker for clarity. COGS / Part III is intentionally omitted —
+// materials consumed in the course of providing services land on line 22 for
+// a small service business under cash-method accounting.
+type ScheduleCCategory = { label: string; line: string };
+const SCHEDULE_C_CATEGORIES: ScheduleCCategory[] = [
+  { label: "Advertising", line: "8" },
+  { label: "Car and truck expenses", line: "9" },
+  { label: "Contract labor", line: "11" },
+  { label: "Insurance", line: "15" },
+  { label: "Legal and professional services", line: "17" },
+  { label: "Office expense", line: "18" },
+  { label: "Depreciation", line: "13" },
+  { label: "Rent or lease — vehicles/equipment", line: "20a" },
+  { label: "Rent or lease — other business property", line: "20b" },
+  { label: "Repairs and maintenance", line: "21" },
+  { label: "Supplies", line: "22" },
+  { label: "Taxes and licenses", line: "23" },
+  { label: "Travel", line: "24a" },
+  { label: "Meals", line: "24b" },
+  { label: "Utilities", line: "25" },
+  { label: "Other", line: "27a" },
 ];
+const CATEGORY_LABELS = SCHEDULE_C_CATEGORIES.map((c) => c.label);
 
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -101,7 +132,6 @@ export default function BusinessExpensesTab() {
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessExpense | null>(null);
-  const [comingSoonOpen, setComingSoonOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<BusinessExpense | null>(null);
 
   // Form
@@ -109,11 +139,12 @@ export default function BusinessExpensesTab() {
   const [fCost, setFCost] = useState("");
   const [fDescription, setFDescription] = useState("");
   const [fCategory, setFCategory] = useState("");
-  const [fCategoryCustom, setFCategoryCustom] = useState(false);
   const [fVendor, setFVendor] = useState("");
   const [fInvoiceNumber, setFInvoiceNumber] = useState("");
   const [fNotes, setFNotes] = useState("");
+  const [fEquipmentId, setFEquipmentId] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [equipmentList, setEquipmentList] = useState<EquipmentLite[]>([]);
 
   async function load() {
     setLoading(true);
@@ -145,6 +176,9 @@ export default function BusinessExpensesTab() {
 
   useEffect(() => {
     void load();
+    apiGet<EquipmentLite[]>("/api/equipment/all")
+      .then((list) => setEquipmentList(Array.isArray(list) ? list : []))
+      .catch(() => setEquipmentList([]));
   }, []);
 
   // re-load when filters change (debounced for search)
@@ -159,10 +193,10 @@ export default function BusinessExpensesTab() {
     setFCost("");
     setFDescription("");
     setFCategory("");
-    setFCategoryCustom(false);
     setFVendor("");
     setFInvoiceNumber("");
     setFNotes("");
+    setFEquipmentId("");
     setDialogOpen(true);
   }
 
@@ -171,13 +205,15 @@ export default function BusinessExpensesTab() {
     setFDate(e.date.slice(0, 10));
     setFCost(e.cost.toFixed(2));
     setFDescription(e.description);
-    const cat = e.category ?? "";
-    setFCategory(cat);
-    // If editing and the category is non-standard, start in custom mode
-    setFCategoryCustom(!!cat && !COMMON_CATEGORIES.includes(cat));
+    // Existing rows may carry old free-text categories that aren't in the
+    // Schedule C list. Surface them as-is so the picker shows them as
+    // unselected and the user can re-pick a valid one. Save logic still
+    // accepts the empty string.
+    setFCategory(e.category ?? "");
     setFVendor(e.vendor ?? "");
     setFInvoiceNumber(e.invoiceNumber ?? "");
     setFNotes(e.notes ?? "");
+    setFEquipmentId(e.equipmentId ?? "");
     setDialogOpen(true);
   }
 
@@ -196,6 +232,7 @@ export default function BusinessExpensesTab() {
         vendor: fVendor.trim() || null,
         invoiceNumber: fInvoiceNumber.trim() || null,
         notes: fNotes.trim() || null,
+        equipmentId: fEquipmentId || null,
       };
       if (editing) {
         await apiPatch(`/api/admin/business-expenses/${editing.id}`, payload);
@@ -225,7 +262,7 @@ export default function BusinessExpensesTab() {
 
   const allCategories = useMemo(() => {
     const seen = new Set<string>();
-    for (const c of COMMON_CATEGORIES) seen.add(c);
+    for (const c of CATEGORY_LABELS) seen.add(c);
     for (const e of expenses) if (e.category) seen.add(e.category);
     return Array.from(seen).sort();
   }, [expenses]);
@@ -243,6 +280,77 @@ export default function BusinessExpensesTab() {
     setFilterCategory("");
   }
 
+  // Schedule C-aligned CSV export. Columns chosen for compatibility with tax
+  // software import (TurboTax / QuickBooks / FreshBooks all accept this shape)
+  // and for handing directly to a CPA. Includes the explicit Schedule C line
+  // number so the categorization is unambiguous even if the importer doesn't
+  // recognize the label by name.
+  function exportCsv() {
+    if (expenses.length === 0) return;
+
+    const lineByCategory: Record<string, string> = {};
+    for (const c of SCHEDULE_C_CATEGORIES) lineByCategory[c.label] = c.line;
+
+    const csvEscape = (v: unknown): string => {
+      if (v == null) return "";
+      const s = String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const headers = [
+      "Date",
+      "Amount",
+      "Category",
+      "Schedule C Line",
+      "Vendor",
+      "Description",
+      "Invoice Number",
+      "Linked Equipment",
+      "Linked Job",
+      "Notes",
+    ];
+
+    const rows: string[] = [headers.join(",")];
+    // Stable order: by date (most recent first), matching what's on screen.
+    const sorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date));
+    for (const e of sorted) {
+      const eq = e.equipment;
+      const eqLabel = eq
+        ? [
+            eq.shortDesc || [eq.brand, eq.model].filter(Boolean).join(" "),
+            eq.qrSlug ? `(${eq.qrSlug})` : "",
+          ].filter(Boolean).join(" ")
+        : "";
+      const job = e.occurrence?.job;
+      const jobLabel = job?.property?.displayName
+        ? `${job.property.displayName}${job.property.client?.displayName ? ` — ${job.property.client.displayName}` : ""}${e.occurrence?.startAt ? ` (${new Date(e.occurrence.startAt).toLocaleDateString()})` : ""}`
+        : "";
+      rows.push([
+        csvEscape(e.date.slice(0, 10)),
+        csvEscape(e.cost.toFixed(2)),
+        csvEscape(e.category ?? ""),
+        csvEscape(e.category ? (lineByCategory[e.category] ?? "") : ""),
+        csvEscape(e.vendor ?? ""),
+        csvEscape(e.description),
+        csvEscape(e.invoiceNumber ?? ""),
+        csvEscape(eqLabel),
+        csvEscape(jobLabel),
+        csvEscape(e.notes ?? ""),
+      ].join(","));
+    }
+
+    // BOM so Excel opens UTF-8 correctly without mangling em-dashes etc.
+    const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const fromStr = filterFrom || "all";
+    const toStr = filterTo || "all";
+    a.download = `business-expenses-${fromStr}-to-${toStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const hasFilters = !!(q || filterFrom || filterTo || filterCategory);
 
   return (
@@ -250,7 +358,7 @@ export default function BusinessExpensesTab() {
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Business Expenses</Text>
         <HStack gap={2}>
-          <Button size="sm" variant="outline" onClick={() => setComingSoonOpen(true)} title="Export for tax software">
+          <Button size="sm" variant="outline" onClick={exportCsv} disabled={expenses.length === 0} title="Download CSV for tax software / CPA">
             <Download size={14} /> Export
           </Button>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
@@ -447,8 +555,46 @@ export default function BusinessExpensesTab() {
                     <HStack gap={2} wrap="wrap" mb={0.5}>
                       <Text fontSize="sm" fontWeight="semibold">{e.description}</Text>
                       {e.category && (
-                        <Badge size="sm" colorPalette="purple" variant="subtle" borderRadius="full" px="2">
+                        <Badge
+                          size="sm"
+                          colorPalette="purple"
+                          variant={filterCategory === e.category ? "solid" : "subtle"}
+                          borderRadius="full"
+                          px="2"
+                          cursor="pointer"
+                          _hover={{ bg: filterCategory === e.category ? undefined : "purple.100" }}
+                          title={filterCategory === e.category ? "Click to clear filter" : "Filter by this category"}
+                          onClick={() => setFilterCategory(filterCategory === e.category ? "" : (e.category ?? ""))}
+                        >
                           {e.category}
+                        </Badge>
+                      )}
+                      {e.occurrenceId && e.occurrence?.job?.property?.displayName && (
+                        <Badge
+                          size="sm"
+                          colorPalette="teal"
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          cursor="pointer"
+                          _hover={{ bg: "teal.100" }}
+                          title="View this occurrence on the Admin Jobs tab"
+                          onClick={() => {
+                            try {
+                              localStorage.setItem(
+                                "seedlings_jobs_pendingHighlight",
+                                `${e.occurrenceId}|${e.occurrence?.startAt ?? ""}`,
+                              );
+                            } catch {}
+                            window.dispatchEvent(
+                              new CustomEvent("navigate:adminTab", {
+                                detail: { tab: "admin-jobs", remount: true },
+                              }),
+                            );
+                          }}
+                        >
+                          Job: {e.occurrence.job.property.displayName}
+                          {e.occurrence.job.property.client?.displayName ? ` — ${e.occurrence.job.property.client.displayName}` : ""} →
                         </Badge>
                       )}
                     </HStack>
@@ -510,47 +656,40 @@ export default function BusinessExpensesTab() {
                     <CurrencyInput value={fCost} onChange={setFCost} size="sm" placeholder="0.00" />
                   </Box>
                   <Box>
-                    <Text fontSize="sm" mb={1}>Category</Text>
-                    {!fCategoryCustom ? (
-                      <Box display="flex" gap="6px" flexWrap="wrap">
-                        {COMMON_CATEGORIES.map((c) => (
-                          <Badge
-                            key={c}
-                            size="sm"
-                            colorPalette={fCategory === c ? "blue" : "gray"}
-                            variant={fCategory === c ? "solid" : "outline"}
-                            cursor="pointer"
-                            px="2"
-                            py="1"
-                            borderRadius="full"
-                            _hover={{ bg: fCategory === c ? undefined : "gray.100" }}
-                            onClick={() => setFCategory(fCategory === c ? "" : c)}
-                          >
-                            {c}
-                          </Badge>
-                        ))}
-                        <Badge
-                          size="sm"
-                          colorPalette="purple"
-                          variant="outline"
-                          cursor="pointer"
-                          px="2"
-                          py="1"
-                          borderRadius="full"
-                          _hover={{ bg: "purple.50" }}
-                          onClick={() => { setFCategoryCustom(true); setFCategory(""); }}
-                        >
-                          + Custom…
-                        </Badge>
-                      </Box>
-                    ) : (
-                      <HStack gap={2}>
-                        <Input size="sm" value={fCategory} onChange={(e) => setFCategory(e.target.value)} placeholder="Custom category" autoFocus />
-                        <Button size="xs" variant="ghost" onClick={() => { setFCategoryCustom(false); setFCategory(""); }}>
-                          Use preset
-                        </Button>
-                      </HStack>
+                    <Text fontSize="sm" mb={1}>Category (Schedule C line)</Text>
+                    <CategoryDropdown value={fCategory} onChange={setFCategory} />
+                    {fCategory && !CATEGORY_LABELS.includes(fCategory) && (
+                      <Text fontSize="xs" color="orange.600" mt={1}>
+                        Legacy category "{fCategory}" — pick a Schedule C category to update it.
+                      </Text>
                     )}
+                    <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                      <Text fontSize="xs" color="blue.800">
+                        <Text as="span" fontWeight="semibold">Supplies vs Depreciation:</Text>{" "}
+                        Use <Text as="span" fontWeight="semibold">Supplies (line 22)</Text> for consumables and small items
+                        — string trimmer line, fertilizer, fuel, hand tools, anything under roughly{" "}
+                        <Text as="span" fontWeight="semibold">$2,500</Text>.
+                        Use <Text as="span" fontWeight="semibold">Depreciation (line 13)</Text> for major
+                        equipment that lasts multiple years — commercial mowers, trailers, trucks, anything
+                        ~$2,500 and up. The app records the purchase; your CPA decides at tax time whether
+                        to fully deduct it under Section 179 (usually yes for small businesses) or depreciate
+                        it over several years.
+                        Tip: when picking <Text as="span" fontWeight="semibold">Depreciation</Text>, link the
+                        expense to the equipment record below so you have a clean audit trail.
+                      </Text>
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Linked equipment (optional)</Text>
+                    <EquipmentDropdown
+                      value={fEquipmentId}
+                      onChange={setFEquipmentId}
+                      equipment={equipmentList}
+                    />
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Use for capital purchases (Depreciation) or major repairs you want to track
+                      against a specific piece of equipment.
+                    </Text>
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Vendor</Text>
@@ -575,29 +714,6 @@ export default function BusinessExpensesTab() {
                     {editing ? "Save" : "Add"}
                   </Button>
                 </HStack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
-
-      {/* Coming Soon Dialog */}
-      <Dialog.Root open={comingSoonOpen} onOpenChange={(e) => { if (!e.open) setComingSoonOpen(false); }}>
-        <Portal>
-          <Dialog.Backdrop />
-          <Dialog.Positioner>
-            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
-              <Dialog.Header>
-                <Dialog.Title>Export — Coming Soon</Dialog.Title>
-              </Dialog.Header>
-              <Dialog.Body>
-                <Text fontSize="sm">
-                  Export to a tax-software-friendly format (CSV / QuickBooks-compatible) is not yet implemented.
-                  When ready, this will produce a file you can directly import into TurboTax, QuickBooks, or other tax/accounting software.
-                </Text>
-              </Dialog.Body>
-              <Dialog.Footer>
-                <Button colorPalette="blue" onClick={() => setComingSoonOpen(false)}>Got it</Button>
               </Dialog.Footer>
             </Dialog.Content>
           </Dialog.Positioner>
@@ -631,6 +747,104 @@ export default function BusinessExpensesTab() {
         </Portal>
       </Dialog.Root>
     </Box>
+  );
+}
+
+function CategoryDropdown(props: { value: string; onChange: (v: string) => void }) {
+  const { value, onChange } = props;
+  const items = useMemo(
+    () => [
+      { label: "— Select category —", value: "__NONE__" },
+      ...SCHEDULE_C_CATEGORIES.map((c) => ({ label: `${c.label} (line ${c.line})`, value: c.label })),
+    ],
+    [],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  // If the stored value is a legacy / unrecognized string, show __NONE__ in
+  // the picker so the user is prompted to pick a real one.
+  const current = value && SCHEDULE_C_CATEGORIES.some((c) => c.label === value) ? value : "__NONE__";
+  return (
+    <Select.Root
+      collection={collection}
+      value={[current]}
+      onValueChange={(e) => {
+        const v = e.value?.[0] ?? "__NONE__";
+        onChange(v === "__NONE__" ? "" : v);
+      }}
+      size="sm"
+      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+    >
+      <Select.Control>
+        <Select.Trigger w="full">
+          <Select.ValueText placeholder="— Select category —" />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
+  );
+}
+
+function EquipmentDropdown(props: {
+  value: string;
+  onChange: (v: string) => void;
+  equipment: EquipmentLite[];
+}) {
+  const { value, onChange, equipment } = props;
+  // Filter retired equipment unless it's the currently-selected value (so an
+  // existing link to retired equipment still displays correctly when editing).
+  const visible = useMemo(
+    () => equipment.filter((e) => !e.retiredAt || e.id === value),
+    [equipment, value],
+  );
+  // Each row shows the descriptive label plus the unique qrSlug so similar
+  // equipment can be told apart.
+  const items = useMemo(
+    () => [
+      { label: "— No equipment —", value: "__NONE__" },
+      ...visible.map((e) => {
+        const slug = e.qrSlug ? ` · ${e.qrSlug}` : "";
+        const retired = e.retiredAt ? " (retired)" : "";
+        return { label: `${equipmentLabel(e)}${slug}${retired}`, value: e.id };
+      }),
+    ],
+    [visible],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  const current = value || "__NONE__";
+  return (
+    <Select.Root
+      collection={collection}
+      value={[current]}
+      onValueChange={(e) => {
+        const v = e.value?.[0] ?? "__NONE__";
+        onChange(v === "__NONE__" ? "" : v);
+      }}
+      size="sm"
+      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+    >
+      <Select.Control>
+        <Select.Trigger w="full">
+          <Select.ValueText placeholder="— No equipment —" />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
   );
 }
 

@@ -637,17 +637,34 @@ export type ServicesPayments = {
   forceCreateNextOccurrence(currentUserId: string, occurrenceId: string): Promise<any>;
 };
 
+export type ExpenseInput = {
+  cost: number;
+  description: string;
+  // Tax-ledger fields — populated on the linked BusinessExpense row.
+  category?: string | null;     // Schedule C label, defaults to "Supplies"
+  vendor?: string | null;
+  date?: string | null;          // ISO date; defaults to today
+};
+
+export type ExpensePatchInput = {
+  cost?: number;
+  description?: string;
+  category?: string | null;
+  vendor?: string | null;
+  date?: string | null;
+};
+
 export type ServicesExpenses = {
   addExpense(
     currentUserId: string,
     occurrenceId: string,
-    input: { cost: number; description: string }
+    input: ExpenseInput
   ): Promise<any>;
 
   updateExpense(
     currentUserId: string,
     expenseId: string,
-    input: { cost?: number; description?: string }
+    input: ExpensePatchInput
   ): Promise<any>;
 
   deleteExpense(
@@ -658,7 +675,7 @@ export type ServicesExpenses = {
   adminAddExpense(
     currentUserId: string,
     occurrenceId: string,
-    input: { cost: number; description: string }
+    input: ExpenseInput
   ): Promise<any>;
 
   adminDeleteExpense(

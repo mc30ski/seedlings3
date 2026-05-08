@@ -1372,6 +1372,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.expenses.adminAddExpense(uid, String(req.params.occurrenceId), {
       cost: Number(body.cost),
       description: String(body.description ?? ""),
+      category: body.category != null ? String(body.category) : null,
+      vendor: body.vendor != null ? String(body.vendor) : null,
+      date: body.date != null ? String(body.date) : null,
     });
   });
 
@@ -3063,9 +3066,48 @@ Respond ONLY with valid JSON in this exact format:
     return prisma.businessExpense.findMany({
       where,
       orderBy: { date: "desc" },
-      include: { createdBy: { select: { id: true, displayName: true, email: true } } },
+      include: {
+        createdBy: { select: { id: true, displayName: true, email: true } },
+        equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
+        occurrence: {
+          select: {
+            id: true,
+            startAt: true,
+            job: {
+              select: {
+                id: true,
+                property: {
+                  select: { id: true, displayName: true, client: { select: { displayName: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
     });
   });
+
+  // Schedule C-aligned categories. Anything outside this list is rejected so
+  // the column stays clean for tax-software import. Existing rows with legacy
+  // free-text values are not touched — admin can recategorize via the UI.
+  const SCHEDULE_C_CATEGORIES = new Set([
+    "Advertising",
+    "Car and truck expenses",
+    "Contract labor",
+    "Depreciation",
+    "Insurance",
+    "Legal and professional services",
+    "Office expense",
+    "Rent or lease — vehicles/equipment",
+    "Rent or lease — other business property",
+    "Repairs and maintenance",
+    "Supplies",
+    "Taxes and licenses",
+    "Travel",
+    "Meals",
+    "Utilities",
+    "Other",
+  ]);
 
   app.post("/admin/business-expenses", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
@@ -3073,16 +3115,26 @@ Respond ONLY with valid JSON in this exact format:
     if (!b.description?.trim()) throw app.httpErrors.badRequest("description is required");
     if (b.cost == null || isNaN(Number(b.cost))) throw app.httpErrors.badRequest("cost is required");
     if (!b.date) throw app.httpErrors.badRequest("date is required");
+    const trimmedCategory = b.category ? String(b.category).trim() : null;
+    if (trimmedCategory && !SCHEDULE_C_CATEGORIES.has(trimmedCategory)) {
+      throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
+    }
+    const equipmentId = b.equipmentId ? String(b.equipmentId) : null;
+    if (equipmentId) {
+      const exists = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { id: true } });
+      if (!exists) throw app.httpErrors.badRequest(`Equipment not found: ${equipmentId}`);
+    }
     return prisma.businessExpense.create({
       data: {
         createdById: uid,
         description: String(b.description).trim(),
         cost: Number(b.cost),
         date: new Date(String(b.date)),
-        category: b.category ? String(b.category).trim() : null,
+        category: trimmedCategory,
         vendor: b.vendor ? String(b.vendor).trim() : null,
         invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
+        equipmentId,
       },
     });
   });
@@ -3094,16 +3146,62 @@ Respond ONLY with valid JSON in this exact format:
     if ("description" in b) data.description = String(b.description ?? "").trim();
     if ("cost" in b) data.cost = Number(b.cost);
     if ("date" in b) data.date = b.date ? new Date(String(b.date)) : null;
-    if ("category" in b) data.category = b.category ? String(b.category).trim() : null;
+    if ("category" in b) {
+      const trimmedCategory = b.category ? String(b.category).trim() : null;
+      if (trimmedCategory && !SCHEDULE_C_CATEGORIES.has(trimmedCategory)) {
+        throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
+      }
+      data.category = trimmedCategory;
+    }
     if ("vendor" in b) data.vendor = b.vendor ? String(b.vendor).trim() : null;
     if ("invoiceNumber" in b) data.invoiceNumber = b.invoiceNumber ? String(b.invoiceNumber).trim() : null;
     if ("notes" in b) data.notes = b.notes ? String(b.notes).trim() : null;
-    return prisma.businessExpense.update({ where: { id }, data });
+    if ("equipmentId" in b) {
+      const equipmentId = b.equipmentId ? String(b.equipmentId) : null;
+      if (equipmentId) {
+        const exists = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { id: true } });
+        if (!exists) throw app.httpErrors.badRequest(`Equipment not found: ${equipmentId}`);
+      }
+      data.equipmentId = equipmentId;
+    }
+
+    // If this BE is the tax-ledger pair of a job-level Expense, mirror
+    // cost/description so the worker's payout deduction stays in sync with
+    // the ledger. Other fields (category/vendor/date/etc) live only on the BE.
+    const linkedExpense = await prisma.expense.findFirst({
+      where: { businessExpenseId: id },
+      select: { id: true },
+    });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.businessExpense.update({ where: { id }, data });
+      if (linkedExpense) {
+        const expenseSync: any = {};
+        if ("cost" in data) expenseSync.cost = data.cost;
+        if ("description" in data) expenseSync.description = data.description;
+        if (Object.keys(expenseSync).length > 0) {
+          await tx.expense.update({ where: { id: linkedExpense.id }, data: expenseSync });
+        }
+      }
+      return updated;
+    });
   });
 
   app.delete("/admin/business-expenses/:id", superGuard, async (req: any) => {
     const id = String(req.params.id);
-    await prisma.businessExpense.delete({ where: { id } });
+    // Cascade: if this BE is paired with a job-level Expense, delete the
+    // Expense too. Otherwise the schema's ON DELETE SET NULL would leave the
+    // Expense in place — still reducing the worker's payout but no longer
+    // appearing in the tax ledger.
+    const linkedExpense = await prisma.expense.findFirst({
+      where: { businessExpenseId: id },
+      select: { id: true },
+    });
+    await prisma.$transaction(async (tx) => {
+      if (linkedExpense) {
+        await tx.expense.delete({ where: { id: linkedExpense.id } });
+      }
+      await tx.businessExpense.delete({ where: { id } });
+    });
     return { deleted: true };
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import {
   Badge,
@@ -174,11 +174,35 @@ export default function OccurrenceDialog({
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
 
-  // Inline expenses
-  type InlineExpense = { id?: string; cost: number; description: string; isNew?: boolean };
+  // Inline expenses. Each entry creates a paired BusinessExpense (tax ledger
+  // entry) on save — category drives the Schedule C line; defaults to Supplies.
+  type InlineExpense = { id?: string; cost: number; description: string; category: string; isNew?: boolean };
   const [expenses, setExpenses] = useState<InlineExpense[]>([]);
   const [newExpCost, setNewExpCost] = useState("");
   const [newExpDesc, setNewExpDesc] = useState("");
+  const [newExpCategory, setNewExpCategory] = useState("Supplies");
+  const expenseCategoryItems = useMemo(
+    () => [
+      { label: "Advertising (line 8)", value: "Advertising" },
+      { label: "Car and truck expenses (line 9)", value: "Car and truck expenses" },
+      { label: "Contract labor (line 11)", value: "Contract labor" },
+      { label: "Depreciation (line 13)", value: "Depreciation" },
+      { label: "Insurance (line 15)", value: "Insurance" },
+      { label: "Legal and professional services (line 17)", value: "Legal and professional services" },
+      { label: "Office expense (line 18)", value: "Office expense" },
+      { label: "Rent or lease — vehicles/equipment (line 20a)", value: "Rent or lease — vehicles/equipment" },
+      { label: "Rent or lease — other business property (line 20b)", value: "Rent or lease — other business property" },
+      { label: "Repairs and maintenance (line 21)", value: "Repairs and maintenance" },
+      { label: "Supplies (line 22)", value: "Supplies" },
+      { label: "Taxes and licenses (line 23)", value: "Taxes and licenses" },
+      { label: "Travel (line 24a)", value: "Travel" },
+      { label: "Meals (line 24b)", value: "Meals" },
+      { label: "Utilities (line 25)", value: "Utilities" },
+      { label: "Other (line 27a)", value: "Other" },
+    ],
+    [],
+  );
+  const expenseCategoryCollection = useMemo(() => createListCollection({ items: expenseCategoryItems }), [expenseCategoryItems]);
 
   type WorkerItem = { id: string; displayName?: string | null; email?: string | null };
   const [workers, setWorkers] = useState<WorkerItem[]>([]);
@@ -239,7 +263,14 @@ export default function OccurrenceDialog({
     if (mode === "UPDATE" && occurrenceId && isAdmin) {
       apiGet<any[]>(`/api/admin/occurrences/${occurrenceId}/expenses`)
         .then((list) => setExpenses(
-          (Array.isArray(list) ? list : []).map((e) => ({ id: e.id, cost: e.cost, description: e.description }))
+          (Array.isArray(list) ? list : []).map((e) => ({
+            id: e.id,
+            cost: e.cost,
+            description: e.description,
+            // Read from the linked BusinessExpense if present (set when the
+            // worker logged the expense post-MVP-2). Falls back to "Supplies".
+            category: e.businessExpense?.category ?? "Supplies",
+          }))
         ))
         .catch(() => {});
     }
@@ -309,7 +340,7 @@ export default function OccurrenceDialog({
             : `/api/occurrences/${newOccId}/expenses`;
           for (const exp of expenses) {
             try {
-              await apiPost(expEndpoint, { cost: exp.cost, description: exp.description });
+              await apiPost(expEndpoint, { cost: exp.cost, description: exp.description, category: exp.category });
             } catch (err) {
               console.error("Failed to create expense:", err);
             }
@@ -371,7 +402,7 @@ export default function OccurrenceDialog({
         if (isAdmin && occurrenceId) {
           for (const exp of expenses) {
             if (exp.isNew) {
-              try { await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description }); } catch {}
+              try { await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description, category: exp.category }); } catch {}
             }
           }
         }
@@ -637,12 +668,20 @@ export default function OccurrenceDialog({
                 </div>
                 <div>
                   <Text mb="1">Expenses <Text as="span" color="fg.muted" fontSize="xs">(optional)</Text></Text>
+                  <Box mb={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                    <Text fontSize="xs" color="blue.800">
+                      Each expense added here is also recorded as a business expense (categorized for
+                      Schedule C) and should be paid on the company account. Default category is{" "}
+                      <Text as="span" fontWeight="semibold">Supplies</Text> — change per row if it fits a different tax line.
+                    </Text>
+                  </Box>
                   {expenses.length > 0 && (
                     <VStack align="stretch" gap={1} mb={2}>
                       {expenses.map((exp, idx) => (
                         <HStack key={exp.id ?? `new-${idx}`} gap={2} fontSize="xs">
                           <Text color="orange.600" flex="1">
                             ${exp.cost.toFixed(2)} — {exp.description}
+                            <Text as="span" color="fg.muted" ml={1}>· {exp.category}</Text>
                           </Text>
                           <Button
                             size="xs"
@@ -663,22 +702,49 @@ export default function OccurrenceDialog({
                       ))}
                     </VStack>
                   )}
-                  <HStack gap={2}>
-                    <Box w="90px" flexShrink={0}>
-                      <CurrencyInput
-                        value={newExpCost}
-                        onChange={setNewExpCost}
+                  <VStack align="stretch" gap={2}>
+                    <HStack gap={2}>
+                      <Box w="90px" flexShrink={0}>
+                        <CurrencyInput
+                          value={newExpCost}
+                          onChange={setNewExpCost}
+                          size="sm"
+                          placeholder="Cost"
+                        />
+                      </Box>
+                      <Input
+                        value={newExpDesc}
+                        onChange={(e) => setNewExpDesc(e.target.value)}
+                        placeholder="Description"
                         size="sm"
-                        placeholder="Cost"
+                        flex="1"
                       />
-                    </Box>
-                    <Input
-                      value={newExpDesc}
-                      onChange={(e) => setNewExpDesc(e.target.value)}
-                      placeholder="Description"
-                      size="sm"
-                      flex="1"
-                    />
+                    </HStack>
+                    <HStack gap={2}>
+                      <Box flex="1">
+                        <Select.Root
+                          collection={expenseCategoryCollection}
+                          value={[newExpCategory]}
+                          onValueChange={(e) => setNewExpCategory(e.value?.[0] ?? "Supplies")}
+                          size="sm"
+                          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                        >
+                          <Select.Control>
+                            <Select.Trigger w="full">
+                              <Select.ValueText placeholder="Supplies (line 22)" />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Select.Positioner>
+                            <Select.Content>
+                              {expenseCategoryItems.map((it) => (
+                                <Select.Item key={it.value} item={it.value}>
+                                  <Select.ItemText>{it.label}</Select.ItemText>
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Select.Root>
+                      </Box>
                     <Button
                       size="sm"
                       variant="outline"
@@ -687,14 +753,16 @@ export default function OccurrenceDialog({
                       onClick={() => {
                         const cost = parseFloat(newExpCost);
                         if (isNaN(cost) || cost <= 0) return;
-                        setExpenses((prev) => [...prev, { cost, description: newExpDesc.trim(), isNew: true }]);
+                        setExpenses((prev) => [...prev, { cost, description: newExpDesc.trim(), category: newExpCategory, isNew: true }]);
                         setNewExpCost("");
                         setNewExpDesc("");
+                        setNewExpCategory("Supplies");
                       }}
                     >
                       Add
                     </Button>
-                  </HStack>
+                    </HStack>
+                  </VStack>
                 </div>
                 {mode === "CREATE" && workers.length > 0 && (
                   <div>

@@ -1571,13 +1571,19 @@ export default function HomePage() {
   // Deep-link to a specific occurrence (e.g., ?occ=OCCURRENCE_ID or ?occ=OCCURRENCE_ID&view=admin)
   // Uses localStorage (not sessionStorage) so it survives OAuth redirects and page reloads.
   // Only strips the URL params after the user is authenticated and the deep link is consumed.
+  // ?at=<ISO startAt> anchors the JobsTab date range on the occurrence so it
+  // isn't hidden by the worker's 60-day clamp (e.g. tomorrow's job under a
+  // "today" default).
   useEffect(() => {
     const occId = router.query.occ as string | undefined;
     const view = router.query.view as string | undefined;
+    const at = router.query.at as string | undefined;
     if (occId) {
       try {
         localStorage.setItem("seedlings_deeplink_occ", occId);
         if (view) localStorage.setItem("seedlings_deeplink_view", view);
+        if (at) localStorage.setItem("seedlings_deeplink_at", at);
+        else localStorage.removeItem("seedlings_deeplink_at");
         localStorage.setItem("seedlings_deeplink_ts", String(Date.now()));
       } catch {}
       // Only strip URL if user is already signed in; otherwise leave it
@@ -1586,7 +1592,7 @@ export default function HomePage() {
         router.replace("/", undefined, { shallow: true });
       }
     }
-  }, [router.query.occ, isSignedIn]);
+  }, [router.query.occ, router.query.at, isSignedIn]);
 
   // Deep-link to a specific equipment item (e.g., ?equipment=ID or ?equipment=ID&view=admin)
   useEffect(() => {
@@ -1608,9 +1614,11 @@ export default function HomePage() {
     if (meLoading || !me?.isApproved) return;
     let occId: string | null = null;
     let view: string | null = null;
+    let anchorAt: string | null = null;
     try {
       occId = localStorage.getItem("seedlings_deeplink_occ");
       view = localStorage.getItem("seedlings_deeplink_view");
+      anchorAt = localStorage.getItem("seedlings_deeplink_at");
       const ts = localStorage.getItem("seedlings_deeplink_ts");
       // Discard stale deep links (older than 5 minutes)
       if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
@@ -1618,12 +1626,13 @@ export default function HomePage() {
       }
     } catch {}
     if (!occId) {
-      try { localStorage.removeItem("seedlings_deeplink_occ"); localStorage.removeItem("seedlings_deeplink_view"); localStorage.removeItem("seedlings_deeplink_ts"); } catch {}
+      try { localStorage.removeItem("seedlings_deeplink_occ"); localStorage.removeItem("seedlings_deeplink_view"); localStorage.removeItem("seedlings_deeplink_at"); localStorage.removeItem("seedlings_deeplink_ts"); } catch {}
       return;
     }
     try {
       localStorage.removeItem("seedlings_deeplink_occ");
       localStorage.removeItem("seedlings_deeplink_view");
+      localStorage.removeItem("seedlings_deeplink_at");
       localStorage.removeItem("seedlings_deeplink_ts");
     } catch {}
     // Strip URL params now that we've consumed them
@@ -1640,6 +1649,7 @@ export default function HomePage() {
     // Retry dispatching the highlight event until the JobsTab is mounted and listening.
     // JobsTab sets a flag on window when its listener is ready.
     const savedOccId = occId;
+    const savedAnchor = anchorAt;
     let attempts = 0;
     const maxAttempts = 30; // 30 x 100ms = 3 seconds max
     const interval = setInterval(() => {
@@ -1649,7 +1659,7 @@ export default function HomePage() {
         if (view !== "admin") {
           window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "jobs" } }));
         }
-        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId: savedOccId } }));
+        window.dispatchEvent(new CustomEvent("jobsTab:highlightOcc", { detail: { occId: savedOccId, anchorAt: savedAnchor } }));
       }
     }, 100);
     return () => clearInterval(interval);
