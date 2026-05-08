@@ -184,6 +184,7 @@ model Equipment {
   likes        LikedEquipment[]
   instructions EquipmentInstruction[]
   collections  EquipmentCollectionItem[]
+  businessExpenses BusinessExpense[]
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -616,6 +617,7 @@ model JobOccurrence {
   assignees   JobOccurrenceAssignee[]
   payment     Payment?
   expenses    Expense[]
+  businessExpenses BusinessExpense[]
   addons       OccurrenceAddon[]
   instructions OccurrenceInstruction[]
   photos           JobOccurrencePhoto[]
@@ -761,6 +763,12 @@ model Expense {
   cost          Float
   description   String
 
+  // 1:1 link to the BusinessExpense (tax ledger) row. Every Expense added on
+  // a job in MVP-step-2 onward gets a paired BusinessExpense — workers buy on
+  // the company card, so per-job spend IS a business expense.
+  businessExpenseId String?  @unique
+  businessExpense   BusinessExpense? @relation(fields: [businessExpenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -783,12 +791,28 @@ model BusinessExpense {
   invoiceNumber String?
   notes         String?
 
+  // Optional link to a piece of equipment — useful for capital purchases
+  // (e.g. "$8K rider mower" categorized as Depreciation gets linked to its
+  // Equipment row so we can track per-equipment lifetime cost later).
+  equipmentId   String?
+  equipment     Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // Optional link to a job occurrence — set when the expense was incurred for
+  // a specific job (worker buys gas on the company card). The corresponding
+  // per-Job Expense row drives payout reduction; this row is the tax ledger
+  // entry. Linked 1:1 via Expense.businessExpenseId.
+  occurrenceId  String?
+  occurrence    JobOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  expense       Expense?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([date])
   @@index([category])
   @@index([createdById])
+  @@index([equipmentId])
+  @@index([occurrenceId])
 }
 
 model Setting {

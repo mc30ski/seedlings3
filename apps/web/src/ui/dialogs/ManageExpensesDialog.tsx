@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -8,8 +8,10 @@ import {
   HStack,
   Input,
   Portal,
+  Select,
   Text,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
@@ -18,7 +20,32 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 
-type Expense = { id: string; cost: number; description: string };
+type Expense = {
+  id: string;
+  cost: number;
+  description: string;
+  businessExpenseId?: string | null;
+  businessExpense?: { category?: string | null; vendor?: string | null; date?: string | null } | null;
+};
+
+const CATEGORY_ITEMS: { label: string; value: string }[] = [
+  { label: "Advertising (line 8)", value: "Advertising" },
+  { label: "Car and truck expenses (line 9)", value: "Car and truck expenses" },
+  { label: "Contract labor (line 11)", value: "Contract labor" },
+  { label: "Depreciation (line 13)", value: "Depreciation" },
+  { label: "Insurance (line 15)", value: "Insurance" },
+  { label: "Legal and professional services (line 17)", value: "Legal and professional services" },
+  { label: "Office expense (line 18)", value: "Office expense" },
+  { label: "Rent or lease — vehicles/equipment (line 20a)", value: "Rent or lease — vehicles/equipment" },
+  { label: "Rent or lease — other business property (line 20b)", value: "Rent or lease — other business property" },
+  { label: "Repairs and maintenance (line 21)", value: "Repairs and maintenance" },
+  { label: "Supplies (line 22)", value: "Supplies" },
+  { label: "Taxes and licenses (line 23)", value: "Taxes and licenses" },
+  { label: "Travel (line 24a)", value: "Travel" },
+  { label: "Meals (line 24b)", value: "Meals" },
+  { label: "Utilities (line 25)", value: "Utilities" },
+  { label: "Other (line 27a)", value: "Other" },
+];
 
 type Props = {
   open: boolean;
@@ -41,10 +68,14 @@ export default function ManageExpensesDialog({
 
   const [newCost, setNewCost] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newCategory, setNewCategory] = useState("Supplies");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCost, setEditCost] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editCategory, setEditCategory] = useState("Supplies");
+
+  const collection = useMemo(() => createListCollection({ items: CATEGORY_ITEMS }), []);
 
   const expensesEndpoint = isAdmin
     ? `/api/admin/occurrences/${occurrenceId}/expenses`
@@ -55,6 +86,7 @@ export default function ManageExpensesDialog({
     setLoading(true);
     setNewCost("");
     setNewDesc("");
+    setNewCategory("Supplies");
     setEditingId(null);
     apiGet<Expense[]>(expensesEndpoint)
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
@@ -69,10 +101,12 @@ export default function ManageExpensesDialog({
       const created = await apiPost<Expense>(expensesEndpoint, {
         cost,
         description: newDesc.trim(),
+        category: newCategory,
       });
       setExpenses((prev) => [...prev, created]);
       setNewCost("");
       setNewDesc("");
+      setNewCategory("Supplies");
       onChanged?.();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add expense.", err) });
@@ -95,12 +129,13 @@ export default function ManageExpensesDialog({
     const cost = parseFloat(editCost);
     if (isNaN(cost) || cost <= 0 || !editDesc.trim()) return;
     try {
-      await apiPatch(`/api/expenses/${editingId}`, {
+      const updated = await apiPatch<Expense>(`/api/expenses/${editingId}`, {
         cost,
         description: editDesc.trim(),
+        category: editCategory,
       });
       setExpenses((prev) =>
-        prev.map((e) => e.id === editingId ? { ...e, cost, description: editDesc.trim() } : e)
+        prev.map((e) => e.id === editingId ? updated : e)
       );
       setEditingId(null);
       onChanged?.();
@@ -123,6 +158,13 @@ export default function ManageExpensesDialog({
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                  <Text fontSize="xs" color="blue.800">
+                    Each expense added here is also recorded as a business expense (categorized for
+                    Schedule C) and should be paid on the company account. Default category is{" "}
+                    <Text as="span" fontWeight="semibold">Supplies</Text> — change per row if it fits a different tax line.
+                  </Text>
+                </Box>
                 {/* Existing expenses */}
                 {expenses.length === 0 && !loading && (
                   <Text fontSize="xs" color="fg.muted">No expenses recorded.</Text>
@@ -131,23 +173,52 @@ export default function ManageExpensesDialog({
                   <VStack align="stretch" gap={1}>
                     {expenses.map((exp) =>
                       editingId === exp.id ? (
-                        <HStack key={exp.id} gap={2}>
-                          <Box w="80px" flexShrink={0}>
-                            <CurrencyInput value={editCost} onChange={setEditCost} size="sm" placeholder="Cost" />
-                          </Box>
-                          <Input
-                            value={editDesc}
-                            onChange={(e) => setEditDesc(e.target.value)}
-                            size="sm"
-                            flex="1"
-                          />
-                          <Button size="xs" onClick={handleUpdate}>Save</Button>
-                          <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>✕</Button>
-                        </HStack>
+                        <VStack key={exp.id} align="stretch" gap={1}>
+                          <HStack gap={2}>
+                            <Box w="80px" flexShrink={0}>
+                              <CurrencyInput value={editCost} onChange={setEditCost} size="sm" placeholder="Cost" />
+                            </Box>
+                            <Input
+                              value={editDesc}
+                              onChange={(e) => setEditDesc(e.target.value)}
+                              size="sm"
+                              flex="1"
+                            />
+                          </HStack>
+                          <HStack gap={2}>
+                            <Box flex="1">
+                              <Select.Root
+                                collection={collection}
+                                value={[editCategory]}
+                                onValueChange={(e) => setEditCategory(e.value?.[0] ?? "Supplies")}
+                                size="sm"
+                                positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                              >
+                                <Select.Control>
+                                  <Select.Trigger w="full">
+                                    <Select.ValueText placeholder="Supplies (line 22)" />
+                                  </Select.Trigger>
+                                </Select.Control>
+                                <Select.Positioner>
+                                  <Select.Content>
+                                    {CATEGORY_ITEMS.map((it) => (
+                                      <Select.Item key={it.value} item={it.value}>
+                                        <Select.ItemText>{it.label}</Select.ItemText>
+                                      </Select.Item>
+                                    ))}
+                                  </Select.Content>
+                                </Select.Positioner>
+                              </Select.Root>
+                            </Box>
+                            <Button size="xs" onClick={handleUpdate}>Save</Button>
+                            <Button size="xs" variant="ghost" onClick={() => setEditingId(null)}>✕</Button>
+                          </HStack>
+                        </VStack>
                       ) : (
                         <HStack key={exp.id} gap={2} fontSize="xs">
                           <Text color="orange.600" flex="1">
                             ${exp.cost.toFixed(2)} — {exp.description}
+                            <Text as="span" color="fg.muted" ml={1}>· {exp.businessExpense?.category ?? "Supplies"}</Text>
                           </Text>
                           <Button
                             size="xs"
@@ -156,6 +227,7 @@ export default function ManageExpensesDialog({
                               setEditingId(exp.id);
                               setEditCost(exp.cost.toFixed(2));
                               setEditDesc(exp.description);
+                              setEditCategory(exp.businessExpense?.category ?? "Supplies");
                             }}
                           >
                             Edit
@@ -180,27 +252,55 @@ export default function ManageExpensesDialog({
                 {/* Add new expense */}
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Add Expense</Text>
-                  <HStack gap={2}>
-                    <Box w="80px" flexShrink={0}>
-                      <CurrencyInput value={newCost} onChange={setNewCost} size="sm" placeholder="Cost" />
-                    </Box>
-                    <Input
-                      value={newDesc}
-                      onChange={(e) => setNewDesc(e.target.value)}
-                      size="sm"
-                      flex="1"
-                      placeholder="Description"
-                    />
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      colorPalette="orange"
-                      disabled={!newCost || !newDesc.trim()}
-                      onClick={handleAdd}
-                    >
-                      Add
-                    </Button>
-                  </HStack>
+                  <VStack align="stretch" gap={2}>
+                    <HStack gap={2}>
+                      <Box w="80px" flexShrink={0}>
+                        <CurrencyInput value={newCost} onChange={setNewCost} size="sm" placeholder="Cost" />
+                      </Box>
+                      <Input
+                        value={newDesc}
+                        onChange={(e) => setNewDesc(e.target.value)}
+                        size="sm"
+                        flex="1"
+                        placeholder="Description"
+                      />
+                    </HStack>
+                    <HStack gap={2}>
+                      <Box flex="1">
+                        <Select.Root
+                          collection={collection}
+                          value={[newCategory]}
+                          onValueChange={(e) => setNewCategory(e.value?.[0] ?? "Supplies")}
+                          size="sm"
+                          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                        >
+                          <Select.Control>
+                            <Select.Trigger w="full">
+                              <Select.ValueText placeholder="Supplies (line 22)" />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Select.Positioner>
+                            <Select.Content>
+                              {CATEGORY_ITEMS.map((it) => (
+                                <Select.Item key={it.value} item={it.value}>
+                                  <Select.ItemText>{it.label}</Select.ItemText>
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Select.Root>
+                      </Box>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="orange"
+                        disabled={!newCost || !newDesc.trim()}
+                        onClick={handleAdd}
+                      >
+                        Add
+                      </Button>
+                    </HStack>
+                  </VStack>
                 </Box>
               </VStack>
             </Dialog.Body>

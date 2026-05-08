@@ -1826,6 +1826,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.expenses.addExpense(uid, String(req.params.id), {
       cost: Number(body.cost),
       description: String(body.description ?? ""),
+      category: body.category != null ? String(body.category) : null,
+      vendor: body.vendor != null ? String(body.vendor) : null,
+      date: body.date != null ? String(body.date) : null,
     });
   });
 
@@ -1835,6 +1838,9 @@ export default async function workerRoutes(app: FastifyInstance) {
     const input: any = {};
     if (body.cost !== undefined) input.cost = Number(body.cost);
     if (body.description !== undefined) input.description = String(body.description);
+    if ("category" in body) input.category = body.category != null ? String(body.category) : null;
+    if ("vendor" in body) input.vendor = body.vendor != null ? String(body.vendor) : null;
+    if ("date" in body) input.date = body.date != null ? String(body.date) : null;
     return services.expenses.updateExpense(uid, String(req.params.id), input);
   });
 
