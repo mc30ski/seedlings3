@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -3052,6 +3052,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             <Heart size={14} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
                           </Box>
                         )}
+                        {isObserver && (
+                          <Box flexShrink={0} display="flex" alignItems="center" title="You're an observer">
+                            <Eye size={14} color="var(--chakra-colors-blue-500)" />
+                          </Box>
+                        )}
                         <Text fontSize="sm" fontWeight="semibold" minW={0} flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
                           {isReminder ? (
                             <>{occ.title || "Reminder"}</>
@@ -3251,6 +3256,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {likedIds.has(occ.id) && (
                             <Box flexShrink={0} display="flex" alignItems="center" title="Liked">
                               <Heart size={16} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
+                            </Box>
+                          )}
+                          {isObserver && (
+                            <Box flexShrink={0} display="flex" alignItems="center" title="You're an observer">
+                              <Eye size={16} color="var(--chakra-colors-blue-500)" />
                             </Box>
                           )}
                           <Text fontSize="md" fontWeight="semibold" minW={0} flex="1">

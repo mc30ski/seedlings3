@@ -23,6 +23,7 @@ import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type EquipmentBrief = {
   id: string;
+  qrSlug?: string | null;
   shortDesc?: string | null;
   type?: string | null;
   brand?: string | null;
@@ -244,7 +245,16 @@ function CollectionEditor(props: {
   const filteredEquipment = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return sortedEquipment;
-    return sortedEquipment.filter((e) => equipmentLabel(e).toLowerCase().includes(q) || (e.type ?? "").toLowerCase().includes(q));
+    return sortedEquipment.filter((e) => {
+      const haystack = [
+        equipmentLabel(e),
+        e.brand,
+        e.model,
+        e.type,
+        e.qrSlug,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
   }, [sortedEquipment, search]);
 
   const toggleMember = (id: string) => {
@@ -316,6 +326,13 @@ function CollectionEditor(props: {
               <VStack align="stretch" gap={1} maxH="320px" overflowY="auto">
                 {filteredEquipment.map((e) => {
                   const checked = memberIds.includes(e.id);
+                  const brandModel = [e.brand, e.model].filter(Boolean).join(" ");
+                  // Primary label (the descriptive name), with brandModel and
+                  // qrSlug as secondary info to disambiguate similar pieces.
+                  const primary = e.shortDesc || brandModel || e.type || e.id.slice(-6);
+                  // Show brand+model on the second line only if it isn't already
+                  // the primary text.
+                  const secondary = brandModel && brandModel !== primary ? brandModel : null;
                   return (
                     <HStack
                       key={e.id}
@@ -325,9 +342,17 @@ function CollectionEditor(props: {
                       bg={checked ? "blue.50" : undefined}
                       _hover={{ bg: checked ? "blue.100" : "gray.50" }}
                       onClick={() => toggleMember(e.id)}
+                      align="start"
                     >
-                      <input type="checkbox" readOnly checked={checked} />
-                      <Text fontSize="sm" flex={1}>{equipmentLabel(e)}</Text>
+                      <Box mt="2px"><input type="checkbox" readOnly checked={checked} /></Box>
+                      <VStack align="start" gap={0} flex={1} minW={0}>
+                        <Text fontSize="sm" fontWeight="medium" lineHeight="1.2">{primary}</Text>
+                        <HStack gap={2} fontSize="xs" color="fg.muted" flexWrap="wrap">
+                          {secondary && <Text>{secondary}</Text>}
+                          {e.type && <Text>· {e.type}</Text>}
+                          {e.qrSlug && <Text fontFamily="mono">· {e.qrSlug}</Text>}
+                        </HStack>
+                      </VStack>
                       {statusBadge(e)}
                     </HStack>
                   );

@@ -1147,17 +1147,33 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       )}
       {collections.length > 0 && (
         <Box mb={3}>
-          <HStack
-            gap={2}
-            align="center"
-            mb={2}
-            cursor="pointer"
-            onClick={() => setCollectionsCollapsed(!collectionsCollapsed)}
-            _hover={{ opacity: 0.7 }}
-          >
-            <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Collections</Text>
-            <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
-            <Text fontSize="xs" color="gray.400">{collectionsCollapsed ? "▶" : "▼"}</Text>
+          <HStack gap={2} align="center" mb={2}>
+            <HStack
+              gap={2}
+              align="center"
+              cursor="pointer"
+              onClick={() => setCollectionsCollapsed(!collectionsCollapsed)}
+              _hover={{ opacity: 0.7 }}
+            >
+              <Text fontSize="sm" fontWeight="bold" color="gray.600" textTransform="uppercase" letterSpacing="wide">Collections</Text>
+              <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs">{collections.length}</Badge>
+              <Text fontSize="xs" color="gray.400">{collectionsCollapsed ? "▶" : "▼"}</Text>
+            </HStack>
+            {forAdmin && (
+              <Badge
+                size="sm"
+                colorPalette="blue"
+                variant="subtle"
+                cursor="pointer"
+                px="2"
+                borderRadius="full"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "collections" } }));
+                }}
+              >
+                Manage collections →
+              </Badge>
+            )}
           </HStack>
           {!collectionsCollapsed && (
             <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} gap={2}>
