@@ -3164,11 +3164,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   </>
                                 )}
                                 {(() => {
+                                  // Once the job leaves the active states the
+                                  // expense list is frozen on JobsTab — admins
+                                  // do retroactive edits via the Services tab.
+                                  const isActive =
+                                    occ.status === "SCHEDULED" ||
+                                    occ.status === "IN_PROGRESS" ||
+                                    occ.status === "PAUSED";
                                   const hasAnyPriv =
                                     forAdmin ||
                                     !!me?.privileges?.canPullInventory ||
                                     !!me?.privileges?.canChargeBusinessExpenses;
-                                  const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                                  const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
                                   if (!canManage) return null;
                                   return (
                                     <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
@@ -3381,11 +3388,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     </>
                                   )}
                                   {(() => {
+                                    // Lock expense edits on JobsTab once the
+                                    // job leaves the active states (Services
+                                    // tab is the admin path for retroactive
+                                    // changes).
+                                    const isActive =
+                                      occ.status === "SCHEDULED" ||
+                                      occ.status === "IN_PROGRESS" ||
+                                      occ.status === "PAUSED";
                                     const hasAnyPriv =
                                       forAdmin ||
                                       !!me?.privileges?.canPullInventory ||
                                       !!me?.privileges?.canChargeBusinessExpenses;
-                                    const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                                    const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
                                     if (!canManage) return null;
                                     return (
                                       <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
@@ -4192,13 +4207,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {/* Manage expenses button — claimer (any privilege) or
                         admin/super. Dialog itself gates Custom vs Inventory
-                        toggles based on the resolved privileges from /me. */}
+                        toggles based on the resolved privileges from /me.
+                        Hidden once the job leaves the active states; admins
+                        do retroactive edits via the Services tab. */}
                     {(() => {
+                      const isActive =
+                        occ.status === "SCHEDULED" ||
+                        occ.status === "IN_PROGRESS" ||
+                        occ.status === "PAUSED";
                       const hasAnyPriv =
                         forAdmin ||
                         !!me?.privileges?.canPullInventory ||
                         !!me?.privileges?.canChargeBusinessExpenses;
-                      const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                      const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
                       if (!canManage) return null;
                       return (
                         <Button
