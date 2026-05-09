@@ -26,6 +26,23 @@ type Expense = {
   description: string;
   businessExpenseId?: string | null;
   businessExpense?: { category?: string | null; vendor?: string | null; date?: string | null } | null;
+  // Set when this Expense was created by consuming inventory. The UI hides
+  // edit on these rows since cost/description are derived from the hold's
+  // qty × jobPayoutCost.
+  supplyHold?: {
+    id: string;
+    quantity: number;
+    status: "ACTIVE" | "CONSUMED" | "RELEASED";
+    supply?: { id: string; name: string; unit: string } | null;
+  } | null;
+};
+
+type SupplyOption = {
+  id: string;
+  name: string;
+  unit: string;
+  jobPayoutCost: number;
+  available: number;
 };
 
 const CATEGORY_ITEMS: { label: string; value: string }[] = [
@@ -53,6 +70,16 @@ type Props = {
   occurrenceId: string;
   /** Use admin endpoints */
   isAdmin?: boolean;
+  /** Hide the "From inventory" toggle. Set true for workflows that don't
+   *  carry physical supply consumption (events, followups, announcements). */
+  disableInventory?: boolean;
+  /** The viewing user's resolved privileges (admin/super always true). When
+   *  omitted, both default to true for back-compat with admin contexts that
+   *  haven't been wired through. */
+  privileges?: {
+    canPullInventory: boolean;
+    canChargeBusinessExpenses: boolean;
+  };
   onChanged?: () => void;
 };
 
@@ -61,14 +88,27 @@ export default function ManageExpensesDialog({
   onOpenChange,
   occurrenceId,
   isAdmin,
+  disableInventory = false,
+  privileges = { canPullInventory: true, canChargeBusinessExpenses: true },
   onChanged,
 }: Props) {
+  const canInventory = privileges.canPullInventory && !disableInventory;
+  const canCharge = privileges.canChargeBusinessExpenses;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Add mode: free-text custom expense vs pull from inventory. Custom is the
+  // existing Step-2 flow; inventory creates a SupplyHold + Expense pair.
+  const [addMode, setAddMode] = useState<"custom" | "inventory">("custom");
 
   const [newCost, setNewCost] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newCategory, setNewCategory] = useState("Supplies");
+
+  // Inventory-mode state
+  const [supplies, setSupplies] = useState<SupplyOption[]>([]);
+  const [pickedSupplyId, setPickedSupplyId] = useState<string>("");
+  const [pickedQty, setPickedQty] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCost, setEditCost] = useState("");
@@ -80,14 +120,55 @@ export default function ManageExpensesDialog({
   const expensesEndpoint = isAdmin
     ? `/api/admin/occurrences/${occurrenceId}/expenses`
     : `/api/occurrences/${occurrenceId}/expenses`;
+  const holdsEndpoint = isAdmin
+    ? `/api/admin/occurrences/${occurrenceId}/supply-holds`
+    : `/api/occurrences/${occurrenceId}/supply-holds`;
+
+  const supplyCollection = useMemo(
+    () =>
+      createListCollection({
+        items: supplies.map((s) => ({
+          label: `${s.name} — ${s.available} ${s.unit} avail @ $${s.jobPayoutCost.toFixed(2)}/${s.unit}`,
+          value: s.id,
+        })),
+      }),
+    [supplies],
+  );
+  const pickedSupply = useMemo(
+    () => supplies.find((s) => s.id === pickedSupplyId) ?? null,
+    [supplies, pickedSupplyId],
+  );
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    setAddMode("custom");
     setNewCost("");
     setNewDesc("");
     setNewCategory("Supplies");
+    setPickedSupplyId("");
+    setPickedQty("");
     setEditingId(null);
+    // Load supplies for inventory picker (worker route is read-only).
+    apiGet<any[]>("/api/supplies")
+      .then((list) => {
+        if (!Array.isArray(list)) {
+          setSupplies([]);
+          return;
+        }
+        setSupplies(
+          list
+            .filter((s) => !s.archivedAt)
+            .map((s) => ({
+              id: s.id,
+              name: s.name,
+              unit: s.unit,
+              jobPayoutCost: Number(s.jobPayoutCost ?? 0),
+              available: Number(s.available ?? 0),
+            })),
+        );
+      })
+      .catch(() => setSupplies([]));
     apiGet<Expense[]>(expensesEndpoint)
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
       .catch(() => setExpenses([]))
@@ -110,6 +191,47 @@ export default function ManageExpensesDialog({
       onChanged?.();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to add expense.", err) });
+    }
+  }
+
+  async function handleAddFromInventory() {
+    if (!pickedSupplyId || !pickedSupply) return;
+    const qty = Math.round(Number(pickedQty));
+    if (!Number.isInteger(qty) || qty <= 0) {
+      publishInlineMessage({ type: "WARNING", text: "Quantity must be a positive integer." });
+      return;
+    }
+    if (qty > pickedSupply.available) {
+      publishInlineMessage({
+        type: "WARNING",
+        text: `Only ${pickedSupply.available} ${pickedSupply.unit}(s) available.`,
+      });
+      return;
+    }
+    try {
+      const created = await apiPost<any>(holdsEndpoint, {
+        supplyId: pickedSupplyId,
+        quantity: qty,
+      });
+      // The API returns the SupplyHold with its linked Expense. Reload the
+      // full expense list so the new row shows up with the inventory chip
+      // (avoids assembling a synthetic Expense shape on the client).
+      const refreshed = await apiGet<Expense[]>(expensesEndpoint);
+      setExpenses(Array.isArray(refreshed) ? refreshed : []);
+      // Refresh available qty on the picker too.
+      setSupplies((prev) =>
+        prev.map((s) =>
+          s.id === pickedSupplyId ? { ...s, available: s.available - qty } : s,
+        ),
+      );
+      setPickedSupplyId("");
+      setPickedQty("");
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to add from inventory.", err),
+      });
     }
   }
 
@@ -218,20 +340,30 @@ export default function ManageExpensesDialog({
                         <HStack key={exp.id} gap={2} fontSize="xs">
                           <Text color="orange.600" flex="1">
                             ${exp.cost.toFixed(2)} — {exp.description}
-                            <Text as="span" color="fg.muted" ml={1}>· {exp.businessExpense?.category ?? "Supplies"}</Text>
+                            {exp.supplyHold ? (
+                              <Text as="span" color="blue.600" ml={1}>· Inventory</Text>
+                            ) : (
+                              <Text as="span" color="fg.muted" ml={1}>· {exp.businessExpense?.category ?? "Supplies"}</Text>
+                            )}
                           </Text>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingId(exp.id);
-                              setEditCost(exp.cost.toFixed(2));
-                              setEditDesc(exp.description);
-                              setEditCategory(exp.businessExpense?.category ?? "Supplies");
-                            }}
-                          >
-                            Edit
-                          </Button>
+                          {/* Inventory-backed rows can't be edited inline —
+                              cost/description are derived from the hold's
+                              qty × jobPayoutCost. To change, delete and
+                              re-add. */}
+                          {!exp.supplyHold && (
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingId(exp.id);
+                                setEditCost(exp.cost.toFixed(2));
+                                setEditDesc(exp.description);
+                                setEditCategory(exp.businessExpense?.category ?? "Supplies");
+                              }}
+                            >
+                              Edit
+                            </Button>
+                          )}
                           <Button
                             size="xs"
                             variant="ghost"
@@ -251,7 +383,125 @@ export default function ManageExpensesDialog({
 
                 {/* Add new expense */}
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Add Expense</Text>
+                  <HStack justify="space-between" mb={1} gap={2} wrap="wrap">
+                    <Text fontSize="sm" fontWeight="medium">Add Expense</Text>
+                    {(canInventory || canCharge) && (
+                      <HStack gap={1}>
+                        <Button
+                          size="xs"
+                          variant={addMode === "custom" ? "solid" : "outline"}
+                          onClick={() => canCharge && setAddMode("custom")}
+                          disabled={!canCharge}
+                          title={
+                            !canCharge
+                              ? "Recording new expenses on the company account requires the “Charge business expenses” privilege. Ask an admin."
+                              : ""
+                          }
+                        >
+                          Custom
+                        </Button>
+                        {canInventory && (
+                          <Button
+                            size="xs"
+                            variant={addMode === "inventory" ? "solid" : "outline"}
+                            colorPalette={addMode === "inventory" ? "blue" : "gray"}
+                            onClick={() => setAddMode("inventory")}
+                            disabled={supplies.length === 0}
+                            title={supplies.length === 0 ? "No supplies in inventory yet" : "Pull from inventory"}
+                          >
+                            From inventory
+                          </Button>
+                        )}
+                      </HStack>
+                    )}
+                  </HStack>
+                  {/* Explainers shown to workers without a privilege so they
+                      understand what's missing and how to ask for it. */}
+                  {!canCharge && canInventory && (
+                    <Box mb={2} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                      <Text fontSize="xs" color="fg.muted">
+                        New out-of-pocket / company-card expenses require the <Text as="span" fontWeight="semibold">Charge business expenses</Text> privilege. Pull from inventory below, or ask an admin to log this expense for you.
+                      </Text>
+                    </Box>
+                  )}
+                  {!canCharge && !canInventory && (
+                    <Box mb={2} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                      <Text fontSize="xs" color="fg.muted">
+                        Expenses on this job are managed by an admin. Let them know if anything needs to be recorded.
+                      </Text>
+                    </Box>
+                  )}
+                  {/* Resolve which UI to render given the available privileges:
+                      - both → follow addMode
+                      - inventory only → force inventory UI
+                      - charge only → force custom UI
+                      - neither → null (info box above already explains) */}
+                  {!canInventory && !canCharge ? null : (canInventory && (!canCharge || addMode === "inventory")) ? (
+                    <VStack align="stretch" gap={2}>
+                      <Box>
+                        <Select.Root
+                          collection={supplyCollection}
+                          value={pickedSupplyId ? [pickedSupplyId] : []}
+                          onValueChange={(e) => setPickedSupplyId(e.value?.[0] ?? "")}
+                          size="sm"
+                          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                        >
+                          <Select.Control>
+                            <Select.Trigger w="full">
+                              <Select.ValueText placeholder="Pick a supply…" />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Select.Positioner>
+                            <Select.Content>
+                              {supplyCollection.items.map((it) => (
+                                <Select.Item key={it.value} item={it.value}>
+                                  <Select.ItemText>{it.label}</Select.ItemText>
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Select.Root>
+                      </Box>
+                      <HStack gap={2}>
+                        <Box w="80px" flexShrink={0}>
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={pickedQty}
+                            onChange={(e) => setPickedQty(e.target.value)}
+                            size="sm"
+                            placeholder="Qty"
+                          />
+                        </Box>
+                        <Box flex="1">
+                          {pickedSupply && pickedQty && Number(pickedQty) > 0 && (
+                            <Text fontSize="xs" color="fg.muted">
+                              {Number(pickedQty)} {pickedSupply.unit} × ${pickedSupply.jobPayoutCost.toFixed(2)} = ${(Number(pickedQty) * pickedSupply.jobPayoutCost).toFixed(2)}
+                              <Text as="span" color={Number(pickedQty) > pickedSupply.available ? "red.600" : "fg.muted"} ml={1}>
+                                ({pickedSupply.available} available)
+                              </Text>
+                            </Text>
+                          )}
+                        </Box>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="blue"
+                          disabled={
+                            !pickedSupplyId ||
+                            !pickedQty ||
+                            !Number.isInteger(Number(pickedQty)) ||
+                            Number(pickedQty) <= 0 ||
+                            !!(pickedSupply && Number(pickedQty) > pickedSupply.available)
+                          }
+                          onClick={handleAddFromInventory}
+                        >
+                          Add
+                        </Button>
+                      </HStack>
+                    </VStack>
+                  ) : (
                   <VStack align="stretch" gap={2}>
                     <HStack gap={2}>
                       <Box w="80px" flexShrink={0}>
@@ -301,6 +551,7 @@ export default function ManageExpensesDialog({
                       </Button>
                     </HStack>
                   </VStack>
+                  )}
                 </Box>
               </VStack>
             </Dialog.Body>

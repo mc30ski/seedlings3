@@ -24,6 +24,11 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
+import {
+  consumeHoldsForOccurrence,
+  releaseHoldsForOccurrence,
+  reactivateHoldsForOccurrence,
+} from "./supplies";
 
 // ---- helpers ----
 
@@ -253,6 +258,14 @@ export const jobs: ServicesJobs = {
               include: {
                 createdBy: { select: { id: true, displayName: true } },
                 businessExpense: { select: { category: true, vendor: true, date: true } },
+                supplyHold: {
+                  select: {
+                    id: true,
+                    quantity: true,
+                    status: true,
+                    supply: { select: { id: true, name: true, unit: true } },
+                  },
+                },
               },
               orderBy: { createdAt: "asc" as const },
             },
@@ -987,6 +1000,27 @@ export const jobs: ServicesJobs = {
         await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       }
 
+      // Inventory hooks: hold lifecycle follows the occurrence's status.
+      if (data.status) {
+        if (data.status === JobOccurrenceStatus.CANCELED) {
+          await releaseHoldsForOccurrence(occurrenceId, tx);
+        } else if (
+          data.status === JobOccurrenceStatus.CLOSED ||
+          data.status === JobOccurrenceStatus.PENDING_PAYMENT ||
+          data.status === JobOccurrenceStatus.PROPOSAL_SUBMITTED
+        ) {
+          await consumeHoldsForOccurrence(occurrenceId, tx);
+        } else if (
+          (original?.status === JobOccurrenceStatus.CLOSED ||
+            original?.status === JobOccurrenceStatus.PENDING_PAYMENT ||
+            original?.status === JobOccurrenceStatus.PROPOSAL_SUBMITTED) &&
+          (data.status === JobOccurrenceStatus.SCHEDULED ||
+            data.status === JobOccurrenceStatus.IN_PROGRESS)
+        ) {
+          await reactivateHoldsForOccurrence(occurrenceId, tx);
+        }
+      }
+
       // If reverting from CLOSED to a pre-payment state, clean up the payment
       if (data.status && data.status !== JobOccurrenceStatus.CLOSED && data.status !== JobOccurrenceStatus.ARCHIVED) {
         const existingPayment = await tx.payment.findUnique({ where: { occurrenceId } });
@@ -1130,6 +1164,14 @@ export const jobs: ServicesJobs = {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
+            supplyHold: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+                supply: { select: { id: true, name: true, unit: true } },
+              },
+            },
           },
           orderBy: { createdAt: "asc" as const },
         },
@@ -1249,6 +1291,14 @@ export const jobs: ServicesJobs = {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
+            supplyHold: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+                supply: { select: { id: true, name: true, unit: true } },
+              },
+            },
           },
           orderBy: { createdAt: "asc" as const },
         },
@@ -1314,6 +1364,14 @@ export const jobs: ServicesJobs = {
           include: {
             createdBy: { select: { id: true, displayName: true } },
             businessExpense: { select: { category: true, vendor: true, date: true } },
+            supplyHold: {
+              select: {
+                id: true,
+                quantity: true,
+                status: true,
+                supply: { select: { id: true, name: true, unit: true } },
+              },
+            },
           },
           orderBy: { createdAt: "asc" as const },
         },
@@ -1795,6 +1853,26 @@ export const jobs: ServicesJobs = {
         where: { id: occurrenceId },
         data,
       });
+
+      // Inventory hooks: same lifecycle policy as the `update` path above.
+      // ACTIVE holds → CONSUMED on entering CLOSED/PENDING_PAYMENT/PROPOSAL_SUBMITTED;
+      // CONSUMED holds → ACTIVE when reverting to SCHEDULED/IN_PROGRESS.
+      // CANCELED isn't reachable from this code path (the `update` flow handles it).
+      if (
+        finalStatus === JobOccurrenceStatus.CLOSED ||
+        finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
+        finalStatus === JobOccurrenceStatus.PROPOSAL_SUBMITTED
+      ) {
+        await consumeHoldsForOccurrence(occurrenceId, tx);
+      } else if (
+        (occ.status === JobOccurrenceStatus.CLOSED ||
+          occ.status === JobOccurrenceStatus.PENDING_PAYMENT ||
+          occ.status === JobOccurrenceStatus.PROPOSAL_SUBMITTED) &&
+        (finalStatus === JobOccurrenceStatus.SCHEDULED ||
+          finalStatus === JobOccurrenceStatus.IN_PROGRESS)
+      ) {
+        await reactivateHoldsForOccurrence(occurrenceId, tx);
+      }
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
         occurrenceId,

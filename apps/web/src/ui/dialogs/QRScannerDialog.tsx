@@ -15,6 +15,14 @@ type Props = {
   label: string;
   onClose: () => void;
   onDetected: (slug: string) => void;
+  /** Barcode formats to decode. Defaults to QR-only (preserves the
+   *  Equipment check-in/check-out behavior). For UPC scanning, pass
+   *  ["upc_a","upc_e","ean_13","ean_8"]. ZXing's MultiFormatReader
+   *  decodes every supported format regardless, but we still pass this
+   *  to BarcodeDetector so the native path matches intent. */
+  formats?: string[];
+  /** Optional placeholder for the manual-entry fallback. */
+  manualPlaceholder?: string;
 };
 
 export default function QRScannerDialog({
@@ -22,6 +30,8 @@ export default function QRScannerDialog({
   label,
   onClose,
   onDetected,
+  formats = ["qr_code"],
+  manualPlaceholder = "Enter code manually (e.g., mower-hrx217)",
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +134,7 @@ export default function QRScannerDialog({
         // @ts-ignore
         const BD = window.BarcodeDetector as any | undefined;
         if (BD) {
-          const detector = new BD({ formats: ["qr_code"] });
+          const detector = new BD({ formats });
           let raf = 0;
 
           const scan = async () => {
@@ -294,7 +304,7 @@ export default function QRScannerDialog({
 
                 <HStack gap="2" wrap="wrap">
                   <Input
-                    placeholder="Enter code manually (e.g., mower-hrx217)"
+                    placeholder={manualPlaceholder}
                     value={manual}
                     onChange={(e) => setManual(e.target.value)}
                     maxW="320px"

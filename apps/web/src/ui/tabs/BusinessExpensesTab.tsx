@@ -17,13 +17,14 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Download, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Download, Eye, Paperclip, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 
 type BusinessExpense = {
   id: string;
@@ -38,6 +39,16 @@ type BusinessExpense = {
   equipment?: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; qrSlug?: string | null } | null;
   occurrenceId?: string | null;
   occurrence?: { id: string; startAt?: string | null; job?: { id: string; property?: { id: string; displayName?: string | null; client?: { displayName?: string | null } | null } | null } | null } | null;
+  supplyPurchase?: {
+    id: string;
+    quantity: number;
+    unitCost: number;
+    supply: { id: string; name: string; unit: string };
+  } | null;
+  receiptR2Key?: string | null;
+  receiptFileName?: string | null;
+  receiptContentType?: string | null;
+  receiptUploadedAt?: string | null;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null; email?: string | null };
 };
@@ -307,6 +318,7 @@ export default function BusinessExpensesTab() {
       "Invoice Number",
       "Linked Equipment",
       "Linked Job",
+      "Linked Supply",
       "Notes",
     ];
 
@@ -325,6 +337,10 @@ export default function BusinessExpensesTab() {
       const jobLabel = job?.property?.displayName
         ? `${job.property.displayName}${job.property.client?.displayName ? ` — ${job.property.client.displayName}` : ""}${e.occurrence?.startAt ? ` (${new Date(e.occurrence.startAt).toLocaleDateString()})` : ""}`
         : "";
+      const sp = e.supplyPurchase;
+      const supplyLabel = sp
+        ? `${sp.supply.name} × ${sp.quantity} ${sp.supply.unit} @ $${sp.unitCost.toFixed(2)}`
+        : "";
       rows.push([
         csvEscape(e.date.slice(0, 10)),
         csvEscape(e.cost.toFixed(2)),
@@ -335,6 +351,7 @@ export default function BusinessExpensesTab() {
         csvEscape(e.invoiceNumber ?? ""),
         csvEscape(eqLabel),
         csvEscape(jobLabel),
+        csvEscape(supplyLabel),
         csvEscape(e.notes ?? ""),
       ].join(","));
     }
@@ -597,6 +614,35 @@ export default function BusinessExpensesTab() {
                           {e.occurrence.job.property.client?.displayName ? ` — ${e.occurrence.job.property.client.displayName}` : ""} →
                         </Badge>
                       )}
+                      {e.supplyPurchase && (
+                        <Badge
+                          size="sm"
+                          colorPalette="blue"
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          cursor="pointer"
+                          _hover={{ bg: "blue.100" }}
+                          title="View this supply on the Supplies tab"
+                          onClick={() => {
+                            // Hand off to the Super → Supplies tab. Same pattern as
+                            // the Job badge above; the receiving tab loads on mount.
+                            try {
+                              localStorage.setItem(
+                                "seedlings_supplies_pendingHighlight",
+                                e.supplyPurchase!.supply.id,
+                              );
+                            } catch {}
+                            window.dispatchEvent(
+                              new CustomEvent("navigate:superTab", {
+                                detail: { tab: "supplies" },
+                              }),
+                            );
+                          }}
+                        >
+                          Supply: {e.supplyPurchase.supply.name} × {e.supplyPurchase.quantity} →
+                        </Badge>
+                      )}
                     </HStack>
                     <HStack gap={3} fontSize="xs" color="fg.muted" wrap="wrap">
                       <Text>{fmtDate(e.date)}</Text>
@@ -611,6 +657,31 @@ export default function BusinessExpensesTab() {
                   <VStack align="end" gap={1}>
                     <Text fontSize="md" fontWeight="bold" color="orange.600">{fmtUSD(e.cost)}</Text>
                     <HStack gap={1}>
+                      {/* Paperclip icon when a receipt is attached — clicks
+                          open the receipt in a new tab via a presigned GET URL. */}
+                      {e.receiptR2Key && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorPalette="green"
+                          title={`View receipt${e.receiptFileName ? `: ${e.receiptFileName}` : ""}`}
+                          onClick={async () => {
+                            try {
+                              const { url } = await apiGet<{ url: string }>(
+                                `/api/admin/business-expenses/${e.id}/receipt-url`,
+                              );
+                              window.open(url, "_blank", "noopener,noreferrer");
+                            } catch (err) {
+                              publishInlineMessage({
+                                type: "ERROR",
+                                text: getErrorMessage("Couldn't open receipt.", err),
+                              });
+                            }
+                          }}
+                        >
+                          <Paperclip size={12} />
+                        </Button>
+                      )}
                       <Button size="xs" variant="ghost" onClick={() => openEdit(e)} title="Edit">
                         <Pencil size={12} />
                       </Button>
@@ -703,6 +774,23 @@ export default function BusinessExpensesTab() {
                     <Text fontSize="sm" mb={1}>Notes</Text>
                     <Textarea size="sm" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Optional notes" rows={2} />
                   </Box>
+                  {/* Receipt — only available on existing expenses (need a
+                      BE id to anchor the upload). For new entries the user
+                      saves first, then re-opens to attach. Sync both the
+                      list and the open dialog in place so the change is
+                      visible immediately without re-fetching. */}
+                  {editing && (
+                    <ReceiptUpload
+                      businessExpenseId={editing.id}
+                      existing={editing}
+                      onChanged={(next) => {
+                        setExpenses((rows) =>
+                          rows.map((r) => (r.id === editing.id ? { ...r, ...next } : r)),
+                        );
+                        setEditing((cur) => (cur ? { ...cur, ...next } : cur));
+                      }}
+                    />
+                  )}
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>

@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
+import { resolvePrivileges } from "../lib/privileges";
 import type { ServicesExpenses, ExpenseInput, ExpensePatchInput } from "../types/services";
 
 // Schedule C-aligned categories. Mirror of the set in routes/admin.ts. Centralized
@@ -67,11 +68,27 @@ export const expenses: ServicesExpenses = {
     });
     if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
 
+    const me = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      include: { roles: true },
+    });
+    if (!me) throw new ServiceError("NOT_FOUND", "User not found.", 404);
+    const priv = resolvePrivileges(me);
     const isClaimer = occ.assignees.some(
       (a) => a.userId === currentUserId && a.assignedById === currentUserId
     );
-    if (!isClaimer && !(await isAdminUser(currentUserId))) {
-      throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can add expenses.", 403);
+    if (!priv.isAdminOrSuper) {
+      if (!isClaimer) {
+        throw new ServiceError("FORBIDDEN", "Only the claimer or an admin can add expenses.", 403);
+      }
+      // Custom expenses imply paying with the company account.
+      if (!priv.canChargeBusinessExpenses) {
+        throw new ServiceError(
+          "FORBIDDEN",
+          "Recording new expenses on the company account requires the \"Charge business expenses\" privilege. Ask an admin.",
+          403,
+        );
+      }
     }
 
     const category = normalizeCategory(input.category);
@@ -180,6 +197,7 @@ export const expenses: ServicesExpenses = {
       where: { id: expenseId },
       include: {
         occurrence: { include: { assignees: true } },
+        supplyHold: true,
       },
     });
     if (!expense) throw new ServiceError("NOT_FOUND", "Expense not found.", 404);
@@ -192,6 +210,23 @@ export const expenses: ServicesExpenses = {
     }
 
     await prisma.$transaction(async (tx) => {
+      // Step-3: if backed by a SupplyHold, release it first (and restore
+      // onHand if it was already CONSUMED) — otherwise the hold's
+      // expenseId would just be nulled by the FK cascade and the hold
+      // would silently keep locking inventory.
+      if (expense.supplyHold) {
+        const h = expense.supplyHold;
+        if (h.status === "CONSUMED") {
+          await tx.supply.update({
+            where: { id: h.supplyId },
+            data: { onHand: { increment: h.quantity } },
+          });
+        }
+        await tx.supplyHold.update({
+          where: { id: h.id },
+          data: { status: "RELEASED", releasedAt: new Date(), expenseId: null },
+        });
+      }
       await tx.expense.delete({ where: { id: expenseId } });
       // Cascade: delete the paired BE so the ledger doesn't keep an orphaned
       // tax-ledger entry for a job-spend that no longer exists.
@@ -238,10 +273,26 @@ export const expenses: ServicesExpenses = {
   },
 
   async adminDeleteExpense(expenseId) {
-    const expense = await prisma.expense.findUnique({ where: { id: expenseId } });
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: { supplyHold: true },
+    });
     if (!expense) throw new ServiceError("NOT_FOUND", "Expense not found.", 404);
 
     await prisma.$transaction(async (tx) => {
+      if (expense.supplyHold) {
+        const h = expense.supplyHold;
+        if (h.status === "CONSUMED") {
+          await tx.supply.update({
+            where: { id: h.supplyId },
+            data: { onHand: { increment: h.quantity } },
+          });
+        }
+        await tx.supplyHold.update({
+          where: { id: h.id },
+          data: { status: "RELEASED", releasedAt: new Date(), expenseId: null },
+        });
+      }
       await tx.expense.delete({ where: { id: expenseId } });
       if (expense.businessExpenseId) {
         await tx.businessExpense.delete({ where: { id: expense.businessExpenseId } }).catch(() => {});

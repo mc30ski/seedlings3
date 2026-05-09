@@ -3163,6 +3163,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     </Button>
                                   </>
                                 )}
+                                {(() => {
+                                  const hasAnyPriv =
+                                    forAdmin ||
+                                    !!me?.privileges?.canPullInventory ||
+                                    !!me?.privileges?.canChargeBusinessExpenses;
+                                  const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                                  if (!canManage) return null;
+                                  return (
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
+                                      <CircleDollarSign size={14} />
+                                      <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
+                                    </Button>
+                                  );
+                                })()}
                                 <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
                                   <Share2 size={14} />
                                   <Box as="span" ml={2}>Share link</Box>
@@ -3366,6 +3380,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       </Button>
                                     </>
                                   )}
+                                  {(() => {
+                                    const hasAnyPriv =
+                                      forAdmin ||
+                                      !!me?.privileges?.canPullInventory ||
+                                      !!me?.privileges?.canChargeBusinessExpenses;
+                                    const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                                    if (!canManage) return null;
+                                    return (
+                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
+                                        <CircleDollarSign size={14} />
+                                        <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
+                                      </Button>
+                                    );
+                                  })()}
                                   <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
                                     <Share2 size={14} />
                                     <Box as="span" ml={2}>Share link</Box>
@@ -4162,6 +4190,27 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         </VStack>
                       </Box>
                     )}
+                    {/* Manage expenses button — claimer (any privilege) or
+                        admin/super. Dialog itself gates Custom vs Inventory
+                        toggles based on the resolved privileges from /me. */}
+                    {(() => {
+                      const hasAnyPriv =
+                        forAdmin ||
+                        !!me?.privileges?.canPullInventory ||
+                        !!me?.privileges?.canChargeBusinessExpenses;
+                      const canManage = forAdmin || (isClaimer && hasAnyPriv);
+                      if (!canManage) return null;
+                      return (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          mt={1}
+                          onClick={(e) => { e.stopPropagation(); setExpenseDialogOccId(occ.id); }}
+                        >
+                          {occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}
+                        </Button>
+                      );
+                    })()}
                     {/* Suggested equipment */}
                     {!isTaskOrReminder && (() => {
                       const allTags = [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)];
@@ -5671,6 +5720,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         open={!!expenseDialogOccId}
         onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
         occurrenceId={expenseDialogOccId ?? ""}
+        isAdmin={forAdmin}
+        disableInventory={(() => {
+          // Tasks, reminders, events, followups, announcements: no inventory.
+          const occ = items.find((o) => o.id === expenseDialogOccId);
+          const wf = (occ as any)?.workflow;
+          return wf === "TASK" || wf === "REMINDER" || wf === "EVENT" || wf === "FOLLOWUP" || wf === "ANNOUNCEMENT";
+        })()}
+        privileges={
+          forAdmin
+            ? { canPullInventory: true, canChargeBusinessExpenses: true }
+            : (me?.privileges ?? { canPullInventory: false, canChargeBusinessExpenses: false })
+        }
         onChanged={() => void load(false)}
       />
 

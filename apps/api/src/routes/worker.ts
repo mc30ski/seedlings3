@@ -1849,6 +1849,39 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.expenses.deleteExpense(uid, String(req.params.id));
   });
 
+  // ── Supplies (claimer / admin) ──
+  //
+  // Catalog read-only for workers (so the inventory picker can show available
+  // qty). Adding/removing holds creates/removes the paired Expense row that
+  // drives payout deduction; the lifecycle hooks on occurrence completion
+  // convert ACTIVE→CONSUMED and decrement onHand.
+
+  app.get("/supplies", workerGuard, async (req: any) => {
+    const q = (req.query || {}) as { q?: string };
+    return services.supplies.list({ q: q.q });
+  });
+
+  // Read-only history for workers/admins (Inventory tab). Same shape as the
+  // super route, but exposed under workerGuard since the data is operational
+  // (purchases / holds / adjustments per supply) — no tax-action surface.
+  app.get("/supplies/:id/history", workerGuard, async (req: any) => {
+    return services.supplies.listHistory(String(req.params.id));
+  });
+
+  app.post("/occurrences/:id/supply-holds", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.addHold(uid, String(req.params.id), {
+      supplyId: String(b.supplyId ?? ""),
+      quantity: Number(b.quantity),
+    });
+  });
+
+  app.delete("/supply-holds/:holdId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.supplies.removeHold(uid, String(req.params.holdId));
+  });
+
   // ── Photos ──
 
   app.post("/occurrences/:id/photos/upload-url", workerGuard, async (req: any) => {

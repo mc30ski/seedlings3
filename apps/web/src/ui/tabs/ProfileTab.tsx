@@ -383,6 +383,54 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
             </Card.Body>
           </Card.Root>
 
+          {/* Permissions card — self-view only (admins manage other users'
+              privileges via UsersTab). Reads `me.privileges` which is the
+              already-resolved effective state from the server. */}
+          {isSelf && me?.privileges && (
+            <Card.Root variant="outline">
+              <Card.Header py="2" px="3" pb="0">
+                <Text fontWeight="semibold">Permissions</Text>
+              </Card.Header>
+              <Card.Body py="2" px="3">
+                <VStack align="stretch" gap={2}>
+                  <HStack fontSize="sm" align="flex-start">
+                    <Text w="24px">📦</Text>
+                    <Box flex="1">
+                      <Text fontWeight="medium">Use company supplies</Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        Pull from already-purchased inventory on jobs you've claimed.
+                        The per-unit cost is deducted from your payout.
+                      </Text>
+                    </Box>
+                    <Badge colorPalette={me.privileges.canPullInventory ? "green" : "gray"}>
+                      {me.privileges.canPullInventory ? "Enabled" : "Not enabled"}
+                    </Badge>
+                  </HStack>
+                  <HStack fontSize="sm" align="flex-start">
+                    <Text w="24px">💳</Text>
+                    <Box flex="1">
+                      <Text fontWeight="medium">Charge business expenses</Text>
+                      <Text fontSize="xs" color="fg.muted">
+                        Record new expenses paid on the company account (gas, parts, dump
+                        fees, etc.). Without this privilege, ask an admin to log out-of-pocket
+                        purchases for you.
+                      </Text>
+                    </Box>
+                    <Badge colorPalette={me.privileges.canChargeBusinessExpenses ? "green" : "gray"}>
+                      {me.privileges.canChargeBusinessExpenses ? "Enabled" : "Not enabled"}
+                    </Badge>
+                  </HStack>
+                  {!me.privileges.canPullInventory && !me.privileges.canChargeBusinessExpenses && (
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Job expenses are recorded by an admin on your behalf. Reach out to your admin
+                      if anything needs to be logged.
+                    </Text>
+                  )}
+                </VStack>
+              </Card.Body>
+            </Card.Root>
+          )}
+
           {/* Home base card */}
           <Card.Root variant="outline">
             <Card.Header py="2" px="3" pb="0">

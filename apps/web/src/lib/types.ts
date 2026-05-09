@@ -18,9 +18,10 @@ export type AdminTabs =
   | "settings"
   | "profile"
   | "notify"
-  | "collections";
+  | "collections"
+  | "supplies";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -33,6 +34,7 @@ export type WorkerTabs =
   | "routes"
   | "statistics"
   | "equipment"
+  | "supplies"
   | "clients"
   | "properties"
   | "jobs"
@@ -77,6 +79,14 @@ export type Me = {
   insuranceExpiresAt?: string | null;
   contractorAgreedAt?: string | null;
   w9Collected?: boolean;
+  // Override columns: null means "follow workerType default"; true/false is explicit.
+  canPullInventoryOverride?: boolean | null;
+  canChargeBusinessExpensesOverride?: boolean | null;
+  // Effective privileges after resolution (admin/super always true).
+  privileges?: {
+    canPullInventory: boolean;
+    canChargeBusinessExpenses: boolean;
+  };
 };
 
 export type TabPropsType = {
