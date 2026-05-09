@@ -484,12 +484,19 @@ export const equipment: ServicesEquipment = {
         throw new ServiceError("TRAINEE_NOT_ALLOWED", "Trainees cannot reserve equipment.", 403);
       }
 
-      // If this equipment requires insurance, check the user has valid coverage
-      if (eq.requiresInsurance) {
+      // Insurance gate applies to CONTRACTORs only. Employees (including
+      // admins/supers, who are W-2) are covered under the company's general
+      // liability policy and don't need a personal certificate. Trainees are
+      // already blocked by the TRAINEE_NOT_ALLOWED check above.
+      if (eq.requiresInsurance && user.workerType === "CONTRACTOR") {
         const now = new Date();
         const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
         if (!insured) {
-          throw new ServiceError("INSURANCE_REQUIRED", "Valid insurance is required to reserve this equipment.", 403);
+          throw new ServiceError(
+            "INSURANCE_REQUIRED",
+            "As a contractor, you need a valid insurance certificate on file to reserve this equipment.",
+            403,
+          );
         }
       }
 
