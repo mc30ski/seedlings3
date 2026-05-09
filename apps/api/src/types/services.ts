@@ -279,6 +279,14 @@ export type ServicesUsers = {
   updateInsuranceCert(userId: string, r2Key: string, fileName: string | null, contentType: string | null, expiresAt: string): Promise<User>;
   recordContractorAgreement(userId: string): Promise<User>;
   setW9Collected(currentUserId: string, userId: string, collected: boolean): Promise<User>;
+  setPrivilegeOverrides(
+    currentUserId: string,
+    userId: string,
+    overrides: {
+      canPullInventory?: boolean | null;
+      canChargeBusinessExpenses?: boolean | null;
+    },
+  ): Promise<User>;
 };
 
 export type ServicesClients = {
@@ -685,6 +693,72 @@ export type ServicesExpenses = {
   listExpensesByOccurrence(occurrenceId: string): Promise<any[]>;
 };
 
+export type SupplyCreateInput = {
+  name: string;
+  description?: string | null;
+  unit: string;
+  upc?: string | null;
+  category?: string | null;
+  businessCost?: number | null;
+  jobPayoutCost: number;
+};
+
+export type SupplyPatchInput = {
+  name?: string;
+  description?: string | null;
+  unit?: string;
+  upc?: string | null;
+  category?: string | null;
+  businessCost?: number | null;
+  jobPayoutCost?: number;
+};
+
+export type SupplyPurchaseInput = {
+  quantity: number;
+  unitCost: number;
+  date?: string | null;
+  vendor?: string | null;
+  invoiceNumber?: string | null;
+  notes?: string | null;
+};
+
+export type SupplyAdjustmentInput = {
+  delta: number;
+  reason: string;
+};
+
+export type SupplyHoldInput = {
+  supplyId: string;
+  quantity: number;
+};
+
+export type ServicesSupplies = {
+  list(opts?: { includeArchived?: boolean; q?: string; includeHoldDetails?: boolean }): Promise<any[]>;
+  getById(id: string): Promise<any | null>;
+  create(currentUserId: string, input: SupplyCreateInput): Promise<any>;
+  update(currentUserId: string, id: string, input: SupplyPatchInput): Promise<any>;
+  archive(currentUserId: string, id: string): Promise<{ archived: true }>;
+  unarchive(currentUserId: string, id: string): Promise<{ archived: false }>;
+
+  recordPurchase(currentUserId: string, supplyId: string, input: SupplyPurchaseInput): Promise<any>;
+  reversePurchase(currentUserId: string, purchaseId: string): Promise<{ reversed: true }>;
+
+  recordAdjustment(currentUserId: string, supplyId: string, input: SupplyAdjustmentInput): Promise<any>;
+
+  listHistory(supplyId: string): Promise<any[]>;
+
+  // Add a hold (consumption reservation) on an occurrence — creates a paired
+  // job-level Expense for payout deduction. Workers (claimers) and admins can
+  // call this; the route layer enforces.
+  addHold(currentUserId: string, occurrenceId: string, input: SupplyHoldInput): Promise<any>;
+  removeHold(currentUserId: string, holdId: string): Promise<{ removed: true }>;
+
+  // Lifecycle: invoked by jobs service when an occurrence transitions.
+  consumeHoldsForOccurrence(occurrenceId: string): Promise<{ consumed: number }>;
+  releaseHoldsForOccurrence(occurrenceId: string): Promise<{ released: number }>;
+  reactivateHoldsForOccurrence(occurrenceId: string): Promise<{ reactivated: number }>;
+};
+
 export type Services = {
   equipment: ServicesEquipment;
   users: ServicesUsers;
@@ -697,6 +771,7 @@ export type Services = {
   payments: ServicesPayments;
   expenses: ServicesExpenses;
   settings: ServicesSettings;
+  supplies: ServicesSupplies;
 };
 
 export type ServicesSettings = {

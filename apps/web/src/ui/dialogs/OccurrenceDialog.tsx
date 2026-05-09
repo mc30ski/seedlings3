@@ -156,6 +156,15 @@ export default function OccurrenceDialog({
   const [completedAt, setCompletedAt] = useState("");
   const [occTitle, setOccTitle] = useState("");
   const [workflow, setWorkflow] = useState(defaultWorkflow ?? "STANDARD");
+  // Tasks, reminders, events, followups, and announcements aren't service
+  // work — they don't touch inventory. Hide the inventory picker entirely
+  // on those workflows (server enforces too).
+  const inventoryEligible =
+    workflow !== "TASK" &&
+    workflow !== "REMINDER" &&
+    workflow !== "EVENT" &&
+    workflow !== "FOLLOWUP" &&
+    workflow !== "ANNOUNCEMENT";
   const [isTentative, setIsTentative] = useState(false);
   const [isAdminOnly, setIsAdminOnly] = useState(false);
   const [occFrequencyDays, setOccFrequencyDays] = useState("");
@@ -174,13 +183,50 @@ export default function OccurrenceDialog({
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
 
-  // Inline expenses. Each entry creates a paired BusinessExpense (tax ledger
-  // entry) on save — category drives the Schedule C line; defaults to Supplies.
-  type InlineExpense = { id?: string; cost: number; description: string; category: string; isNew?: boolean };
+  // Inline expenses. Custom rows create a paired BusinessExpense on save;
+  // inventory rows create a SupplyHold + Expense pair via the supply-holds
+  // endpoint. `fromInventory` flags rows already loaded from the DB; new
+  // inventory rows carry `pendingHold` until they're POSTed on save.
+  type InlineExpense = {
+    id?: string;
+    cost: number;
+    description: string;
+    category: string;
+    isNew?: boolean;
+    fromInventory?: boolean;
+    pendingHold?: { supplyId: string; quantity: number; unit: string };
+  };
   const [expenses, setExpenses] = useState<InlineExpense[]>([]);
   const [newExpCost, setNewExpCost] = useState("");
   const [newExpDesc, setNewExpDesc] = useState("");
   const [newExpCategory, setNewExpCategory] = useState("Supplies");
+
+  // "Custom" vs "From inventory" mode toggle for the inline add row.
+  const [addMode, setAddMode] = useState<"custom" | "inventory">("custom");
+  type SupplyOption = {
+    id: string;
+    name: string;
+    unit: string;
+    jobPayoutCost: number;
+    available: number;
+  };
+  const [suppliesAvail, setSuppliesAvail] = useState<SupplyOption[]>([]);
+  const [pickedSupplyId, setPickedSupplyId] = useState("");
+  const [pickedQty, setPickedQty] = useState("");
+  const supplyCollection = useMemo(
+    () =>
+      createListCollection({
+        items: suppliesAvail.map((s) => ({
+          label: `${s.name} — ${s.available} ${s.unit} avail @ $${s.jobPayoutCost.toFixed(2)}/${s.unit}`,
+          value: s.id,
+        })),
+      }),
+    [suppliesAvail],
+  );
+  const pickedSupply = useMemo(
+    () => suppliesAvail.find((s) => s.id === pickedSupplyId) ?? null,
+    [suppliesAvail, pickedSupplyId],
+  );
   const expenseCategoryItems = useMemo(
     () => [
       { label: "Advertising (line 8)", value: "Advertising" },
@@ -245,6 +291,9 @@ export default function OccurrenceDialog({
       setExpenses([]);
       setNewExpCost("");
       setNewExpDesc("");
+      setAddMode("custom");
+      setPickedSupplyId("");
+      setPickedQty("");
       setAddons(defaultAddons ?? []);
       setAddonTag("");
       setAddonCustomLabel("");
@@ -259,6 +308,25 @@ export default function OccurrenceDialog({
     apiGet<WorkerItem[]>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
+    // Load supplies (worker-readable list — works for any role) for the
+    // inline inventory picker. Filters out archived; computes available =
+    // onHand − active holds server-side.
+    apiGet<any[]>("/api/supplies")
+      .then((list) => {
+        if (!Array.isArray(list)) return setSuppliesAvail([]);
+        setSuppliesAvail(
+          list
+            .filter((s) => !s.archivedAt)
+            .map((s) => ({
+              id: s.id,
+              name: s.name,
+              unit: s.unit,
+              jobPayoutCost: Number(s.jobPayoutCost ?? 0),
+              available: Number(s.available ?? 0),
+            })),
+        );
+      })
+      .catch(() => setSuppliesAvail([]));
     // Load existing expenses for UPDATE mode
     if (mode === "UPDATE" && occurrenceId && isAdmin) {
       apiGet<any[]>(`/api/admin/occurrences/${occurrenceId}/expenses`)
@@ -270,6 +338,7 @@ export default function OccurrenceDialog({
             // Read from the linked BusinessExpense if present (set when the
             // worker logged the expense post-MVP-2). Falls back to "Supplies".
             category: e.businessExpense?.category ?? "Supplies",
+            fromInventory: !!e.supplyHold,
           }))
         ))
         .catch(() => {});
@@ -338,9 +407,19 @@ export default function OccurrenceDialog({
           const expEndpoint = useAdmin
             ? `/api/admin/occurrences/${newOccId}/expenses`
             : `/api/occurrences/${newOccId}/expenses`;
+          const holdsEndpointNew = useAdmin
+            ? `/api/admin/occurrences/${newOccId}/supply-holds`
+            : `/api/occurrences/${newOccId}/supply-holds`;
           for (const exp of expenses) {
             try {
-              await apiPost(expEndpoint, { cost: exp.cost, description: exp.description, category: exp.category });
+              if (exp.pendingHold) {
+                await apiPost(holdsEndpointNew, {
+                  supplyId: exp.pendingHold.supplyId,
+                  quantity: exp.pendingHold.quantity,
+                });
+              } else {
+                await apiPost(expEndpoint, { cost: exp.cost, description: exp.description, category: exp.category });
+              }
             } catch (err) {
               console.error("Failed to create expense:", err);
             }
@@ -398,11 +477,20 @@ export default function OccurrenceDialog({
           body.proposalNotes = proposalNotes.trim() || null;
         }
         await apiPatch(`/api/admin/occurrences/${occurrenceId}`, body);
-        // Create new expenses, delete removed ones
+        // Create new expenses (custom or inventory), delete removed ones
         if (isAdmin && occurrenceId) {
           for (const exp of expenses) {
             if (exp.isNew) {
-              try { await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description, category: exp.category }); } catch {}
+              try {
+                if (exp.pendingHold) {
+                  await apiPost(`/api/admin/occurrences/${occurrenceId}/supply-holds`, {
+                    supplyId: exp.pendingHold.supplyId,
+                    quantity: exp.pendingHold.quantity,
+                  });
+                } else {
+                  await apiPost(`/api/admin/occurrences/${occurrenceId}/expenses`, { cost: exp.cost, description: exp.description, category: exp.category });
+                }
+              } catch {}
             }
           }
         }
@@ -681,7 +769,11 @@ export default function OccurrenceDialog({
                         <HStack key={exp.id ?? `new-${idx}`} gap={2} fontSize="xs">
                           <Text color="orange.600" flex="1">
                             ${exp.cost.toFixed(2)} — {exp.description}
-                            <Text as="span" color="fg.muted" ml={1}>· {exp.category}</Text>
+                            {exp.fromInventory ? (
+                              <Text as="span" color="blue.600" ml={1}>· Inventory</Text>
+                            ) : (
+                              <Text as="span" color="fg.muted" ml={1}>· {exp.category}</Text>
+                            )}
                           </Text>
                           <Button
                             size="xs"
@@ -702,6 +794,112 @@ export default function OccurrenceDialog({
                       ))}
                     </VStack>
                   )}
+                  {inventoryEligible && (
+                    <HStack gap={1} mb={2} wrap="wrap">
+                      <Button
+                        size="xs"
+                        variant={addMode === "custom" ? "solid" : "outline"}
+                        onClick={() => setAddMode("custom")}
+                      >
+                        Custom
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={addMode === "inventory" ? "solid" : "outline"}
+                        colorPalette={addMode === "inventory" ? "blue" : "gray"}
+                        onClick={() => setAddMode("inventory")}
+                        disabled={suppliesAvail.length === 0}
+                        title={suppliesAvail.length === 0 ? "No supplies in inventory yet" : "Pull from inventory"}
+                      >
+                        From inventory
+                      </Button>
+                    </HStack>
+                  )}
+                  {inventoryEligible && addMode === "inventory" ? (
+                    <VStack align="stretch" gap={2}>
+                      <Select.Root
+                        collection={supplyCollection}
+                        value={pickedSupplyId ? [pickedSupplyId] : []}
+                        onValueChange={(e) => setPickedSupplyId(e.value?.[0] ?? "")}
+                        size="sm"
+                        positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                      >
+                        <Select.Control>
+                          <Select.Trigger w="full">
+                            <Select.ValueText placeholder="Pick a supply…" />
+                          </Select.Trigger>
+                        </Select.Control>
+                        <Select.Positioner>
+                          <Select.Content>
+                            {supplyCollection.items.map((it) => (
+                              <Select.Item key={it.value} item={it.value}>
+                                <Select.ItemText>{it.label}</Select.ItemText>
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Select.Root>
+                      <HStack gap={2}>
+                        <Box w="80px" flexShrink={0}>
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={pickedQty}
+                            onChange={(e) => setPickedQty(e.target.value)}
+                            size="sm"
+                            placeholder="Qty"
+                          />
+                        </Box>
+                        <Box flex="1">
+                          {pickedSupply && pickedQty && Number(pickedQty) > 0 && (
+                            <Text fontSize="xs" color="fg.muted">
+                              {Number(pickedQty)} {pickedSupply.unit} × ${pickedSupply.jobPayoutCost.toFixed(2)} = ${(Number(pickedQty) * pickedSupply.jobPayoutCost).toFixed(2)}
+                              <Text as="span" color={Number(pickedQty) > pickedSupply.available ? "red.600" : "fg.muted"} ml={1}>
+                                ({pickedSupply.available} available)
+                              </Text>
+                            </Text>
+                          )}
+                        </Box>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorPalette="blue"
+                          disabled={
+                            !pickedSupplyId ||
+                            !pickedQty ||
+                            !Number.isInteger(Number(pickedQty)) ||
+                            Number(pickedQty) <= 0 ||
+                            !!(pickedSupply && Number(pickedQty) > pickedSupply.available)
+                          }
+                          onClick={() => {
+                            if (!pickedSupply) return;
+                            const qty = Math.round(Number(pickedQty));
+                            const cost = Math.round(qty * pickedSupply.jobPayoutCost * 100) / 100;
+                            setExpenses((prev) => [
+                              ...prev,
+                              {
+                                cost,
+                                description: `${pickedSupply.name} × ${qty} ${pickedSupply.unit}`,
+                                category: "Supplies",
+                                isNew: true,
+                                fromInventory: true,
+                                pendingHold: { supplyId: pickedSupply.id, quantity: qty, unit: pickedSupply.unit },
+                              },
+                            ]);
+                            // Optimistically reduce available so user can't double-add past stock
+                            setSuppliesAvail((prev) =>
+                              prev.map((s) => (s.id === pickedSupply.id ? { ...s, available: s.available - qty } : s)),
+                            );
+                            setPickedSupplyId("");
+                            setPickedQty("");
+                          }}
+                        >
+                          Add
+                        </Button>
+                      </HStack>
+                    </VStack>
+                  ) : (
                   <VStack align="stretch" gap={2}>
                     <HStack gap={2}>
                       <Box w="90px" flexShrink={0}>
@@ -763,6 +961,7 @@ export default function OccurrenceDialog({
                     </Button>
                     </HStack>
                   </VStack>
+                  )}
                 </div>
                 {mode === "CREATE" && workers.length > 0 && (
                   <div>

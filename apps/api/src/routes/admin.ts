@@ -1633,6 +1633,30 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  // Per-user privilege overrides. Body shape:
+  //   { canPullInventory?: true|false|null, canChargeBusinessExpenses?: true|false|null }
+  // null = clear override (use workerType default); true/false = explicit grant/deny;
+  // omit a key to leave it alone. Audit captures before/after.
+  app.patch("/admin/users/:id/privileges", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    const overrides: { canPullInventory?: boolean | null; canChargeBusinessExpenses?: boolean | null } = {};
+    function readTri(key: "canPullInventory" | "canChargeBusinessExpenses") {
+      if (!(key in body)) return;
+      const v = body[key];
+      if (v === null || v === true || v === false) {
+        overrides[key] = v;
+        return;
+      }
+      throw app.httpErrors.badRequest(`${key} must be true, false, or null`);
+    }
+    readTri("canPullInventory");
+    readTri("canChargeBusinessExpenses");
+    await services.users.setPrivilegeOverrides(uid, userId, overrides);
+    return { ok: true };
+  });
+
   app.patch("/admin/users/:id/home-base", adminGuard, async (req: any) => {
     const userId = String(req.params.id);
     const body = req.body || {};
@@ -3083,6 +3107,14 @@ Respond ONLY with valid JSON in this exact format:
             },
           },
         },
+        supplyPurchase: {
+          select: {
+            id: true,
+            quantity: true,
+            unitCost: true,
+            supply: { select: { id: true, name: true, unit: true } },
+          },
+        },
       },
     });
   });
@@ -3172,6 +3204,21 @@ Respond ONLY with valid JSON in this exact format:
       where: { businessExpenseId: id },
       select: { id: true },
     });
+    // If this BE is paired with a SupplyPurchase (step-3), edits to
+    // cost/quantity-effecting fields must be routed through the Supplies tab
+    // — direct editing here would desync the SupplyPurchase row, the per-unit
+    // cost stored on the Supply, and onHand. Block cost/description edits in
+    // that case; tax-only fields (vendor, invoiceNumber, notes, date) are
+    // safe to edit directly on the BE.
+    const linkedSupplyPurchase = await prisma.supplyPurchase.findFirst({
+      where: { businessExpenseId: id },
+      select: { id: true, supply: { select: { name: true } } },
+    });
+    if (linkedSupplyPurchase && ("cost" in data || "description" in data)) {
+      throw app.httpErrors.badRequest(
+        `This expense is linked to a supply purchase (${linkedSupplyPurchase.supply.name}). To change cost or description, edit the purchase from the Supplies tab.`,
+      );
+    }
     return prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
       if (linkedExpense) {
@@ -3196,9 +3243,31 @@ Respond ONLY with valid JSON in this exact format:
       where: { businessExpenseId: id },
       select: { id: true },
     });
+    // If paired with a SupplyPurchase (step-3), reverse inventory and remove
+    // the SupplyPurchase row first — schema FK is Restrict so the BE delete
+    // would otherwise fail. Block if reversing would push onHand negative.
+    const linkedSupplyPurchase = await prisma.supplyPurchase.findFirst({
+      where: { businessExpenseId: id },
+      include: { supply: true },
+    });
+    if (linkedSupplyPurchase) {
+      const newOnHand = linkedSupplyPurchase.supply.onHand - linkedSupplyPurchase.quantity;
+      if (newOnHand < 0) {
+        throw app.httpErrors.conflict(
+          `Cannot delete: reversing this purchase would push ${linkedSupplyPurchase.supply.name} stock to ${newOnHand}. Adjust inventory first.`,
+        );
+      }
+    }
     await prisma.$transaction(async (tx) => {
       if (linkedExpense) {
         await tx.expense.delete({ where: { id: linkedExpense.id } });
+      }
+      if (linkedSupplyPurchase) {
+        await tx.supply.update({
+          where: { id: linkedSupplyPurchase.supplyId },
+          data: { onHand: { decrement: linkedSupplyPurchase.quantity } },
+        });
+        await tx.supplyPurchase.delete({ where: { id: linkedSupplyPurchase.id } });
       }
       await tx.businessExpense.delete({ where: { id } });
     });
@@ -3566,5 +3635,281 @@ Respond ONLY with valid JSON in this exact format:
 
     const text = lines.join("\n");
     return { text };
+  });
+
+  // ── Supplies (super only) ──
+  //
+  // Catalog + purchases + adjustments. The history endpoint returns a unified
+  // timeline (purchases, holds, adjustments) for one supply, which the UI
+  // renders as a single chronological feed.
+
+  // Read endpoints are adminGuard so admins can view inventory + per-job hold
+  // breakdown on their Inventory tab. Mutations stay superGuard below.
+  app.get("/admin/supplies", adminGuard, async (req: any) => {
+    const q = (req.query || {}) as { includeArchived?: string; q?: string };
+    return services.supplies.list({
+      includeArchived: q.includeArchived === "true",
+      q: q.q,
+      includeHoldDetails: true,
+    });
+  });
+
+  app.get("/admin/supplies/:id", adminGuard, async (req: any) => {
+    const row = await services.supplies.getById(String(req.params.id));
+    if (!row) throw app.httpErrors.notFound("Supply not found");
+    return row;
+  });
+
+  app.post("/admin/supplies", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.create(uid, {
+      name: String(b.name ?? ""),
+      description: b.description != null ? String(b.description) : null,
+      unit: String(b.unit ?? ""),
+      upc: b.upc != null ? String(b.upc) : null,
+      category: b.category != null ? String(b.category) : null,
+      businessCost: b.businessCost != null ? Number(b.businessCost) : null,
+      jobPayoutCost: Number(b.jobPayoutCost ?? 0),
+    });
+  });
+
+  app.patch("/admin/supplies/:id", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    const input: any = {};
+    if ("name" in b) input.name = String(b.name);
+    if ("description" in b) input.description = b.description != null ? String(b.description) : null;
+    if ("unit" in b) input.unit = String(b.unit);
+    if ("upc" in b) input.upc = b.upc != null ? String(b.upc) : null;
+    if ("category" in b) input.category = b.category != null ? String(b.category) : null;
+    if ("businessCost" in b) input.businessCost = b.businessCost != null ? Number(b.businessCost) : null;
+    if ("jobPayoutCost" in b) input.jobPayoutCost = Number(b.jobPayoutCost);
+    return services.supplies.update(uid, String(req.params.id), input);
+  });
+
+  app.post("/admin/supplies/:id/archive", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.supplies.archive(uid, String(req.params.id));
+  });
+
+  app.post("/admin/supplies/:id/unarchive", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.supplies.unarchive(uid, String(req.params.id));
+  });
+
+  app.post("/admin/supplies/:id/purchases", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.recordPurchase(uid, String(req.params.id), {
+      quantity: Number(b.quantity),
+      unitCost: Number(b.unitCost),
+      date: b.date != null ? String(b.date) : null,
+      vendor: b.vendor != null ? String(b.vendor) : null,
+      invoiceNumber: b.invoiceNumber != null ? String(b.invoiceNumber) : null,
+      notes: b.notes != null ? String(b.notes) : null,
+    });
+  });
+
+  app.delete("/admin/supplies/purchases/:purchaseId", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.supplies.reversePurchase(uid, String(req.params.purchaseId));
+  });
+
+  app.post("/admin/supplies/:id/adjustments", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.recordAdjustment(uid, String(req.params.id), {
+      delta: Number(b.delta),
+      reason: String(b.reason ?? ""),
+    });
+  });
+
+  app.get("/admin/supplies/:id/history", adminGuard, async (req: any) => {
+    return services.supplies.listHistory(String(req.params.id));
+  });
+
+  // ── Receipt photo on a BusinessExpense ──
+  //
+  // Optional. Same shape regardless of which "step" the BE came from
+  // (freestanding, job-Expense pair, or supply-purchase pair). Pattern:
+  //   1. Client requests presigned PUT URL with content type
+  //   2. Client uploads directly to R2
+  //   3. Client tells server the upload is done; server saves the key
+  //   4. To view, client requests a presigned GET URL (short-lived)
+
+  app.post(
+    "/admin/business-expenses/:id/receipt/upload-url",
+    superGuard,
+    async (req: any) => {
+      const id = String(req.params.id);
+      const b = req.body || {};
+      const fileName = String(b.fileName ?? "receipt").trim();
+      const contentType = String(b.contentType ?? "image/jpeg");
+      if (!/^image\/|^application\/pdf$/.test(contentType)) {
+        throw app.httpErrors.badRequest("Receipt must be an image or PDF.");
+      }
+      const exists = await prisma.businessExpense.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!exists) throw app.httpErrors.notFound("Business expense not found.");
+      // Key includes the BE id so the finalize step can verify ownership and
+      // so orphaned objects are easy to spot.
+      const safeName = fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+      const key = `receipts/${id}/${Date.now()}-${safeName}`;
+      const uploadUrl = await getUploadUrl(key, contentType, 300, "receipts");
+      return { uploadUrl, key, contentType, fileName: safeName };
+    },
+  );
+
+  app.post(
+    "/admin/business-expenses/:id/receipt",
+    superGuard,
+    async (req: any) => {
+      const id = String(req.params.id);
+      const b = req.body || {};
+      const key = String(b.key ?? "");
+      const fileName = String(b.fileName ?? "");
+      const contentType = String(b.contentType ?? "");
+      // Reject keys that don't belong to this BE — prevents a caller from
+      // pointing a different BE at someone else's already-uploaded object.
+      if (!key.startsWith(`receipts/${id}/`)) {
+        throw app.httpErrors.badRequest("Receipt key does not belong to this expense.");
+      }
+      // If the BE already had a receipt, delete the old object first.
+      const prev = await prisma.businessExpense.findUnique({
+        where: { id },
+        select: { receiptR2Key: true },
+      });
+      if (!prev) throw app.httpErrors.notFound("Business expense not found.");
+      if (prev.receiptR2Key && prev.receiptR2Key !== key) {
+        await deleteObject(prev.receiptR2Key, "receipts").catch(() => {});
+      }
+      return prisma.businessExpense.update({
+        where: { id },
+        data: {
+          receiptR2Key: key,
+          receiptFileName: fileName || null,
+          receiptContentType: contentType || null,
+          receiptUploadedAt: new Date(),
+        },
+        select: {
+          id: true,
+          receiptR2Key: true,
+          receiptFileName: true,
+          receiptContentType: true,
+          receiptUploadedAt: true,
+        },
+      });
+    },
+  );
+
+  app.get(
+    "/admin/business-expenses/:id/receipt-url",
+    superGuard,
+    async (req: any) => {
+      const id = String(req.params.id);
+      const be = await prisma.businessExpense.findUnique({
+        where: { id },
+        select: { receiptR2Key: true, receiptContentType: true, receiptFileName: true },
+      });
+      if (!be) throw app.httpErrors.notFound("Business expense not found.");
+      if (!be.receiptR2Key) throw app.httpErrors.notFound("No receipt uploaded.");
+      const url = await getDownloadUrl(be.receiptR2Key, 3600, "receipts");
+      return { url, contentType: be.receiptContentType, fileName: be.receiptFileName };
+    },
+  );
+
+  app.delete(
+    "/admin/business-expenses/:id/receipt",
+    superGuard,
+    async (req: any) => {
+      const id = String(req.params.id);
+      const be = await prisma.businessExpense.findUnique({
+        where: { id },
+        select: { receiptR2Key: true },
+      });
+      if (!be) throw app.httpErrors.notFound("Business expense not found.");
+      if (be.receiptR2Key) {
+        await deleteObject(be.receiptR2Key, "receipts").catch(() => {});
+      }
+      await prisma.businessExpense.update({
+        where: { id },
+        data: {
+          receiptR2Key: null,
+          receiptFileName: null,
+          receiptContentType: null,
+          receiptUploadedAt: null,
+        },
+      });
+      return { deleted: true };
+    },
+  );
+
+  // UPC lookup: tries the internal Supply table first, then the keyless
+  // UPCitemdb trial endpoint as a best-effort fallback (rate-limited per IP,
+  // ~100/day — fine for our scale). Returns both fields so the UI can decide
+  // whether to open Buy More (existing match) or Add Supply (prefill).
+  app.get("/admin/supplies/upc-lookup", superGuard, async (req: any) => {
+    const code = String((req.query?.code ?? "")).trim();
+    if (!code) throw app.httpErrors.badRequest("Missing 'code' query parameter.");
+
+    const matchExisting = await prisma.supply.findFirst({
+      where: { upc: code, archivedAt: null },
+      select: { id: true, name: true, unit: true, jobPayoutCost: true, businessCost: true, onHand: true, category: true },
+    });
+
+    let lookup: { found: boolean; title?: string; brand?: string; description?: string } | null = null;
+    if (!matchExisting) {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 5000);
+        const r = await fetch(
+          `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(code)}`,
+          { signal: ac.signal },
+        );
+        clearTimeout(t);
+        if (r.ok) {
+          const data: any = await r.json();
+          const item = data?.items?.[0];
+          if (item?.title) {
+            lookup = {
+              found: true,
+              title: String(item.title),
+              brand: item.brand ? String(item.brand) : undefined,
+              description: item.description ? String(item.description) : undefined,
+            };
+          } else {
+            lookup = { found: false };
+          }
+        } else {
+          lookup = { found: false };
+        }
+      } catch {
+        // Timeout or network error — degrade gracefully to "not found"
+        lookup = { found: false };
+      }
+    }
+
+    return { code, matchExisting, lookup };
+  });
+
+  // Admin parity for adding/removing supply holds on an occurrence (same as
+  // the worker route, for admin-only flows like editing on behalf of a
+  // worker). Uses adminGuard rather than superGuard since this is occurrence
+  // management, not catalog management.
+  app.post("/admin/occurrences/:occurrenceId/supply-holds", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.addHold(uid, String(req.params.occurrenceId), {
+      supplyId: String(b.supplyId ?? ""),
+      quantity: Number(b.quantity),
+    });
+  });
+
+  app.delete("/admin/supply-holds/:holdId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.supplies.removeHold(uid, String(req.params.holdId));
   });
 }

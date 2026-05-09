@@ -9,6 +9,7 @@ import {
   Portal,
   Select,
   Stack,
+  Switch,
   Text,
   Badge,
   VStack,
@@ -42,6 +43,9 @@ type ApiUser = {
   contractorAgreedAt?: string | null;
   w9Collected?: boolean;
   w9CollectedAt?: string | null;
+  // Per-user privilege overrides. Null = follow workerType default.
+  canPullInventory?: boolean | null;
+  canChargeBusinessExpenses?: boolean | null;
 };
 
 type Me = {
@@ -364,6 +368,50 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
+  // Privilege overrides — set to null (use default), true (grant), or false (deny).
+  // Optimistic in-place update so the row doesn't unmount and the page doesn't
+  // jump back to the top from a full re-fetch.
+  async function setPrivilegeOverride(
+    userId: string,
+    key: "canPullInventory" | "canChargeBusinessExpenses",
+    value: boolean | null,
+  ) {
+    const prev = items.find((u) => u.id === userId);
+    const userLabel = prev?.displayName || prev?.email || "user";
+    const permLabel = key === "canPullInventory" ? "Use company supplies" : "Charge business expenses";
+    setItems((rows) => rows.map((u) => (u.id === userId ? { ...u, [key]: value } : u)));
+    try {
+      await apiPatch(`/api/admin/users/${userId}/privileges`, { [key]: value });
+      const stateText = value === true ? "ON" : value === false ? "OFF" : "default";
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `${permLabel} → ${stateText} for ${userLabel}`,
+      });
+    } catch (err: any) {
+      // Roll back on failure
+      if (prev) {
+        setItems((rows) => rows.map((u) => (u.id === userId ? { ...u, [key]: prev[key] } : u)));
+      }
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed", err) });
+    }
+  }
+
+  // Defaults by workerType — mirror of the server's privileges.ts.
+  // Used to show "(default: ✅/❌)" hints next to the override selector.
+  const PRIV_DEFAULTS: Record<string, { canPullInventory: boolean; canChargeBusinessExpenses: boolean }> = {
+    TRAINEE: { canPullInventory: false, canChargeBusinessExpenses: false },
+    CONTRACTOR: { canPullInventory: true, canChargeBusinessExpenses: false },
+    EMPLOYEE: { canPullInventory: true, canChargeBusinessExpenses: false },
+  };
+  function resolveEffective(u: any, key: "canPullInventory" | "canChargeBusinessExpenses"): boolean {
+    const isAdmin = u.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (isAdmin) return true;
+    const override = u[key];
+    if (override === true || override === false) return override;
+    const def = u.workerType ? PRIV_DEFAULTS[u.workerType] : { canPullInventory: false, canChargeBusinessExpenses: false };
+    return def[key];
+  }
+
   // Hard delete (DB + Clerk) — used for both Delete and Decline confirmations
   async function deleteUser(userId: string) {
     try {
@@ -609,13 +657,13 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                   </HStack>
                 </Box>
 
-                {/* RIGHT: actions */}
+                {/* Actions */}
                 {meReady && (
                   <Stack
                     direction="row"
                     gap="2"
                     flexWrap="wrap"
-                    justify={{ base: "flex-start", md: "flex-end" }}
+                    justify="flex-start"
                   >
                     {isMe ? null : (
                       <>
@@ -779,6 +827,75 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                       </Button>
                     )}
                   </Stack>
+                )}
+
+                {/* Permissions — one row per permission, with a switch on
+                    the right. Visible on every worker user (including admin/
+                    super) for a consistent layout; for admin/super the
+                    switches are forced ON + disabled with a "granted by
+                    role" hint, since their role implies both. */}
+                {isWorker && (
+                  <Box
+                    mt={3}
+                    pt={3}
+                    borderTopWidth="1px"
+                    borderColor="gray.200"
+                  >
+                    <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={2}>
+                      Permissions
+                    </Text>
+                    <VStack align="stretch" gap={2}>
+                      {[
+                        {
+                          key: "canPullInventory" as const,
+                          label: "Use company supplies",
+                          help: "Pull from already-purchased inventory on jobs they've claimed.",
+                        },
+                        {
+                          key: "canChargeBusinessExpenses" as const,
+                          label: "Charge business expenses",
+                          help: "Record new expenses paid on the company account (gas, parts, etc.).",
+                        },
+                      ].map((perm) => {
+                        const grantedByRole = isAdmin || isSuper;
+                        const effective = grantedByRole
+                          ? true
+                          : resolveEffective(u, perm.key);
+                        return (
+                          <HStack
+                            key={perm.key}
+                            justify="space-between"
+                            align="flex-start"
+                            gap={3}
+                          >
+                            <Box flex="1" minW={0}>
+                              <Text fontSize="sm" fontWeight="medium">
+                                {perm.label}
+                              </Text>
+                              <Text fontSize="xs" color="fg.muted">
+                                {grantedByRole
+                                  ? "Granted automatically by Admin/Super role."
+                                  : perm.help}
+                              </Text>
+                            </Box>
+                            <Switch.Root
+                              checked={effective}
+                              disabled={grantedByRole}
+                              onCheckedChange={(e) =>
+                                void setPrivilegeOverride(u.id, perm.key, e.checked)
+                              }
+                              colorPalette="green"
+                            >
+                              <Switch.HiddenInput />
+                              <Switch.Control>
+                                <Switch.Thumb />
+                              </Switch.Control>
+                            </Switch.Root>
+                          </HStack>
+                        );
+                      })}
+                    </VStack>
+                  </Box>
                 )}
               </VStack>
 

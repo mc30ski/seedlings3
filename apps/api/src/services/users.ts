@@ -6,6 +6,7 @@ import type { ServicesUsers, Role } from "../types/services";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
+import { resolvePrivileges } from "../lib/privileges";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -304,6 +305,7 @@ export const users: ServicesUsers = {
     // Respond
     const now = new Date();
     const isInsuranceValid = !!(user!.insuranceCertR2Key && user!.insuranceExpiresAt && user!.insuranceExpiresAt > now);
+    const priv = resolvePrivileges(user!);
     const me = {
       id: user!.id,
       isApproved: !!user!.isApproved,
@@ -322,6 +324,14 @@ export const users: ServicesUsers = {
       insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,
       contractorAgreedAt: user!.contractorAgreedAt?.toISOString() ?? null,
       w9Collected: !!user!.w9Collected,
+      // Override columns (for the user-edit UI to show explicit grants/denies)
+      canPullInventoryOverride: user!.canPullInventory ?? null,
+      canChargeBusinessExpensesOverride: user!.canChargeBusinessExpenses ?? null,
+      // Resolved values (admin/super wins, otherwise override-or-default)
+      privileges: {
+        canPullInventory: priv.canPullInventory,
+        canChargeBusinessExpenses: priv.canChargeBusinessExpenses,
+      },
     };
 
     return me;
@@ -383,6 +393,39 @@ export const users: ServicesUsers = {
       });
       await writeAudit(tx, AUDIT.USER.W9_COLLECTED, currentUserId, {
         userId, collected,
+      });
+      return updated;
+    });
+  },
+
+  async setPrivilegeOverrides(
+    currentUserId: string,
+    userId: string,
+    overrides: { canPullInventory?: boolean | null; canChargeBusinessExpenses?: boolean | null },
+  ) {
+    // null = clear override (use workerType default); true/false = explicit override.
+    // undefined = leave alone.
+    const data: any = {};
+    if ("canPullInventory" in overrides) data.canPullInventory = overrides.canPullInventory;
+    if ("canChargeBusinessExpenses" in overrides) {
+      data.canChargeBusinessExpenses = overrides.canChargeBusinessExpenses;
+    }
+    if (Object.keys(data).length === 0) {
+      return prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    }
+    return prisma.$transaction(async (tx) => {
+      const before = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { canPullInventory: true, canChargeBusinessExpenses: true },
+      });
+      const updated = await tx.user.update({ where: { id: userId }, data });
+      await writeAudit(tx, AUDIT.USER.PRIVILEGES_UPDATED, currentUserId, {
+        userId,
+        before,
+        after: {
+          canPullInventory: updated.canPullInventory,
+          canChargeBusinessExpenses: updated.canChargeBusinessExpenses,
+        },
       });
       return updated;
     });

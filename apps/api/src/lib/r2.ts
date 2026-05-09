@@ -8,6 +8,7 @@ const R2_BUCKET = process.env.R2_BUCKET_NAME!;
 const R2_DOCS_BUCKET = process.env.R2_DOCS_BUCKET_NAME!;
 const R2_PROPERTY_PHOTOS_BUCKET = process.env.R2_PROPERTY_PHOTOS_BUCKET_NAME!;
 const R2_EQUIPMENT_PHOTOS_BUCKET = process.env.R2_EQUIPMENT_PHOTOS_BUCKET_NAME!;
+const R2_RECEIPTS_BUCKET = process.env.R2_RECEIPTS_BUCKET_NAME!;
 
 const s3 = new S3Client({
   region: "auto",
@@ -21,12 +22,13 @@ const s3 = new S3Client({
   responseChecksumValidation: "WHEN_REQUIRED",
 });
 
-type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos";
+type BucketType = "photos" | "docs" | "property-photos" | "equipment-photos" | "receipts";
 
 function bucketName(type: BucketType): string {
   if (type === "docs") return R2_DOCS_BUCKET;
   if (type === "property-photos") return R2_PROPERTY_PHOTOS_BUCKET;
   if (type === "equipment-photos") return R2_EQUIPMENT_PHOTOS_BUCKET;
+  if (type === "receipts") return R2_RECEIPTS_BUCKET;
   return R2_BUCKET;
 }
 

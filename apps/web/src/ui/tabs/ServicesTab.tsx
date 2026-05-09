@@ -2605,6 +2605,15 @@ export default function ServicesTab({
         open={!!expenseDialogOccId}
         onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); setExpenseDialogJobId(null); } }}
         endpoint={`/api/admin/occurrences/${expenseDialogOccId}/expenses`}
+        holdsEndpoint={`/api/admin/occurrences/${expenseDialogOccId}/supply-holds`}
+        disableInventory={(() => {
+          // Tasks, reminders, events, followups, announcements: no inventory.
+          if (!expenseDialogJobId || !expenseDialogOccId) return false;
+          const detail = jobDetails[expenseDialogJobId];
+          const occ = detail?.occurrences?.find((o: any) => o.id === expenseDialogOccId);
+          const wf = (occ as any)?.workflow;
+          return wf === "TASK" || wf === "REMINDER" || wf === "EVENT" || wf === "FOLLOWUP" || wf === "ANNOUNCEMENT";
+        })()}
         onAdded={() => {
           if (expenseDialogJobId) void loadDetail(expenseDialogJobId, true);
           setExpenseDialogOccId(null);

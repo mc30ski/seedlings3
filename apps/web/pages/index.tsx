@@ -20,6 +20,7 @@ import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
+import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import WeatherBar from "@/src/ui/components/WeatherBar";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -514,6 +515,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<EquipmentTab key={`weq-${equipmentRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
+      value: "supplies",
+      label: "Supplies",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
+    },
+    {
       value: "payments",
       label: "Payments",
       icon: TfiMoney,
@@ -597,6 +604,12 @@ export default function HomePage() {
       icon: FiPackage,
 
       content: wrapWithInlineMessage(<AdminCollectionsTab />),
+    },
+    {
+      value: "supplies",
+      label: "Supplies",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
     },
     {
       value: "payments",
@@ -790,7 +803,7 @@ export default function HomePage() {
           home: "Work",
           tasks: "Actions",
           reminders: "Work", jobs: "Work", routes: "Work",
-          equipment: "Inventory",
+          equipment: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
           clients: "Info", properties: "Info", profile: "Info",
         };
@@ -835,7 +848,7 @@ export default function HomePage() {
         const catMap: Record<string, string> = {
           tasks: "Actions",
           "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
-          equipment: "Inventory", collections: "Inventory",
+          equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory",
           profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
@@ -860,6 +873,14 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
           category: "Money",
           categoryIcon: TfiMoney,
+        },
+        {
+          value: "supplies",
+          label: "Supplies",
+          icon: FiPackage,
+          content: wrapWithInlineMessage(<SuppliesTab />),
+          category: "Inventory",
+          categoryIcon: FiPackage,
         },
         {
           value: "operations",
@@ -1415,7 +1436,7 @@ export default function HomePage() {
     const adminCatMap: Record<string, string> = {
       tasks: "Actions",
       "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
-      equipment: "Inventory", collections: "Inventory",
+      equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
       payments: "Money", statistics: "Money",
       clients: "Directory", properties: "Directory", users: "Directory",
       profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
@@ -1441,6 +1462,29 @@ export default function HomePage() {
     };
     window.addEventListener("navigate:adminTab", onNav as EventListener);
     return () => window.removeEventListener("navigate:adminTab", onNav as EventListener);
+  }, []);
+
+  // navigate:superTab — handoff from any tab into a Super inner tab (e.g.
+  // BusinessExpensesTab clicking the "Supply: Mulch ×10" badge to land on
+  // Super → Supplies). Mirrors the navigate:adminTab pattern; the receiving
+  // tab reads its own pendingHighlight key on mount.
+  useEffect(() => {
+    const onNav = (e: Event) => {
+      const { tab } = (e as CustomEvent).detail || {};
+      if (!tab) return;
+      const current = getCurrentNavState();
+      const wouldChange = current.outer !== "super" || current.inner !== tab;
+      if (wouldChange) pushNavHistory(current);
+      programmaticNavRef.current = true;
+      setTopTab("super");
+      setSuperInnerTab(tab as any);
+      if (tab === "supplies") setSuperCategory("Inventory");
+      else if (tab === "business-expenses") setSuperCategory("Money");
+      else if (tab === "operations" || tab === "audit" || tab === "settings") setSuperCategory("System");
+      setTimeout(() => { programmaticNavRef.current = false; }, 50);
+    };
+    window.addEventListener("navigate:superTab", onNav as EventListener);
+    return () => window.removeEventListener("navigate:superTab", onNav as EventListener);
   }, []);
 
   // Listen for "launch New Job Setup with estimate defaults" from JobsTab

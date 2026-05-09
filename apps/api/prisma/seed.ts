@@ -64,8 +64,15 @@ async function clearDatabase() {
   await prisma.occurrencePropertyPhoto.deleteMany();
   await prisma.jobPropertyPhoto.deleteMany();
   await prisma.paymentSplit.deleteMany();
+  // Supply chain (step-3): clear holds + adjustments + purchases before
+  // expenses/BEs so the FK dependencies unwind cleanly. Supplies themselves
+  // get cleared after BusinessExpense (SupplyPurchase → BE is Restrict).
+  await prisma.supplyAdjustment.deleteMany();
+  await prisma.supplyHold.deleteMany();
   await prisma.expense.deleteMany();
+  await prisma.supplyPurchase.deleteMany();
   await prisma.businessExpense.deleteMany();
+  await prisma.supply.deleteMany();
   await prisma.jobOccurrencePhoto.deleteMany();
   await prisma.jobOccurrenceAssignee.deleteMany();
 
@@ -121,6 +128,33 @@ async function seedDatabase() {
     },
     update: { isApproved: false },
   });
+
+  // ── Privilege overrides on seed workers ──────────────────────────────────
+  // Demos the per-user override layer on top of workerType defaults:
+  //   EMPLOYEE: gets `canChargeBusinessExpenses = true` (trusted employee
+  //             who carries the company card — can record new expenses).
+  //   TRAINEE:  gets `canPullInventory = true` (a specific trainee allowed
+  //             to consume from inventory; ordinarily trainees can't).
+  //   CONTRACTOR / ADMIN_WORKER: cleared to null, so defaults apply
+  //             (contractor: inventory-only; admin: everything).
+  console.log("  Setting privilege overrides on seed workers...");
+  const privilegeUpdates: Array<{ id: string; canPullInventory: boolean | null; canChargeBusinessExpenses: boolean | null }> = [
+    { id: ADMIN_WORKER_ID, canPullInventory: null, canChargeBusinessExpenses: null },
+    { id: CONTRACTOR_ID,   canPullInventory: null, canChargeBusinessExpenses: null },
+    { id: EMPLOYEE_ID,     canPullInventory: null, canChargeBusinessExpenses: true },
+    { id: TRAINEE_ID,      canPullInventory: true, canChargeBusinessExpenses: null },
+  ];
+  for (const p of privilegeUpdates) {
+    await prisma.user.update({
+      where: { id: p.id },
+      data: {
+        canPullInventory: p.canPullInventory,
+        canChargeBusinessExpenses: p.canChargeBusinessExpenses,
+      },
+    }).catch((err) => {
+      console.warn(`  ⚠ skipped privilege seed for ${p.id}: ${err?.message ?? err}`);
+    });
+  }
 
   // ── Clients (12) ──────────────────────────────────────────────────────────
   console.log("  Creating clients...");
@@ -1082,6 +1116,181 @@ async function seedDatabase() {
         category: e.category,
         vendor: e.vendor ?? null,
         notes: e.notes ?? null,
+      },
+    });
+  }
+
+  // ── Supplies (step-3) ────────────────────────────────────────────────────
+  // Inventory-tracked consumables. Each purchase creates a paired
+  // BusinessExpense (tax-ledger) entry. After purchases run, two of the
+  // supplies have an ACTIVE hold against an upcoming occurrence to demo the
+  // reservation flow.
+  console.log("  Creating supplies + purchases + holds...");
+
+  const supplyCatalog: {
+    key: string;
+    name: string;
+    unit: string;
+    upc?: string;
+    category: string;
+    businessCost: number;
+    jobPayoutCost: number;
+    description?: string;
+    purchases: { ago: number; quantity: number; unitCost: number; vendor: string; invoiceNumber?: string }[];
+  }[] = [
+    {
+      key: "MULCH",
+      name: "Hardwood mulch",
+      unit: "bag",
+      upc: "012345678901",
+      category: "Supplies",
+      businessCost: 4.0,
+      jobPayoutCost: 4.2,
+      description: "2 cu. ft. bags. Markup of $0.20/bag covers fetch time.",
+      purchases: [
+        { ago: 2, quantity: 30, unitCost: 4.0, vendor: "Lowes", invoiceNumber: "L-44120" },
+        { ago: 16, quantity: 24, unitCost: 3.85, vendor: "Home Depot", invoiceNumber: "HD-22988" },
+      ],
+    },
+    {
+      key: "TRIMMER_LINE",
+      name: "Trimmer line 0.095",
+      unit: "spool",
+      upc: "022345678902",
+      category: "Supplies",
+      businessCost: 18.0,
+      jobPayoutCost: 18.0,
+      description: "Pro-grade square cross-section, 0.095\" gauge, 3 lb spool.",
+      purchases: [
+        { ago: 7, quantity: 8, unitCost: 18.0, vendor: "Stihl Pro Dealer" },
+      ],
+    },
+    {
+      key: "EDGER_BLADE",
+      name: "Edger blade",
+      unit: "blade",
+      category: "Supplies",
+      businessCost: 6.5,
+      jobPayoutCost: 7.0,
+      purchases: [
+        { ago: 11, quantity: 12, unitCost: 6.5, vendor: "Pro Lawn Supply" },
+      ],
+    },
+    {
+      key: "FERTILIZER",
+      name: "Granular fertilizer 24-4-8",
+      unit: "bag",
+      category: "Supplies",
+      businessCost: 32.0,
+      jobPayoutCost: 34.0,
+      description: "50 lb bag covers ~12,500 sq ft.",
+      purchases: [
+        { ago: 30, quantity: 6, unitCost: 32.0, vendor: "Pro Lawn Supply", invoiceNumber: "PLS-1042" },
+      ],
+    },
+    {
+      key: "TRASH_BAGS",
+      name: "Heavy-duty trash bags",
+      unit: "bag",
+      category: "Supplies",
+      businessCost: 0.6,
+      jobPayoutCost: 0.75,
+      description: "55-gal contractor bags, 3 mil.",
+      purchases: [
+        { ago: 5, quantity: 50, unitCost: 0.6, vendor: "Costco" },
+      ],
+    },
+    {
+      key: "FUEL_2CYC",
+      name: "Premixed 2-cycle fuel",
+      unit: "can",
+      category: "Car and truck expenses",
+      businessCost: 24.0,
+      jobPayoutCost: 24.0,
+      description: "TruFuel 50:1 quart cans. Categorized as Car and truck expenses (not Supplies).",
+      purchases: [
+        { ago: 4, quantity: 12, unitCost: 24.0, vendor: "Pro Lawn Supply" },
+      ],
+    },
+  ];
+
+  const createdSupplies: Record<string, string> = {}; // key → supply id
+  for (const s of supplyCatalog) {
+    const created = await prisma.supply.create({
+      data: {
+        createdById: ADMIN_WORKER_ID,
+        name: s.name,
+        unit: s.unit,
+        upc: s.upc ?? null,
+        category: s.category,
+        businessCost: s.businessCost,
+        jobPayoutCost: s.jobPayoutCost,
+        description: s.description ?? null,
+        onHand: 0,
+      },
+    });
+    createdSupplies[s.key] = created.id;
+
+    for (const p of s.purchases) {
+      const totalCost = Math.round(p.quantity * p.unitCost * 100) / 100;
+      const be = await prisma.businessExpense.create({
+        data: {
+          createdById: ADMIN_WORKER_ID,
+          date: daysAgo(p.ago, 10),
+          cost: totalCost,
+          description: `${s.name} × ${p.quantity} ${s.unit}`,
+          category: s.category,
+          vendor: p.vendor,
+          invoiceNumber: p.invoiceNumber ?? null,
+        },
+      });
+      await prisma.supplyPurchase.create({
+        data: {
+          supplyId: created.id,
+          quantity: p.quantity,
+          unitCost: p.unitCost,
+          totalCost,
+          date: daysAgo(p.ago, 10),
+          vendor: p.vendor,
+          invoiceNumber: p.invoiceNumber ?? null,
+          businessExpenseId: be.id,
+          createdById: ADMIN_WORKER_ID,
+        },
+      });
+      await prisma.supply.update({
+        where: { id: created.id },
+        data: { onHand: { increment: p.quantity }, businessCost: p.unitCost },
+      });
+    }
+  }
+
+  // Two ACTIVE holds against future occurrences — demo the reservation flow.
+  const holdSeeds: { supplyKey: string; occId: string; quantity: number }[] = [
+    { supplyKey: "MULCH", occId: cWillowbrook14.id, quantity: 8 },
+    { supplyKey: "TRIMMER_LINE", occId: cMartinez14.id, quantity: 1 },
+  ];
+  for (const h of holdSeeds) {
+    const supplyId = createdSupplies[h.supplyKey];
+    if (!supplyId) continue;
+    const supply = await prisma.supply.findUniqueOrThrow({ where: { id: supplyId } });
+    const totalCharge = Math.round(h.quantity * supply.jobPayoutCost * 100) / 100;
+    const expense = await prisma.expense.create({
+      data: {
+        occurrenceId: h.occId,
+        createdById: EMPLOYEE_ID,
+        cost: totalCharge,
+        description: `${supply.name} × ${h.quantity} ${supply.unit}`,
+      },
+    });
+    await prisma.supplyHold.create({
+      data: {
+        supplyId,
+        occurrenceId: h.occId,
+        quantity: h.quantity,
+        jobPayoutCost: supply.jobPayoutCost,
+        status: "ACTIVE",
+        expenseId: expense.id,
+        createdById: EMPLOYEE_ID,
       },
     });
   }

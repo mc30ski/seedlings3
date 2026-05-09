@@ -82,6 +82,17 @@ model User {
   availableDays           String?        // JSON array of day numbers, e.g. "[1,2,3,4,5]" (0=Sun,6=Sat)
   availableHoursPerDay    Float?         // default 4 if null
 
+  // Privilege overrides. Null = follow workerType default (resolved in app
+  // code via DEFAULTS_BY_WORKERTYPE). True/false = explicit override.
+  //
+  //   canPullInventory  defaults: TRAINEE=false, CONTRACTOR/EMPLOYEE=true
+  //   canChargeBusinessExpenses  defaults: false everywhere (granted explicitly)
+  //
+  // Admin/Super always have both effectively true regardless of these
+  // columns — the role guard wins.
+  canPullInventory          Boolean?
+  canChargeBusinessExpenses Boolean?
+
   insuranceCertR2Key      String?
   insuranceCertFileName   String?
   insuranceCertContentType String?
@@ -120,6 +131,11 @@ model User {
   changeRequestsCreated     OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
   changeRequestsResolved    OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
   pushSubscriptions         PushSubscription[]
+
+  suppliesCreated           Supply[]
+  supplyPurchasesCreated    SupplyPurchase[]
+  supplyHoldsCreated        SupplyHold[]
+  supplyAdjustmentsCreated  SupplyAdjustment[]
 }
 
 model NotificationTemplate {
@@ -618,6 +634,7 @@ model JobOccurrence {
   payment     Payment?
   expenses    Expense[]
   businessExpenses BusinessExpense[]
+  supplyHolds SupplyHold[]
   addons       OccurrenceAddon[]
   instructions OccurrenceInstruction[]
   photos           JobOccurrencePhoto[]
@@ -769,6 +786,12 @@ model Expense {
   businessExpenseId String?  @unique
   businessExpense   BusinessExpense? @relation(fields: [businessExpenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  // Back-relation: when this Expense was created by consuming inventory
+  // (MVP-step-3), the SupplyHold owns the link via SupplyHold.expenseId.
+  // No BusinessExpense is paired in this case — the BE was already recorded
+  // at purchase time, and double-recording would inflate tax-ledger totals.
+  supplyHold    SupplyHold?
+
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -804,6 +827,20 @@ model BusinessExpense {
   occurrenceId  String?
   occurrence    JobOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   expense       Expense?
+
+  // Back-relation: when this BE was created by an inventory purchase
+  // (MVP-step-3), the SupplyPurchase owns the link via
+  // SupplyPurchase.businessExpenseId. Allows the tax-ledger UI to surface a
+  // "Supply: Mulch ×10" badge and link back to the Supplies tab.
+  supplyPurchase SupplyPurchase?
+
+  // Optional receipt photo. Stored in the seedlings-receipts R2 bucket; the
+  // R2 key is the canonical reference. Same anchor for all 3 expense
+  // sources (freestanding BE, job-Expense pair, supply-purchase pair).
+  receiptR2Key         String?
+  receiptFileName      String?
+  receiptContentType   String?
+  receiptUploadedAt    DateTime?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1131,4 +1168,141 @@ model OccurrenceChangeRequest {
   @@index([occurrenceId])
   @@index([requestedById])
   @@index([status])
+}
+
+// ── Supplies (MVP-step-3) ─────────────────────────────────────────────────────
+//
+// Inventory-tracked consumables. Decoupled from job-Expense so we can record
+// the tax deduction at PURCHASE time (cash-method accounting) but charge the
+// payout deduction at CONSUMPTION time, with optional markup.
+//
+//   Supply           = catalog row (one per SKU), tracks onHand
+//   SupplyPurchase   = a buy event, paired 1:1 with a BusinessExpense (tax)
+//   SupplyHold       = a consumption against an occurrence; ACTIVE reserves
+//                      units, CONSUMED draws them down on completion
+//   SupplyAdjustment = manual count corrections (no tax effect)
+
+model Supply {
+  id              String   @id @default(cuid())
+
+  name            String
+  description     String?
+  unit            String                       // "bag", "spool", "lb"
+  // For future UPC-scan add-flow. Nullable; not unique because the same
+  // SKU could legitimately be entered twice with different display names.
+  upc             String?
+  // Schedule C category for the BusinessExpense paired with each purchase.
+  // Defaults to "Supplies"; can be overridden per supply (e.g. "Car and
+  // truck expenses" if you ever want to track fuel as inventory).
+  category        String   @default("Supplies")
+  // Reference businessCost — typically updated to the most recent
+  // SupplyPurchase.unitCost. Display-only / default for new purchases.
+  businessCost    Float    @default(0)
+  // Per-unit charge to the job's payout when consumed. May exceed
+  // businessCost — the difference is implicit business margin (similar to
+  // platform fee / employee margin). Snapshot at hold time so retroactive
+  // edits don't reprice existing holds.
+  jobPayoutCost   Float    @default(0)
+  // Physical units in stock. Available = onHand − Σ(active holds), computed
+  // at query time.
+  onHand          Int      @default(0)
+
+  archivedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdById     String
+  createdBy       User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  purchases       SupplyPurchase[]
+  holds           SupplyHold[]
+  adjustments     SupplyAdjustment[]
+
+  @@index([archivedAt])
+  @@index([upc])
+  @@index([name])
+}
+
+model SupplyPurchase {
+  id                String   @id @default(cuid())
+
+  supplyId          String
+  supply            Supply   @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  quantity          Int
+  unitCost          Float    // per-unit cost at this purchase (snapshot)
+  totalCost         Float    // quantity × unitCost (denormalized for export)
+  date              DateTime @default(now())
+  vendor            String?
+  invoiceNumber    String?
+  notes             String?
+
+  // 1:1 link to the tax-ledger row created at the same time. Same dual-write
+  // pattern as job Expense ↔ BusinessExpense in step-2. Restrict (not
+  // Cascade): deleting the BE while a SupplyPurchase is linked would orphan
+  // inventory; the BE-delete handler must reverse inventory and remove the
+  // SupplyPurchase first.
+  businessExpenseId String   @unique
+  businessExpense   BusinessExpense @relation(fields: [businessExpenseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  createdById       String
+  createdBy         User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([supplyId, date])
+  @@index([date])
+}
+
+model SupplyHold {
+  id              String           @id @default(cuid())
+
+  supplyId        String
+  supply          Supply           @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  occurrenceId    String
+  occurrence      JobOccurrence    @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  quantity        Int
+  jobPayoutCost   Float            // per-unit charge snapshot at hold time
+  status          SupplyHoldStatus @default(ACTIVE)
+
+  // 1:1 link to the per-job Expense row that drives payout deduction.
+  // No paired BusinessExpense — the BE was created at purchase time;
+  // recording another at consumption would double-count for taxes.
+  expenseId       String?          @unique
+  expense         Expense?         @relation(fields: [expenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  createdById     String
+  createdBy       User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt       DateTime         @default(now())
+  consumedAt      DateTime?
+  releasedAt      DateTime?
+  updatedAt       DateTime         @updatedAt
+
+  @@index([supplyId, status])
+  @@index([occurrenceId])
+  @@index([status])
+}
+
+model SupplyAdjustment {
+  id            String   @id @default(cuid())
+
+  supplyId      String
+  supply        Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  delta         Int      // +N or −N units
+  reason        String
+
+  createdById   String
+  createdBy     User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime @default(now())
+
+  @@index([supplyId, createdAt])
+}
+
+enum SupplyHoldStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
 }
