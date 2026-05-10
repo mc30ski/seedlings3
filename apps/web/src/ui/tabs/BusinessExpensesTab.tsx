@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
   Box,
@@ -25,6 +26,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
+import { compressOnly } from "@/src/lib/imageRedact";
 
 type BusinessExpense = {
   id: string;
@@ -49,8 +51,43 @@ type BusinessExpense = {
   receiptFileName?: string | null;
   receiptContentType?: string | null;
   receiptUploadedAt?: string | null;
+  recurrence?: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY" | null;
   createdAt: string;
   createdBy?: { id: string; displayName?: string | null; email?: string | null };
+};
+
+type DueSoonSuggestion = {
+  nextExpectedDate: string;
+  overdueDays: number;
+  recurrence: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY";
+  prefill: {
+    description: string;
+    cost: number;
+    category: string | null;
+    vendor: string | null;
+    invoiceNumber: string | null;
+    notes: string | null;
+    equipmentId: string | null;
+    recurrence: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY";
+  };
+  latestId: string;
+  latestDate: string;
+  latestCost: number;
+};
+
+const RECURRENCE_LABELS: Record<string, string> = {
+  WEEKLY: "Weekly",
+  MONTHLY: "Monthly",
+  QUARTERLY: "Quarterly",
+  ANNUALLY: "Annually",
+};
+// Singular noun used in copy like "one month from now". "Annually" → "year",
+// not "annual", so the prose reads naturally.
+const RECURRENCE_NOUNS: Record<string, string> = {
+  WEEKLY: "week",
+  MONTHLY: "month",
+  QUARTERLY: "quarter",
+  ANNUALLY: "year",
 };
 
 type EquipmentLite = {
@@ -113,6 +150,11 @@ const SCHEDULE_C_CATEGORIES: ScheduleCCategory[] = [
   { label: "Other", line: "27a" },
 ];
 const CATEGORY_LABELS = SCHEDULE_C_CATEGORIES.map((c) => c.label);
+// Quick lookup so the row chip can show "Supplies (line 22)" without a join.
+const LINE_BY_CATEGORY: Record<string, string> = SCHEDULE_C_CATEGORIES.reduce(
+  (acc, c) => ((acc[c.label] = c.line), acc),
+  {} as Record<string, string>,
+);
 
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -140,6 +182,13 @@ export default function BusinessExpensesTab() {
   const [filterTo, setFilterTo] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
 
+  // Pagination — most recent first, page back through history. pageSize is
+  // user-controlled (persisted) so the choice survives reloads. page resets
+  // to 1 whenever a filter changes.
+  const [pageSize, setPageSize] = usePersistedState<number>("be_pageSize", 20);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessExpense | null>(null);
@@ -154,8 +203,16 @@ export default function BusinessExpensesTab() {
   const [fInvoiceNumber, setFInvoiceNumber] = useState("");
   const [fNotes, setFNotes] = useState("");
   const [fEquipmentId, setFEquipmentId] = useState<string>("");
+  const [fRecurrence, setFRecurrence] = useState<string>(""); // "" = one-off
+  // Buffered receipt for create flow — uploaded against the new BE id after
+  // POST returns. On edit, ReceiptUpload talks to the API directly so this
+  // stays null.
+  const [fNewReceiptFile, setFNewReceiptFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [equipmentList, setEquipmentList] = useState<EquipmentLite[]>([]);
+  // Recurring-expense suggestions panel.
+  const [dueSoon, setDueSoon] = useState<DueSoonSuggestion[]>([]);
+  const [confirmSkip, setConfirmSkip] = useState<DueSoonSuggestion | null>(null);
 
   async function load() {
     setLoading(true);
@@ -165,9 +222,12 @@ export default function BusinessExpensesTab() {
       if (filterTo) params.set("to", filterTo);
       if (filterCategory) params.set("category", filterCategory);
       if (q.trim()) params.set("q", q.trim());
+      params.set("limit", String(pageSize));
+      params.set("offset", String((page - 1) * pageSize));
       const qs = params.toString();
-      const list = await apiGet<BusinessExpense[]>(`/api/admin/business-expenses${qs ? `?${qs}` : ""}`);
-      setExpenses(Array.isArray(list) ? list : []);
+      const resp = await apiGet<{ rows: BusinessExpense[]; total: number }>(`/api/admin/business-expenses${qs ? `?${qs}` : ""}`);
+      setExpenses(Array.isArray(resp?.rows) ? resp.rows : []);
+      setTotal(typeof resp?.total === "number" ? resp.total : 0);
       const sumQs = new URLSearchParams();
       if (filterFrom) sumQs.set("from", filterFrom);
       if (filterTo) sumQs.set("to", filterTo);
@@ -177,6 +237,12 @@ export default function BusinessExpensesTab() {
       try {
         const cmp = await apiGet<Comparison>("/api/admin/business-expenses/vs-revenue");
         setComparison(cmp);
+      } catch { /* non-fatal */ }
+      // Due-to-record suggestions (also global; recurrence is a property of
+      // the series, not the current filter view).
+      try {
+        const ds = await apiGet<DueSoonSuggestion[]>("/api/admin/business-expenses/due-soon");
+        setDueSoon(Array.isArray(ds) ? ds : []);
       } catch { /* non-fatal */ }
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load expenses.", err) });
@@ -192,11 +258,21 @@ export default function BusinessExpensesTab() {
       .catch(() => setEquipmentList([]));
   }, []);
 
-  // re-load when filters change (debounced for search)
+  // Filter changes always reset to page 1 — otherwise you could be on
+  // page 5 of "all", flip the category filter, and silently land on what
+  // is now an empty page 5 of the narrower set.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, filterFrom, filterTo, filterCategory, pageSize]);
+
+  // Re-load when filters or pagination change. Search is debounced; page/
+  // pageSize changes load immediately.
   useEffect(() => {
     const t = setTimeout(() => void load(), 300);
     return () => clearTimeout(t);
-  }, [q, filterFrom, filterTo, filterCategory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, filterFrom, filterTo, filterCategory, page, pageSize]);
 
   function openCreate() {
     setEditing(null);
@@ -208,6 +284,8 @@ export default function BusinessExpensesTab() {
     setFInvoiceNumber("");
     setFNotes("");
     setFEquipmentId("");
+    setFRecurrence("");
+    setFNewReceiptFile(null);
     setDialogOpen(true);
   }
 
@@ -225,7 +303,52 @@ export default function BusinessExpensesTab() {
     setFInvoiceNumber(e.invoiceNumber ?? "");
     setFNotes(e.notes ?? "");
     setFEquipmentId(e.equipmentId ?? "");
+    setFRecurrence(e.recurrence ?? "");
+    setFNewReceiptFile(null);
     setDialogOpen(true);
+  }
+
+  // Open the Add Expense dialog pre-filled from a "Due to record"
+  // suggestion. Date is the next expected date (editable); cost is the last
+  // paid amount (editable); description/vendor/category/recurrence carry
+  // forward unchanged. Treated as a CREATE (editing=null) so the new row
+  // becomes the most-recent in its series after save.
+  function openFromSuggestion(s: DueSoonSuggestion) {
+    setEditing(null);
+    setFDate(s.nextExpectedDate);
+    setFCost(s.prefill.cost.toFixed(2));
+    setFDescription(s.prefill.description);
+    setFCategory(s.prefill.category ?? "");
+    setFVendor(s.prefill.vendor ?? "");
+    setFInvoiceNumber("");
+    setFNotes("");
+    setFEquipmentId(s.prefill.equipmentId ?? "");
+    setFRecurrence(s.prefill.recurrence);
+    setFNewReceiptFile(null);
+    setDialogOpen(true);
+  }
+
+  // Confirmed skip — store the dismissed expected date on the most recent
+  // row; the panel removes it optimistically. On failure, restore.
+  async function doSkip(s: DueSoonSuggestion) {
+    const prevDueSoon = dueSoon;
+    setDueSoon((rows) => rows.filter((r) => r.latestId !== s.latestId));
+    try {
+      await apiPost(
+        `/api/admin/business-expenses/${s.latestId}/skip-recurrence`,
+        { skipDate: s.nextExpectedDate },
+      );
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Skipped ${s.prefill.description} for this period.`,
+      });
+    } catch (err) {
+      setDueSoon(prevDueSoon);
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Skip failed.", err),
+      });
+    }
   }
 
   async function save() {
@@ -244,13 +367,49 @@ export default function BusinessExpensesTab() {
         invoiceNumber: fInvoiceNumber.trim() || null,
         notes: fNotes.trim() || null,
         equipmentId: fEquipmentId || null,
+        recurrence: fRecurrence || null,
       };
       if (editing) {
         await apiPatch(`/api/admin/business-expenses/${editing.id}`, payload);
         publishInlineMessage({ type: "SUCCESS", text: "Expense updated." });
       } else {
-        await apiPost("/api/admin/business-expenses", payload);
-        publishInlineMessage({ type: "SUCCESS", text: "Expense added." });
+        const created = await apiPost<{ id: string }>("/api/admin/business-expenses", payload);
+        // Optional buffered receipt → upload against the new BE id. If this
+        // fails the BE itself is fine, so we warn and let the user retry via
+        // edit instead of rolling back the create.
+        if (fNewReceiptFile && created?.id) {
+          try {
+            const file = fNewReceiptFile;
+            const isPdf = file.type === "application/pdf";
+            const body: Blob = isPdf ? file : await compressOnly(file);
+            const contentType = isPdf ? "application/pdf" : "image/jpeg";
+            const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+              `/api/admin/business-expenses/${created.id}/receipt/upload-url`,
+              { fileName: file.name, contentType },
+            );
+            const uploadRes = await fetch(uploadUrl, {
+              method: "PUT",
+              body,
+              headers: { "Content-Type": contentType },
+            });
+            if (!uploadRes.ok) {
+              throw new Error(`Upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+            }
+            await apiPost(`/api/admin/business-expenses/${created.id}/receipt`, {
+              key,
+              fileName: file.name,
+              contentType,
+            });
+            publishInlineMessage({ type: "SUCCESS", text: "Expense added with receipt." });
+          } catch (e) {
+            publishInlineMessage({
+              type: "WARNING",
+              text: `Expense saved, but receipt upload failed: ${getErrorMessage("", e)}. Re-open the expense to attach.`,
+            });
+          }
+        } else {
+          publishInlineMessage({ type: "SUCCESS", text: "Expense added." });
+        }
       }
       setDialogOpen(false);
       void load();
@@ -296,8 +455,26 @@ export default function BusinessExpensesTab() {
   // and for handing directly to a CPA. Includes the explicit Schedule C line
   // number so the categorization is unambiguous even if the importer doesn't
   // recognize the label by name.
-  function exportCsv() {
-    if (expenses.length === 0) return;
+  async function exportCsv() {
+    // Re-fetch with all=true so the export contains every row matching
+    // the current filters, not just the page on screen.
+    const params = new URLSearchParams();
+    if (filterFrom) params.set("from", filterFrom);
+    if (filterTo) params.set("to", filterTo);
+    if (filterCategory) params.set("category", filterCategory);
+    if (q.trim()) params.set("q", q.trim());
+    params.set("all", "true");
+    let allRows: BusinessExpense[] = [];
+    try {
+      const resp = await apiGet<{ rows: BusinessExpense[]; total: number }>(
+        `/api/admin/business-expenses?${params.toString()}`,
+      );
+      allRows = Array.isArray(resp?.rows) ? resp.rows : [];
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Export failed.", err) });
+      return;
+    }
+    if (allRows.length === 0) return;
 
     const lineByCategory: Record<string, string> = {};
     for (const c of SCHEDULE_C_CATEGORIES) lineByCategory[c.label] = c.line;
@@ -319,12 +496,13 @@ export default function BusinessExpensesTab() {
       "Linked Equipment",
       "Linked Job",
       "Linked Supply",
+      "Recurrence",
       "Notes",
     ];
 
     const rows: string[] = [headers.join(",")];
     // Stable order: by date (most recent first), matching what's on screen.
-    const sorted = [...expenses].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...allRows].sort((a, b) => b.date.localeCompare(a.date));
     for (const e of sorted) {
       const eq = e.equipment;
       const eqLabel = eq
@@ -352,6 +530,7 @@ export default function BusinessExpensesTab() {
         csvEscape(eqLabel),
         csvEscape(jobLabel),
         csvEscape(supplyLabel),
+        csvEscape(e.recurrence ? RECURRENCE_LABELS[e.recurrence] ?? e.recurrence : ""),
         csvEscape(e.notes ?? ""),
       ].join(","));
     }
@@ -375,7 +554,7 @@ export default function BusinessExpensesTab() {
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Business Expenses</Text>
         <HStack gap={2}>
-          <Button size="sm" variant="outline" onClick={exportCsv} disabled={expenses.length === 0} title="Download CSV for tax software / CPA">
+          <Button size="sm" variant="outline" onClick={() => void exportCsv()} disabled={total === 0} title="Download CSV for tax software / CPA">
             <Download size={14} /> Export
           </Button>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
@@ -383,6 +562,73 @@ export default function BusinessExpensesTab() {
           </Button>
         </HStack>
       </HStack>
+
+      {/* Due to record — recurring expenses whose next expected instance
+          has arrived (or is within the lead window). Hidden when nothing
+          is due so the panel doesn't nag with empty state. */}
+      {dueSoon.length > 0 && (
+        <Card.Root variant="outline" mb={3} borderColor="orange.300" bg="orange.50">
+          <Card.Body p={3}>
+            <Text fontSize="xs" fontWeight="semibold" color="orange.800" textTransform="uppercase" mb={2}>
+              Due to record
+            </Text>
+            <VStack align="stretch" gap={1}>
+              {dueSoon.map((s) => {
+                const isOverdue = s.overdueDays > 0;
+                const expectedLabel = new Date(s.nextExpectedDate + "T00:00:00").toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                });
+                return (
+                  <HStack
+                    key={s.latestId}
+                    gap={2}
+                    p={2}
+                    bg="white"
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor={isOverdue ? "red.200" : "gray.200"}
+                    fontSize="sm"
+                    wrap="wrap"
+                  >
+                    <Box flex="1" minW="200px">
+                      <Text fontWeight="medium" color="gray.800">
+                        {s.prefill.description}
+                        {s.prefill.vendor && <Text as="span" color="fg.muted"> — {s.prefill.vendor}</Text>}
+                      </Text>
+                      <HStack gap={2} fontSize="xs" color="fg.muted" wrap="wrap">
+                        <Badge size="sm" colorPalette="purple" variant="subtle" borderRadius="full" px="2">
+                          {RECURRENCE_LABELS[s.recurrence]}
+                        </Badge>
+                        <Text>last {fmtUSD(s.latestCost)} on {fmtDate(s.latestDate)}</Text>
+                        <Text color={isOverdue ? "red.600" : "fg.muted"} fontWeight={isOverdue ? "medium" : "normal"}>
+                          · {isOverdue ? `${s.overdueDays} day${s.overdueDays === 1 ? "" : "s"} overdue` : `due ${expectedLabel}`}
+                        </Text>
+                      </HStack>
+                    </Box>
+                    <HStack gap={1}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmSkip(s)}
+                      >
+                        Skip
+                      </Button>
+                      <Button
+                        size="sm"
+                        colorPalette="orange"
+                        onClick={() => openFromSuggestion(s)}
+                      >
+                        Record
+                      </Button>
+                    </HStack>
+                  </HStack>
+                );
+              })}
+            </VStack>
+          </Card.Body>
+        </Card.Root>
+      )}
 
       {/* Summary */}
       {summary && (
@@ -584,6 +830,11 @@ export default function BusinessExpensesTab() {
                           onClick={() => setFilterCategory(filterCategory === e.category ? "" : (e.category ?? ""))}
                         >
                           {e.category}
+                          {LINE_BY_CATEGORY[e.category] && (
+                            <Text as="span" ml={1} opacity={0.75}>
+                              (line {LINE_BY_CATEGORY[e.category]})
+                            </Text>
+                          )}
                         </Badge>
                       )}
                       {e.occurrenceId && e.occurrence?.job?.property?.displayName && (
@@ -697,6 +948,64 @@ export default function BusinessExpensesTab() {
         </VStack>
       )}
 
+      {/* Pagination footer — only renders when there's more than one page
+          worth of rows. Per-page selector lives on the right. */}
+      {total > 0 && (() => {
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const start = (page - 1) * pageSize + 1;
+        const end = Math.min(page * pageSize, total);
+        return (
+          <HStack mt={3} justify="space-between" wrap="wrap" gap={2} fontSize="sm">
+            <Text color="fg.muted">
+              Showing {start}–{end} of {total}
+            </Text>
+            <HStack gap={2} wrap="wrap">
+              {totalPages > 1 && (
+                <>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    ← Prev
+                  </Button>
+                  <Text color="fg.muted" fontSize="xs">
+                    Page {page} of {totalPages}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next →
+                  </Button>
+                </>
+              )}
+              <HStack gap={1}>
+                <Text color="fg.muted" fontSize="xs">Per page:</Text>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  style={{
+                    padding: "2px 6px",
+                    fontSize: "12px",
+                    border: "1px solid var(--chakra-colors-gray-200)",
+                    borderRadius: "4px",
+                    background: "white",
+                  }}
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </HStack>
+            </HStack>
+          </HStack>
+        );
+      })()}
+
       {/* Add/Edit Dialog */}
       <Dialog.Root open={dialogOpen} onOpenChange={(e) => { if (!e.open) setDialogOpen(false); }}>
         <Portal>
@@ -774,12 +1083,40 @@ export default function BusinessExpensesTab() {
                     <Text fontSize="sm" mb={1}>Notes</Text>
                     <Textarea size="sm" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Optional notes" rows={2} />
                   </Box>
-                  {/* Receipt — only available on existing expenses (need a
-                      BE id to anchor the upload). For new entries the user
-                      saves first, then re-opens to attach. Sync both the
-                      list and the open dialog in place so the change is
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Repeats every</Text>
+                    {/* Native select for simplicity — same pattern as the
+                        date input. The UI is a free-standing tab; full
+                        Chakra Select.Root is overkill for 5 options. */}
+                    <select
+                      value={fRecurrence}
+                      onChange={(e) => setFRecurrence(e.target.value)}
+                      style={{
+                        padding: "6px 8px",
+                        fontSize: "14px",
+                        border: "1px solid var(--chakra-colors-gray-200)",
+                        borderRadius: "6px",
+                        width: "100%",
+                        background: "white",
+                      }}
+                    >
+                      <option value="">One-off (no recurrence)</option>
+                      <option value="WEEKLY">Weekly</option>
+                      <option value="MONTHLY">Monthly</option>
+                      <option value="QUARTERLY">Quarterly</option>
+                      <option value="ANNUALLY">Annually</option>
+                    </select>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      Mark recurring spends (e.g., software subscriptions, insurance) so the system can suggest the next instance when it's due.
+                    </Text>
+                  </Box>
+                  {/* Receipt. On EDIT, ReceiptUpload talks to the API
+                      directly (we have a BE id). On CREATE, the BE doesn't
+                      exist yet — we buffer the file locally and upload it
+                      against the new BE id after save() completes. Sync both
+                      the list and the open dialog in place so the change is
                       visible immediately without re-fetching. */}
-                  {editing && (
+                  {editing ? (
                     <ReceiptUpload
                       businessExpenseId={editing.id}
                       existing={editing}
@@ -790,6 +1127,44 @@ export default function BusinessExpensesTab() {
                         setEditing((cur) => (cur ? { ...cur, ...next } : cur));
                       }}
                     />
+                  ) : (
+                    <Box>
+                      <HStack gap={2} mb={1}>
+                        <Text fontSize="sm" fontWeight="medium">Receipt</Text>
+                        <Text fontSize="xs" color="fg.muted">(optional)</Text>
+                      </HStack>
+                      {fNewReceiptFile ? (
+                        <HStack
+                          gap={2}
+                          p={2}
+                          borderWidth="1px"
+                          borderColor="green.200"
+                          bg="green.50"
+                          borderRadius="md"
+                          fontSize="sm"
+                        >
+                          <Text flex="1" minW={0} truncate>{fNewReceiptFile.name}</Text>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorPalette="red"
+                            onClick={() => setFNewReceiptFile(null)}
+                          >
+                            Remove
+                          </Button>
+                        </HStack>
+                      ) : (
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => setFNewReceiptFile(e.target.files?.[0] ?? null)}
+                          style={{ fontSize: "13px" }}
+                        />
+                      )}
+                      <Text fontSize="xs" color="fg.muted" mt={1}>
+                        Uploaded after the expense saves. If the upload fails, the expense still gets recorded — re-open it from the list to attach.
+                      </Text>
+                    </Box>
                   )}
                 </VStack>
               </Dialog.Body>
@@ -800,6 +1175,45 @@ export default function BusinessExpensesTab() {
                   </Button>
                   <Button colorPalette="blue" onClick={save} loading={saving} disabled={!fDate || !fDescription.trim() || !fCost}>
                     {editing ? "Save" : "Add"}
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Skip confirmation — same shape as the Delete dialog. */}
+      <Dialog.Root open={!!confirmSkip} onOpenChange={(e) => { if (!e.open) setConfirmSkip(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.Header>
+                <Dialog.Title>Skip this {confirmSkip ? RECURRENCE_LABELS[confirmSkip.recurrence].toLowerCase() : ""} expense?</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text fontSize="sm">
+                  Skip <b>{confirmSkip?.prefill.description}</b>
+                  {confirmSkip?.prefill.vendor ? <> from <b>{confirmSkip.prefill.vendor}</b></> : null}
+                  {" "}for this period? The next reminder will be one
+                  {" "}{confirmSkip ? RECURRENCE_NOUNS[confirmSkip.recurrence] : ""}
+                  {" "}from now. Nothing is recorded — you can always add this period later if needed.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button variant="ghost" onClick={() => setConfirmSkip(null)}>Cancel</Button>
+                  <Button
+                    colorPalette="orange"
+                    onClick={() => {
+                      if (confirmSkip) {
+                        void doSkip(confirmSkip);
+                        setConfirmSkip(null);
+                      }
+                    }}
+                  >
+                    Skip this period
                   </Button>
                 </HStack>
               </Dialog.Footer>

@@ -61,6 +61,17 @@ type Summary = {
   actualWeekEarnings: number;
   weekJobCount: number;
   weeklyCompleted: { weekStart: string; count: number; earnings: number }[];
+  // Aggregate-only: per-row breakdown of currently active work for the
+  // Team Overview banner. Empty/undefined in per-worker mode.
+  inProgressJobs?: {
+    id: string;
+    startAt: string | null;
+    status: string;
+    title: string | null;
+    propertyName: string | null;
+    clientName: string | null;
+    assignees: { userId: string; displayName: string; isClaimer: boolean }[];
+  }[];
 };
 
 type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean; method?: string };
@@ -546,6 +557,98 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                   {s.activeWork > 0 ? ` · ${s.activeWork} in progress` : ""}
                   {(s.tomorrow ?? 0) > 0 ? ` · ${s.tomorrow} tomorrow` : ""}
                 </Text>
+                {/* Live "who's doing what" panel — only renders in aggregate
+                    mode when at least one job is active. Each row links to
+                    the occurrence on the Admin Jobs tab via the existing
+                    pendingHighlight handoff. */}
+                {(s.inProgressJobs?.length ?? 0) > 0 && (
+                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
+                    <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+                      In progress now
+                    </Text>
+                    {(s.inProgressJobs ?? []).map((occ) => {
+                      const claimer = occ.assignees.find((a) => a.isClaimer);
+                      const others = occ.assignees.filter((a) => !a.isClaimer);
+                      const assigneeText =
+                        occ.assignees.length === 0
+                          ? "(unassigned)"
+                          : claimer
+                            ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
+                            : occ.assignees.map((a) => a.displayName).join(", ");
+                      const jobLabel =
+                        occ.propertyName
+                          ? `${occ.propertyName}${occ.clientName ? ` — ${occ.clientName}` : ""}`
+                          : (occ.title ?? "(untitled)");
+                      // Date label disambiguates rows when the same property
+                      // has multiple active occurrences. Older dates are
+                      // typically a sign of a forgotten "complete" — the
+                      // status dot stays accurate either way.
+                      const dateLabel = occ.startAt
+                        ? new Date(occ.startAt).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          })
+                        : "";
+                      return (
+                        <HStack
+                          key={occ.id}
+                          gap={2}
+                          fontSize="sm"
+                          p={1.5}
+                          borderRadius="sm"
+                          cursor="pointer"
+                          _hover={{ bg: "white" }}
+                          onClick={() => {
+                            try {
+                              localStorage.setItem(
+                                "seedlings_jobs_pendingHighlight",
+                                `${occ.id}|${occ.startAt ?? ""}`,
+                              );
+                            } catch {}
+                            window.dispatchEvent(
+                              new CustomEvent("navigate:adminTab", {
+                                detail: { tab: "admin-jobs", remount: true },
+                              }),
+                            );
+                          }}
+                          title="Open this occurrence on the Admin Jobs tab"
+                        >
+                          {occ.status === "PAUSED" ? (
+                            <Box
+                              w="8px"
+                              h="8px"
+                              borderRadius="full"
+                              bg="orange.400"
+                              flexShrink={0}
+                              title="Paused"
+                            />
+                          ) : (
+                            <Box
+                              w="8px"
+                              h="8px"
+                              borderRadius="full"
+                              bg="green.500"
+                              flexShrink={0}
+                              title="In progress"
+                            />
+                          )}
+                          <Text flex="1" minW={0} truncate color="gray.800">
+                            {jobLabel}
+                            {dateLabel && (
+                              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+                                · {dateLabel}
+                              </Text>
+                            )}
+                          </Text>
+                          <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
+                            {assigneeText}
+                          </Text>
+                          <Text fontSize="xs" color="blue.600">→</Text>
+                        </HStack>
+                      );
+                    })}
+                  </VStack>
+                )}
               </VStack>
             </Card.Body>
           </Card.Root>

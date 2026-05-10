@@ -1084,26 +1084,33 @@ async function seedDatabase() {
   console.log("  Creating business expenses...");
 
   // Categories below match the Schedule C-aligned list enforced by the API.
-  const businessExpenseData: { ago: number; cost: number; desc: string; category: string; vendor?: string; notes?: string }[] = [
+  // recurrence flag drives the "Due to record" panel suggestions.
+  type RecurrenceCadence = "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY";
+  // Recurrence dates are tuned so the "Due to record" panel demos visibly:
+  //   QuickBooks (monthly) — last 35d ago → next ~5d overdue
+  //   Facebook Ads (monthly) — last 33d ago → next ~3d overdue
+  //   State Farm liability (quarterly) — last 95d ago → next ~5d overdue
+  //   Annual business license — last ~358d ago → next due in ~7d
+  const businessExpenseData: { ago: number; cost: number; desc: string; category: string; vendor?: string; notes?: string; recurrence?: RecurrenceCadence }[] = [
     // Today / this week
     { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Car and truck expenses", vendor: "Shell" },
-    { ago: 1, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit" },
     { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Supplies", vendor: "Stihl Pro Dealer" },
     // This month, prior weeks
-    { ago: 9, cost: 285.00, desc: "Q2 General liability insurance", category: "Insurance", vendor: "State Farm Commercial" },
     { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Car and truck expenses", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
     { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office expense", vendor: "Staples" },
-    { ago: 22, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Advertising", vendor: "Meta" },
+    { ago: 33, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Advertising", vendor: "Meta", recurrence: "MONTHLY" },
+    { ago: 35, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit", recurrence: "MONTHLY" },
     // Earlier this year
     { ago: 38, cost: 1250.00, desc: "New backpack blower (Echo PB-8010T)", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { ago: 55, cost: 320.00, desc: "Annual business license renewal", category: "Taxes and licenses", vendor: "City of Springfield" },
+    { ago: 65, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit", recurrence: "MONTHLY" },
     { ago: 72, cost: 215.85, desc: "Mower deck repair (welding + new blades)", category: "Repairs and maintenance", vendor: "Mike's Mower Shop" },
-    { ago: 96, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit" },
+    { ago: 95, cost: 285.00, desc: "General liability insurance", category: "Insurance", vendor: "State Farm Commercial", recurrence: "QUARTERLY" },
     { ago: 124, cost: 75.00, desc: "Logo redesign (vector files)", category: "Advertising", vendor: "Fiverr designer" },
     // Last year (for "all time" totals)
-    { ago: 200, cost: 285.00, desc: "Q4 General liability insurance", category: "Insurance", vendor: "State Farm Commercial" },
+    { ago: 188, cost: 285.00, desc: "General liability insurance", category: "Insurance", vendor: "State Farm Commercial", recurrence: "QUARTERLY" },
     { ago: 240, cost: 12.50, desc: "Bank wire fee", category: "Other", vendor: "Chase Business" },
     { ago: 320, cost: 595.00, desc: "Tax prep (small business return)", category: "Legal and professional services", vendor: "H&R Block" },
+    { ago: 358, cost: 320.00, desc: "Annual business license renewal", category: "Taxes and licenses", vendor: "City of Springfield", recurrence: "ANNUALLY" },
   ];
 
   for (const e of businessExpenseData) {
@@ -1116,6 +1123,7 @@ async function seedDatabase() {
         category: e.category,
         vendor: e.vendor ?? null,
         notes: e.notes ?? null,
+        recurrence: e.recurrence ?? null,
       },
     });
   }

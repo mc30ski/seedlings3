@@ -532,6 +532,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       thisWeekJobs, trendJobs, tomorrowUnconfirmedJobs,
       remindersDueOccs, allRemindersPending,
       equipmentCheckedOut, equipmentReserved,
+      inProgressList,
     ] = await Promise.all([
       prisma.jobOccurrence.count({
         where: {
@@ -676,6 +677,44 @@ export default async function workerRoutes(app: FastifyInstance) {
       prisma.reminder.count({ where: { dismissedAt: null, ...userSubsetFilter } }),
       prisma.checkout.count({ where: { releasedAt: null, checkedOutAt: { not: null }, ...userSubsetFilter } }),
       prisma.checkout.count({ where: { releasedAt: null, checkedOutAt: null, ...userSubsetFilter } }),
+      // In-progress / paused job list with active assignees — feeds the
+      // "jobs in progress and by who" panel on the Admin Home Team Overview.
+      // Same status set as the activeWork count above; lookback bound matches
+      // so we don't return stale never-completed rows from the deep past.
+      prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["IN_PROGRESS", "PAUSED"] as any },
+          startAt: { gte: lookbackStart },
+          ...assigneeSubsetFilter,
+        },
+        select: {
+          id: true,
+          startAt: true,
+          status: true,
+          title: true,
+          job: {
+            select: {
+              property: {
+                select: {
+                  displayName: true,
+                  client: { select: { displayName: true } },
+                },
+              },
+            },
+          },
+          assignees: {
+            where: { role: { not: "observer" } },
+            select: {
+              userId: true,
+              role: true,
+              assignedById: true,
+              user: { select: { displayName: true, email: true } },
+            },
+          },
+        },
+        orderBy: { startAt: "asc" },
+        take: 25, // safety cap; team-overview panel is a snapshot, not a list
+      }),
     ]);
 
     const todayPotentialAmount = (todayJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
@@ -757,6 +796,22 @@ export default async function workerRoutes(app: FastifyInstance) {
       actualWeekEarnings: Math.round(actualWeekEarnings * 100) / 100,
       weekJobCount,
       weeklyCompleted,
+      // Per-row breakdown of currently in-progress / paused work so the
+      // Team Overview banner can list "X is doing job Y". Each row carries
+      // just the names + ids the UI needs to render and link.
+      inProgressJobs: (inProgressList as any[]).map((occ) => ({
+        id: occ.id,
+        startAt: occ.startAt ? occ.startAt.toISOString() : null,
+        status: occ.status,
+        title: occ.title ?? null,
+        propertyName: occ.job?.property?.displayName ?? null,
+        clientName: occ.job?.property?.client?.displayName ?? null,
+        assignees: (occ.assignees ?? []).map((a: any) => ({
+          userId: a.userId,
+          displayName: a.user?.displayName ?? a.user?.email ?? a.userId,
+          isClaimer: a.assignedById === a.userId,
+        })),
+      })),
     };
   });
 
