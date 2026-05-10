@@ -97,9 +97,11 @@ export default function ManageExpensesDialog({
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Add mode: free-text custom expense vs pull from inventory. Custom is the
-  // existing Step-2 flow; inventory creates a SupplyHold + Expense pair.
-  const [addMode, setAddMode] = useState<"custom" | "inventory">("custom");
+  // Add mode: nothing selected by default. The user must explicitly pick
+  // Custom or From inventory. If they pick a mode they don't have permission
+  // for, we render an inline yellow warning instead of the form fields —
+  // never silently disable the button.
+  const [addMode, setAddMode] = useState<"custom" | "inventory" | null>(null);
 
   const [newCost, setNewCost] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -142,7 +144,7 @@ export default function ManageExpensesDialog({
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    setAddMode("custom");
+    setAddMode(null);
     setNewCost("");
     setNewDesc("");
     setNewCategory("Supplies");
@@ -385,58 +387,42 @@ export default function ManageExpensesDialog({
                 <Box>
                   <HStack justify="space-between" mb={1} gap={2} wrap="wrap">
                     <Text fontSize="sm" fontWeight="medium">Add Expense</Text>
-                    {(canInventory || canCharge) && (
-                      <HStack gap={1}>
-                        <Button
-                          size="xs"
-                          variant={addMode === "custom" ? "solid" : "outline"}
-                          onClick={() => canCharge && setAddMode("custom")}
-                          disabled={!canCharge}
-                          title={
-                            !canCharge
-                              ? "Recording new expenses on the company account requires the “Charge business expenses” privilege. Ask an admin."
-                              : ""
-                          }
-                        >
-                          Custom
-                        </Button>
-                        {canInventory && (
-                          <Button
-                            size="xs"
-                            variant={addMode === "inventory" ? "solid" : "outline"}
-                            colorPalette={addMode === "inventory" ? "blue" : "gray"}
-                            onClick={() => setAddMode("inventory")}
-                            disabled={supplies.length === 0}
-                            title={supplies.length === 0 ? "No supplies in inventory yet" : "Pull from inventory"}
-                          >
-                            From inventory
-                          </Button>
-                        )}
-                      </HStack>
-                    )}
+                    <HStack gap={1}>
+                      <Button
+                        size="xs"
+                        variant={addMode === "custom" ? "solid" : "outline"}
+                        onClick={() => setAddMode("custom")}
+                      >
+                        Custom
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={addMode === "inventory" ? "solid" : "outline"}
+                        colorPalette={addMode === "inventory" ? "blue" : "gray"}
+                        onClick={() => setAddMode("inventory")}
+                        disabled={canInventory && supplies.length === 0}
+                        title={canInventory && supplies.length === 0 ? "No supplies in inventory yet" : "Pull from inventory"}
+                      >
+                        From inventory
+                      </Button>
+                    </HStack>
                   </HStack>
-                  {/* Explainers shown to workers without a privilege so they
-                      understand what's missing and how to ask for it. */}
-                  {!canCharge && canInventory && (
-                    <Box mb={2} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-                      <Text fontSize="xs" color="fg.muted">
-                        New out-of-pocket / company-card expenses require the <Text as="span" fontWeight="semibold">Charge business expenses</Text> privilege. Pull from inventory below, or ask an admin to log this expense for you.
+                  {/* Render the appropriate body for the selected mode. If the
+                      user picked a mode they don't have permission for, show
+                      an inline yellow warning instead of form fields. */}
+                  {addMode === null ? null : addMode === "custom" && !canCharge ? (
+                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
+                      <Text fontSize="xs" color="yellow.800">
+                        Recording new out-of-pocket or company-card expenses requires the <Text as="span" fontWeight="semibold">Charge business expenses</Text> privilege. Ask an admin to grant it, or have them log this expense for you.
                       </Text>
                     </Box>
-                  )}
-                  {!canCharge && !canInventory && (
-                    <Box mb={2} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
-                      <Text fontSize="xs" color="fg.muted">
-                        Expenses on this job are managed by an admin. Let them know if anything needs to be recorded.
+                  ) : addMode === "inventory" && !canInventory ? (
+                    <Box p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" borderRadius="md">
+                      <Text fontSize="xs" color="yellow.800">
+                        Pulling from inventory requires the <Text as="span" fontWeight="semibold">Pull inventory</Text> privilege{disableInventory ? " (and isn't supported on this workflow)" : ""}. Ask an admin.
                       </Text>
                     </Box>
-                  )}
-                  {/* Resolve which UI to render given the available privileges:
-                      - both → follow addMode
-                      - inventory only → force inventory UI
-                      - charge only → force custom UI
-                      - neither → null (info box above already explains) */}
-                  {!canInventory && !canCharge ? null : (canInventory && (!canCharge || addMode === "inventory")) ? (
+                  ) : addMode === "inventory" ? (
                     <VStack align="stretch" gap={2}>
                       <Box>
                         <Select.Root
@@ -557,7 +543,7 @@ export default function ManageExpensesDialog({
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">
-                <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                <Button variant="outline" onClick={() => onOpenChange(false)}>
                   Done
                 </Button>
               </HStack>
