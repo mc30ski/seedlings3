@@ -703,7 +703,11 @@ export default async function workerRoutes(app: FastifyInstance) {
             },
           },
           assignees: {
-            where: { role: { not: "observer" } },
+            // Exclude observers, but KEEP workers/claimers. role is nullable
+            // (null = worker, "observer" = observer); SQL `role != 'observer'`
+            // is null/falsy when role IS NULL, which would silently drop every
+            // real worker and make the panel render "(unassigned)".
+            where: { OR: [{ role: null }, { role: { not: "observer" } }] },
             select: {
               userId: true,
               role: true,
@@ -1451,7 +1455,11 @@ export default async function workerRoutes(app: FastifyInstance) {
         status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
         workflow: { in: ["STANDARD", "ONE_OFF"] },
         ...(paidOccIds.size > 0 ? { id: { notIn: [...paidOccIds] } } : {}),
-        assignees: { some: { userId: uid, role: { not: "observer" } } },
+        // Same null-handling caveat as the In-Progress panel above:
+        // role IS NULL for normal workers, so a bare `not: "observer"` filter
+        // would silently exclude every worker assignment (NULL != 'observer'
+        // is NULL, which is falsy in SQL).
+        assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
       },
       select: {
         id: true,

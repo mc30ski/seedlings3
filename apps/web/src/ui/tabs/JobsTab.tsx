@@ -1440,7 +1440,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     const allowDateBypass = typeFilter[0] !== "JOBS";
     if (dateFrom || dateTo) {
       rows = rows.filter((occ) => {
-        if (allowDateBypass && (pinnedIds.has(occ.id) || likedIds.has(occ.id))) return true;
+        // Pins are explicit "always show this" markers — they bypass the date
+        // window. Likes are just bookmarks; they should still respect filters.
+        if (allowDateBypass && pinnedIds.has(occ.id)) return true;
         if (allowDateBypass && (occ as any).reminder && !reminderBypassFinished.has(occ.status as string)) return true;
         const day = occ.startAt ? bizDateKey(occ.startAt) : null;
         if (!day) return true; // no date — include
@@ -3279,7 +3281,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             return (
                               <Box position="relative">
                                 <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); setContactMenuOcc((v) => v === occ.id ? null : occ.id); }} title={name ? `Contact ${name}` : "Contact client"}>
-                                  <Phone size={14} color="var(--chakra-colors-green-500)" />
+                                  <MessageCircle size={14} color="var(--chakra-colors-green-500)" />
                                 </Button>
                                 {contactMenuOcc === occ.id && (
                                   <VStack
@@ -3359,7 +3361,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     forAdmin ||
                                     !!me?.privileges?.canPullInventory ||
                                     !!me?.privileges?.canChargeBusinessExpenses;
-                                  const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
+                                  // Admin/Super always pass — they can manage expenses on any job (e.g.
+// adding a custom expense on behalf of a contractor who lacks the
+// "Charge business expenses" privilege). Workers must be the claimer
+// AND have at least one expense-related privilege.
+const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
                                   if (!canManage) return null;
                                   return (
                                     <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
@@ -3503,7 +3509,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               return (
                                 <Box position="relative">
                                   <Button variant="ghost" size="xs" px="0" minW="0" onClick={(e) => { e.stopPropagation(); setContactMenuOcc((v) => v === occ.id ? null : occ.id); }} title={name ? `Contact ${name}` : "Contact client"}>
-                                    <Phone size={14} color="var(--chakra-colors-green-500)" />
+                                    <MessageCircle size={14} color="var(--chakra-colors-green-500)" />
                                   </Button>
                                   {contactMenuOcc === occ.id && (
                                     <VStack
@@ -3584,7 +3590,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       forAdmin ||
                                       !!me?.privileges?.canPullInventory ||
                                       !!me?.privileges?.canChargeBusinessExpenses;
-                                    const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
+                                    // Admin/Super always pass — they can manage expenses on any job (e.g.
+// adding a custom expense on behalf of a contractor who lacks the
+// "Charge business expenses" privilege). Workers must be the claimer
+// AND have at least one expense-related privilege.
+const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
                                     if (!canManage) return null;
                                     return (
                                       <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
@@ -3815,6 +3825,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Box>
                         );
                       })()}
+                      {/* Worker(s) — surfaced above the price/payout row to
+                          match the fully-expanded card. */}
+                      {!isUnassigned ? (
+                        <Text fontSize="xs" fontWeight="semibold" color="teal.700">
+                          {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
+                            const name = a.user?.displayName ?? a.user?.email ?? a.userId;
+                            const isCl = a.assignedById === a.userId && a.role !== "observer";
+                            const role = isCl ? "Claimer - Lead Worker" : a.role === "observer" ? "Observer" : "Worker";
+                            return `${name} (${role})`;
+                          }).join(", ")}
+                        </Text>
+                      ) : occ.status !== "ARCHIVED" && !(isEvent || isFollowup || isAnnouncement) ? (
+                        <Text fontSize="xs" fontWeight="semibold" color="orange.500">
+                          {isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
+                        </Text>
+                      ) : null}
                       {/* Price / payout / time */}
                       {(() => { const basePrice = (occ.price || null) ?? (occ.proposalAmount || null); const addonsAmt = addonTotal(occ); const displayPrice = totalPrice(occ); return (
                       <Box display="flex" gap={2} flexWrap="wrap" alignItems="center">
@@ -3868,21 +3894,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                       ); })()}
                     </VStack>
-                    <HStack mt={1} justify="space-between" align="center">
-                      {!isUnassigned ? (
-                        <Text fontSize="xs" fontWeight="semibold" color="teal.700">
-                          {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
-                            const name = a.user?.displayName ?? a.user?.email ?? a.userId;
-                            const isCl = a.assignedById === a.userId && a.role !== "observer";
-                            const role = isCl ? "Claimer - Lead Worker" : a.role === "observer" ? "Observer" : "Worker";
-                            return `${name} (${role})`;
-                          }).join(", ")}
-                        </Text>
-                      ) : occ.status !== "ARCHIVED" ? (
-                        <Text fontSize="xs" fontWeight="semibold" color="orange.500">
-                          {(isEvent || isFollowup || isAnnouncement) ? null : isTentative ? "Tentative — awaiting confirmation" : isAdminOnlyOcc ? "Unassigned — admin must assign" : "Unclaimed"}
-                        </Text>
-                      ) : <Box />}
+                    <HStack mt={1} justify="flex-end" align="center">
                       {(occ._count?.comments ?? 0) > 0 && (
                         <Badge
                           variant="solid"
@@ -3999,6 +4011,43 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Badge>
                         )}
                       </Box>
+                    )}
+                    {/* Worker(s) — surfaced above the money/payout panel so
+                        you see who's on the job before the price breakdown. */}
+                    {!isUnassigned && (
+                      <VStack align="start" gap={0}>
+                        {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
+                          const isClaimer = a.assignedById === a.userId;
+                          const isMe = a.userId === myId;
+                          return (
+                            <Text
+                              key={a.userId}
+                              fontSize="xs"
+                              fontWeight={isMe ? "semibold" : "normal"}
+                              color={isMe ? "teal.600" : "fg.muted"}
+                            >
+                              <span
+                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                              >
+                                {a.user?.displayName ?? a.user?.email ?? a.userId}
+                              </span>
+                              {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
+                              {isMe ? " (you)" : ""}
+                              {isClaimer ? " · Claimer - Lead Worker" : a.role === "observer" ? " · Observer" : " · Worker"}
+                            </Text>
+                          );
+                        })}
+                      </VStack>
+                    )}
+                    {isUnassigned && !isEvent && !isFollowup && !isAnnouncement && occ.status !== "ARCHIVED" && (
+                      <Text fontSize="xs" color="orange.500" fontWeight="medium">
+                        {isTentative
+                          ? "Unclaimed — tentative, awaiting admin confirmation"
+                          : isAdminOnlyOcc
+                          ? "Unclaimed — administered, must be assigned by an admin"
+                          : "Unclaimed — available to claim"}
+                      </Text>
                     )}
                     {(totalPrice(occ) != null || occ.payment || ((occ.price || null) ?? (occ.proposalAmount || null)) != null) && (
                       <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2} bg="gray.50" fontSize="xs">
@@ -4282,41 +4331,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </VStack>
                     )}
 
-                    {!isUnassigned && (
-                      <VStack align="start" gap={0}>
-                        {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
-                          const isClaimer = a.assignedById === a.userId;
-                          const isMe = a.userId === myId;
-                          return (
-                            <Text
-                              key={a.userId}
-                              fontSize="xs"
-                              fontWeight={isMe ? "semibold" : "normal"}
-                              color={isMe ? "teal.600" : "fg.muted"}
-                            >
-                              <span
-                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                              >
-                                {a.user?.displayName ?? a.user?.email ?? a.userId}
-                              </span>
-                              {a.user?.workerType ? ` · ${a.user.workerType === "CONTRACTOR" ? "1099" : a.user.workerType === "TRAINEE" ? "Trainee" : "W-2"}` : ""}
-                              {isMe ? " (you)" : ""}
-                              {isClaimer ? " · Claimer - Lead Worker" : a.role === "observer" ? " · Observer" : " · Worker"}
-                            </Text>
-                          );
-                        })}
-                      </VStack>
-                    )}
-                    {isUnassigned && !isEvent && !isFollowup && !isAnnouncement && occ.status !== "ARCHIVED" && (
-                      <Text fontSize="xs" color="orange.500" fontWeight="medium">
-                        {isTentative
-                          ? "Unclaimed — tentative, awaiting admin confirmation"
-                          : isAdminOnlyOcc
-                          ? "Unclaimed — administered, must be assigned by an admin"
-                          : "Unclaimed — available to claim"}
-                      </Text>
-                    )}
                     {occ.payment && (() => {
                       const pay = occ.payment as any;
                       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
@@ -4381,53 +4395,51 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           Expenses: −${occ.expenses.reduce((s, e) => s + e.cost, 0).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
-                          {occ.expenses.map((exp) => (
-                            <Text key={exp.id} fontSize="xs" color="red.600">
-                              −${exp.cost.toFixed(2)} — {exp.description}
-                            </Text>
-                          ))}
+                          {occ.expenses.map((exp) => {
+                            // Inventory-backed expenses are paired with a SupplyHold
+                            // server-side; everything else is a custom out-of-pocket /
+                            // company-card expense. Tag both so the worker knows
+                            // which path the row came from at a glance.
+                            const fromInventory = !!(exp as any).supplyHold;
+                            return (
+                              <HStack key={exp.id} gap={1.5} align="center" wrap="wrap">
+                                <Text fontSize="xs" color="red.600">
+                                  −${exp.cost.toFixed(2)} — {exp.description}
+                                </Text>
+                                {fromInventory ? (
+                                  <Badge size="sm" colorPalette="blue" variant="subtle" borderRadius="full" px="2" fontSize="2xs">
+                                    Inventory
+                                  </Badge>
+                                ) : (
+                                  <Badge size="sm" colorPalette="orange" variant="subtle" borderRadius="full" px="2" fontSize="2xs">
+                                    Custom Expense
+                                  </Badge>
+                                )}
+                              </HStack>
+                            );
+                          })}
                         </VStack>
                       </Box>
                     )}
-                    {/* Manage expenses button — claimer (any privilege) or
-                        admin/super. Dialog itself gates Custom vs Inventory
-                        toggles based on the resolved privileges from /me.
-                        Hidden once the job leaves the active states; admins
-                        do retroactive edits via the Services tab. */}
-                    {(() => {
-                      const isActive =
-                        occ.status === "SCHEDULED" ||
-                        occ.status === "IN_PROGRESS" ||
-                        occ.status === "PAUSED";
-                      const hasAnyPriv =
-                        forAdmin ||
-                        !!me?.privileges?.canPullInventory ||
-                        !!me?.privileges?.canChargeBusinessExpenses;
-                      const canManage = isActive && (forAdmin || (isClaimer && hasAnyPriv));
-                      if (!canManage) return null;
-                      return (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          mt={1}
-                          onClick={(e) => { e.stopPropagation(); setExpenseDialogOccId(occ.id); }}
-                        >
-                          {occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}
-                        </Button>
-                      );
-                    })()}
-                    {/* Suggested equipment */}
+                    {/* Suggested gear — equipment kinds (blue) + collections
+                        (purple) folded into a single panel. Buttons keep their
+                        original palette so the two kinds remain visually
+                        distinct while sharing one labeled section. */}
                     {!isTaskOrReminder && (() => {
                       const allTags = [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)];
                       const suggestions = suggestedEquipment(serviceTypes, allTags, equipmentKinds);
-                      if (suggestions.length === 0) return null;
+                      const recIds: string[] = ((occ.job as any)?.recommendedCollections ?? []).map((r: any) => r.collectionId);
+                      const recs = recIds
+                        .map((id) => equipmentCollections.find((c) => c.id === id))
+                        .filter(Boolean) as CollectionLite[];
+                      if (suggestions.length === 0 && recs.length === 0) return null;
                       return (
-                        <Box mt={1} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                          <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Suggested Equipment</Text>
+                        <Box mt={1} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="gray.700" mb={1}>Suggested Equipment & Collections</Text>
                           <HStack gap={1.5} wrap="wrap">
                             {suggestions.map((s) => (
                               <Button
-                                key={s.equipmentKind}
+                                key={`eq-${s.equipmentKind}`}
                                 size="xs"
                                 variant="solid"
                                 colorPalette="blue"
@@ -4443,26 +4455,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 {s.label} →
                               </Button>
                             ))}
-                          </HStack>
-                        </Box>
-                      );
-                    })()}
-                    {/* Recommended kits — collections the admin attached to this job. */}
-                    {!isTaskOrReminder && (() => {
-                      const recIds: string[] = ((occ.job as any)?.recommendedCollections ?? []).map((r: any) => r.collectionId);
-                      if (recIds.length === 0) return null;
-                      const recs = recIds.map((id) => equipmentCollections.find((c) => c.id === id)).filter(Boolean) as CollectionLite[];
-                      if (recs.length === 0) return null;
-                      return (
-                        <Box mt={1} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" borderRadius="md">
-                          <Text fontSize="xs" fontWeight="semibold" color="purple.700" mb={1}>Recommended Collections</Text>
-                          <HStack gap={1.5} wrap="wrap">
                             {recs.map((c) => {
                               const total = c.items.length;
                               const available = c.items.filter((i) => !i.equipment.retiredAt && i.equipment.status === "AVAILABLE").length;
                               return (
                                 <Button
-                                  key={c.id}
+                                  key={`col-${c.id}`}
                                   size="xs"
                                   variant="solid"
                                   colorPalette="purple"
@@ -5245,6 +5243,37 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
+                      {/* Add / Manage expenses — claimer (any privilege) or
+                          admin/super. Dialog itself gates Custom vs Inventory
+                          toggles based on the resolved privileges from /me.
+                          Only surfaces while the occurrence is in an active
+                          state; admins do retroactive edits via Services. */}
+                      {(() => {
+                        const isActive =
+                          occ.status === "SCHEDULED" ||
+                          occ.status === "IN_PROGRESS" ||
+                          (occ.status as string) === "PAUSED";
+                        const hasAnyPriv =
+                          forAdmin ||
+                          !!me?.privileges?.canPullInventory ||
+                          !!me?.privileges?.canChargeBusinessExpenses;
+                        // Admin/Super always pass — they can manage expenses on any job (e.g.
+// adding a custom expense on behalf of a contractor who lacks the
+// "Charge business expenses" privilege). Workers must be the claimer
+// AND have at least one expense-related privilege.
+const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
+                        if (!canManage) return null;
+                        const hasExpenses = (occ.expenses?.length ?? 0) > 0;
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => { e.stopPropagation(); setExpenseDialogOccId(occ.id); }}
+                          >
+                            {hasExpenses ? "Manage Expenses" : "Add Expense"}
+                          </Button>
+                        );
+                      })()}
                       {isClaimer && !isTaskOrReminder && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-unclaim"
