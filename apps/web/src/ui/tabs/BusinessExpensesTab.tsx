@@ -18,7 +18,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Download, Eye, Paperclip, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Download, Eye, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -817,6 +817,21 @@ export default function BusinessExpensesTab() {
                   <Box flex="1" minW={0}>
                     <HStack gap={2} wrap="wrap" mb={0.5}>
                       <Text fontSize="sm" fontWeight="semibold">{e.description}</Text>
+                      {e.recurrence && (
+                        <Badge
+                          size="sm"
+                          colorPalette="cyan"
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          title={`Repeats ${RECURRENCE_LABELS[e.recurrence].toLowerCase()}`}
+                        >
+                          <HStack gap="1" align="center">
+                            <Repeat size={12} />
+                            <Text as="span">{RECURRENCE_LABELS[e.recurrence]}</Text>
+                          </HStack>
+                        </Badge>
+                      )}
                       {e.category && (
                         <Badge
                           size="sm"

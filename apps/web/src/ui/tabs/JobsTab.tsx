@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -3095,11 +3095,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     return (
                       <HStack
                         px="3"
-                        py="1.5"
+                        py="1"
                         gap={2}
-                        minH="36px"
+                        minH="32px"
                         align="center"
-                        fontSize="sm"
+                        fontSize="xs"
                       >
                         {/* Quick action icon if one is available; otherwise
                             an invisible spacer so every row's text aligns
@@ -3137,6 +3137,25 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         ) : (
                           <Box flexShrink={0} w="18px" h="18px" />
                         )}
+                        {/* Instructions indicator — bold yellow alert-circle
+                            shown when this occurrence has one or more
+                            special instructions, so workers see at a glance
+                            that there's something to read before they start. */}
+                        {(((occ as any).instructions ?? []).length > 0) && (
+                          <Box
+                            flexShrink={0}
+                            display="inline-flex"
+                            alignItems="center"
+                            title={`${((occ as any).instructions as any[]).length} special instruction${((occ as any).instructions as any[]).length === 1 ? "" : "s"}`}
+                          >
+                            <AlertCircle
+                              size={16}
+                              color="var(--chakra-colors-yellow-900)"
+                              fill="var(--chakra-colors-yellow-400)"
+                              strokeWidth={2.5}
+                            />
+                          </Box>
+                        )}
                         <Text
                           flex="1"
                           minW={0}
@@ -3149,12 +3168,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {total != null && (
                           <Box
                             flexShrink={0}
-                            px="2"
+                            px="1.5"
                             py="0.5"
                             borderRadius="md"
                             bg="green.100"
                             color="green.800"
-                            fontSize="sm"
+                            fontSize="xs"
                             fontWeight="bold"
                             lineHeight="1.2"
                           >
@@ -3163,7 +3182,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         )}
                         <Text
                           flexShrink={0}
-                          fontSize="xs"
+                          fontSize="2xs"
                           color={isUnassigned ? "orange.600" : "fg.muted"}
                           maxW="140px"
                           truncate
@@ -5374,9 +5393,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       )}
                       {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                        <HStack key={inst.id} gap="1" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {inst.text}</Text>
-                          {inst.repeats && <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>}
+                        <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                          <AlertCircle
+                            size={18}
+                            color="var(--chakra-colors-yellow-900)"
+                            fill="var(--chakra-colors-yellow-400)"
+                            strokeWidth={2.5}
+                          />
+                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
+                          {inst.repeats && (
+                            <Box display="inline-flex" alignItems="center" title="Carries forward">
+                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                            </Box>
+                          )}
                         </HStack>
                       ))}
                     </Box>
@@ -5392,12 +5421,20 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
                         <VStack align="stretch" gap="0.5">
                           {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                            <HStack key={inst.id} gap="1">
+                            <HStack key={inst.id} gap="1.5" align="center">
+                              <AlertCircle
+                                size={18}
+                                color="var(--chakra-colors-yellow-900)"
+                                fill="var(--chakra-colors-yellow-400)"
+                                strokeWidth={2.5}
+                              />
                               <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                                📌 {inst.text}
+                                {inst.text}
                               </Text>
                               {inst.repeats && (
-                                <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>
+                                <Box display="inline-flex" alignItems="center" title="Carries forward">
+                                  <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                                </Box>
                               )}
                             </HStack>
                           ))}

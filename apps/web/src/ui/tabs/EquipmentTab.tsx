@@ -19,7 +19,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertTriangle, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -94,9 +94,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // Equipment Collections — kits the admin has defined. Workers see them at
   // the top of the tab as "Reserve kit" shortcuts; the action loops the
   // existing per-piece reserve() call.
-  type CollectionItem = { id: string; equipmentId: string; equipment: { id: string; shortDesc?: string | null; type?: string | null; status?: string | null; retiredAt?: string | null } };
+  type CollectionItem = { id: string; equipmentId: string; equipment: { id: string; shortDesc?: string | null; type?: string | null; brand?: string | null; model?: string | null; status?: string | null; retiredAt?: string | null } };
   type Collection = { id: string; name: string; description?: string | null; items: CollectionItem[] };
   const [collections, setCollections] = useState<Collection[]>([]);
+  // Per-card expansion state for collection cards. Click the chevron to reveal
+  // the description + member equipment list (matches what the Equipment
+  // Collections admin tab shows for each kit).
+  const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
   const [reservingKitId, setReservingKitId] = useState<string | null>(null);
   const [collectionsCollapsed, setCollectionsCollapsed] = usePersistedState<boolean>(`${pfx}_collectionsCollapsed`, false);
   const [highlightCollectionId, setHighlightCollectionId] = useState<string | null>(null);
@@ -223,6 +227,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         window.sessionStorage.removeItem("highlightCollectionId");
         setHighlightCollectionId(hl);
         setCollectionsCollapsed(false);
+        // Auto-expand the matching card so the worker sees the description and
+        // member equipment immediately after navigating from a job's suggestion.
+        setExpandedCollections((prev) => {
+          const next = new Set(prev);
+          next.add(hl);
+          return next;
+        });
         setTimeout(() => setHighlightCollectionId(null), 2500);
       }
     } catch {}
@@ -1188,6 +1199,14 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 }).length;
                 const allAvail = total > 0 && available === total;
                 const someAvail = available > 0;
+                const isExpanded = expandedCollections.has(c.id);
+                const equipLabel = (eq: CollectionItem["equipment"]): string => {
+                  if (eq.shortDesc) return eq.shortDesc;
+                  const parts = [eq.brand, eq.model].filter(Boolean);
+                  if (parts.length > 0) return parts.join(" ");
+                  if (eq.type) return eq.type;
+                  return eq.id.slice(-6);
+                };
                 return (
                   <Card.Root
                     key={c.id}
@@ -1226,8 +1245,69 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                               Reserve{available > 0 && available < total ? ` (${available})` : ""}
                             </Button>
                           )}
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            aria-label={isExpanded ? "Collapse details" : "Show details"}
+                            title={isExpanded ? "Hide details" : "Show description and equipment"}
+                            onClick={() => setExpandedCollections((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(c.id)) next.delete(c.id);
+                              else next.add(c.id);
+                              return next;
+                            })}
+                          >
+                            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </Button>
                         </HStack>
                       </HStack>
+                      {isExpanded && (
+                        <VStack align="stretch" gap={1.5} mt={2} pt={2} borderTopWidth="1px" borderColor="gray.200">
+                          {c.description ? (
+                            <Text fontSize="xs" color="fg.muted">{c.description}</Text>
+                          ) : (
+                            <Text fontSize="xs" color="fg.muted" fontStyle="italic">No description.</Text>
+                          )}
+                          {c.items.length > 0 ? (
+                            <HStack flexWrap="wrap" gap={1.5}>
+                              {c.items.map((it) => {
+                                const live = items.find((eq) => eq.id === it.equipmentId);
+                                const retired = !!live?.retiredAt || !!it.equipment.retiredAt;
+                                const liveStatus = live?.status ?? it.equipment.status;
+                                const palette = retired
+                                  ? "gray"
+                                  : liveStatus === "AVAILABLE"
+                                    ? "green"
+                                    : liveStatus === "CHECKED_OUT" || liveStatus === "RESERVED"
+                                      ? "yellow"
+                                      : "gray";
+                                return (
+                                  <Badge
+                                    key={it.id}
+                                    size="sm"
+                                    colorPalette={palette}
+                                    variant="subtle"
+                                    cursor="pointer"
+                                    title={`Show ${equipLabel(it.equipment)} on this tab`}
+                                    onClick={() => {
+                                      // Reuse the existing single-item highlight path. Clears any
+                                      // active collection filter so the card surfaces.
+                                      setCollectionFilter(null);
+                                      setHighlightId(it.equipmentId);
+                                      setEquipmentCollapsed(false);
+                                    }}
+                                  >
+                                    {equipLabel(it.equipment)}
+                                    {retired && " (retired)"}
+                                  </Badge>
+                                );
+                              })}
+                            </HStack>
+                          ) : (
+                            <Text fontSize="xs" color="fg.muted" fontStyle="italic">No equipment in this collection.</Text>
+                          )}
+                        </VStack>
+                      )}
                     </Card.Body>
                   </Card.Root>
                 );
@@ -1706,8 +1786,14 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               isCardCompact ? (
                 <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
                   {(e.instructions ?? []).map((inst) => (
-                    <HStack key={inst.id} gap="1" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {inst.text}</Text>
+                    <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                      <AlertCircle
+                        size={18}
+                        color="var(--chakra-colors-yellow-900)"
+                        fill="var(--chakra-colors-yellow-400)"
+                        strokeWidth={2.5}
+                      />
+                      <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
                     </HStack>
                   ))}
                 </Box>
@@ -1715,9 +1801,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 <Box mx="3" mb="2" mt="0" px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
                   <VStack align="stretch" gap="0.5">
                     {(e.instructions ?? []).map((inst) => (
-                      <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
-                        📌 {inst.text}
-                      </Text>
+                      <HStack key={inst.id} gap="1.5" align="center">
+                        <AlertCircle
+                          size={18}
+                          color="var(--chakra-colors-yellow-900)"
+                          fill="var(--chakra-colors-yellow-400)"
+                          strokeWidth={2.5}
+                        />
+                        <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
+                          {inst.text}
+                        </Text>
+                      </HStack>
                     ))}
                   </VStack>
                 </Box>

@@ -44,6 +44,9 @@ export interface RoutingProvider {
   /** Geocode multiple addresses */
   geocodeMany(addresses: string[]): Promise<(GeocodedAddress | null)[]>;
 
+  /** Convert coordinates to a street address (best-effort; null if no match) */
+  reverseGeocode?(coords: Coordinates): Promise<string | null>;
+
   /**
    * Given a list of coordinates, return the optimal visiting order.
    * If startCoords is provided, the route starts (and optionally ends) there.

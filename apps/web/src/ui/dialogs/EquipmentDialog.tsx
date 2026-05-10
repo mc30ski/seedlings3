@@ -15,6 +15,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
+import { AlertCircle } from "lucide-react";
 import { apiPost, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import {
@@ -429,9 +430,17 @@ export default function EquipmentDialog({
                         <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
                           <VStack align="stretch" gap="0.5">
                             {instructions.map((inst) => (
-                              <Text key={inst.id} fontSize="xs" fontWeight="semibold" color="yellow.700">
-                                📌 {inst.text}
-                              </Text>
+                              <HStack key={inst.id} gap="1.5" align="center">
+                                <AlertCircle
+                                  size={18}
+                                  color="var(--chakra-colors-yellow-900)"
+                                  fill="var(--chakra-colors-yellow-400)"
+                                  strokeWidth={2.5}
+                                />
+                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700">
+                                  {inst.text}
+                                </Text>
+                              </HStack>
                             ))}
                           </VStack>
                         </Box>

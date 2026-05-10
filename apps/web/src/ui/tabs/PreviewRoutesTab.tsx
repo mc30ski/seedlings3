@@ -69,6 +69,12 @@ type RoutingInfo = {
   totalDriveMiles: number;
 };
 
+type DataIssue = {
+  occurrenceId: string;
+  missingProperty: boolean;
+  missingAddress: boolean;
+};
+
 type Response = {
   suggestions: Suggestions | null;
   raw?: string;
@@ -77,6 +83,9 @@ type Response = {
   targetUser?: { id: string; displayName: string | null };
   routing?: RoutingInfo | null;
   routeError?: string | null;
+  startedFromCurrentLocation?: boolean;
+  currentLocationAddress?: string | null;
+  dataIssues?: DataIssue[];
 };
 
 function formatDuration(mins: number): string {
@@ -201,14 +210,47 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
     publishInlineMessage({ type: "SUCCESS", text: "Home base set for route planning." });
   }
 
+  // Start point for the optimized route. "home" uses the saved home base
+  // (round-trip). "current" geolocates the device when Analyze runs and uses
+  // those coords as the start (one-way — no return leg). Admin views can't
+  // pick "current" because the device location belongs to the operator, not
+  // the target worker.
+  const [startFrom, setStartFrom] = usePersistedState<"home" | "current">("preview_startFrom", "home");
+  const effectiveStartFrom = userId ? "home" : startFrom;
+
   async function loadSuggestions() {
     setLoading(true);
     setError(null);
     try {
+      let startParam = "";
+      if (effectiveStartFrom === "current") {
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+          publishInlineMessage({ type: "WARNING", text: "Geolocation isn't available in this browser." });
+          setLoading(false);
+          return;
+        }
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: false,
+              timeout: 10000,
+              maximumAge: 60000,
+            });
+          });
+          startParam = `&startLat=${pos.coords.latitude}&startLng=${pos.coords.longitude}`;
+        } catch (err: any) {
+          const msg = err?.code === 1
+            ? "Location permission denied. Allow location access or switch to Home base."
+            : err?.message || "Could not get your location.";
+          publishInlineMessage({ type: "WARNING", text: msg });
+          setLoading(false);
+          return;
+        }
+      }
       const userParam = userId ? `&userId=${userId}` : "";
       const params = `targetDate=${targetDate}&bufferPercent=${bufferPercent}&mode=${mode}&routingProvider=${routingProvider}` +
         (mode === "suggest" ? `&lookAhead=${lookAhead}&availableHours=${availableHours}` : "") +
-        userParam;
+        userParam + startParam;
       const res = await apiGet<Response>(`/api/preview/route-suggestions?${params}`);
       setData(res);
       saveCachedResults(res, userId);
@@ -373,6 +415,28 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             </Button>
           )}
         </HStack>
+        {!userId && (
+          <HStack gap={2} mt={2} align="center">
+            <Text fontSize="xs" fontWeight="medium" color="fg.muted">Start route from:</Text>
+            <Button
+              size="xs"
+              variant={effectiveStartFrom === "home" ? "solid" : "outline"}
+              colorPalette={effectiveStartFrom === "home" ? "blue" : "gray"}
+              onClick={() => setStartFrom("home")}
+            >
+              Home base
+            </Button>
+            <Button
+              size="xs"
+              variant={effectiveStartFrom === "current" ? "solid" : "outline"}
+              colorPalette={effectiveStartFrom === "current" ? "blue" : "gray"}
+              onClick={() => setStartFrom("current")}
+              title="Geolocate the device when Analyze runs and use those coords as the start (one-way, no return leg)"
+            >
+              My current location
+            </Button>
+          </HStack>
+        )}
       </Box>
 
       {/* Mode toggle */}
@@ -618,10 +682,37 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
             {data.routing && (
               <Badge size="sm" colorPalette="blue" variant="subtle" mt={2}>{data.routing.provider}</Badge>
             )}
+            {data.startedFromCurrentLocation && (
+              <Badge size="sm" colorPalette="purple" variant="subtle" mt={2} ml={2}>
+                {data.currentLocationAddress
+                  ? `Started from ${data.currentLocationAddress} · one-way`
+                  : "Started from current location · one-way"}
+              </Badge>
+            )}
             {data.routeError && (
               <Text fontSize="xs" color="orange.500" mt={2}>Route optimization note: {data.routeError}</Text>
             )}
           </Box>
+
+          {/* Missing-data warning — jobs without an address can't be geocoded
+              for distance optimization, and show as "Unknown / No address" in
+              the route until their property record is filled in. */}
+          {data.dataIssues && data.dataIssues.length > 0 && (() => {
+            const noAddr = data.dataIssues.filter((i) => i.missingAddress).length;
+            const noName = data.dataIssues.filter((i) => i.missingProperty && !i.missingAddress).length;
+            return (
+              <Box p={3} bg="yellow.50" rounded="md" borderWidth="1px" borderColor="yellow.300">
+                <Text fontSize="sm" fontWeight="medium" color="yellow.700">
+                  {data.dataIssues.length} job{data.dataIssues.length !== 1 ? "s" : ""} can't be fully optimized — missing property data
+                </Text>
+                <Text fontSize="xs" color="yellow.700" mt={1}>
+                  {noAddr > 0 && <>{noAddr} without an address (skipped from distance optimization). </>}
+                  {noName > 0 && <>{noName} without a property name. </>}
+                  Open the property in Clients/Properties and fill in {noAddr > 0 ? "street/city/state" : "displayName"} so the route can include real driving distances.
+                </Text>
+              </Box>
+            );
+          })()}
 
           {/* Date change warning */}
           {dateChangeCount > 0 && (

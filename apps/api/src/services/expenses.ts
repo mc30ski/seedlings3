@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
+import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
 import type { ServicesExpenses, ExpenseInput, ExpensePatchInput } from "../types/services";
 
@@ -41,7 +42,7 @@ function normalizeCategory(raw: string | null | undefined): string {
 
 function resolveDate(raw: string | null | undefined): Date {
   if (!raw) return new Date();
-  const d = new Date(raw);
+  const d = parseUserDate(raw);
   if (isNaN(d.getTime())) throw new ServiceError("INVALID_DATE", "Invalid date.", 400);
   return d;
 }

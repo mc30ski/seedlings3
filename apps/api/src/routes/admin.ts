@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { prisma } from "../db/prisma";
 import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
-import { etMidnight, etEndOfDay } from "../lib/dates";
+import { etMidnight, etEndOfDay, parseUserDate } from "../lib/dates";
 import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { Role as RoleVal } from "@prisma/client";
@@ -3194,7 +3194,7 @@ Respond ONLY with valid JSON in this exact format:
         createdById: uid,
         description: String(b.description).trim(),
         cost: Number(b.cost),
-        date: new Date(String(b.date)),
+        date: parseUserDate(String(b.date)),
         category: trimmedCategory,
         vendor: b.vendor ? String(b.vendor).trim() : null,
         invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
@@ -3211,7 +3211,7 @@ Respond ONLY with valid JSON in this exact format:
     const data: any = {};
     if ("description" in b) data.description = String(b.description ?? "").trim();
     if ("cost" in b) data.cost = Number(b.cost);
-    if ("date" in b) data.date = b.date ? new Date(String(b.date)) : null;
+    if ("date" in b) data.date = b.date ? parseUserDate(String(b.date)) : null;
     if ("category" in b) {
       const trimmedCategory = b.category ? String(b.category).trim() : null;
       if (trimmedCategory && !SCHEDULE_C_CATEGORIES.has(trimmedCategory)) {
