@@ -197,8 +197,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const pfx = purpose === "ADMIN" ? "ajobs" : "wjobs";
 
   const [q, setQ] = useState("");
-  const [compact, setCompact] = usePersistedState(`${pfx}_compact`, true);
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  // Card density: three levels.
+  //   ultra  — single-row scan view, ~32px tall
+  //   semi   — compact card (default)
+  //   expanded — full detail view
+  // The global density (`cardDensity`) sets the default for every card.
+  // `cardOverrides` is a per-card override Map — clicking a card cycles
+  // its mode (ultra → semi → expanded → ultra…) independently of the
+  // global setting. Switching the global density clears all overrides.
+  type CardDensity = "ultra" | "semi" | "expanded";
+  const [cardDensity, setCardDensity] = usePersistedState<CardDensity>(`${pfx}_density`, "semi");
+  // Backward-compat shim: a few legacy spots still read `compact`. Treat
+  // anything but "expanded" as compact for those checks.
+  const compact = cardDensity !== "expanded";
+
+  // Cycle order matches the segmented toggle (left→right): ultra → semi
+  // → expanded → ultra. Used by per-card click handlers.
+  const CARD_DENSITY_CYCLE: CardDensity[] = ["ultra", "semi", "expanded"];
+  const nextDensity = (m: CardDensity): CardDensity => {
+    const i = CARD_DENSITY_CYCLE.indexOf(m);
+    return CARD_DENSITY_CYCLE[(i + 1) % CARD_DENSITY_CYCLE.length];
+  };
+  const [cardOverrides, setCardOverrides] = useState<Map<string, CardDensity>>(new Map());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [kind, setKind] = usePersistedState<string[]>(`${pfx}_kind`, ["ALL"]);
@@ -537,7 +557,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         const occId = sepIdx >= 0 ? entityId.slice(0, sepIdx) : entityId;
         const startAt = sepIdx >= 0 ? entityId.slice(sepIdx + 1) : "";
         setHighlightOccId(occId);
-        setExpandedCards(new Set([occId]));
+        setCardOverrides(new Map([[occId, "expanded"]]));
         setQ("");
         setDatePreset(null);
         // Set a 7-day window around the occurrence date
@@ -575,7 +595,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       const occId = sepIdx >= 0 ? entityId.slice(0, sepIdx) : entityId;
       const startAt = sepIdx >= 0 ? entityId.slice(sepIdx + 1) : "";
       setHighlightOccId(occId);
-      setExpandedCards(new Set([occId]));
+      setCardOverrides(new Map([[occId, "expanded"]]));
       setFilterJobId(null);
       setQ("");
       setOverdueActive(false);
@@ -1159,7 +1179,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // to a wide range so includeOccId can still locate the row.
   function applyHighlight(occId: string, anchorAt?: string | null) {
     setHighlightOccId(occId);
-    setExpandedCards(new Set([occId]));
+    setCardOverrides(new Map([[occId, "expanded"]]));
     setFilterJobId(null);
     setQ("");
     setOverdueActive(false);
@@ -1713,33 +1733,42 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
 
   return (
     <Box w="full">
-      {/* Admin "View as" worker selector — always visible above the search/filter
-          toolbar. Worker mode doesn't pass headerSlot so this row collapses. */}
-      {headerSlot && (
-        <HStack mb={2} gap={2} wrap="nowrap" pl="1">
-          {headerSlot}
-        </HStack>
-      )}
       <HStack mb={2} gap={2} wrap="nowrap">
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)", border: "1px solid var(--chakra-colors-gray-300)", borderRadius: "6px" }}>
           <RefreshCw size={14} />
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          px="2"
-          flexShrink={0}
-          onClick={() => { setCompact((v) => !v); setExpandedCards(new Set()); }}
-          css={{
-            background: !compact ? "var(--chakra-colors-gray-200)" : "var(--chakra-colors-gray-100)",
-            color: !compact ? "var(--chakra-colors-gray-700)" : undefined,
-            border: "1px solid var(--chakra-colors-gray-300)",
-            borderRadius: "6px",
-          }}
-          title={compact ? "Expand all cards" : "Collapse all cards"}
-        >
-          <Maximize2 size={14} />
-        </Button>
+        {/* Density cycle button — icon reflects current density; clicking
+            advances to the next (ultra → semi → expanded → ultra) and
+            clears all per-card overrides. */}
+        {(() => {
+          const meta: Record<CardDensity, { icon: React.ReactNode; label: string }> = {
+            ultra: { icon: <List size={14} />, label: "Ultra-compact" },
+            semi: { icon: <LayoutList size={14} />, label: "Semi-compact" },
+            expanded: { icon: <Maximize2 size={14} />, label: "Expanded" },
+          };
+          const next = nextDensity(cardDensity);
+          return (
+            <Button
+              size="sm"
+              variant="ghost"
+              px="2"
+              flexShrink={0}
+              onClick={() => {
+                setCardDensity(next);
+                setCardOverrides(new Map());
+              }}
+              css={{
+                background: "var(--chakra-colors-gray-100)",
+                color: "var(--chakra-colors-gray-700)",
+                border: "1px solid var(--chakra-colors-gray-300)",
+                borderRadius: "6px",
+              }}
+              title={`${meta[cardDensity].label} — click for ${meta[next].label.toLowerCase()}`}
+            >
+              {meta[cardDensity].icon}
+            </Button>
+          );
+        })()}
         <SearchWithClear
           value={q}
           onChange={(v) => setQ(v)}
@@ -1874,6 +1903,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           )}
         </Box>
       </HStack>
+      {/* Admin "View as" worker selector — sits below the filter toolbar.
+          Worker mode doesn't pass headerSlot, so this row collapses. */}
+      {headerSlot && (
+        <HStack mb={2} gap={2} wrap="nowrap" pl="1" align="center">
+          {headerSlot}
+        </HStack>
+      )}
       {!filtersOpen && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
           <Box position="relative" onClick={(e: any) => e.stopPropagation()}>
@@ -2608,7 +2644,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         colorPalette="purple"
                         onClick={() => {
                           setHighlightOccId(occ.id);
-                          setExpandedCards(new Set([occ.id]));
+                          setCardOverrides(new Map([[occ.id, "expanded"]]));
                           setFilterJobId(null);
                           setQ("");
                           if (occ.startAt) {
@@ -2675,7 +2711,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         colorPalette={ghostColor}
                         onClick={() => {
                           setHighlightOccId(occ.id);
-                          setExpandedCards(new Set([occ.id]));
+                          setCardOverrides(new Map([[occ.id, "expanded"]]));
                           setFilterJobId(null);
                           setQ("");
                         }}
@@ -2756,15 +2792,247 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToOthers ? "gray.700"
               : "gray.700";
 
-            const isCardCompact = compact && !expandedCards.has(occ.id);
-            const toggleCard = compact
-              ? () => setExpandedCards((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(occ.id)) next.delete(occ.id);
-                  else next.add(occ.id);
-                  return next;
-                })
-              : undefined;
+            // Per-card density: explicit per-card override (cardOverrides)
+            // wins; otherwise the global cardDensity. `isCardCompact` keeps
+            // the existing meaning ("anything but expanded") for the dozens
+            // of legacy checks below; cardMode is the precise three-state
+            // value used by the ultra branch.
+            const cardMode: CardDensity = cardOverrides.get(occ.id) ?? cardDensity;
+            const isCardCompact = cardMode !== "expanded";
+            // Click cycles this card's mode through ultra → semi → expanded
+            // → ultra, independent of the global density. Sets an override
+            // on the Map so the cycle persists until the global density
+            // changes (which clears all overrides).
+            const toggleCard = () => {
+              setCardOverrides((prev) => {
+                const next = new Map(prev);
+                next.set(occ.id, nextDensity(cardMode));
+                return next;
+              });
+            };
+
+            // Context-dependent quick-action button (Confirm Client / Start /
+            // Pause-Complete menu / Resume / Accept Payment / Claim / etc.)
+            // Renders the same circular button used in the semi-card header,
+            // and the ultra row reuses it in place of the status dot.
+            const quickActionButton = (!isTrainee && !isTentative) ? (() => {
+              if (needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
+                    e.stopPropagation();
+                    setConfirmAction({
+                      title: "Confirm Client?",
+                      message: "Have you confirmed with the client that this job is good to go?",
+                      confirmLabel: "Yes, Confirmed",
+                      colorPalette: "orange",
+                      onConfirm: async () => {
+                        setBusyOccId(occ.id);
+                        try {
+                          await apiPost(`/api/occurrences/${occ.id}/confirm`);
+                          setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+                          publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+                        } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) }); }
+                        setBusyOccId(null);
+                      },
+                    });
+                  }}><CheckCircle2 size={12} /></Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
+                    e.stopPropagation();
+                    if (isOffline) {
+                      void (async () => {
+                        await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+                        setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+                        publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+                      })();
+                      return;
+                    }
+                    const now = new Date();
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+                    setStartJobOcc(occ);
+                  }}><Play size={12} /></Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || (forAdmin && (isAdmin || isSuper))) && !isEstimateOcc) {
+                return (
+                  <Box position="relative" flexShrink={0}>
+                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
+                      e.stopPropagation();
+                      setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
+                    }}><CheckCircle2 size={12} /></Box>
+                    {quickActionMenuOcc === occ.id && (
+                      <VStack
+                        position="fixed"
+                        bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="120px"
+                        onClick={(e: any) => e.stopPropagation()}
+                        ref={(el: HTMLDivElement | null) => {
+                          if (el && el.parentElement) {
+                            const rect = el.parentElement.getBoundingClientRect();
+                            el.style.top = `${rect.bottom + 4}px`;
+                            el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+                          }
+                        }}
+                      >
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); void pauseJob(occ); }}>
+                          <Pause size={12} /> Pause
+                        </Button>
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
+                          <CheckCircle2 size={12} /> Complete
+                        </Button>
+                      </VStack>
+                    )}
+                  </Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
+                    e.stopPropagation();
+                    setConfirmAction({
+                      title: "Complete Estimate?",
+                      message: "Add any comments about this estimate (optional):",
+                      confirmLabel: "Complete",
+                      colorPalette: "purple",
+                      inputLabel: "Comments",
+                      inputPlaceholder: "Notes about this estimate...",
+                      inputOptional: true,
+                      inputDefaultValue: occ.proposalNotes ?? "",
+                      amountLabel: "Proposal Amount ($) — optional",
+                      amountPlaceholder: "0.00",
+                      amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
+                      onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
+                    });
+                  }}><CheckCircle2 size={12} /></Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box position="relative" flexShrink={0}>
+                    <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
+                      e.stopPropagation();
+                      setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
+                    }}><CheckCircle2 size={12} /></Box>
+                    {quickActionMenuOcc === occ.id && (
+                      <VStack
+                        position="fixed"
+                        bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
+                        onClick={(e: any) => e.stopPropagation()}
+                        ref={(el: HTMLDivElement | null) => {
+                          if (el && el.parentElement) {
+                            const rect = el.parentElement.getBoundingClientRect();
+                            el.style.top = `${rect.bottom + 4}px`;
+                            el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+                          }
+                        }}
+                      >
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
+                          setQuickActionMenuOcc(null);
+                          setConfirmAction({
+                            title: "Accept Estimate?",
+                            message: "Add a comment:",
+                            confirmLabel: "Accept",
+                            colorPalette: "green",
+                            inputPlaceholder: "Comment...",
+                            inputLabel: "Comment",
+                            onConfirm: async (comment: string) => {
+                              try {
+                                const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
+                                await load(false);
+                                if (!result.jobId) {
+                                  setPendingEstimateConvert({
+                                    occurrenceId: occ.id,
+                                    contactName: occ.contactName,
+                                    contactPhone: occ.contactPhone,
+                                    contactEmail: occ.contactEmail,
+                                    estimateAddress: occ.estimateAddress,
+                                    proposalAmount: occ.proposalAmount,
+                                    proposalNotes: occ.proposalNotes,
+                                    title: occ.title,
+                                    estimatedMinutes: occ.estimatedMinutes,
+                                  });
+                                } else if (result.jobId) {
+                                  const rawTags = result.occurrence?.jobTags;
+                                  setPromptOccDefaults({
+                                    notes: result.occurrence?.notes ?? null,
+                                    price: result.occurrence?.price ?? null,
+                                    estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
+                                    jobTags: rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return null; } })()) : null,
+                                    jobType: result.occurrence?.jobType ?? null,
+                                  });
+                                  setPromptOccJobId(result.jobId);
+                                }
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
+                              }
+                            },
+                          });
+                        }}>
+                          <CheckCircle2 size={12} /> Accept
+                        </Button>
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
+                          setQuickActionMenuOcc(null);
+                          setConfirmAction({
+                            title: "Reject Estimate?",
+                            message: "Add a reason:",
+                            confirmLabel: "Reject",
+                            colorPalette: "red",
+                            inputPlaceholder: "Reason...",
+                            inputLabel: "Reason",
+                            onConfirm: async (reason: string) => {
+                              try {
+                                await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
+                                publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
+                                await load(false);
+                              } catch (err: any) {
+                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
+                              }
+                            },
+                          });
+                        }}>
+                          <X size={12} /> Reject
+                        </Button>
+                      </VStack>
+                    )}
+                  </Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
+                    e.stopPropagation();
+                    void resumeJob(occ);
+                  }}><Play size={12} /></Box>
+                );
+              }
+              if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept Payment" onClick={(e: any) => {
+                    e.stopPropagation();
+                    setAcceptPaymentOcc(occ);
+                    setAcceptPaymentOpen(true);
+                  }}><CircleDollarSign size={12} /></Box>
+                );
+              }
+              if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
+                const isContractor = me?.workerType === "CONTRACTOR";
+                const jobDate = occ.startAt ? new Date(occ.startAt) : null;
+                const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                const contractorBlocked = isContractor && daysAhead > 2;
+                if (contractorBlocked || isTrainee) return null;
+                return (
+                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
+                    e.stopPropagation();
+                    void claim(occ.id);
+                  }}><Hand size={12} /></Box>
+                );
+              }
+              return null;
+            })() : null;
 
             return (
               <Card.Root
@@ -2776,7 +3044,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 position="relative"
                 css={{
-                  ...(compact ? { cursor: "pointer", "& a, & button": { pointerEvents: "auto" } } : {}),
+                  // Cards are always clickable now (click cycles density).
+                  cursor: "pointer",
+                  "& a, & button": { pointerEvents: "auto" },
                   ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
                 onClick={(e: any) => {
@@ -2792,6 +3062,119 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     <Spinner size="sm" />
                   </Box>
                 )}
+                {cardMode === "ultra" ? (
+                  /* ── ULTRA: single-row scan layout. Click anywhere on the
+                       row (other than the action menu) to expand into the
+                       full card. Status dot + property + claimer + date. */
+                  (() => {
+                    const propertyName = occ.job?.property?.displayName ?? null;
+                    const clientName = occ.job?.property?.client?.displayName ?? null;
+                    const titleText = propertyName
+                      ? `${propertyName}${clientName ? ` — ${clientName}` : ""}`
+                      : (occ.title ?? "(untitled)");
+                    // Show the active lead's name regardless of how they got
+                    // assigned. "Lead" = the claimer (self-assigned) if there
+                    // is one, else just the first active assignee. Always a
+                    // name — the previous "1 assigned" fallback was missing
+                    // info that's right there on the row.
+                    const activeAssignees = assignees.filter((a: any) => a.role !== "observer");
+                    const lead = activeAssignees.find((a: any) => a.assignedById === a.userId) ?? activeAssignees[0];
+                    const others = Math.max(0, activeAssignees.length - 1);
+                    const assigneeText = !lead
+                      ? "Unassigned"
+                      : `${lead.user?.displayName ?? lead.user?.email ?? ""}${others > 0 ? ` +${others}` : ""}`;
+                    // Date/time intentionally omitted: the surrounding group
+                    // header already shows the date (via fmtDateWeekday) and
+                    // no other per-card view in this tab carries a time.
+                    // Event-specific start times stay in the semi/expanded
+                    // body where they exist today.
+                    // Job total — price + addons (or proposalAmount). Same
+                    // helper the semi/expanded card uses, so the number
+                    // shown here matches what they see when they expand.
+                    const total = totalPrice(occ);
+                    return (
+                      <HStack
+                        px="3"
+                        py="1.5"
+                        gap={2}
+                        minH="36px"
+                        align="center"
+                        fontSize="sm"
+                      >
+                        {/* Quick action icon if one is available; otherwise
+                            an invisible spacer so every row's text aligns
+                            at the same x-coordinate. The CSS overrides
+                            shrink the (22px in semi) action button down to
+                            18px specifically in the ultra row.
+                            Selectors target the action button at depth 1
+                            (direct) and depth 2 (wrapped in a position:
+                            relative div for menu positioning, e.g. the
+                            IN_PROGRESS Pause/Complete and Estimate
+                            Accept/Reject buttons). The wrapper's menu items
+                            are at depth 3 and stay full-size. */}
+                        {quickActionButton ? (
+                          <Box
+                            flexShrink={0}
+                            w="18px"
+                            h="18px"
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            css={{
+                              "& > button, & > div > button": {
+                                width: "18px !important",
+                                minWidth: "18px !important",
+                                height: "18px !important",
+                              },
+                              "& > button svg, & > div > button svg": {
+                                width: "10px",
+                                height: "10px",
+                              },
+                            }}
+                          >
+                            {quickActionButton}
+                          </Box>
+                        ) : (
+                          <Box flexShrink={0} w="18px" h="18px" />
+                        )}
+                        <Text
+                          flex="1"
+                          minW={0}
+                          truncate
+                          color="fg"
+                          fontWeight={isHighPriority ? "semibold" : "normal"}
+                        >
+                          {titleText}
+                        </Text>
+                        {total != null && (
+                          <Box
+                            flexShrink={0}
+                            px="2"
+                            py="0.5"
+                            borderRadius="md"
+                            bg="green.100"
+                            color="green.800"
+                            fontSize="sm"
+                            fontWeight="bold"
+                            lineHeight="1.2"
+                          >
+                            ${Math.round(total).toLocaleString()}
+                          </Box>
+                        )}
+                        <Text
+                          flexShrink={0}
+                          fontSize="xs"
+                          color={isUnassigned ? "orange.600" : "fg.muted"}
+                          maxW="140px"
+                          truncate
+                        >
+                          {assigneeText}
+                        </Text>
+                      </HStack>
+                    );
+                  })()
+                ) : (
+                <>
                 {/* Client confirmation banner — expanded cards only, above title */}
                 {!isCardCompact && needsConfirmation && (
                   <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
@@ -2827,226 +3210,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection="column" gap={1}>
                       <HStack gap={1} justifyContent="space-between" alignItems="center">
-                        {/* Quick action icon */}
-                        {!isTrainee && !isTentative && (() => {
-                          if (needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
-                                e.stopPropagation();
-                                setConfirmAction({
-                                  title: "Confirm Client?",
-                                  message: "Have you confirmed with the client that this job is good to go?",
-                                  confirmLabel: "Yes, Confirmed",
-                                  colorPalette: "orange",
-                                  onConfirm: async () => {
-                                    setBusyOccId(occ.id);
-                                    try {
-                                      await apiPost(`/api/occurrences/${occ.id}/confirm`);
-                                      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
-                                      publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
-                                    } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) }); }
-                                    setBusyOccId(null);
-                                  },
-                                });
-                              }}><CheckCircle2 size={12} /></Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
-                                e.stopPropagation();
-                                if (isOffline) {
-                                  void (async () => {
-                                    await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
-                                    setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
-                                    publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
-                                  })();
-                                  return;
-                                }
-                                const now = new Date();
-                                const pad = (n: number) => String(n).padStart(2, "0");
-                                setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
-                                setStartJobOcc(occ);
-                              }}><Play size={12} /></Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || (forAdmin && (isAdmin || isSuper))) && !isEstimateOcc) {
-                            return (
-                              <Box position="relative" flexShrink={0}>
-                                <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
-                                  e.stopPropagation();
-                                  setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
-                                }}><CheckCircle2 size={12} /></Box>
-                                {quickActionMenuOcc === occ.id && (
-                                  <VStack
-                                    position="fixed"
-                                    bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="120px"
-                                    onClick={(e: any) => e.stopPropagation()}
-                                    ref={(el: HTMLDivElement | null) => {
-                                      if (el && el.parentElement) {
-                                        const rect = el.parentElement.getBoundingClientRect();
-                                        el.style.top = `${rect.bottom + 4}px`;
-                                        const right = window.innerWidth - rect.right;
-                                        el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
-                                      }
-                                    }}
-                                  >
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); void pauseJob(occ); }}>
-                                      <Pause size={12} /> Pause
-                                    </Button>
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
-                                      <CheckCircle2 size={12} /> Complete
-                                    </Button>
-                                  </VStack>
-                                )}
-                              </Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
-                                e.stopPropagation();
-                                setConfirmAction({
-                                  title: "Complete Estimate?",
-                                  message: "Add any comments about this estimate (optional):",
-                                  confirmLabel: "Complete",
-                                  colorPalette: "purple",
-                                  inputLabel: "Comments",
-                                  inputPlaceholder: "Notes about this estimate...",
-                                  inputOptional: true,
-                                  inputDefaultValue: occ.proposalNotes ?? "",
-                                  amountLabel: "Proposal Amount ($) — optional",
-                                  amountPlaceholder: "0.00",
-                                  amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
-                                  onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
-                                });
-                              }}><CheckCircle2 size={12} /></Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box position="relative" flexShrink={0}>
-                                <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
-                                  e.stopPropagation();
-                                  setQuickActionMenuOcc((prev) => prev === occ.id ? null : occ.id);
-                                }}><CheckCircle2 size={12} /></Box>
-                                {quickActionMenuOcc === occ.id && (
-                                  <VStack
-                                    position="fixed"
-                                    bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px"
-                                    onClick={(e: any) => e.stopPropagation()}
-                                    ref={(el: HTMLDivElement | null) => {
-                                      if (el && el.parentElement) {
-                                        const rect = el.parentElement.getBoundingClientRect();
-                                        el.style.top = `${rect.bottom + 4}px`;
-                                        el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
-                                      }
-                                    }}
-                                  >
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
-                                      setQuickActionMenuOcc(null);
-                                      setConfirmAction({
-                                        title: "Accept Estimate?",
-                                        message: "Add a comment:",
-                                        confirmLabel: "Accept",
-                                        colorPalette: "green",
-                                        inputPlaceholder: "Comment...",
-                                        inputLabel: "Comment",
-                                        onConfirm: async (comment: string) => {
-                                          try {
-                                            const result = await apiPost<{ accepted: boolean; jobId: string; occurrence: any }>(`/api/occurrences/${occ.id}/accept-estimate`, { comment: comment || undefined });
-                                            publishInlineMessage({ type: "SUCCESS", text: "Estimate accepted." });
-                                            await load(false);
-                                            if (!result.jobId) {
-                                              setPendingEstimateConvert({
-                                                occurrenceId: occ.id,
-                                                contactName: occ.contactName,
-                                                contactPhone: occ.contactPhone,
-                                                contactEmail: occ.contactEmail,
-                                                estimateAddress: occ.estimateAddress,
-                                                proposalAmount: occ.proposalAmount,
-                                                proposalNotes: occ.proposalNotes,
-                                                title: occ.title,
-                                                estimatedMinutes: occ.estimatedMinutes,
-                                              });
-                                            } else if (result.jobId) {
-                                              const rawTags = result.occurrence?.jobTags;
-                                              setPromptOccDefaults({
-                                                notes: result.occurrence?.notes ?? null,
-                                                price: result.occurrence?.price ?? null,
-                                                estimatedMinutes: result.occurrence?.estimatedMinutes ?? null,
-                                                jobTags: rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return null; } })()) : null,
-                                                jobType: result.occurrence?.jobType ?? null,
-                                              });
-                                              setPromptOccJobId(result.jobId);
-                                            }
-                                          } catch (err: any) {
-                                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Accept failed.", err) });
-                                          }
-                                        },
-                                      });
-                                    }}>
-                                      <CheckCircle2 size={12} /> Accept
-                                    </Button>
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => {
-                                      setQuickActionMenuOcc(null);
-                                      setConfirmAction({
-                                        title: "Reject Estimate?",
-                                        message: "Add a reason:",
-                                        confirmLabel: "Reject",
-                                        colorPalette: "red",
-                                        inputPlaceholder: "Reason...",
-                                        inputLabel: "Reason",
-                                        onConfirm: async (reason: string) => {
-                                          try {
-                                            await apiPost(`/api/occurrences/${occ.id}/reject-estimate`, { reason: reason || undefined });
-                                            publishInlineMessage({ type: "SUCCESS", text: "Estimate rejected." });
-                                            await load(false);
-                                          } catch (err: any) {
-                                            publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reject failed.", err) });
-                                          }
-                                        },
-                                      });
-                                    }}>
-                                      <X size={12} /> Reject
-                                    </Button>
-                                  </VStack>
-                                )}
-                              </Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
-                                e.stopPropagation();
-                                void resumeJob(occ);
-                              }}><Play size={12} /></Box>
-                            );
-                          }
-                          if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept Payment" onClick={(e: any) => {
-                                e.stopPropagation();
-                                setAcceptPaymentOcc(occ);
-                                setAcceptPaymentOpen(true);
-                              }}><CircleDollarSign size={12} /></Box>
-                            );
-                          }
-                          if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
-                            const isContractor = me?.workerType === "CONTRACTOR";
-                            const jobDate = occ.startAt ? new Date(occ.startAt) : null;
-                            const daysAhead = jobDate ? Math.ceil((jobDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 0;
-                            const contractorBlocked = isContractor && daysAhead > 2;
-                            if (contractorBlocked || isTrainee) return null;
-                            return (
-                              <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="yellow.400" color="yellow.900" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "yellow.500" }} title="Claim" onClick={(e: any) => {
-                                e.stopPropagation();
-                                void claim(occ.id);
-                              }}><Hand size={12} /></Box>
-                            );
-                          }
-                          return null;
-                        })()}
+                        {/* Quick action icon — extracted to quickActionButton above */}
+                        {quickActionButton}
                         {likedIds.has(occ.id) && (
                           <Box flexShrink={0} display="flex" alignItems="center" title="Liked">
                             <Heart size={14} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
@@ -3434,7 +3599,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     e.stopPropagation();
                                     const lo = occ.linkedOccurrence!;
                                     setHighlightOccId(lo.id);
-                                    setExpandedCards(new Set([lo.id]));
+                                    setCardOverrides(new Map([[lo.id, "expanded"]]));
                                     setFilterJobId(null);
                                     setQ("");
                                     // Ensure date range includes the linked occurrence
@@ -3711,7 +3876,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           color={commentBadgeColor}
                           onClick={(e: any) => {
                             e.stopPropagation();
-                            if (isCardCompact) setExpandedCards((prev) => { const next = new Set(prev); next.add(occ.id); return next; });
+                            if (isCardCompact) setCardOverrides((prev) => { const next = new Map(prev); next.set(occ.id, "expanded"); return next; });
                             setCommentsOpenFor((prev) => { const next = new Set(prev); next.add(occ.id); if (!commentsCache[occ.id]) void loadComments(occ.id); return next; });
                             setTimeout(() => {
                               const el = document.querySelector(`[data-comments="${occ.id}"]`);
@@ -4336,7 +4501,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   setHighlightOccId(null);
                                   requestAnimationFrame(() => {
                                     setHighlightOccId(lo.id);
-                                    setExpandedCards(new Set([lo.id]));
+                                    setCardOverrides(new Map([[lo.id, "expanded"]]));
                                     setFilterJobId(null);
                                     setQ("");
                                   });
@@ -5240,6 +5405,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                   </>
+                )}
+                </>
                 )}
               </Card.Root>
             );
