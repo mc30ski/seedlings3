@@ -15,7 +15,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Filter, Info, RefreshCw, Shield, Tag, X } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { prettyStatus, equipmentStatusColor, fmtDate } from "@/src/lib/lib";
 import { Role } from "@/src/lib/types";
@@ -108,6 +108,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   // who am I? (used to hide actions for self)
   const [me, setMe] = useState<Me | null>(null);
   const [meReady, setMeReady] = useState(false); // prevents action button flash
+
+  // Collapsed-by-default Permissions section per user. Most admin tasks
+  // don't involve toggling these — keep the card compact unless drilled in.
+  const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
 
   // simple filters
   const [q, setQ] = useState("");
@@ -829,74 +833,88 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                   </Stack>
                 )}
 
-                {/* Permissions — one row per permission, with a switch on
-                    the right. Visible on every worker user (including admin/
-                    super) for a consistent layout; for admin/super the
-                    switches are forced ON + disabled with a "granted by
-                    role" hint, since their role implies both. */}
-                {isWorker && (
-                  <Box
-                    mt={3}
-                    pt={3}
-                    borderTopWidth="1px"
-                    borderColor="gray.200"
-                  >
-                    <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={2}>
-                      Permissions
-                    </Text>
-                    <VStack align="stretch" gap={2}>
-                      {[
-                        {
-                          key: "canPullInventory" as const,
-                          label: "Use company supplies",
-                          help: "Pull from already-purchased inventory on jobs they've claimed.",
-                        },
-                        {
-                          key: "canChargeBusinessExpenses" as const,
-                          label: "Charge business expenses",
-                          help: "Record new expenses paid on the company account (gas, parts, etc.).",
-                        },
-                      ].map((perm) => {
-                        const grantedByRole = isAdmin || isSuper;
-                        const effective = grantedByRole
-                          ? true
-                          : resolveEffective(u, perm.key);
-                        return (
-                          <HStack
-                            key={perm.key}
-                            justify="space-between"
-                            align="flex-start"
-                            gap={3}
-                          >
-                            <Box flex="1" minW={0}>
-                              <Text fontSize="sm" fontWeight="medium">
-                                {perm.label}
-                              </Text>
-                              <Text fontSize="xs" color="fg.muted">
-                                {grantedByRole
-                                  ? "Granted automatically by Admin/Super role."
-                                  : perm.help}
-                              </Text>
-                            </Box>
-                            <Switch.Root
-                              checked={effective}
-                              disabled={grantedByRole}
-                              onCheckedChange={(e) =>
-                                void setPrivilegeOverride(u.id, perm.key, e.checked)
-                              }
-                              colorPalette="green"
-                            >
-                              <Switch.HiddenInput />
-                              <Switch.Control>
-                                <Switch.Thumb />
-                              </Switch.Control>
-                            </Switch.Root>
-                          </HStack>
-                        );
-                      })}
-                    </VStack>
-                  </Box>
-                )}
+                {/* Permissions — collapsed by default. Header toggles open;
+                    body shows the same per-permission switches as before. */}
+                {isWorker && (() => {
+                  const open = permsOpen.has(u.id);
+                  return (
+                    <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
+                      <HStack
+                        gap={1}
+                        cursor="pointer"
+                        onClick={() => {
+                          setPermsOpen((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(u.id)) next.delete(u.id);
+                            else next.add(u.id);
+                            return next;
+                          });
+                        }}
+                        _hover={{ color: "fg" }}
+                        color="fg.muted"
+                        userSelect="none"
+                      >
+                        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        <Text fontSize="xs" fontWeight="medium">
+                          Permissions
+                        </Text>
+                      </HStack>
+                      {open && (
+                        <VStack align="stretch" gap={2} mt={2}>
+                          {[
+                            {
+                              key: "canPullInventory" as const,
+                              label: "Use company supplies",
+                              help: "Pull from already-purchased inventory on jobs they've claimed.",
+                            },
+                            {
+                              key: "canChargeBusinessExpenses" as const,
+                              label: "Charge business expenses",
+                              help: "Record new expenses paid on the company account (gas, parts, etc.).",
+                            },
+                          ].map((perm) => {
+                            const grantedByRole = isAdmin || isSuper;
+                            const effective = grantedByRole
+                              ? true
+                              : resolveEffective(u, perm.key);
+                            return (
+                              <HStack
+                                key={perm.key}
+                                justify="space-between"
+                                align="flex-start"
+                                gap={3}
+                              >
+                                <Box flex="1" minW={0}>
+                                  <Text fontSize="sm" fontWeight="medium">
+                                    {perm.label}
+                                  </Text>
+                                  <Text fontSize="xs" color="fg.muted">
+                                    {grantedByRole
+                                      ? "Granted automatically by Admin/Super role."
+                                      : perm.help}
+                                  </Text>
+                                </Box>
+                                <Switch.Root
+                                  checked={effective}
+                                  disabled={grantedByRole}
+                                  onCheckedChange={(e) =>
+                                    void setPrivilegeOverride(u.id, perm.key, e.checked)
+                                  }
+                                  colorPalette="green"
+                                >
+                                  <Switch.HiddenInput />
+                                  <Switch.Control>
+                                    <Switch.Thumb />
+                                  </Switch.Control>
+                                </Switch.Root>
+                              </HStack>
+                            );
+                          })}
+                        </VStack>
+                      )}
+                    </Box>
+                  );
+                })()}
               </VStack>
 
               {isConfirming && (

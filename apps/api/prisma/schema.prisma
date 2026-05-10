@@ -842,6 +842,17 @@ model BusinessExpense {
   receiptContentType   String?
   receiptUploadedAt    DateTime?
 
+  // Optional cadence flag for recurring expenses (e.g. monthly software
+  // subscriptions). Null = one-off. The most recent row in a group keyed
+  // by (description, vendor) drives "due to record" suggestions.
+  recurrence           ExpenseRecurrence?
+
+  // When set, the next-expected date for the series is computed from this
+  // date instead of `date + cadence`. Used by the "Skip" button on the Due
+  // to record panel: skipping the May invoice sets this to the May expected
+  // date, so the next suggestion is one cadence later.
+  recurrenceSkippedUntil DateTime?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1305,4 +1316,11 @@ enum SupplyHoldStatus {
   ACTIVE
   CONSUMED
   RELEASED
+}
+
+enum ExpenseRecurrence {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
 }

@@ -3067,7 +3067,15 @@ Respond ONLY with valid JSON in this exact format:
   // ── Business Expenses (super only) ──
 
   app.get("/admin/business-expenses", superGuard, async (req: any) => {
-    const q = (req.query || {}) as { from?: string; to?: string; category?: string; q?: string };
+    const q = (req.query || {}) as {
+      from?: string;
+      to?: string;
+      category?: string;
+      q?: string;
+      limit?: string;
+      offset?: string;
+      all?: string;
+    };
     const where: any = {};
     if (q.from || q.to) {
       where.date = {};
@@ -3087,36 +3095,57 @@ Respond ONLY with valid JSON in this exact format:
         { notes: { contains: term, mode: "insensitive" } },
       ];
     }
-    return prisma.businessExpense.findMany({
-      where,
-      orderBy: { date: "desc" },
-      include: {
-        createdBy: { select: { id: true, displayName: true, email: true } },
-        equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
-        occurrence: {
-          select: {
-            id: true,
-            startAt: true,
-            job: {
-              select: {
-                id: true,
-                property: {
-                  select: { id: true, displayName: true, client: { select: { displayName: true } } },
-                },
+
+    // Pagination — limit/offset, applied to the same `where` filter so the
+    // page is a slice of the filtered set. `all=true` bypasses the page cap;
+    // used by the CSV export so the file contains every matching row.
+    const all = q.all === "true";
+    const rawLimit = Number(q.limit ?? "20");
+    const rawOffset = Number(q.offset ?? "0");
+    // Hard ceiling so a malicious or buggy caller can't ask for the whole
+    // table when in paged mode. The export path uses `all=true` instead.
+    const limit = all ? undefined : Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 200);
+    const offset = all ? 0 : Math.max(0, isNaN(rawOffset) ? 0 : rawOffset);
+
+    const include = {
+      createdBy: { select: { id: true, displayName: true, email: true } },
+      equipment: { select: { id: true, shortDesc: true, brand: true, model: true, qrSlug: true } },
+      occurrence: {
+        select: {
+          id: true,
+          startAt: true,
+          job: {
+            select: {
+              id: true,
+              property: {
+                select: { id: true, displayName: true, client: { select: { displayName: true } } },
               },
             },
           },
         },
-        supplyPurchase: {
-          select: {
-            id: true,
-            quantity: true,
-            unitCost: true,
-            supply: { select: { id: true, name: true, unit: true } },
-          },
+      },
+      supplyPurchase: {
+        select: {
+          id: true,
+          quantity: true,
+          unitCost: true,
+          supply: { select: { id: true, name: true, unit: true } },
         },
       },
-    });
+    } as const;
+
+    const [rows, total] = await Promise.all([
+      prisma.businessExpense.findMany({
+        where,
+        orderBy: { date: "desc" },
+        include,
+        ...(limit !== undefined ? { take: limit } : {}),
+        ...(offset > 0 ? { skip: offset } : {}),
+      }),
+      prisma.businessExpense.count({ where }),
+    ]);
+
+    return { rows, total };
   });
 
   // Schedule C-aligned categories. Anything outside this list is rejected so
@@ -3156,6 +3185,10 @@ Respond ONLY with valid JSON in this exact format:
       const exists = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { id: true } });
       if (!exists) throw app.httpErrors.badRequest(`Equipment not found: ${equipmentId}`);
     }
+    const recurrence = b.recurrence ? String(b.recurrence).toUpperCase() : null;
+    if (recurrence && !["WEEKLY", "MONTHLY", "QUARTERLY", "ANNUALLY"].includes(recurrence)) {
+      throw app.httpErrors.badRequest("recurrence must be WEEKLY, MONTHLY, QUARTERLY, or ANNUALLY");
+    }
     return prisma.businessExpense.create({
       data: {
         createdById: uid,
@@ -3167,6 +3200,7 @@ Respond ONLY with valid JSON in this exact format:
         invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
         equipmentId,
+        recurrence: recurrence as any,
       },
     });
   });
@@ -3195,6 +3229,13 @@ Respond ONLY with valid JSON in this exact format:
         if (!exists) throw app.httpErrors.badRequest(`Equipment not found: ${equipmentId}`);
       }
       data.equipmentId = equipmentId;
+    }
+    if ("recurrence" in b) {
+      const r = b.recurrence ? String(b.recurrence).toUpperCase() : null;
+      if (r && !["WEEKLY", "MONTHLY", "QUARTERLY", "ANNUALLY"].includes(r)) {
+        throw app.httpErrors.badRequest("recurrence must be WEEKLY, MONTHLY, QUARTERLY, or ANNUALLY");
+      }
+      data.recurrence = r;
     }
 
     // If this BE is the tax-ledger pair of a job-level Expense, mirror
@@ -3392,6 +3433,123 @@ Respond ONLY with valid JSON in this exact format:
       byCategory: Object.fromEntries(Object.entries(byCategory).map(([k, v]) => [k, round(v)])),
       count: all.length,
     };
+  });
+
+  // Recurring-expense suggestions. Groups freestanding (non-job, non-supply)
+  // BEs flagged with a recurrence by (description, vendor); for each group
+  // the most recent row drives the next-expected date. Anything overdue or
+  // due within the lead-window appears as a suggestion to record.
+  app.get("/admin/business-expenses/due-soon", superGuard, async (_req: any) => {
+    // Same-day-of-month math with end-of-month clamping (Jan 31 + 1mo → Feb 28).
+    function nextDate(d: Date, cadence: string): Date {
+      const out = new Date(d);
+      if (cadence === "WEEKLY") {
+        out.setDate(out.getDate() + 7);
+        return out;
+      }
+      const day = out.getDate();
+      out.setDate(1);
+      if (cadence === "MONTHLY") out.setMonth(out.getMonth() + 1);
+      else if (cadence === "QUARTERLY") out.setMonth(out.getMonth() + 3);
+      else if (cadence === "ANNUALLY") out.setFullYear(out.getFullYear() + 1);
+      const lastDay = new Date(out.getFullYear(), out.getMonth() + 1, 0).getDate();
+      out.setDate(Math.min(day, lastDay));
+      return out;
+    }
+
+    const LEAD_DAYS = 7; // suggest 0–7 days before the expected next date
+    const now = new Date();
+    const horizon = new Date(now); horizon.setDate(horizon.getDate() + LEAD_DAYS);
+
+    // Pull all flagged rows. Exclude BEs paired with a job-Expense or
+    // SupplyPurchase — those are event-driven, not calendar-driven.
+    const rows = await prisma.businessExpense.findMany({
+      where: {
+        recurrence: { not: null },
+        occurrenceId: null,
+        supplyPurchase: { is: null },
+      },
+      orderBy: { date: "desc" },
+      select: {
+        id: true, date: true, cost: true, description: true, category: true,
+        vendor: true, invoiceNumber: true, notes: true, equipmentId: true,
+        recurrence: true, recurrenceSkippedUntil: true,
+      },
+    });
+
+    // Group by (description, vendor); the first row hit (most recent) wins.
+    const seen = new Map<string, typeof rows[number]>();
+    for (const r of rows) {
+      const key = `${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
+      if (!seen.has(key)) seen.set(key, r);
+    }
+
+    const suggestions = Array.from(seen.values())
+      .map((latest) => {
+        const cadence = String(latest.recurrence);
+        const baseNext = nextDate(latest.date, cadence);
+        // Skip marker advances the "next expected" by one cadence past the
+        // skipped date. Each click of Skip stores the date being skipped.
+        const expected =
+          latest.recurrenceSkippedUntil && latest.recurrenceSkippedUntil >= baseNext
+            ? nextDate(latest.recurrenceSkippedUntil, cadence)
+            : baseNext;
+        return { latest, expected };
+      })
+      .filter(({ expected }) => expected <= horizon)
+      .sort((a, b) => a.expected.getTime() - b.expected.getTime())
+      .map(({ latest, expected }) => ({
+        // Pre-fill payload — what the dialog needs to open with everything
+        // populated. Cost and date are editable; description/vendor/category
+        // copy as-is.
+        nextExpectedDate: expected.toISOString().slice(0, 10),
+        overdueDays: Math.max(0, Math.floor((now.getTime() - expected.getTime()) / 86400000)),
+        recurrence: latest.recurrence,
+        prefill: {
+          description: latest.description,
+          cost: latest.cost,
+          category: latest.category,
+          vendor: latest.vendor,
+          invoiceNumber: null, // invoice numbers are usually unique per period
+          notes: null, // notes typically don't repeat
+          equipmentId: latest.equipmentId,
+          recurrence: latest.recurrence,
+        },
+        // Reference info for the UI
+        latestId: latest.id,
+        latestDate: latest.date.toISOString().slice(0, 10),
+        latestCost: latest.cost,
+      }));
+
+    return suggestions;
+  });
+
+  // Skip the current expected instance of a recurring BE — the next reminder
+  // moves forward by one cadence period. Body: { skipDate: "YYYY-MM-DD" }
+  // (the expected date the user is dismissing). Stored on the most recent
+  // row of the series; the due-soon endpoint advances past it.
+  app.post("/admin/business-expenses/:id/skip-recurrence", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = req.body || {};
+    const be = await prisma.businessExpense.findUnique({
+      where: { id },
+      select: { id: true, recurrence: true },
+    });
+    if (!be) throw app.httpErrors.notFound("Business expense not found.");
+    if (!be.recurrence) {
+      throw app.httpErrors.badRequest("This expense isn't flagged as recurring.");
+    }
+    const skipDateStr = String(b.skipDate ?? "").trim();
+    if (!skipDateStr) throw app.httpErrors.badRequest("skipDate is required.");
+    const skipDate = new Date(skipDateStr);
+    if (isNaN(skipDate.getTime())) {
+      throw app.httpErrors.badRequest("skipDate is not a valid date.");
+    }
+    return prisma.businessExpense.update({
+      where: { id },
+      data: { recurrenceSkippedUntil: skipDate },
+      select: { id: true, recurrenceSkippedUntil: true },
+    });
   });
 
   // ── Full Data Export ──

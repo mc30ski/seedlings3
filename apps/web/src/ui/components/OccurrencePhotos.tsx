@@ -17,7 +17,8 @@ import { Camera, ChevronLeft, ChevronRight, ImageIcon, Trash2 } from "lucide-rea
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
 import { fmtDateTime } from "@/src/lib/lib";
-import { compressAndRedact } from "@/src/lib/imageRedact";
+import { compressOnly } from "@/src/lib/imageRedact";
+import RedactPhotoDialog from "@/src/ui/components/RedactPhotoDialog";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -103,66 +104,124 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
 
   const displayCount = loaded ? photos.length : (photoCount ?? 0);
 
-  const handleFiles = useCallback(async (files: FileList) => {
+  // Manual-redaction queue. Files picked → shown one at a time in the
+  // RedactPhotoDialog → on commit (with or without redactions) or skip,
+  // we upload that file and advance to the next. On Cancel, the file is
+  // dropped without uploading.
+  const [pendingQueue, setPendingQueue] = useState<File[]>([]);
+  const [redactingFile, setRedactingFile] = useState<File | null>(null);
+  const completedRef = useRef(0);
+  const skippedRef = useRef(0);
+
+  // Single-file upload (compress + R2 + confirm; handles offline queue too).
+  const uploadOneFile = useCallback(async (file: File) => {
+    const compressed = await compressOnly(file);
+
+    if (isOffline) {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.includes(",") ? result.split(",")[1] : result);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(compressed);
+      });
+      await enqueueAction("ADD_PHOTO", occurrenceId, `Photo: ${file.name}`, {
+        base64,
+        fileName: file.name,
+        contentType: "image/jpeg",
+      });
+      return;
+    }
+
+    const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+      `/api/occurrences/${occurrenceId}/photos/upload-url`,
+      { fileName: file.name, contentType: "image/jpeg" },
+    );
+    const uploadRes = await fetch(uploadUrl, {
+      method: "PUT",
+      body: compressed,
+      headers: { "Content-Type": "image/jpeg" },
+    });
+    if (!uploadRes.ok) {
+      throw new Error(`R2 upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+    }
+    await apiPost(`/api/occurrences/${occurrenceId}/photos/confirm`, {
+      key,
+      fileName: file.name,
+      contentType: "image/jpeg",
+    });
+  }, [occurrenceId, isOffline]);
+
+  // Pull the next file off the queue and show it in the dialog. When the
+  // queue is empty, finalize: refresh the list and toast a summary.
+  const advanceQueue = useCallback(async () => {
+    setPendingQueue((prev) => {
+      if (prev.length === 0) {
+        // Done — finalize.
+        const completed = completedRef.current;
+        const skipped = skippedRef.current;
+        completedRef.current = 0;
+        skippedRef.current = 0;
+        setUploading(false);
+        setRedactingFile(null);
+        if (completed > 0) {
+          if (isOffline) {
+            publishInlineMessage({
+              type: "INFO",
+              text: `${completed} photo${completed === 1 ? "" : "s"} queued for upload when online.${skipped ? ` ${skipped} canceled.` : ""}`,
+            });
+          } else {
+            publishInlineMessage({
+              type: "SUCCESS",
+              text: `${completed} photo${completed === 1 ? "" : "s"} uploaded.${skipped ? ` ${skipped} canceled.` : ""}`,
+            });
+            setExpanded(true);
+            void loadPhotos(true);
+          }
+        } else if (skipped > 0) {
+          publishInlineMessage({ type: "INFO", text: "Upload canceled." });
+        }
+        return prev;
+      }
+      const [next, ...rest] = prev;
+      setRedactingFile(next);
+      return rest;
+    });
+  }, [isOffline]);
+
+  const handleFiles = useCallback((files: FileList) => {
+    if (files.length === 0) return;
+    completedRef.current = 0;
+    skippedRef.current = 0;
     setUploading(true);
+    const arr = Array.from(files);
+    setPendingQueue(arr.slice(1));
+    setRedactingFile(arr[0]);
+  }, []);
+
+  // User clicked "Skip & upload as-is" or "Apply & upload" — file may have
+  // redactions baked in (in which case it's a fresh File from the dialog
+  // export). Upload it and move on.
+  const handleRedactCommit = useCallback(async (file: File) => {
+    setRedactingFile(null);
     try {
-      for (const file of Array.from(files)) {
-        const compressed = await compressAndRedact(file);
-
-        if (isOffline) {
-          // Queue for offline sync — convert blob to base64
-          const reader = new FileReader();
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onload = () => {
-              const result = reader.result as string;
-              // Strip data URL prefix to get raw base64
-              resolve(result.includes(",") ? result.split(",")[1] : result);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(compressed);
-          });
-          await enqueueAction("ADD_PHOTO", occurrenceId, `Photo: ${file.name}`, {
-            base64,
-            fileName: file.name,
-            contentType: "image/jpeg",
-          });
-          continue;
-        }
-
-        const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-          `/api/occurrences/${occurrenceId}/photos/upload-url`,
-          { fileName: file.name, contentType: "image/jpeg" },
-        );
-
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          body: compressed,
-          headers: { "Content-Type": "image/jpeg" },
-        });
-        if (!uploadRes.ok) {
-          throw new Error(`R2 upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
-        }
-
-        await apiPost(`/api/occurrences/${occurrenceId}/photos/confirm`, {
-          key,
-          fileName: file.name,
-          contentType: "image/jpeg",
-        });
-      }
-      if (isOffline) {
-        publishInlineMessage({ type: "INFO", text: `${files.length} photo${files.length > 1 ? "s" : ""} queued for upload when online.` });
-      } else {
-        publishInlineMessage({ type: "SUCCESS", text: `${files.length} photo${files.length > 1 ? "s" : ""} uploaded.` });
-        setExpanded(true);
-        await loadPhotos(true);
-      }
+      await uploadOneFile(file);
+      completedRef.current += 1;
     } catch (err) {
       console.error("Photo upload error:", err);
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
-    } finally {
-      setUploading(false);
     }
-  }, [occurrenceId, isOffline]);
+    void advanceQueue();
+  }, [uploadOneFile, advanceQueue]);
+
+  // User clicked Cancel — drop the current file, advance.
+  const handleRedactCancel = useCallback(() => {
+    skippedRef.current += 1;
+    setRedactingFile(null);
+    void advanceQueue();
+  }, [advanceQueue]);
 
   const openPicker = useFileUpload(handleFiles);
 
@@ -257,6 +316,14 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
         onNext={() => hasNext && setViewPhoto(photos[viewIndex + 1])}
         onDelete={handleDelete}
       />}
+
+      {/* Optional manual-redaction step — opens automatically per file
+          after picking. Skip & upload as-is leaves the photo unchanged. */}
+      <RedactPhotoDialog
+        file={redactingFile}
+        onCommit={handleRedactCommit}
+        onCancel={handleRedactCancel}
+      />
     </VStack>
   );
 }
