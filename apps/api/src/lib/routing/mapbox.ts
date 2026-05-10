@@ -26,6 +26,19 @@ export class MapboxProvider implements RoutingProvider {
     return { address, coordinates: { lng, lat } };
   }
 
+  async reverseGeocode(coords: Coordinates): Promise<string | null> {
+    // Mapbox accepts `lng,lat` in the same /geocoding/v5 endpoint to do
+    // coordinate-based lookup. Returns the most relevant nearby place name.
+    const url = `${BASE_URL}/geocoding/v5/mapbox.places/${coords.lng},${coords.lat}.json` +
+      `?access_token=${this.token}&limit=1&types=address,place,locality,neighborhood`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const feature = data.features?.[0];
+    if (!feature) return null;
+    return (feature.place_name as string) ?? null;
+  }
+
   async geocodeMany(addresses: string[]): Promise<(GeocodedAddress | null)[]> {
     // Mapbox doesn't have a batch geocoding endpoint on free tier,
     // so we geocode in parallel with a concurrency limit

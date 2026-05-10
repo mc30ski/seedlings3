@@ -16,7 +16,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, CalendarRange, ChevronDown, ChevronUp, CircleAlert, Filter, Layers, LayoutList, Link2, Maximize2, MessageCircle, Plus, RefreshCw, Repeat, Star, Tag, X } from "lucide-react";
 import ChangeRequestsPanel from "@/src/ui/components/ChangeRequestsPanel";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
@@ -1825,12 +1825,20 @@ export default function ServicesTab({
                               <Box mt={1} p={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" rounded="sm">
                                 <VStack align="stretch" gap="0.5">
                                   {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                                    <HStack key={inst.id} gap="1">
+                                    <HStack key={inst.id} gap="1.5" align="center">
+                                      <AlertCircle
+                                        size={18}
+                                        color="var(--chakra-colors-yellow-900)"
+                                        fill="var(--chakra-colors-yellow-400)"
+                                        strokeWidth={2.5}
+                                      />
                                       <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
-                                        📌 {inst.text}
+                                        {inst.text}
                                       </Text>
                                       {inst.repeats && (
-                                        <Text fontSize="xs" color="blue.500" title="Carries forward">🔄</Text>
+                                        <Box display="inline-flex" alignItems="center" title="Carries forward">
+                                          <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                                        </Box>
                                       )}
                                     </HStack>
                                   ))}

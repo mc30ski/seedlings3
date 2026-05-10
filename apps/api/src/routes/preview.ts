@@ -163,6 +163,19 @@ export default async function previewRoutes(app: FastifyInstance) {
       ...claimable.map((o) => formatOcc(o, "claimable")),
     ];
 
+    // Surface jobs whose property records are missing data the optimizer needs.
+    // Without an address Mapbox can't geocode them, so they're skipped from
+    // distance optimization — Claude still places them in the route but with
+    // no spatial info. The client renders this as a warning so it's obvious
+    // why a stop shows up as "Unknown / No address".
+    const dataIssues = allJobs
+      .filter((j) => j.address === "No address" || j.property === "Unknown")
+      .map((j) => ({
+        occurrenceId: j.id,
+        missingProperty: j.property === "Unknown",
+        missingAddress: j.address === "No address",
+      }));
+
     if (allJobs.length === 0) {
       return {
         suggestions: null,
@@ -175,6 +188,22 @@ export default async function previewRoutes(app: FastifyInstance) {
     const routingProviderName = (req.query?.routingProvider as string) || "mapbox";
     let optimizedRoute: OptimizedRoute | null = null;
     let routeError: string | null = null;
+
+    // Optional override: start the route from the worker's current location
+    // (lat/lng) instead of their home base. When present, the route is treated
+    // as one-way (no return leg back to start) since "current location" is
+    // assumed not to be a meaningful endpoint.
+    const rawStartLat = req.query?.startLat;
+    const rawStartLng = req.query?.startLng;
+    const currentLat = rawStartLat != null ? Number(rawStartLat) : NaN;
+    const currentLng = rawStartLng != null ? Number(rawStartLng) : NaN;
+    const fromCurrentLocation =
+      Number.isFinite(currentLat) && Number.isFinite(currentLng) &&
+      currentLat >= -90 && currentLat <= 90 && currentLng >= -180 && currentLng <= 180;
+    // Resolved when fromCurrentLocation is true: a friendly address for the
+    // current coords, used in the prompt and surfaced in the response so the UI
+    // can show "Started from <address>" instead of bare lat/lng.
+    let currentLocationAddress: string | null = null;
 
     try {
       const router = getRoutingProvider(routingProviderName);
@@ -193,17 +222,32 @@ export default async function previewRoutes(app: FastifyInstance) {
         }
       }
 
-      // Geocode home base if available
-      let homeCoords: { lng: number; lat: number } | undefined;
-      if (user.homeBaseAddress) {
+      // Resolve start coords: explicit current location overrides home base.
+      let startCoords: { lng: number; lat: number } | undefined;
+      if (fromCurrentLocation) {
+        startCoords = { lat: currentLat, lng: currentLng };
+        // Reverse-geocode the device coords to a human-readable address so the
+        // AI prompt has something meaningful (and the UI can display it).
+        // Without this Claude tends to hallucinate a phantom "start" stop with
+        // property "Unknown" and address "No address" because all it has is
+        // bare lat/lng.
+        if (typeof router.reverseGeocode === "function") {
+          try {
+            currentLocationAddress = await router.reverseGeocode(startCoords);
+          } catch { /* non-fatal */ }
+        }
+      } else if (user.homeBaseAddress) {
         const homeGeo = await router.geocode(user.homeBaseAddress);
-        if (homeGeo) homeCoords = homeGeo.coordinates;
+        if (homeGeo) startCoords = homeGeo.coordinates;
       }
 
       if (validCoords.length > 1) {
         optimizedRoute = await router.optimizeRoute(validCoords, {
-          startCoords: homeCoords,
-          roundTrip: !!homeCoords,
+          startCoords,
+          // Round-trip only makes sense when start is home base; if the worker
+          // is starting from wherever they happen to be, don't tack on a
+          // return leg back to that arbitrary point.
+          roundTrip: !!startCoords && !fromCurrentLocation,
         });
 
         // Map the optimized indices back to allJobs indices
@@ -274,15 +318,17 @@ export default async function previewRoutes(app: FastifyInstance) {
                   validCoords2.push(geocoded[i]!.coordinates);
                 }
               }
-              let homeCoords2: { lng: number; lat: number } | undefined;
-              if (user.homeBaseAddress) {
+              let startCoords2: { lng: number; lat: number } | undefined;
+              if (fromCurrentLocation) {
+                startCoords2 = { lat: currentLat, lng: currentLng };
+              } else if (user.homeBaseAddress) {
                 const hg = await router.geocode(user.homeBaseAddress);
-                if (hg) homeCoords2 = hg.coordinates;
+                if (hg) startCoords2 = hg.coordinates;
               }
               if (validCoords2.length > 1) {
                 optimizedRoute = await router.optimizeRoute(validCoords2, {
-                  startCoords: homeCoords2,
-                  roundTrip: !!homeCoords2,
+                  startCoords: startCoords2,
+                  roundTrip: !!startCoords2 && !fromCurrentLocation,
                 });
                 for (const stop of optimizedRoute.stops) {
                   stop.inputIndex = validIndices2[stop.inputIndex] ?? stop.inputIndex;
@@ -329,11 +375,17 @@ IMPORTANT: Use this optimized order as the basis for your route. The driving tim
 
     const jobsJson = JSON.stringify(allJobs, null, 2);
 
+    const startRule = fromCurrentLocation
+      ? `Route should start from the worker's current location (${currentLocationAddress ?? `lat ${currentLat.toFixed(4)}, lng ${currentLng.toFixed(4)}`}) — one-way, no return leg back to that point. DO NOT include the current location as an entry in the "route" array — the route array contains only the actual jobs.`
+      : user.homeBaseAddress
+        ? `Route should start and end near the worker's home base (${user.homeBaseAddress})`
+        : "Route should minimize total driving";
+
     const modeInstructions = mode === "claimed"
       ? `MODE: Claimed Only — optimize the route order for ONLY the jobs this worker has already claimed. Do not suggest additional jobs. Focus purely on the most efficient ordering and travel path.
 
 Rules:
-1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
+1. ${startRule}
 2. All claimed jobs must be included — just find the optimal order
 3. Setup buffer: ${bufferPercent}% — add this on top of each job's estimated work time for setup/teardown (unloading equipment, etc.). Travel time is calculated separately by the mapping provider.
 4. Prioritize properties the worker has previously serviced — they know the property and can work more efficiently there`
@@ -344,7 +396,7 @@ Setup buffer: ${bufferPercent}% — add this percentage on top of each job's est
 ${lookAhead > 0 ? `Also considering jobs from ${lookAhead} days before and after ${targetStr} (but not before today) that could be moved to ${targetStr} for a better route.` : "Only considering jobs scheduled for this day."}
 
 Rules:
-1. ${user.homeBaseAddress ? `Route should start and end near the worker's home base (${user.homeBaseAddress})` : "Route should minimize total driving"}
+1. ${startRule}
 2. Start with jobs already scheduled for ${targetStr} — these are the core of the route
 3. Look at jobs from other days nearby — if moving them to ${targetStr} would create a tighter geographic cluster and a more efficient day, suggest it
 4. Already claimed jobs for ${targetStr} must be included
@@ -356,6 +408,7 @@ Rules:
 
 Worker: ${user.displayName ?? user.email ?? "Unknown"}
 ${user.homeBaseAddress ? `Home base: ${user.homeBaseAddress}` : "Home base: not set"}
+${fromCurrentLocation ? `Starting from current location: ${currentLocationAddress ?? `lat ${currentLat.toFixed(4)}, lng ${currentLng.toFixed(4)}`} (one-way route — no return leg)` : ""}
 Target day: ${targetStr}
 ${availableDays.length > 0 ? `Worker is typically available on: ${availableDays.map((d: number) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}` : ""}
 
@@ -421,6 +474,20 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       } catch {}
 
+      // Defense-in-depth: drop any AI-hallucinated stops whose occurrenceId
+      // doesn't match a real job (e.g. a phantom "start point" stop with
+      // property "Unknown" / address "No address"). Even with the prompt
+      // instruction the model occasionally fabricates these.
+      if (parsed?.days && Array.isArray(parsed.days)) {
+        const validIds = new Set(allJobs.map((j) => j.id));
+        for (const day of parsed.days) {
+          if (Array.isArray(day.route)) {
+            day.route = day.route.filter((s: any) => s && validIds.has(s.occurrenceId));
+            day.route.forEach((s: any, i: number) => { s.order = i + 1; });
+          }
+        }
+      }
+
       return {
         suggestions: parsed,
         raw: parsed ? undefined : text,
@@ -432,6 +499,9 @@ For jobs that need a date change, set dateChanged=true with originalDate and sug
           totalDriveMiles: Math.round(optimizedRoute.totalDistance / 1609.34 * 10) / 10,
         } : null,
         routeError,
+        startedFromCurrentLocation: fromCurrentLocation,
+        currentLocationAddress: fromCurrentLocation ? currentLocationAddress : null,
+        dataIssues,
       };
     } catch (err: any) {
       app.log.error({ where: "preview/route-suggestions", err: err.message });

@@ -13,7 +13,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { CheckCircle, MapPin, Wrench } from "lucide-react";
+import { AlertCircle, CheckCircle, MapPin, Wrench } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
@@ -354,7 +354,15 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                             {contactName && <Text fontSize="xs" color="fg.muted">Contact: {contactName}{poc?.phone ? ` · ${poc.phone}` : ""}</Text>}
                             {(current as any).pinnedNote && (
                               <Box px={2} py={1} bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md" w="full">
-                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700">📌 {(current as any).pinnedNote}</Text>
+                                <HStack gap="1.5" align="center">
+                                  <AlertCircle
+                                    size={18}
+                                    color="var(--chakra-colors-yellow-900)"
+                                    fill="var(--chakra-colors-yellow-400)"
+                                    strokeWidth={2.5}
+                                  />
+                                  <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{(current as any).pinnedNote}</Text>
+                                </HStack>
                               </Box>
                             )}
                             <HStack gap={2} fontSize="xs" wrap="wrap" mt={1}>

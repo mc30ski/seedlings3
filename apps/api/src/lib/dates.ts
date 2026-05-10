@@ -40,3 +40,13 @@ export function etToday(): string {
   const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }); // en-CA gives YYYY-MM-DD
   return formatter.format(now);
 }
+
+/**
+ * Parse a user-supplied date string. Bare YYYY-MM-DD inputs (from <input type="date">)
+ * are interpreted as ET midnight so they render on the correct calendar day after
+ * `fmtDate` formats them in `America/New_York`. Full datetime strings are passed
+ * through to the Date constructor unchanged.
+ */
+export function parseUserDate(raw: string): Date {
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? etMidnight(raw) : new Date(raw);
+}

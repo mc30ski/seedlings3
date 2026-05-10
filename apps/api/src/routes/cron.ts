@@ -103,7 +103,7 @@ export default async function cronRoutes(app: FastifyInstance) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.seedlings.team";
-    const planningLink = `${appUrl}?tab=worker-work-planning`;
+    const homeLink = `${appUrl}?tab=worker-work-home`;
     const results: { userId: string; method: string; ok: boolean; error?: string }[] = [];
 
     for (const [userId, bucket] of workerBuckets) {
@@ -127,18 +127,18 @@ export default async function cronRoutes(app: FastifyInstance) {
       // SMS — short. Just the headline; the link is appended by notifyWorker.
       const smsBody = `${greeting} You have ${itemNoun} scheduled for tomorrow.`;
 
-      // Push — short, native-style. URL targets the planning tab so a tap
-      // deep-links straight to it.
+      // Push — short, native-style. URL targets the Home tab so a tap
+      // deep-links straight to the worker's daily landing screen.
       const pushPayload = {
         title: `Tomorrow's plan — ${itemNoun}`,
         body: smsBody,
-        url: planningLink,
+        url: homeLink,
         tag: "daily-plan",
       };
 
       const result = await notifyWorker(userId, { sms: smsBody, email: emailBody, push: pushPayload }, {
         subject: `Seedlings — ${itemNoun} tomorrow`,
-        link: planningLink,
+        link: homeLink,
       });
 
       results.push({ userId, method: result.method, ok: result.ok, error: result.error });
