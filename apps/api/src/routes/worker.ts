@@ -835,10 +835,12 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {
     const id = req.params.id as string;
+    const body = (req.body || {}) as { groupId?: string | null };
     return services.equipment.reserve(
       await currentUserId(req),
       id,
-      req.user.id
+      req.user.id,
+      { groupId: body.groupId ?? null },
     );
   });
 
@@ -1091,7 +1093,17 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/claim", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
-    return services.jobs.claimOccurrence(uid, String(req.params.id));
+    const body = (req.body || {}) as { groupId?: string | null };
+    return services.jobs.claimOccurrence(uid, String(req.params.id), {
+      groupId: body.groupId ?? null,
+    });
+  });
+
+  // Groups the caller can claim on behalf of (i.e. they are the claimer).
+  // Used by the JobsTab Claim chooser.
+  app.get("/me/groups-as-claimer", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    return services.groups.listForClaimer(uid);
   });
 
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
@@ -1389,16 +1401,31 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/payments/earnings-summary", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
 
-    const now = new Date();
-    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
-    const startOfTomorrow = new Date(startOfToday); startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const startOfNextWeek = new Date(startOfWeek); startOfNextWeek.setDate(startOfNextWeek.getDate() + 7);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const startOfNextYear = new Date(now.getFullYear() + 1, 0, 1);
+    // All bucket boundaries are anchored to Eastern Time (the business
+    // timezone). Using server-local midnight on a UTC Vercel host would
+    // shift "today" 4–5 hours late, so payments collected yesterday
+    // evening would show up as today's. ET keeps the buckets aligned
+    // with what workers experience on the ground.
+    const todayStr = etToday();
+    const [y, m, d] = todayStr.split("-").map(Number);
+    // YYYY-MM-DD for an arbitrary offset from today (handles month/year
+    // rollover via Date arithmetic, then formats in ET).
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+    const dayStr = (offsetDays: number) =>
+      fmt.format(new Date(Date.UTC(y, m - 1, d + offsetDays, 12)));
+    // Week starts on Sunday in ET — getUTCDay() on a calendar-date instant
+    // is the weekday for that date (no timezone bleed).
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const startOfToday = etMidnight(todayStr);
+    const startOfTomorrow = etMidnight(dayStr(1));
+    const startOfWeek = etMidnight(dayStr(-dow));
+    const startOfNextWeek = etMidnight(dayStr(-dow + 7));
+    const startOfMonth = etMidnight(`${y}-${String(m).padStart(2, "0")}-01`);
+    const startOfNextMonth = etMidnight(
+      m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`,
+    );
+    const startOfYear = etMidnight(`${y}-01-01`);
+    const startOfNextYear = etMidnight(`${y + 1}-01-01`);
 
     // 1) Actual payments (already received) — use the user's payment split.
     const splits = await prisma.paymentSplit.findMany({

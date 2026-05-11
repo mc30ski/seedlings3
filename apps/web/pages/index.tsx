@@ -46,6 +46,7 @@ import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
+import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -652,6 +653,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<UsersTab role="admin" />),
     },
     {
+      value: "groups",
+      label: "Groups",
+      icon: AiOutlineTeam,
+      content: wrapWithInlineMessage(<AdminGroupsTab />),
+    },
+    {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
@@ -850,7 +857,7 @@ export default function HomePage() {
           "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
           equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
-          clients: "Directory", properties: "Directory", users: "Directory",
+          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {

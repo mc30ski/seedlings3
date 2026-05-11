@@ -366,6 +366,18 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       .catch(() => {});
   }, [isWorkerView]);
 
+  // Groups the signed-in worker is the claimer of — used to show a
+  // "Claim for [Group]" chooser on the Claim button.
+  type ClaimerGroup = { id: string; name: string; members: { userId: string; role: string }[] };
+  const [groupsAsClaimer, setGroupsAsClaimer] = useState<ClaimerGroup[]>([]);
+  useEffect(() => {
+    if (!isWorkerView) return;
+    apiGet<ClaimerGroup[]>("/api/me/groups-as-claimer")
+      .then((list) => setGroupsAsClaimer(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [isWorkerView]);
+  const [claimChooserOccId, setClaimChooserOccId] = useState<string | null>(null);
+
   async function toggleLike(occId: string) {
     const wasLiked = likedIds.has(occId);
     setLikedIds((prev) => {
@@ -772,6 +784,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [manageOpen, setManageOpen] = useState(false);
   const [agreementDialogOpen, setAgreementDialogOpen] = useState(false);
   const [pendingClaimOccId, setPendingClaimOccId] = useState<string | null>(null);
+  // Group id stashed alongside pendingClaimOccId so a "claim for group" action
+  // that's interrupted by the contractor-agreement dialog resumes with the
+  // group context, not as a solo claim.
+  const [pendingClaimGroupId, setPendingClaimGroupId] = useState<string | null>(null);
   const [insuranceDialogOpen, setInsuranceDialogOpen] = useState(false);
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
@@ -1278,23 +1294,28 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     void refreshOverdueCount();
   }, [items]);
 
-  async function claim(occurrenceId: string) {
-    // All workers must accept payout terms before claiming
+  async function claim(occurrenceId: string, groupId?: string | null) {
+    // All workers must accept payout terms before claiming. The agreement
+    // dialog interrupts the flow on first use; we stash both the occurrence
+    // id AND the group id so the resumed claim still goes to the group
+    // (not silently downgraded to a solo claim).
     if (!agreementDialogOpen) {
       setPendingClaimOccId(occurrenceId);
+      setPendingClaimGroupId(groupId ?? null);
       setAgreementDialogOpen(true);
       return;
     }
 
     setBusyOccId(occurrenceId);
     try {
-      await apiPost(`/api/occurrences/${occurrenceId}/claim`, {});
-      publishInlineMessage({ type: "SUCCESS", text: "Job claimed." });
+      await apiPost(`/api/occurrences/${occurrenceId}/claim`, groupId ? { groupId } : {});
+      publishInlineMessage({ type: "SUCCESS", text: groupId ? "Job claimed for group." : "Job claimed." });
       await load(false);
     } catch (err: any) {
       const code = err?.code ?? "";
       if (code === "CONTRACTOR_AGREEMENT_REQUIRED") {
         setPendingClaimOccId(occurrenceId);
+        setPendingClaimGroupId(groupId ?? null);
         setAgreementDialogOpen(true);
       } else if (code === "INSURANCE_REQUIRED") {
         publishInlineMessage({
@@ -3082,9 +3103,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     const activeAssignees = assignees.filter((a: any) => a.role !== "observer");
                     const lead = activeAssignees.find((a: any) => a.assignedById === a.userId) ?? activeAssignees[0];
                     const others = Math.max(0, activeAssignees.length - 1);
-                    const assigneeText = !lead
-                      ? "Unassigned"
-                      : `${lead.user?.displayName ?? lead.user?.email ?? ""}${others > 0 ? ` +${others}` : ""}`;
+                    // Group-claimed: show just the group name + crew size. Workers
+                    // can expand the card to see who's on it.
+                    const ultraGroup = (occ as any).assignedGroup as { name: string } | null | undefined;
+                    const assigneeText = ultraGroup
+                      ? `${ultraGroup.name} (${activeAssignees.length})`
+                      : !lead
+                        ? "Unassigned"
+                        : `${lead.user?.displayName ?? lead.user?.email ?? ""}${others > 0 ? ` +${others}` : ""}`;
                     // Date/time intentionally omitted: the surrounding group
                     // header already shows the date (via fmtDateWeekday) and
                     // no other per-card view in this tab carries a time.
@@ -3826,8 +3852,14 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         );
                       })()}
                       {/* Worker(s) — surfaced above the price/payout row to
-                          match the fully-expanded card. */}
-                      {!isUnassigned ? (
+                          match the fully-expanded card. For group-claimed
+                          jobs we collapse to a single purple chip; the full
+                          roster only shows when the user expands the card. */}
+                      {(occ as any).assignedGroup ? (
+                        <Badge size="sm" colorPalette="purple" variant="solid" borderRadius="full" px="2">
+                          Group: {(occ as any).assignedGroup.name} ({(occ.assignees ?? []).filter((a: any) => a.role !== "observer").length})
+                        </Badge>
+                      ) : !isUnassigned ? (
                         <Text fontSize="xs" fontWeight="semibold" color="teal.700">
                           {[...assignees].sort((a, b) => assigneeSortOrder(a) - assigneeSortOrder(b)).map((a) => {
                             const name = a.user?.displayName ?? a.user?.email ?? a.userId;
@@ -4011,6 +4043,13 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           </Badge>
                         )}
                       </Box>
+                    )}
+                    {/* Group chip — present when the occurrence was claimed
+                        on behalf of a group or admin-attached a group. */}
+                    {(occ as any).assignedGroup && (
+                      <Badge size="sm" colorPalette="purple" variant="solid" borderRadius="full" px="2">
+                        Group: {(occ as any).assignedGroup.name} ({(occ.assignees ?? []).filter((a: any) => a.role !== "observer").length})
+                      </Badge>
                     )}
                     {/* Worker(s) — surfaced above the money/payout panel so
                         you see who's on the job before the price breakdown. */}
@@ -4422,9 +4461,9 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       </Box>
                     )}
                     {/* Suggested gear — equipment kinds (blue) + collections
-                        (purple) folded into a single panel. Buttons keep their
-                        original palette so the two kinds remain visually
-                        distinct while sharing one labeled section. */}
+                        (purple) + group preferred (teal) folded into a single
+                        panel. Buttons keep their original palette so the kinds
+                        remain visually distinct while sharing one section. */}
                     {!isTaskOrReminder && (() => {
                       const allTags = [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)];
                       const suggestions = suggestedEquipment(serviceTypes, allTags, equipmentKinds);
@@ -4432,7 +4471,33 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       const recs = recIds
                         .map((id) => equipmentCollections.find((c) => c.id === id))
                         .filter(Boolean) as CollectionLite[];
-                      if (suggestions.length === 0 && recs.length === 0) return null;
+                      // Group preferred equipment: only surfaces when the
+                      // occurrence is group-claimed. Display-only — clicking
+                      // jumps to the equipment/collection like the other chips.
+                      const groupPref = ((occ as any).assignedGroup?.preferredEquipment ?? []) as Array<{
+                        id: string;
+                        equipmentId: string | null;
+                        equipmentCollectionId: string | null;
+                        equipment: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; type?: string | null } | null;
+                        equipmentCollection: { id: string; name: string } | null;
+                      }>;
+                      if (suggestions.length === 0 && recs.length === 0 && groupPref.length === 0) return null;
+                      // Every chip click sets the Equipment tab's "Reserve
+                      // as:" hint explicitly — to the assigned group's id
+                      // when the viewer is its claimer, otherwise to ""
+                      // (Just me). Always writing the hint prevents stale
+                      // persisted picker state from a previous session
+                      // bleeding into a solo job's flow.
+                      const occGroup = (occ as any).assignedGroup as { id: string; claimerUserId: string } | null | undefined;
+                      const useGroup = !!(occGroup && me?.id === occGroup.claimerUserId);
+                      const setReserveAs = () => {
+                        try {
+                          window.sessionStorage.setItem(
+                            "reserveAsGroupId",
+                            useGroup ? occGroup!.id : "",
+                          );
+                        } catch {}
+                      };
                       return (
                         <Box mt={1} p={2} bg="gray.50" borderWidth="1px" borderColor="gray.200" borderRadius="md">
                           <Text fontSize="xs" fontWeight="semibold" color="gray.700" mb={1}>Suggested Equipment & Collections</Text>
@@ -4448,6 +4513,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                 fontWeight="medium"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  setReserveAs();
                                   window.sessionStorage.setItem("equipmentKindFilter", s.equipmentKind);
                                   openEventSearch("jobsToEquipmentKindFilter", " ", forAdmin, s.equipmentKind);
                                 }}
@@ -4469,6 +4535,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                   fontWeight="medium"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    setReserveAs();
                                     // Send the worker to the Equipment tab where the collections strip
                                     // is rendered with a Reserve button. Highlights via session flag.
                                     try { window.sessionStorage.setItem("highlightCollectionId", c.id); } catch {}
@@ -4476,6 +4543,40 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                   }}
                                 >
                                   {c.name} ({available}/{total}) →
+                                </Button>
+                              );
+                            })}
+                            {groupPref.map((gp) => {
+                              const isCol = !!gp.equipmentCollectionId;
+                              const label = isCol
+                                ? `${gp.equipmentCollection?.name ?? "—"} (group kit)`
+                                : (gp.equipment?.shortDesc
+                                    || [gp.equipment?.brand, gp.equipment?.model].filter(Boolean).join(" ")
+                                    || gp.equipment?.type
+                                    || "—");
+                              return (
+                                <Button
+                                  key={`gp-${gp.id}`}
+                                  size="xs"
+                                  variant="solid"
+                                  colorPalette="teal"
+                                  px="2"
+                                  borderRadius="full"
+                                  fontWeight="medium"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setReserveAs();
+                                    if (isCol && gp.equipmentCollectionId) {
+                                      try { window.sessionStorage.setItem("highlightCollectionId", gp.equipmentCollectionId); } catch {}
+                                      window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                    } else if (gp.equipmentId) {
+                                      try { window.sessionStorage.setItem("equipmentHighlightId", gp.equipmentId); } catch {}
+                                      window.dispatchEvent(new CustomEvent(forAdmin ? "navigate:adminTab" : "navigate:workerTab", { detail: { tab: "equipment" } }));
+                                    }
+                                  }}
+                                  title={`Preferred by the group${isCol ? " — kit" : ""}`}
+                                >
+                                  {label} ★
                                 </Button>
                               );
                             })}
@@ -4863,9 +4964,18 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           colorPalette="yellow"
                           disabled={isOffline}
                           title={isOffline ? "Requires internet" : undefined}
-                          onClick={() => void claim(occ.id)}
+                          onClick={() => {
+                            // If the worker is the claimer of any active group,
+                            // open the chooser so they can pick "Just me" vs
+                            // "For [Group]". Otherwise go straight to solo claim.
+                            if (groupsAsClaimer.length > 0) {
+                              setClaimChooserOccId(occ.id);
+                            } else {
+                              void claim(occ.id);
+                            }
+                          }}
                         >
-                          Claim
+                          Claim{groupsAsClaimer.length > 0 ? " ▾" : ""}
                         </Button>
                       );
                     })()}
@@ -5497,6 +5607,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
             role: a.role,
             user: a.user,
           }))}
+          assignedGroup={(manageOccurrence as any).assignedGroup ?? null}
           onChanged={() => void load(false)}
           isAdmin={forAdmin && (isAdmin || isSuper)}
           isClaimer={!!(me?.id && (manageOccurrence.assignees ?? []).some((a: any) => a.userId === me.id && a.assignedById === me.id && a.role !== "observer"))}
@@ -5970,6 +6081,55 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         </Portal>
       </Dialog.Root>
 
+      {/* Claim chooser — appears when the worker is the claimer of one or
+          more groups. Picks "Just me" vs "For [Group]" before invoking claim. */}
+      <Dialog.Root open={!!claimChooserOccId} onOpenChange={(e) => { if (!e.open) setClaimChooserOccId(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Claim this job</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={2}>
+                  <Text fontSize="sm" color="fg.muted">
+                    You can claim solo, or claim for a group you lead — the whole crew gets added at once.
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const id = claimChooserOccId;
+                      setClaimChooserOccId(null);
+                      if (id) void claim(id);
+                    }}
+                  >
+                    Just me
+                  </Button>
+                  {groupsAsClaimer.map((g) => (
+                    <Button
+                      key={g.id}
+                      size="sm"
+                      variant="solid"
+                      colorPalette="blue"
+                      onClick={() => {
+                        const id = claimChooserOccId;
+                        setClaimChooserOccId(null);
+                        if (id) void claim(id, g.id);
+                      }}
+                    >
+                      Claim for {g.name} ({g.members.length + 1})
+                    </Button>
+                  ))}
+                </VStack>
+              </Dialog.Body>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
       <ManageExpensesDialog
         open={!!expenseDialogOccId}
         onOpenChange={(o) => { if (!o) { setExpenseDialogOccId(null); void load(false); } }}
@@ -6015,6 +6175,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
+            isClaimer: a.assignedById === a.userId,
           }))}
           onAccepted={async (result: any) => {
             if (acceptPaymentOcc) setBusyOccId(acceptPaymentOcc.id);
@@ -6061,10 +6222,26 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         occurrence={pendingClaimOccId ? items.find((o) => o.id === pendingClaimOccId) ?? null : null}
         commissionPercent={commissionPercent}
         marginPercent={marginPercent}
+        group={(() => {
+          // Active workers = claimer (always a worker) + non-observer
+          // members. Observers don't share in the payout.
+          if (!pendingClaimGroupId) return null;
+          const g = groupsAsClaimer.find((x) => x.id === pendingClaimGroupId);
+          if (!g) return null;
+          const workerMembers = g.members.filter((m) => m.role !== "observer").length;
+          return {
+            id: g.id,
+            name: g.name,
+            activeWorkerCount: 1 + workerMembers,
+          };
+        })()}
         onAgreed={async () => {
           if (pendingClaimOccId) {
-            await claim(pendingClaimOccId);
+            const occId = pendingClaimOccId;
+            const groupId = pendingClaimGroupId;
             setPendingClaimOccId(null);
+            setPendingClaimGroupId(null);
+            await claim(occId, groupId);
           }
         }}
       />

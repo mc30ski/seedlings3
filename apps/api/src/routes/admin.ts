@@ -4070,4 +4070,131 @@ Respond ONLY with valid JSON in this exact format:
     const uid = await currentUserId(req);
     return services.supplies.removeHold(uid, String(req.params.holdId));
   });
+
+  // ─── Groups (crews) ─────────────────────────────────────────────────────
+  // Admins manage groups via Admin → Directory → Groups. See services/groups.ts
+  // for the lock rule (no edits while group has in-flight occurrences or
+  // active rentals) and the equipmentCostPercent invariant.
+
+  app.get("/admin/groups", adminGuard, async (req: any) => {
+    const q = (req.query || {}) as { includeArchived?: string };
+    return services.groups.list({ includeArchived: q.includeArchived === "true" });
+  });
+
+  app.get("/admin/groups/:id", adminGuard, async (req: any) => {
+    return services.groups.getById(String(req.params.id));
+  });
+
+  app.post("/admin/groups", adminGuard, async (req: any) => {
+    const b = req.body || {};
+    return services.groups.create({
+      name: String(b.name ?? ""),
+      description: b.description != null ? String(b.description) : null,
+      claimerUserId: String(b.claimerUserId ?? ""),
+      members: Array.isArray(b.members)
+        ? b.members.map((m: any) => ({
+            userId: String(m.userId ?? ""),
+            role: m.role != null ? String(m.role) : "worker",
+            equipmentCostPercent: m.equipmentCostPercent != null ? Number(m.equipmentCostPercent) : null,
+          }))
+        : [],
+    });
+  });
+
+  app.patch("/admin/groups/:id", adminGuard, async (req: any) => {
+    const b = req.body || {};
+    const input: any = {};
+    if ("name" in b) input.name = String(b.name ?? "");
+    if ("description" in b) input.description = b.description != null ? String(b.description) : null;
+    if ("claimerUserId" in b) input.claimerUserId = String(b.claimerUserId);
+    return services.groups.update(String(req.params.id), input);
+  });
+
+  app.post("/admin/groups/:id/archive", adminGuard, async (req: any) => {
+    return services.groups.archive(String(req.params.id));
+  });
+
+  app.post("/admin/groups/:id/unarchive", adminGuard, async (req: any) => {
+    return services.groups.unarchive(String(req.params.id));
+  });
+
+  // Member management
+  app.post("/admin/groups/:id/members", adminGuard, async (req: any) => {
+    const b = req.body || {};
+    return services.groups.addMember(String(req.params.id), {
+      userId: String(b.userId ?? ""),
+      role: b.role != null ? String(b.role) : "worker",
+      equipmentCostPercent: b.equipmentCostPercent != null ? Number(b.equipmentCostPercent) : null,
+    });
+  });
+
+  app.patch("/admin/groups/:id/members/:userId", adminGuard, async (req: any) => {
+    const b = req.body || {};
+    const patch: any = {};
+    if ("role" in b) patch.role = String(b.role);
+    if ("equipmentCostPercent" in b) {
+      patch.equipmentCostPercent = b.equipmentCostPercent == null ? null : Number(b.equipmentCostPercent);
+    }
+    return services.groups.updateMember(
+      String(req.params.id),
+      String(req.params.userId),
+      patch,
+    );
+  });
+
+  app.delete("/admin/groups/:id/members/:userId", adminGuard, async (req: any) => {
+    return services.groups.removeMember(String(req.params.id), String(req.params.userId));
+  });
+
+  // Preferred equipment
+  app.post("/admin/groups/:id/preferred-equipment", adminGuard, async (req: any) => {
+    const b = req.body || {};
+    return services.groups.addPreferred(String(req.params.id), {
+      equipmentId: b.equipmentId != null ? String(b.equipmentId) : null,
+      equipmentCollectionId: b.equipmentCollectionId != null ? String(b.equipmentCollectionId) : null,
+    });
+  });
+
+  app.delete("/admin/groups/preferred-equipment/:preferredId", adminGuard, async (req: any) => {
+    return services.groups.removePreferred(String(req.params.preferredId));
+  });
+
+  // Cascade preview for archiving a user — shows which groups they're in
+  // so the UI can ask the admin to resolve claimer-of relationships
+  // before allowing the user soft-delete.
+  app.get("/admin/users/:id/group-archive-cascade", adminGuard, async (req: any) => {
+    return services.groups.previewUserArchiveCascade(String(req.params.id));
+  });
+
+  // Attach a group to an occurrence (admin pre-assignment). Rejects if the
+  // occurrence already has individual assignees — admin must remove them first.
+  app.post("/admin/occurrences/:id/attach-group", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const body = req.body || {};
+    const groupId = String(body.groupId ?? "");
+    if (!groupId) throw app.httpErrors.badRequest("groupId is required");
+
+    const actorUserId = await currentUserId(req);
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.jobOccurrenceAssignee.count({ where: { occurrenceId } });
+      if (existing > 0) {
+        throw app.httpErrors.conflict("Detach existing assignees before attaching a group.");
+      }
+      await services.groups.attachGroupToOccurrence(tx, {
+        occurrenceId,
+        groupId,
+        actorUserId,
+        mode: "admin-assign",
+      });
+      return { attached: true };
+    });
+  });
+
+  app.post("/admin/occurrences/:id/detach-group", adminGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    return prisma.$transaction(async (tx) => {
+      await services.groups.detachGroupFromOccurrence(tx, occurrenceId);
+      return { detached: true };
+    });
+  });
 }

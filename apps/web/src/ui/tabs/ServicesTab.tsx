@@ -2596,6 +2596,7 @@ export default function ServicesTab({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
+            isClaimer: a.assignedById === a.userId,
           }))}
           onAccepted={(result) => {
             const jobId = acceptPaymentJobId;

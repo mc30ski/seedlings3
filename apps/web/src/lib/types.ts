@@ -19,7 +19,8 @@ export type AdminTabs =
   | "profile"
   | "notify"
   | "collections"
-  | "supplies";
+  | "supplies"
+  | "groups";
 
 export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies";
 

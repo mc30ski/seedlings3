@@ -27,6 +27,10 @@ type Props = {
   occurrence: WorkerOccurrence | null;
   commissionPercent: number;
   marginPercent: number;
+  /** Set when the claim is being made on behalf of a group. The dialog will
+   *  divide the payout by the active worker count (claimer + non-observer
+   *  members) and show "your share" instead of the gross amount. */
+  group?: { id: string; name: string; activeWorkerCount: number } | null;
 };
 
 export default function ClaimAgreementDialog({
@@ -37,6 +41,7 @@ export default function ClaimAgreementDialog({
   occurrence,
   commissionPercent,
   marginPercent,
+  group,
 }: Props) {
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -51,9 +56,13 @@ export default function ClaimAgreementDialog({
   const net = price - expTotal;
   const pct = isEmployee ? marginPercent : commissionPercent;
   const deduction = Math.round(net * pct) / 100;
-  const payout = net - deduction;
+  // Total payout pool after commission/margin — split by active worker count
+  // when this is a group claim. Observers are excluded from the worker count
+  // and from the split (they don't earn). Claimer always counts as a worker.
+  const payoutPool = Math.max(0, net - deduction);
+  const splitCount = group ? Math.max(1, group.activeWorkerCount) : 1;
+  const perWorker = Math.round((payoutPool / splitCount) * 100) / 100;
   const label = isEmployee ? "Business Margin" : "Commission";
-  const workerLabel = isEmployee ? "Employee" : "Contractor";
 
   async function handleSubmit() {
     setBusy(true);
@@ -83,6 +92,18 @@ export default function ClaimAgreementDialog({
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
+                {/* Group banner — surfaced first so the share math below
+                    reads as "shared with N workers" without surprising the
+                    user mid-breakdown. */}
+                {group && (
+                  <Box p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
+                    <Text fontSize="sm" color="purple.800">
+                      Claiming for <Text as="span" fontWeight="semibold">{group.name}</Text> ({group.activeWorkerCount} worker{group.activeWorkerCount === 1 ? "" : "s"}, observers don't share payout).
+                      The payout is split evenly across active workers.
+                    </Text>
+                  </Box>
+                )}
+
                 {/* Payout breakdown */}
                 {price > 0 && (
                   <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
@@ -112,18 +133,30 @@ export default function ClaimAgreementDialog({
                       )}
                       <Box borderTopWidth="1px" borderColor="gray.300" pt={1} mt={1}>
                         <HStack justify="space-between">
-                          <Text fontWeight="bold">Your Payout</Text>
+                          <Text fontWeight="bold">
+                            {group ? "Group Payout Pool" : "Your Payout"}
+                          </Text>
                           <Badge colorPalette="green" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
-                            ${payout.toFixed(2)}
+                            ${payoutPool.toFixed(2)}
                           </Badge>
                         </HStack>
+                        {group && (
+                          <HStack justify="space-between" mt={1}>
+                            <Text fontWeight="bold" color="purple.800">
+                              Each worker's share ({group.activeWorkerCount}-way split)
+                            </Text>
+                            <Badge colorPalette="purple" variant="solid" fontSize="sm" px="3" py="0.5" borderRadius="full">
+                              ${perWorker.toFixed(2)}
+                            </Badge>
+                          </HStack>
+                        )}
                       </Box>
                     </VStack>
                   </Box>
                 )}
 
                 <Text fontSize="xs" color="orange.500" fontStyle="italic">
-                  Note: This payout is an estimate based on current expenses. The final amount may change if expenses are added, updated, or removed before the job is completed.
+                  Note: {group ? "Each worker's payout" : "This payout"} is an estimate based on current expenses. The final amount may change if expenses are added, updated, or removed before the job is completed.
                 </Text>
 
                 {/* Agreement terms */}

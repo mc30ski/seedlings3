@@ -19,7 +19,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -112,6 +112,55 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // it to drill into "what's in this kit"; admins use it to scope bulk actions
   // like force-release.
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
+
+  // Groups this user is the claimer of — used to surface the "Reserve on
+  // behalf of [Group]" picker. Only group claimers can rent equipment for
+  // a group; cost gets split across workers per the group's percent config.
+  type ClaimerGroup = { id: string; name: string; members: { userId: string }[] };
+  const [groupsAsClaimer, setGroupsAsClaimer] = useState<ClaimerGroup[]>([]);
+  // Tri-state: null = nothing selected yet, "" = Just me, "<id>" = group.
+  // Not persisted: every fresh visit starts unselected so workers have to
+  // make a conscious choice before reserving. Chip clicks from JobsTab
+  // pre-fill this via the sessionStorage handoff so the worker doesn't
+  // have to pick again on every chip click.
+  const [reserveForGroupId, setReserveForGroupId] = useState<string | null>(null);
+  const [reserveScopePromptFor, setReserveScopePromptFor] = useState<
+    | { kind: "single"; equipment: Equipment }
+    | { kind: "collection"; collection: Collection }
+    | null
+  >(null);
+  useEffect(() => {
+    if (forAdmin) return;
+    apiGet<ClaimerGroup[]>("/api/me/groups-as-claimer")
+      .then((list) => {
+        const groups = Array.isArray(list) ? list : [];
+        setGroupsAsClaimer(groups);
+        // Stale-state guard: if a group id was hinted/chosen but the
+        // group doesn't exist anymore (e.g. after a reseed), drop back
+        // to the unselected state so the reserve flow prompts again.
+        if (reserveForGroupId && !groups.some((g) => g.id === reserveForGroupId)) {
+          setReserveForGroupId(null);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forAdmin]);
+
+  // Hand-off from JobsTab: when a worker clicks a preferred-equipment chip
+  // on a group-claimed job, the chip sets `reserveAsGroupId` so the picker
+  // here lands on the right group without a manual click. Reads + clears
+  // on mount and on every navigate-to-equipment event (so the same handoff
+  // works even if EquipmentTab is already mounted in the background).
+  const applyReserveAsGroupHandoff = () => {
+    try {
+      const hint = window.sessionStorage.getItem("reserveAsGroupId");
+      if (hint != null) {
+        window.sessionStorage.removeItem("reserveAsGroupId");
+        setReserveForGroupId(hint);
+      }
+    } catch {}
+  };
+  useEffect(() => { applyReserveAsGroupHandoff(); }, []);
   // Workers list — only used by the admin worker-filter chip to look up names.
   const [adminWorkers, setAdminWorkers] = useState<Array<{ id: string; displayName?: string | null; email?: string | null }>>([]);
   useEffect(() => {
@@ -205,6 +254,63 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
+  // Consume hand-off keys from sessionStorage and apply filters/highlights.
+  // Extracted so the same logic runs on initial mount AND whenever this tab
+  // is navigated to from elsewhere (e.g. clicking a chip on JobsTab while
+  // the Equipment tab is already mounted — without this re-run, the chip
+  // would switch tabs but the filter wouldn't apply because the original
+  // mount effect ran with no key present).
+  const applyHandoffFilters = () => {
+    try {
+      // Reset filters that could hide the chip-target. Any pre-existing
+      // status/like/worker filter is intentionally cleared — clicking a
+      // suggestion chip is an explicit "show me this thing", and the
+      // user's prior narrowing context shouldn't compete with it.
+      const resetFiltersForHandoff = () => {
+        setQ("");
+        setKind(["ALL"]);
+        setStatusFilter(["ALL"]);
+        setCollectionFilter(null);
+        if (isWorkerView) setLikedOnly(false);
+        if (forAdmin) setWorkerFilter([]);
+      };
+
+      const hl = window.sessionStorage.getItem("highlightCollectionId");
+      if (hl) {
+        window.sessionStorage.removeItem("highlightCollectionId");
+        resetFiltersForHandoff();
+        setHighlightCollectionId(hl);
+        setCollectionsCollapsed(false);
+        setExpandedCollections((prev) => {
+          const next = new Set(prev);
+          next.add(hl);
+          return next;
+        });
+        setTimeout(() => setHighlightCollectionId(null), 2500);
+      }
+      const highlight = window.sessionStorage.getItem("equipmentHighlightId");
+      if (highlight) {
+        window.sessionStorage.removeItem("equipmentHighlightId");
+        resetFiltersForHandoff();
+        setHighlightId(highlight);
+      }
+      const kindOverride = window.sessionStorage.getItem("equipmentKindFilter");
+      if (kindOverride) {
+        window.sessionStorage.removeItem("equipmentKindFilter");
+        resetFiltersForHandoff();
+        setKind([kindOverride]);
+      }
+      // Reserve-scope handoff lives alongside the filter handoffs so the
+      // same chip click can both highlight the equipment AND switch the
+      // reserve picker to the right group.
+      const groupHint = window.sessionStorage.getItem("reserveAsGroupId");
+      if (groupHint != null) {
+        window.sessionStorage.removeItem("reserveAsGroupId");
+        setReserveForGroupId(groupHint);
+      }
+    } catch {}
+  };
+
   // Loads all the items for the first time.
   useEffect(() => {
     void load();
@@ -219,24 +325,22 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     apiGet<Collection[]>("/api/equipment-collections")
       .then((list) => setCollections(Array.isArray(list) ? list : []))
       .catch(() => setCollections([]));
-    // Pick up a "show me this collection" hand-off from JobsTab: ensures the
-    // strip is uncollapsed and pulses the matching card.
-    try {
-      const hl = window.sessionStorage.getItem("highlightCollectionId");
-      if (hl) {
-        window.sessionStorage.removeItem("highlightCollectionId");
-        setHighlightCollectionId(hl);
-        setCollectionsCollapsed(false);
-        // Auto-expand the matching card so the worker sees the description and
-        // member equipment immediately after navigating from a job's suggestion.
-        setExpandedCollections((prev) => {
-          const next = new Set(prev);
-          next.add(hl);
-          return next;
-        });
-        setTimeout(() => setHighlightCollectionId(null), 2500);
-      }
-    } catch {}
+    applyHandoffFilters();
+  }, [forAdmin]);
+
+  // Re-apply hand-off filters whenever someone navigates to this tab.
+  // The chip click sets sessionStorage *then* dispatches the navigate
+  // event, so by the time this handler runs the key is present.
+  useEffect(() => {
+    const eventName = forAdmin ? "navigate:adminTab" : "navigate:workerTab";
+    function handler(ev: Event) {
+      const detail = (ev as CustomEvent).detail;
+      if (detail?.tab !== "equipment") return;
+      applyHandoffFilters();
+    }
+    window.addEventListener(eventName, handler as EventListener);
+    return () => window.removeEventListener(eventName, handler as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forAdmin]);
 
   // Worker-only: load pinned + liked equipment
@@ -397,18 +501,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     onEventSearchRun("activityTavToEquipmentTabQRCodeSearch", setQ, inputRef);
   }, []);
 
-  // Check for pending equipment kind filter (set by suggested equipment chips on Jobs/Services tabs)
-  useEffect(() => {
-    const kindOverride = window.sessionStorage.getItem("equipmentKindFilter");
-    if (kindOverride) {
-      setKind([kindOverride]);
-      setQ("");
-      window.sessionStorage.removeItem("equipmentKindFilter");
-    }
-  });
-
-  // Handle QR slug redirect (from /e/[slug] page)
-  // Wait for items to load, then find equipment by slug and prompt checkout/return
+  // QR slug redirect (from /e/[slug] page) — kept separate from the
+  // applyHandoffFilters helper because it also drives the
+  // post-load checkout/return prompt via qrSlugPending.current.
   const qrSlugPending = useRef<string | null>(null);
   useEffect(() => {
     const qrSlug = window.sessionStorage.getItem("equipmentQrSlug");
@@ -416,15 +511,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       window.sessionStorage.removeItem("equipmentQrSlug");
       qrSlugPending.current = qrSlug;
       setQ(qrSlug);
-      setKind(["ALL"]);
-      setStatusFilter(["ALL"]);
-    }
-    // Hand-off from other surfaces (e.g. AdminCollectionsTab chip click) —
-    // filter to a single equipment item by id.
-    const highlight = window.sessionStorage.getItem("equipmentHighlightId");
-    if (highlight) {
-      window.sessionStorage.removeItem("equipmentHighlightId");
-      setHighlightId(highlight);
       setKind(["ALL"]);
       setStatusFilter(["ALL"]);
     }
@@ -626,13 +712,33 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
   async function reserve(e: Equipment) {
+    // Always confirm scope for reservers who lead any group(s) — the
+    // dialog opens with whatever's currently in the "Reserve as:" picker
+    // pre-selected so they're just confirming, unless they want to switch.
+    // Solo-only workers (no claimer-groups) skip the dialog entirely.
+    if (groupsAsClaimer.length > 0) {
+      setReserveScopePromptFor({ kind: "single", equipment: e });
+      return;
+    }
+    await doReserve(e);
+  }
+
+  // The dialog-confirmed reserve path: skips the scope prompt and uses
+  // whatever the caller has set in reserveForGroupId. Public reserve()
+  // routes through the prompt; the prompt's button handlers call this
+  // directly so we don't loop back into the dialog.
+  async function doReserve(e: Equipment, opts?: { groupId?: string | null }) {
+    const groupId = opts?.groupId !== undefined ? opts.groupId : reserveForGroupId;
     try {
-      await apiPost(`/api/equipment/${e.id}/reserve`);
+      await apiPost(`/api/equipment/${e.id}/reserve`, groupId ? { groupId } : {});
       notifyEquipmentUpdated();
       await load(false);
+      const groupName = groupsAsClaimer.find((g) => g.id === groupId)?.name;
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Equipment '${e.qrSlug}' successfully reserved.`,
+        text: groupName
+          ? `Reserved '${e.qrSlug}' on behalf of ${groupName}.`
+          : `Equipment '${e.qrSlug}' successfully reserved.`,
       });
     } catch (err) {
       publishInlineMessage({
@@ -647,6 +753,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   // and surfaces those reasons in the toast — workers shouldn't have to read
   // the console to figure out why a kit only partially reserved.
   async function reserveKit(collection: Collection) {
+    // Same confirmation as the single-item reserve.
+    if (groupsAsClaimer.length > 0) {
+      setReserveScopePromptFor({ kind: "collection", collection });
+      return;
+    }
+    await doReserveKit(collection);
+  }
+
+  async function doReserveKit(collection: Collection, opts?: { groupId?: string | null }) {
+    const groupId = opts?.groupId !== undefined ? opts.groupId : reserveForGroupId;
     setReservingKitId(collection.id);
     try {
       // Aggregate human-readable reasons → count
@@ -674,7 +790,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           continue;
         }
         try {
-          await apiPost(`/api/equipment/${i.equipmentId}/reserve`);
+          await apiPost(`/api/equipment/${i.equipmentId}/reserve`, groupId ? { groupId } : {});
           reserved++;
         } catch (err: any) {
           addReason(err?.message || "could not reserve");
@@ -834,14 +950,18 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         item.holder.state === "CHECKED_OUT"
           ? "Checked out by "
           : "Reserved by ";
-      str +=
-        item.holder?.displayName ||
-        item.holder?.email ||
-        item.holder?.userId.slice(0, 8);
+      const holderName = item.holder?.displayName
+        || item.holder?.email
+        || item.holder?.userId.slice(0, 8);
+      // Group rentals display the group name first, claimer in parens —
+      // matches the convention used in the equipment-charges listing and
+      // makes it obvious at a glance that a whole crew is on the equipment.
+      const groupName = (item.holder as any)?.groupName;
+      str += groupName ? `${groupName} (${holderName})` : holderName;
 
       return (
         <Box pt="2">
-          <Badge bg="gray.100">{str}</Badge>
+          <Badge bg={groupName ? "purple.100" : "gray.100"}>{str}</Badge>
         </Box>
       );
     } else {
@@ -1156,6 +1276,78 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           </Badge>
         </HStack>
       )}
+      {/* Group-claimer reserve scope picker. Only shows when the worker is
+          the claimer of at least one active group. Designed to be
+          deliberately loud — workers were missing it and accidentally
+          renting under the wrong scope. */}
+      {!forAdmin && groupsAsClaimer.length > 0 && (() => {
+        const activeGroup = groupsAsClaimer.find((g) => g.id === reserveForGroupId);
+        const isUnset = reserveForGroupId == null;
+        const isSolo = reserveForGroupId === "";
+        const isGroup = !!activeGroup;
+        // Unselected state shouts louder than the made-a-choice states so
+        // workers don't accidentally hit Reserve without picking a scope.
+        const bg = isUnset ? "yellow.50" : isGroup ? "purple.100" : "blue.50";
+        const borderColor = isUnset ? "yellow.400" : isGroup ? "purple.400" : "blue.300";
+        const headerColor = isUnset ? "yellow.900" : isGroup ? "purple.900" : "blue.900";
+        return (
+          <Box mb={3} p={3} bg={bg} borderWidth="2px" borderColor={borderColor} borderRadius="md">
+            <HStack gap={2} mb={2} align="center">
+              {isUnset ? (
+                <AlertCircle size={18} color="var(--chakra-colors-yellow-800)" />
+              ) : isGroup ? (
+                <Users size={18} color="var(--chakra-colors-purple-700)" />
+              ) : (
+                <User size={18} color="var(--chakra-colors-blue-700)" />
+              )}
+              <Text fontSize="sm" fontWeight="bold" color={headerColor}>
+                {isUnset
+                  ? "Pick who you're reserving for"
+                  : isGroup
+                    ? `Reserving on behalf of ${activeGroup!.name}`
+                    : "Reserving for yourself"}
+              </Text>
+            </HStack>
+            <HStack gap={2} wrap="wrap">
+              {/* Toggle behavior: tapping the already-selected scope clears
+                  the selection (back to unset), so the user can deliberately
+                  reset without picking a different one. */}
+              <Button
+                size="sm"
+                variant={isSolo ? "solid" : "outline"}
+                colorPalette={isSolo ? "blue" : "gray"}
+                onClick={() => setReserveForGroupId(isSolo ? null : "")}
+              >
+                <User size={14} /> Just me
+              </Button>
+              {groupsAsClaimer.map((g) => {
+                const active = reserveForGroupId === g.id;
+                return (
+                  <Button
+                    key={g.id}
+                    size="sm"
+                    variant={active ? "solid" : "outline"}
+                    colorPalette={active ? "purple" : "gray"}
+                    onClick={() => setReserveForGroupId(active ? null : g.id)}
+                  >
+                    <Users size={14} /> {g.name} ({g.members.length + 1})
+                  </Button>
+                );
+              })}
+            </HStack>
+            {isGroup && (
+              <Text fontSize="xs" color="purple.800" mt={2}>
+                Cost will be split among {activeGroup!.members.length + 1} workers on release.
+              </Text>
+            )}
+            {isUnset && (
+              <Text fontSize="xs" color="yellow.900" mt={2}>
+                You'll be asked to pick when you tap Reserve.
+              </Text>
+            )}
+          </Box>
+        );
+      })()}
       {collections.length > 0 && (
         <Box mb={3}>
           <HStack gap={2} align="center" mb={2}>
@@ -1872,6 +2064,77 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           }}
         />
       )}
+
+      {/* Scope-pick prompt: opens when a claimer-of-group(s) hits Reserve
+          without first choosing "Just me" or "[Group]". Closing the dialog
+          via a button records the choice and replays the original reserve. */}
+      <Dialog.Root open={!!reserveScopePromptFor} onOpenChange={(e) => { if (!e.open) setReserveScopePromptFor(null); }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>
+                  {reserveForGroupId == null
+                    ? "Who are you reserving for?"
+                    : "Confirm reservation"}
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={2}>
+                  <Text fontSize="sm" color="fg.muted">
+                    {reserveForGroupId == null
+                      ? "You lead one or more groups. Pick whether this reservation is for yourself or on behalf of a group — group rentals split the cost among group workers when the equipment is released."
+                      : "Confirm the scope below, or tap a different option to switch."}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant={reserveForGroupId === "" ? "solid" : "outline"}
+                    colorPalette="blue"
+                    onClick={() => {
+                      const target = reserveScopePromptFor;
+                      setReserveForGroupId("");
+                      setReserveScopePromptFor(null);
+                      if (target?.kind === "single") void doReserve(target.equipment, { groupId: "" });
+                      else if (target?.kind === "collection") void doReserveKit(target.collection, { groupId: "" });
+                    }}
+                  >
+                    <User size={14} /> Just me{reserveForGroupId === "" ? " — confirm" : ""}
+                  </Button>
+                  {groupsAsClaimer.map((g) => {
+                    const active = reserveForGroupId === g.id;
+                    return (
+                      <Button
+                        key={g.id}
+                        size="sm"
+                        variant={active ? "solid" : "outline"}
+                        colorPalette="purple"
+                        onClick={() => {
+                          const target = reserveScopePromptFor;
+                          setReserveForGroupId(g.id);
+                          setReserveScopePromptFor(null);
+                          if (target?.kind === "single") void doReserve(target.equipment, { groupId: g.id });
+                          else if (target?.kind === "collection") void doReserveKit(target.collection, { groupId: g.id });
+                        }}
+                      >
+                        <Users size={14} /> For {g.name} ({g.members.length + 1}){active ? " — confirm" : ""}
+                      </Button>
+                    );
+                  })}
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="center" w="full">
+                  <Button variant="outline" onClick={() => setReserveScopePromptFor(null)}>
+                    Cancel
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
 
       {/* Reserve Confirmation Dialog */}
       <Dialog.Root open={!!reserveConfirmEquip} onOpenChange={(e) => { if (!e.open) { setReserveConfirmEquip(null); setReserveChecked(false); } }}>
