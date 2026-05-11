@@ -39,6 +39,7 @@ import { type ReceiptData } from "@/src/lib/receipt";
 import AcceptPaymentDialog from "@/src/ui/dialogs/AcceptPaymentDialog";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
+import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -822,6 +823,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
   const [addonBusy, setAddonBusy] = useState(false);
+  // Pricing entries (with jobTag bindings) — loaded when the add-on
+  // dialog is open so we can show an inline reference price next to the
+  // price input when the selected tag has a matching entry.
+  type PricingHintEntry = { key: string; parsedValue: { label: string; amount: number; unit: string; jobTag?: string | null } | null };
+  const [pricingHints, setPricingHints] = useState<PricingHintEntry[]>([]);
+  const [pricingGuideOpen, setPricingGuideOpen] = useState(false);
+  useEffect(() => {
+    if (!addAddonOcc) return;
+    apiGet<PricingHintEntry[]>(forAdmin ? "/api/admin/pricing" : "/api/pricing")
+      .then((list) => setPricingHints(Array.isArray(list) ? list : []))
+      .catch(() => setPricingHints([]));
+  }, [addAddonOcc, forAdmin]);
+  const addonHintEntry = useMemo(() => {
+    if (!addonTag) return null;
+    return pricingHints.find((p) => p.parsedValue?.jobTag === addonTag) ?? null;
+  }, [pricingHints, addonTag]);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
 
   // Close quick action menu on outside click
@@ -866,6 +883,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     amountLabel?: string;
     amountPlaceholder?: string;
     amountDefaultValue?: string;
+    /** Tags to drive the pricing reference panel (Complete Estimate flow). */
+    pricingReferenceTags?: string[];
     cancelLabel?: string;
     onCancelAction?: () => void;
   } | null>(null);
@@ -2927,6 +2946,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       amountLabel: "Proposal Amount ($) — optional",
                       amountPlaceholder: "0.00",
                       amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
+                      pricingReferenceTags: [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)],
                       onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
                     });
                   }}><CheckCircle2 size={12} /></Box>
@@ -4413,20 +4433,55 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
 
                     {/* Expenses */}
                     {/* Add-on services */}
-                    {(occ.addons ?? []).length > 0 && (
+                    {(occ.addons ?? []).length > 0 && (() => {
+                      // Removal allowed for claimer / admin / super on
+                      // active occurrences only. Removed add-ons are
+                      // hard-deleted (no carry-forward to next occurrence
+                      // exists anyway, so there's nothing to reconcile).
+                      const isActive =
+                        occ.status === "SCHEDULED" ||
+                        occ.status === "IN_PROGRESS" ||
+                        (occ.status as string) === "PAUSED";
+                      const canRemove = isActive && (forAdmin || isAdmin || isSuper || isClaimer);
+                      return (
                       <Box mt={1} p={1} bg="green.50" rounded="sm" w="full" borderWidth="1px" borderColor="green.200">
                         <Text fontSize="xs" fontWeight="medium" color="green.700">
                           Add-ons: +${addonTotal(occ).toFixed(2)}
                         </Text>
                         <VStack align="start" gap={0} mt={0.5}>
                           {(occ.addons ?? []).map((addon: any) => (
-                            <Text key={addon.id} fontSize="xs" color="green.600">
-                              +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                            </Text>
+                            <HStack key={addon.id} gap={1} align="center">
+                              <Text fontSize="xs" color="green.600">
+                                +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                              </Text>
+                              {canRemove && (
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="red"
+                                  px="1"
+                                  minW="auto"
+                                  title="Remove this service"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      await apiDelete(`/api/${forAdmin ? "admin/" : ""}occurrences/${occ.id}/addons/${addon.id}`);
+                                      setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, addons: (o.addons ?? []).filter((a: any) => a.id !== addon.id) } : o));
+                                      publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
+                                    } catch (err) {
+                                      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
+                                    }
+                                  }}
+                                >
+                                  <X size={11} />
+                                </Button>
+                              )}
+                            </HStack>
                           ))}
                         </VStack>
                       </Box>
-                    )}
+                      );
+                    })()}
                     {/* Expenses */}
                     {occ.expenses && occ.expenses.length > 0 && (
                       <Box mt={1} p={1} bg="red.50" rounded="sm" w="full" borderWidth="1px" borderColor="red.200">
@@ -4820,6 +4875,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           amountLabel: "Proposal Amount ($) — optional",
                           amountPlaceholder: "0.00",
                           amountDefaultValue: occ.proposalAmount != null ? Number(occ.proposalAmount).toFixed(2) : "",
+                          pricingReferenceTags: [...parseJobTags(occ), ...((occ.addons ?? []) as any[]).map((a: any) => a.tag).filter(Boolean)],
                           onConfirm: (comments: string, amount?: string) => void completeEstimate(occ.id, comments, amount),
                         })}
                       >
@@ -5384,6 +5440,31 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           </Button>
                         );
                       })()}
+                      {/* Add Service (add-on) — claimer / admin / super, only
+                          on real jobs that are active. Tasks, reminders, and
+                          events don't carry add-ons. Mirrors the gating used
+                          on Add Expense so workers see both side-by-side. */}
+                      {(() => {
+                        const isActive =
+                          occ.status === "SCHEDULED" ||
+                          occ.status === "IN_PROGRESS" ||
+                          (occ.status as string) === "PAUSED";
+                        const canAdd =
+                          isActive
+                          && !isTaskOrReminder
+                          && (forAdmin || isAdmin || isSuper || isClaimer);
+                        if (!canAdd) return null;
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="teal"
+                            onClick={(e) => { e.stopPropagation(); setAddAddonOcc(occ); }}
+                          >
+                            Add Service
+                          </Button>
+                        );
+                      })()}
                       {isClaimer && !isTaskOrReminder && occ.status !== "PENDING_PAYMENT" && (
                         <StatusButton
                           id="occ-unclaim"
@@ -5753,6 +5834,8 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         amountLabel={confirmAction?.amountLabel}
         amountPlaceholder={confirmAction?.amountPlaceholder}
         amountDefaultValue={confirmAction?.amountDefaultValue}
+        pricingReferenceTags={confirmAction?.pricingReferenceTags}
+        pricingEndpoint={forAdmin ? "/api/admin/pricing" : "/api/pricing"}
         cancelLabel={confirmAction?.cancelLabel}
         onCancelAction={confirmAction?.onCancelAction}
         onConfirm={(inputValue: string, amountValue?: string) => {
@@ -6215,6 +6298,19 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
           window.location.reload();
         }}
       />
+      {/* Pricing guide popup — opened from the "View pricing guide" chip
+          in the add-on dialog. Picks back into addonPrice when the user
+          taps a row. Pre-filters by the selected service type (if any),
+          since that's almost always what the worker is shopping for —
+          they can clear the search to see everything. */}
+      <PricingGuideDialog
+        open={pricingGuideOpen}
+        onOpenChange={setPricingGuideOpen}
+        endpoint={forAdmin ? "/api/admin/pricing" : "/api/pricing"}
+        initialSearch={addonTag ? jobTagLabel(addonTag) : ""}
+        onPick={(amount) => setAddonPrice(String(amount))}
+      />
+
       <ClaimAgreementDialog
         open={agreementDialogOpen}
         onOpenChange={setAgreementDialogOpen}
@@ -6377,6 +6473,33 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       onChange={setAddonPrice}
                       size="sm"
                     />
+                    <HStack gap={2} mt={1.5} wrap="wrap">
+                      {addonHintEntry?.parsedValue && (
+                        <Badge
+                          size="sm"
+                          colorPalette="gray"
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          cursor="pointer"
+                          title="Tap to use as the price"
+                          onClick={() => setAddonPrice(String(addonHintEntry.parsedValue!.amount))}
+                        >
+                          Ref: ${addonHintEntry.parsedValue.amount.toFixed(2)} / {addonHintEntry.parsedValue.unit} · {addonHintEntry.parsedValue.label}
+                        </Badge>
+                      )}
+                      <Badge
+                        size="sm"
+                        colorPalette="blue"
+                        variant="outline"
+                        borderRadius="full"
+                        px="2"
+                        cursor="pointer"
+                        onClick={() => setPricingGuideOpen(true)}
+                      >
+                        View pricing guide ↗
+                      </Badge>
+                    </HStack>
                   </Box>
                 </VStack>
               </Dialog.Body>
@@ -6391,11 +6514,14 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       if (!addAddonOcc) return;
                       setAddonBusy(true);
                       try {
-                        const created = await apiPost<{ id: string; tag?: string; customLabel?: string; price: number }>(`/api/admin/occurrences/${addAddonOcc.id}/addons`, {
-                          tag: addonTag || undefined,
-                          customLabel: addonCustomLabel.trim() || undefined,
-                          price: Number(addonPrice),
-                        });
+                        const created = await apiPost<{ id: string; tag?: string; customLabel?: string; price: number }>(
+                          `/api/${forAdmin ? "admin/" : ""}occurrences/${addAddonOcc.id}/addons`,
+                          {
+                            tag: addonTag || undefined,
+                            customLabel: addonCustomLabel.trim() || undefined,
+                            price: Number(addonPrice),
+                          },
+                        );
                         setItems((prev) => prev.map((o) => o.id === addAddonOcc.id ? { ...o, addons: [...(o.addons ?? []), created] } : o));
                         publishInlineMessage({ type: "SUCCESS", text: "Service added." });
                         setAddAddonOcc(null);

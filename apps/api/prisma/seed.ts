@@ -1617,6 +1617,27 @@ async function seedDatabase() {
     update: { value: serviceTypesValue, description: "Service types with labels and optional equipment mapping. Array of {key, label, equipmentKind?}. Order determines UI display.", updatedById: MICHAEL_ID },
   });
 
+  // Company-document taxonomy + per-version upload cap.
+  const documentTypesValue = JSON.stringify([
+    { key: "ARTICLES_OF_ORGANIZATION", label: "Articles of Organization", singleton: true },
+    { key: "EIN_LETTER", label: "EIN Letter", singleton: true },
+    { key: "OPERATING_AGREEMENT", label: "Operating Agreement", singleton: true },
+    { key: "INSURANCE_CERT", label: "Insurance Certificate", singleton: false },
+    { key: "BUSINESS_LICENSE", label: "Business License", singleton: false },
+    { key: "VENDOR_CONTRACT", label: "Vendor Contract", singleton: false },
+    { key: "TAX_RETURN", label: "Tax Return", singleton: false },
+  ]);
+  await prisma.setting.upsert({
+    where: { key: "DOCUMENT_TYPES" },
+    create: { key: "DOCUMENT_TYPES", value: documentTypesValue, description: "Company document types. Array of {key, label, singleton}. singleton=true means only one active doc per type is allowed.", updatedById: MICHAEL_ID },
+    update: { value: documentTypesValue, description: "Company document types. Array of {key, label, singleton}. singleton=true means only one active doc per type is allowed.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "DOCUMENT_MAX_SIZE_MB" },
+    create: { key: "DOCUMENT_MAX_SIZE_MB", value: "25", description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
+    update: { description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
+  });
+
   // ── Notification templates ────────────────────────────────────────────────
   console.log("  Creating notification templates...");
   const notifTemplates = [
@@ -1637,12 +1658,38 @@ async function seedDatabase() {
   // ── Pricing settings ───────────────────────────────────────────────────────
   console.log("  Creating pricing entries...");
 
-  const pricingEntries = [
+  // Tagged entries match JOB_TAGS keys so the add-on dialog and estimate
+  // workflow can surface them as inline hints. Two reference-only entries
+  // (no jobTag) demonstrate the "browse-only" pattern.
+  const pricingEntries: Array<{ key: string; label: string; description: string; unit: string; amount: number; sortOrder: number; jobTag?: string | null }> = [
+    // Reference-only (no jobTag → no auto-hint, only in the guide)
     { key: "pricing_general_labor", label: "General Labor", description: "Hourly rate for general labor tasks like cleanup, hauling, debris removal, and other non-specialized work", unit: "per hour per person", amount: 60, sortOrder: 1 },
     { key: "pricing_mowing_acre", label: "Mowing (per acre)", description: "Standard mowing rate for open acreage using a riding mower. Includes basic trimming along fence lines and obstacles", unit: "per acre", amount: 150, sortOrder: 2 },
+
+    // Tagged — each maps to a JOB_TAGS key so picking that tag in the
+    // add-on dialog or estimate workflow lights up the inline hint.
+    { key: "pricing_mow_standard", label: "Mow — standard yard", description: "Single-visit residential mow on a typical quarter-acre lot. Includes deck-discharge pattern; bag is +$10.", unit: "per visit", amount: 65, sortOrder: 10, jobTag: "MOW" },
+    { key: "pricing_trim_standard", label: "String trim", description: "Trim along fence lines, beds, trees, and obstacles. Pair with Mow as standard.", unit: "per visit", amount: 25, sortOrder: 20, jobTag: "TRIM" },
+    { key: "pricing_edge_standard", label: "Edge — driveway + walks", description: "Stick-edge driveway, sidewalks, and curb. ~150 linear ft assumed.", unit: "per visit", amount: 25, sortOrder: 30, jobTag: "EDGE" },
+    { key: "pricing_blow_standard", label: "Blow off hardscapes", description: "Clean drive, walks, and patios after mow/trim/edge.", unit: "per visit", amount: 15, sortOrder: 40, jobTag: "BLOW" },
+    { key: "pricing_hedge_small", label: "Hedge — small (under 6 ft)", description: "Boxwood, privet, ornamental. Per-visit shape-up — heavier rejuvenation cuts billed at labor rate.", unit: "per visit", amount: 75, sortOrder: 50, jobTag: "HEDGE" },
+    { key: "pricing_leaf_cleanup_yard", label: "Leaf cleanup — typical yard", description: "Bag-and-haul leaf cleanup on a residential lot. Pricing scales with leaf load; storm cleanup is separate.", unit: "per visit", amount: 180, sortOrder: 60, jobTag: "LEAF_CLEANUP" },
+    { key: "pricing_aeration_5k", label: "Aeration — up to 5,000 sq ft", description: "Core aeration with double-pass on compacted areas. Add seed/starter fertilizer separately.", unit: "per visit", amount: 145, sortOrder: 70, jobTag: "AERATION" },
+    { key: "pricing_mulch_per_yard", label: "Mulch — installed", description: "Premium hardwood mulch, spread to 2–3\" depth. Edging touchup included.", unit: "per cubic yard installed", amount: 95, sortOrder: 80, jobTag: "MULCH" },
+    { key: "pricing_weed_beds", label: "Weed beds", description: "Hand-pull weeds and apply pre-emergent in landscape beds.", unit: "per visit", amount: 60, sortOrder: 90, jobTag: "WEED" },
+    { key: "pricing_fertilize_lawn", label: "Fertilize lawn", description: "Granular fertilizer application, broadcast spreader. Mid-grade NPK; weed-and-feed is +$25.", unit: "per visit", amount: 85, sortOrder: 100, jobTag: "FERTILIZE" },
+    { key: "pricing_tree_trim_small", label: "Tree trim — small (under 20 ft)", description: "Crown thin / shape with pole pruner. Chainsaw work over 4\" diameter is separate.", unit: "per tree", amount: 120, sortOrder: 110, jobTag: "TREE_TRIM" },
+    { key: "pricing_plant_install_1gal", label: "Plant install — 1 gal", description: "Plant install: dig, amend soil, mulch in. Per-plant rate for 1-gallon sizes.", unit: "per plant", amount: 28, sortOrder: 120, jobTag: "PLANT" },
   ];
   for (const p of pricingEntries) {
-    const value = JSON.stringify({ label: p.label, description: p.description, unit: p.unit, amount: p.amount, sortOrder: p.sortOrder });
+    const value = JSON.stringify({
+      label: p.label,
+      description: p.description,
+      unit: p.unit,
+      amount: p.amount,
+      sortOrder: p.sortOrder,
+      jobTag: p.jobTag ?? null,
+    });
     await prisma.setting.upsert({
       where: { key: p.key },
       create: { key: p.key, value, updatedById: MICHAEL_ID },

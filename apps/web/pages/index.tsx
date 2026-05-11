@@ -21,6 +21,7 @@ import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
+import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import WeatherBar from "@/src/ui/components/WeatherBar";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -47,6 +48,7 @@ import HomeTab from "@/src/ui/tabs/HomeTab";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
+import PricingTab from "@/src/ui/tabs/PricingTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -76,6 +78,7 @@ import {
   FiAlertCircle,
   FiSun,
   FiSearch,
+  FiFolder,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -552,6 +555,12 @@ export default function HomePage() {
       ),
     },
     {
+      value: "pricing",
+      label: "Pricing",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PricingTab readOnly />),
+    },
+    {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
@@ -659,6 +668,12 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminGroupsTab />),
     },
     {
+      value: "pricing",
+      label: "Pricing",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PricingTab readOnly />),
+    },
+    {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
@@ -692,6 +707,13 @@ export default function HomePage() {
       icon: FiFileText,
 
       content: wrapWithInlineMessage(<HistoryTab role="admin" />),
+    },
+    {
+      value: "documents",
+      label: "Documents",
+      icon: FiFolder,
+
+      content: wrapWithInlineMessage(<DocumentsTab />),
     },
     {
       value: "settings",
@@ -806,16 +828,20 @@ export default function HomePage() {
         </>
       ),
       innerTabs: (() => {
+        // Mirror the admin layout: clients/properties live in Directory,
+        // profile lives in Settings. Keeps the mental model aligned so a
+        // worker promoted to admin doesn't have to relearn the tab map.
         const catMap: Record<string, string> = {
           home: "Work",
           tasks: "Actions",
           reminders: "Work", jobs: "Work", routes: "Work",
           equipment: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
-          clients: "Info", properties: "Info", profile: "Info",
+          clients: "Directory", properties: "Directory", pricing: "Directory",
+          profile: "Settings",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Info: FiUsers,
+          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, Settings: FiSettings,
         };
         const highlightCats = new Set(["Actions"]);
         return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
@@ -857,8 +883,8 @@ export default function HomePage() {
           "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
           equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
-          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
-          profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
+          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory", pricing: "Directory",
+          profile: "System", activity: "System", history: "System", documents: "System", settings: "System", notify: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
           Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
@@ -888,6 +914,22 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<SuppliesTab />),
           category: "Inventory",
           categoryIcon: FiPackage,
+        },
+        {
+          value: "pricing",
+          label: "Pricing",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<PricingTab isSuper />),
+          category: "Directory",
+          categoryIcon: FiUsers,
+        },
+        {
+          value: "documents",
+          label: "Documents",
+          icon: FiFolder,
+          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "System",
+          categoryIcon: FiSettings,
         },
         {
           value: "operations",
@@ -1327,6 +1369,43 @@ export default function HomePage() {
     setWorkerInnerTab("reminders" as any);
   }, []);
 
+  // Expired company documents alert — visible to admins (read-only) and super.
+  // Hidden docs are filtered server-side when caller is not super, so the
+  // count an admin sees never reveals the existence of hidden docs.
+  const [expiredDocsCount, setExpiredDocsCount] = useState(0);
+  const loadExpiredDocs = useCallback(async () => {
+    if (!isAdmin) { setExpiredDocsCount(0); if (me) markAlertLoaded("documents"); return; }
+    try {
+      const r = await apiGet<{ expired: number; expiring: number }>(
+        "/api/admin/documents/expiration-counts",
+      );
+      setExpiredDocsCount(r?.expired ?? 0);
+    } catch {
+      setExpiredDocsCount(0);
+    }
+    markAlertLoaded("documents");
+  }, [isAdmin, me]);
+
+  useEffect(() => {
+    void loadExpiredDocs();
+    const onRefresh = () => void loadExpiredDocs();
+    window.addEventListener("seedlings3:documents-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:documents-changed", onRefresh);
+  }, [loadExpiredDocs]);
+
+  const goToDocuments = useCallback(() => {
+    try { sessionStorage.setItem("pendingDocumentsStatusFilter", "expired"); } catch {}
+    if (isSuper) {
+      setTopTab("super");
+      setSuperInnerTab("documents" as any);
+      setSuperCategory("System");
+    } else if (isAdmin) {
+      setTopTab("admin");
+      setAdminInnerTab("documents" as any);
+      setAdminCategory("System");
+    }
+  }, [isSuper, isAdmin]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -1487,7 +1566,7 @@ export default function HomePage() {
       setSuperInnerTab(tab as any);
       if (tab === "supplies") setSuperCategory("Inventory");
       else if (tab === "business-expenses") setSuperCategory("Money");
-      else if (tab === "operations" || tab === "audit" || tab === "settings") setSuperCategory("System");
+      else if (tab === "operations" || tab === "audit" || tab === "settings" || tab === "documents") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
     window.addEventListener("navigate:superTab", onNav as EventListener);
@@ -1577,6 +1656,11 @@ export default function HomePage() {
     }
 
     // Try 3-part format (<outer>-<category>-<inner>) first, then 2-part fallback.
+    // The 3-part match enforces exact category alignment so deep links that
+    // baked in the original category continue to resolve there. Falling back
+    // by inner slug alone makes legacy URLs survive category renames
+    // (e.g. old `worker-info-clients` after Info → Directory) and is safe
+    // because inner tab slugs are unique within a given outer tab.
     let matched: { value: string; category?: string } | null = null;
     if (parts.length >= 3) {
       const categorySlug = parts[1];
@@ -1586,6 +1670,18 @@ export default function HomePage() {
         if (slugify(t.label) === innerSlug || t.value === innerSlug) {
           matched = { value: t.value, category: t.category };
           break;
+        }
+      }
+      // 3-part fallback: tolerate a stale/renamed category slug as long as
+      // the inner slug still names a real tab. The tab's *current* category
+      // is used (the matched.category that flows through to setWorkerCategory
+      // etc.) so the user lands on the correct group.
+      if (!matched) {
+        for (const t of outer.innerTabs) {
+          if (slugify(t.label) === innerSlug || t.value === innerSlug) {
+            matched = { value: t.value, category: t.category };
+            break;
+          }
         }
       }
     }
@@ -1965,6 +2061,7 @@ export default function HomePage() {
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
+              if (isAdmin && expiredDocsCount > 0) alerts.push({ label: "Documents", count: expiredDocsCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToDocuments });
               if (alerts.length === 0) return null;
               const total = alerts.reduce((s, a) => s + a.count, 0);
               const topAlert = alerts[0]; // highest priority for badge color

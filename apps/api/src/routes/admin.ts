@@ -2332,6 +2332,13 @@ Respond ONLY with valid JSON in this exact format:
     const key = String(req.params.key);
     const body = req.body || {};
     if (body.value === undefined) throw app.httpErrors.badRequest("value is required");
+    // Cross-check setting-driven taxonomies before persisting. Today we only
+    // guard DOCUMENT_TYPES (singleton flips with conflicting active docs);
+    // other settings have no such cross-table constraint.
+    if (key === "DOCUMENT_TYPES") {
+      const { validateDocumentTypesUpdate } = await import("../services/companyDocuments");
+      await validateDocumentTypesUpdate(String(body.value));
+    }
     return services.settings.set(uid, key, String(body.value));
   });
 
@@ -2682,6 +2689,11 @@ Respond ONLY with valid JSON in this exact format:
       unit: String(body.unit),
       amount: Number(body.amount),
       sortOrder: body.sortOrder != null ? Number(body.sortOrder) : 100,
+      // Optional binding to a job tag (MOW, TRIM, EDGE, …) so the add-on
+      // dialog and estimate workflow can surface this entry as an inline
+      // reference price. Pricing entries without a tag still appear on
+      // the Pricing tab — they just don't drive any auto-match hint.
+      jobTag: body.jobTag ? String(body.jobTag) : null,
     });
 
     return services.settings.set(uid, key, value);
@@ -2705,6 +2717,10 @@ Respond ONLY with valid JSON in this exact format:
       unit: body.unit != null ? String(body.unit) : current.unit,
       amount: body.amount != null ? Number(body.amount) : current.amount,
       sortOrder: body.sortOrder != null ? Number(body.sortOrder) : current.sortOrder,
+      // "" or null clears the binding so the entry stops auto-hinting.
+      jobTag: "jobTag" in body
+        ? (body.jobTag ? String(body.jobTag) : null)
+        : (current.jobTag ?? null),
     });
 
     return services.settings.set(uid, key, value);
@@ -4235,4 +4251,143 @@ Respond ONLY with valid JSON in this exact format:
       return { detached: true };
     });
   });
+
+  // ----------------------------------------------------------------------
+  // Company Documents
+  // ----------------------------------------------------------------------
+  // Super has full access (read, write, hidden docs). Admin can view + open
+  // non-hidden docs but cannot mutate.
+
+  async function callerIsSuper(req: any): Promise<boolean> {
+    const me = await services.currentUser.me(req.auth?.clerkUserId);
+    return (me.roles ?? []).includes(RoleVal.SUPER);
+  }
+
+  // List
+  app.get("/admin/documents", adminGuard, async (req: any) => {
+    const adminHiddenVisible = await callerIsSuper(req);
+    const { type, status, q } = (req.query || {}) as Record<string, string>;
+    return services.companyDocuments.list({
+      adminHiddenVisible,
+      type,
+      status: (status as any) || undefined,
+      q,
+    });
+  });
+
+  // Expiration counts (title-bar pill)
+  app.get("/admin/documents/expiration-counts", adminGuard, async (req: any) => {
+    const adminHiddenVisible = await callerIsSuper(req);
+    return services.companyDocuments.expirationCounts({ adminHiddenVisible });
+  });
+
+  // Detail
+  app.get("/admin/documents/:id", adminGuard, async (req: any) => {
+    const adminHiddenVisible = await callerIsSuper(req);
+    return services.companyDocuments.get(String(req.params.id), { adminHiddenVisible });
+  });
+
+  // Open / download a version (presigned URL)
+  app.get(
+    "/admin/documents/:id/versions/:versionId/url",
+    adminGuard,
+    async (req: any) => {
+      const adminHiddenVisible = await callerIsSuper(req);
+      const mode = (req.query?.mode === "download" ? "download" : "view") as
+        | "view"
+        | "download";
+      return services.companyDocuments.getVersionUrl(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+        mode,
+        { adminHiddenVisible },
+      );
+    },
+  );
+
+  // ----- Super-only writes ------------------------------------------------
+
+  app.post("/admin/documents", superGuard, async (req: any) => {
+    return services.companyDocuments.create(
+      await currentUserId(req),
+      req.body || {},
+    );
+  });
+
+  app.patch("/admin/documents/:id", superGuard, async (req: any) => {
+    return services.companyDocuments.update(
+      await currentUserId(req),
+      String(req.params.id),
+      req.body || {},
+    );
+  });
+
+  app.post("/admin/documents/:id/archive", superGuard, async (req: any) => {
+    return services.companyDocuments.archive(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
+
+  app.post("/admin/documents/:id/unarchive", superGuard, async (req: any) => {
+    return services.companyDocuments.unarchive(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
+
+  // Hard delete — requires the document to be archived first.
+  app.delete("/admin/documents/:id", superGuard, async (req: any) => {
+    return services.companyDocuments.hardDelete(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
+
+  // Versions
+  app.post("/admin/documents/:id/versions/init", superGuard, async (req: any) => {
+    return services.companyDocuments.initVersion(
+      await currentUserId(req),
+      String(req.params.id),
+      req.body || {},
+    );
+  });
+
+  app.post(
+    "/admin/documents/:id/versions/:versionId/confirm",
+    superGuard,
+    async (req: any) => {
+      return services.companyDocuments.confirmVersion(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+        req.body || {},
+      );
+    },
+  );
+
+  app.post(
+    "/admin/documents/:id/versions/:versionId/restore",
+    superGuard,
+    async (req: any) => {
+      return services.companyDocuments.restoreVersion(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+      );
+    },
+  );
+
+  app.delete(
+    "/admin/documents/:id/versions/:versionId",
+    superGuard,
+    async (req: any) => {
+      return services.companyDocuments.deleteVersion(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+      );
+    },
+  );
 }
