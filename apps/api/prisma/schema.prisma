@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
 }
 
@@ -68,19 +68,19 @@ enum WorkerType {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  clerkUserId  String       @unique
-  email        String?
-  phone        String?
-  firstName    String?
-  lastName     String?
-  displayName  String?
-  isApproved   Boolean      @default(false)
+  id          String  @id @default(cuid())
+  clerkUserId String  @unique
+  email       String?
+  phone       String?
+  firstName   String?
+  lastName    String?
+  displayName String?
+  isApproved  Boolean @default(false)
 
-  workerType              WorkerType?
-  homeBaseAddress         String?
-  availableDays           String?        // JSON array of day numbers, e.g. "[1,2,3,4,5]" (0=Sun,6=Sat)
-  availableHoursPerDay    Float?         // default 4 if null
+  workerType           WorkerType?
+  homeBaseAddress      String?
+  availableDays        String? // JSON array of day numbers, e.g. "[1,2,3,4,5]" (0=Sun,6=Sat)
+  availableHoursPerDay Float? // default 4 if null
 
   // Privilege overrides. Null = follow workerType default (resolved in app
   // code via DEFAULTS_BY_WORKERTYPE). True/false = explicit override.
@@ -93,49 +93,54 @@ model User {
   canPullInventory          Boolean?
   canChargeBusinessExpenses Boolean?
 
-  insuranceCertR2Key      String?
-  insuranceCertFileName   String?
+  insuranceCertR2Key       String?
+  insuranceCertFileName    String?
   insuranceCertContentType String?
-  insuranceExpiresAt      DateTime?
-  contractorAgreedAt      DateTime?
-  w9Collected             Boolean     @default(false)
-  w9CollectedAt           DateTime?
+  insuranceExpiresAt       DateTime?
+  contractorAgreedAt       DateTime?
+  w9Collected              Boolean   @default(false)
+  w9CollectedAt            DateTime?
 
-  roles        UserRole[]
-  checkouts    Checkout[]
-  auditEvents  AuditEvent[] @relation("AuditActor")
+  roles          UserRole[]
+  checkouts      Checkout[]
+  checkoutSplits CheckoutSplit[]
+  auditEvents    AuditEvent[]    @relation("AuditActor")
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  // Groups
+  groupsClaimed    Group[]       @relation("GroupClaimer")
+  groupMemberships GroupMember[]
 
-  jobDefaultAssignments     JobAssigneeDefault[]
-  jobOccurrenceAssignments  JobOccurrenceAssignee[]
-  jobAssignmentAuditActor   JobOccurrenceAssignee[] @relation("JobAssignActor")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  paymentsCollected         Payment[]
-  paymentSplits             PaymentSplit[]
-  expenses                  Expense[]
-  photos                    JobOccurrencePhoto[]
-  settingsUpdated           Setting[]
-  pinnedOccurrences         PinnedOccurrence[]
-  likedOccurrences          LikedOccurrence[]
-  reminders                 Reminder[]
-  calendarFeedTokens        CalendarFeedToken[]
-  occurrenceComments        OccurrenceComment[]
-  propertyPhotosUploaded    PropertyPhoto[]
-  equipmentPhotosUploaded   EquipmentPhoto[]
-  occurrenceAddons          OccurrenceAddon[]
-  pinnedEquipment           PinnedEquipment[]
-  likedEquipment            LikedEquipment[]
-  businessExpenses          BusinessExpense[]
-  changeRequestsCreated     OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
-  changeRequestsResolved    OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
-  pushSubscriptions         PushSubscription[]
+  jobDefaultAssignments    JobAssigneeDefault[]
+  jobOccurrenceAssignments JobOccurrenceAssignee[]
+  jobAssignmentAuditActor  JobOccurrenceAssignee[] @relation("JobAssignActor")
 
-  suppliesCreated           Supply[]
-  supplyPurchasesCreated    SupplyPurchase[]
-  supplyHoldsCreated        SupplyHold[]
-  supplyAdjustmentsCreated  SupplyAdjustment[]
+  paymentsCollected       Payment[]
+  paymentSplits           PaymentSplit[]
+  expenses                Expense[]
+  photos                  JobOccurrencePhoto[]
+  settingsUpdated         Setting[]
+  pinnedOccurrences       PinnedOccurrence[]
+  likedOccurrences        LikedOccurrence[]
+  reminders               Reminder[]
+  calendarFeedTokens      CalendarFeedToken[]
+  occurrenceComments      OccurrenceComment[]
+  propertyPhotosUploaded  PropertyPhoto[]
+  equipmentPhotosUploaded EquipmentPhoto[]
+  occurrenceAddons        OccurrenceAddon[]
+  pinnedEquipment         PinnedEquipment[]
+  likedEquipment          LikedEquipment[]
+  businessExpenses        BusinessExpense[]
+  changeRequestsCreated   OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
+  changeRequestsResolved  OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
+  pushSubscriptions       PushSubscription[]
+
+  suppliesCreated          Supply[]
+  supplyPurchasesCreated   SupplyPurchase[]
+  supplyHoldsCreated       SupplyHold[]
+  supplyAdjustmentsCreated SupplyAdjustment[]
 }
 
 model NotificationTemplate {
@@ -151,60 +156,61 @@ model NotificationTemplate {
 }
 
 model PushSubscription {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  endpoint   String   @unique
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint   String    @unique
   p256dh     String
   auth       String
   userAgent  String?
   label      String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 
   @@index([userId])
 }
 
 model UserRole {
-  id      String @id @default(cuid())
-  userId  String
-  role    Role
+  id     String @id @default(cuid())
+  userId String
+  role   Role
 
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, role])
 }
 
 model Equipment {
-  id         String           @id @default(uuid())
-  qrSlug     String?          @unique
-  status     EquipmentStatus  @default(AVAILABLE)
-  type       String?
-  brand      String?
-  model      String?
-  shortDesc  String?
-  longDesc   String?
-  energy     String?
-  features   String?
-  condition  String?
-  issues     String?
-  age        String?
+  id        String          @id @default(uuid())
+  qrSlug    String?         @unique
+  status    EquipmentStatus @default(AVAILABLE)
+  type      String?
+  brand     String?
+  model     String?
+  shortDesc String?
+  longDesc  String?
+  energy    String?
+  features  String?
+  condition String?
+  issues    String?
+  age       String?
 
-  dailyRate          Float?
-  employeeDailyRate  Float?
-  requiresInsurance  Boolean  @default(false)
+  dailyRate         Float?
+  employeeDailyRate Float?
+  requiresInsurance Boolean @default(false)
 
-  checkouts    Checkout[]
-  photos       EquipmentPhoto[]
-  pins         PinnedEquipment[]
-  likes        LikedEquipment[]
-  instructions EquipmentInstruction[]
-  collections  EquipmentCollectionItem[]
+  checkouts        Checkout[]
+  photos           EquipmentPhoto[]
+  pins             PinnedEquipment[]
+  likes            LikedEquipment[]
+  instructions     EquipmentInstruction[]
+  collections      EquipmentCollectionItem[]
   businessExpenses BusinessExpense[]
+  groupPreferences GroupPreferredEquipment[]
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  retiredAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  retiredAt DateTime?
 }
 
 model EquipmentPhoto {
@@ -224,36 +230,62 @@ model EquipmentPhoto {
 }
 
 model Checkout {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   equipmentId  String
   userId       String
-  reservedAt   DateTime @default(now())
+  reservedAt   DateTime  @default(now())
   checkedOutAt DateTime?
   releasedAt   DateTime?
   rentalDays   Int?
   rentalCost   Float?
 
-  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Group rentals: when set, the checkout is owned by the group's claimer
+  // (still tracked in userId) but the cost is split among workers per
+  // CheckoutSplit rows materialized at release time. Null = solo checkout.
+  groupId String?
+  group   Group?  @relation(fields: [groupId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  equipment Equipment       @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  splits    CheckoutSplit[]
 
   // Helpful indexes; the “one active checkout” guarantee is added via a partial unique index in SQL
   @@index([equipmentId, releasedAt])
   @@index([userId, checkedOutAt])
+  @@index([groupId])
+}
+
+// Per-worker share of a group rental. Created at release time from the
+// group's per-member equipmentCostPercent (or even-split among workers
+// when no percents are configured). Observers are excluded — they don't
+// earn or pay for equipment.
+model CheckoutSplit {
+  id         String   @id @default(cuid())
+  checkoutId String
+  checkout   Checkout @relation(fields: [checkoutId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  percent    Float
+  amount     Float
+  createdAt  DateTime @default(now())
+
+  @@unique([checkoutId, userId])
+  @@index([userId])
 }
 
 model AuditEvent {
-  id           String       @id @default(cuid())
+  id String @id @default(cuid())
 
-  scope        AuditScope
-  verb         AuditVerb
-  action       String?      @db.VarChar(64)
+  scope  AuditScope
+  verb   AuditVerb
+  action String?    @db.VarChar(64)
 
-  actorUserId  String?
-  metadata     Json?
+  actorUserId String?
+  metadata    Json?
 
-  actor        User?        @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
-  createdAt    DateTime     @default(now())
+  createdAt DateTime @default(now())
 
   @@index([actorUserId, createdAt])
   @@index([scope, createdAt])
@@ -297,92 +329,92 @@ enum ContactStatus {
 }
 
 enum PropertyStatus {
-   ACTIVE
-   ARCHIVED
+  ACTIVE
+  ARCHIVED
 }
 
 model Client {
-  id            String       @id @default(cuid())
-  type          ClientType
-  displayName   String
+  id          String     @id @default(cuid())
+  type        ClientType
+  displayName String
 
-  status        ClientStatus @default(ACTIVE)
+  status ClientStatus @default(ACTIVE)
 
-  isVip         Boolean      @default(false)
-  vipReason     String?
+  isVip     Boolean @default(false)
+  vipReason String?
 
   notesInternal String?
-  adminTags     String?      // JSON string array e.g. ["LATE_PAYER","ARGUMENTATIVE"] — admin-only
+  adminTags     String? // JSON string array e.g. ["LATE_PAYER","ARGUMENTATIVE"] — admin-only
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   //TODO: NOT BEING USED YET, BUT SHOULD MAKE ALL ENTITIES BE RETIRED/ARCHIVED
-  archivedAt    DateTime?
+  archivedAt DateTime?
 
   // Relations
-  contacts      ClientContact[]
-  properties    Property[]
-  jobClients    JobClient[]
-  followups     FollowupClient[]
+  contacts   ClientContact[]
+  properties Property[]
+  jobClients JobClient[]
+  followups  FollowupClient[]
 
   @@index([status])
   @@index([displayName])
 }
 
 model ClientContact {
-  id               String      @id @default(cuid())
+  id String @id @default(cuid())
 
-  status           ContactStatus @default(ACTIVE)
+  status ContactStatus @default(ACTIVE)
 
   // Belongs to Client
-  clientId         String
-  client           Client      @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   // Identity
-  firstName        String
-  lastName         String
-  nickname         String?
-  email            String?
-  phone            String?                 // raw as entered
-  normalizedPhone  String?     @db.VarChar(20) // E.164 for dedupe/lookup
+  firstName       String
+  lastName        String
+  nickname        String?
+  email           String?
+  phone           String? // raw as entered
+  normalizedPhone String? @db.VarChar(20) // E.164 for dedupe/lookup
 
-  role             ContactRole?
-  isPrimary        Boolean     @default(false)
+  role      ContactRole?
+  isPrimary Boolean      @default(false)
 
-  clerkUserId      String?     @unique
+  clerkUserId String? @unique
 
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  propertiesAsPOC  Property[]  @relation("PropertyPOC")
+  propertiesAsPOC Property[] @relation("PropertyPOC")
 
   // Backref from Property.pointOfContactId targets this model
 
   jobContacts JobContact[]
 
-  @@index([clientId, status])
   // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
   @@unique([email])
   @@unique([normalizedPhone])
+  @@index([clientId, status])
 }
 
 model Property {
-  id                 String         @id @default(cuid())
+  id String @id @default(cuid())
 
   // Belongs to Client
-  clientId           String
-  client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  kind               PropertyKind   @default(SINGLE)
+  kind PropertyKind @default(SINGLE)
 
   // Labels & addressing
-  displayName        String
-  street1            String
-  street2            String?
-  city               String
-  state              String
-  postalCode         String
-  country            String
+  displayName String
+  street1     String
+  street2     String?
+  city        String
+  state       String
+  postalCode  String
+  country     String
 
   // Optional geo
   //lat                Float?
@@ -396,23 +428,23 @@ model Property {
   //siteBoundaryGeo    Json?          // polygon/bbox later if needed
 
   // Default point of contact for this property
-  pointOfContactId   String?
-  pointOfContact     ClientContact? @relation("PropertyPOC", fields: [pointOfContactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  pointOfContactId String?
+  pointOfContact   ClientContact? @relation("PropertyPOC", fields: [pointOfContactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   // Property size
-  lotSize            Float?
-  lotSizeUnit        String?        // e.g. "sqft", "acres", "hectares"
+  lotSize     Float?
+  lotSizeUnit String? // e.g. "sqft", "acres", "hectares"
 
   // Light ops
-  accessNotes        String?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  archivedAt         DateTime?
+  accessNotes String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  archivedAt  DateTime?
 
-  status            PropertyStatus @default(ACTIVE)
+  status PropertyStatus @default(ACTIVE)
 
-  jobs              Job[]
-  photos            PropertyPhoto[]
+  jobs   Job[]
+  photos PropertyPhoto[]
 
   @@index([clientId])
   @@index([kind])
@@ -481,13 +513,13 @@ enum JobOccurrenceSource {
 }
 
 model Job {
-  id          String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  propertyId  String
-  property    Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  kind        JobKind   @default(SINGLE_ADDRESS) // REQUIRED
-  status      JobStatus @default(PROPOSED)
+  kind   JobKind   @default(SINGLE_ADDRESS) // REQUIRED
+  status JobStatus @default(PROPOSED)
 
   frequencyDays    Int?
   description      String?
@@ -495,148 +527,153 @@ model Job {
   defaultPrice     Float?
   estimatedMinutes Int?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  contacts    JobContact[]
-  clients     JobClient[]
+  contacts JobContact[]
+  clients  JobClient[]
 
-  schedule              JobSchedule?
-  occurrences           JobOccurrence[]
-  defaultAssignees      JobAssigneeDefault[]
-  defaultPropertyPhotos JobPropertyPhoto[]
-  followups             FollowupJob[]
+  schedule               JobSchedule?
+  occurrences            JobOccurrence[]
+  defaultAssignees       JobAssigneeDefault[]
+  defaultPropertyPhotos  JobPropertyPhoto[]
+  followups              FollowupJob[]
   recommendedCollections JobRecommendedCollection[]
 }
 
 model JobContact {
-  id              String         @id @default(cuid())
+  id String @id @default(cuid())
 
-  jobId           String
-  job             Job            @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   clientContactId String
-  clientContact   ClientContact  @relation(fields: [clientContactId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  clientContact   ClientContact @relation(fields: [clientContactId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  role            String         // "decision_maker" | "on_site" | "notify_only"
-  notify          Boolean        @default(true)
+  role   String // "decision_maker" | "on_site" | "notify_only"
+  notify Boolean @default(true)
 
   @@index([jobId])
   @@index([clientContactId])
 }
 
 model JobClient {
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  jobId     String
-  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  clientId  String
-  client    Client   @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  role      String   // "owner" | "payer" | "point_of_contact"
-  share     Float?   // optional split %
+  role  String // "owner" | "payer" | "point_of_contact"
+  share Float? // optional split %
 
   @@index([jobId])
   @@index([clientId])
 }
 
 model JobSchedule {
-  id        String  @id @default(cuid())
+  id String @id @default(cuid())
 
-  jobId     String  @unique
-  job       Job     @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId String @unique
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   autoRenew Boolean @default(false)
 
-  cadence   Cadence?
-  interval  Int?       // every N weeks/months (simple)
+  cadence  Cadence?
+  interval Int? // every N weeks/months (simple)
 
-  dayOfWeek Int?       // 0-6 for weekly-ish schedules
-  dayOfMonth Int?      // 1-31 for monthly-ish schedules
+  dayOfWeek  Int? // 0-6 for weekly-ish schedules
+  dayOfMonth Int? // 1-31 for monthly-ish schedules
 
   preferredStartHour Int?
   preferredEndHour   Int?
 
-  horizonDays    Int      @default(21)
+  horizonDays    Int       @default(21)
   nextGenerateAt DateTime?
-  active         Boolean  @default(true)
+  active         Boolean   @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model JobOccurrence {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  jobId       String?
-  job         Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId String?
+  job   Job?    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  kind        JobKind?  // Copied from Job.kind on creation; null for tasks
+  kind JobKind? // Copied from Job.kind on creation; null for tasks
 
-  title       String?   // Short title for tasks; optional for job occurrences
+  title String? // Short title for tasks; optional for job occurrences
 
-  startAt     DateTime?
-  endAt       DateTime?
+  startAt DateTime?
+  endAt   DateTime?
 
-  status      JobOccurrenceStatus @default(SCHEDULED)
-  source      JobOccurrenceSource @default(GENERATED)
-  workflow    OccurrenceWorkflow  @default(STANDARD)
+  status   JobOccurrenceStatus @default(SCHEDULED)
+  source   JobOccurrenceSource @default(GENERATED)
+  workflow OccurrenceWorkflow  @default(STANDARD)
 
-  jobType          String?        // Legacy/custom free-text job type
-  jobTags          String?        // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
-  notes            String?
-  price            Float?
-  estimatedMinutes Int?
-  frequencyDays    Int?       // Overrides Job.frequencyDays when set
-  proposalAmount   Float?
-  proposalNotes    String?
-  rejectionReason  String?
-  generatedEstimate String?        // AI-generated estimate message for client
+  jobType                    String? // Legacy/custom free-text job type
+  jobTags                    String? // JSON array of tags, e.g. ["MOW","TRIM","EDGE","BLOW"]
+  notes                      String?
+  price                      Float?
+  estimatedMinutes           Int?
+  frequencyDays              Int? // Overrides Job.frequencyDays when set
+  proposalAmount             Float?
+  proposalNotes              String?
+  rejectionReason            String?
+  generatedEstimate          String? // AI-generated estimate message for client
   generatedEstimateBreakdown String? // AI-generated internal cost breakdown for business
   // Light estimate fields (used when jobId is null and workflow is ESTIMATE)
-  contactName      String?
-  contactPhone     String?
-  contactEmail     String?
-  estimateAddress  String?
+  contactName                String?
+  contactPhone               String?
+  contactEmail               String?
+  estimateAddress            String?
 
-  isOneOff         Boolean @default(false)   // @deprecated — use workflow
-  isTentative      Boolean @default(false)
-  isEstimate       Boolean @default(false)   // @deprecated — use workflow
-  isAdminOnly      Boolean @default(false)
+  isOneOff          Boolean @default(false) // @deprecated — use workflow
+  isTentative       Boolean @default(false)
+  isEstimate        Boolean @default(false) // @deprecated — use workflow
+  isAdminOnly       Boolean @default(false)
   isClientConfirmed Boolean @default(false)
-  isHighPriority   Boolean @default(false)
-  pinnedNote          String?
-  pinnedNoteRepeats   Boolean @default(true)
+  isHighPriority    Boolean @default(false)
+  pinnedNote        String?
+  pinnedNoteRepeats Boolean @default(true)
 
-  startedAt             DateTime?
-  completedAt           DateTime?
-  pausedAt              DateTime?
-  totalPausedMs         Int          @default(0)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  pausedAt      DateTime?
+  totalPausedMs Int       @default(0)
 
   startLat    Float?
   startLng    Float?
   completeLat Float?
   completeLng Float?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  linkedOccurrenceId  String?
-  linkedOccurrence    JobOccurrence?  @relation("TaskLink", fields: [linkedOccurrenceId], references: [id], onDelete: SetNull)
-  linkedFromTasks     JobOccurrence[] @relation("TaskLink")
+  linkedOccurrenceId String?
+  linkedOccurrence   JobOccurrence?  @relation("TaskLink", fields: [linkedOccurrenceId], references: [id], onDelete: SetNull)
+  linkedFromTasks    JobOccurrence[] @relation("TaskLink")
 
-  linkGroupId         String?
+  linkGroupId String?
 
-  @@index([linkGroupId])
+  // Set when admin attached a Group (crew) or the claimer claimed for a group.
+  // Members are materialized into `assignees` at attach/claim time — this
+  // column is the back-link so we can render "Group: Alpha (5)" and enforce
+  // the group-vs-individual exclusivity rule.
+  assignedGroupId String?
+  assignedGroup   Group?  @relation("OccurrenceGroup", fields: [assignedGroupId], references: [id], onDelete: SetNull)
 
-  assignees   JobOccurrenceAssignee[]
-  payment     Payment?
-  expenses    Expense[]
+  assignees        JobOccurrenceAssignee[]
+  payment          Payment?
+  expenses         Expense[]
   businessExpenses BusinessExpense[]
-  supplyHolds SupplyHold[]
-  addons       OccurrenceAddon[]
-  instructions OccurrenceInstruction[]
+  supplyHolds      SupplyHold[]
+  addons           OccurrenceAddon[]
+  instructions     OccurrenceInstruction[]
   photos           JobOccurrencePhoto[]
   propertyPhotos   OccurrencePropertyPhoto[]
   pins             PinnedOccurrence[]
@@ -647,43 +684,45 @@ model JobOccurrence {
   followupJobs     FollowupJob[]
   changeRequests   OccurrenceChangeRequest[]
 
+  @@index([linkGroupId])
+  @@index([assignedGroupId])
   @@index([jobId, status])
   @@index([startAt])
   @@index([kind])
 }
 
 model JobOccurrencePhoto {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  r2Key         String        // object key in R2 bucket
-  fileName      String?       // original file name
-  contentType   String?       // e.g. image/jpeg
+  r2Key       String // object key in R2 bucket
+  fileName    String? // original file name
+  contentType String? // e.g. image/jpeg
 
-  uploadedById  String
-  uploadedBy    User          @relation(fields: [uploadedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  createdAt     DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([occurrenceId])
 }
 
 model JobAssigneeDefault {
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  jobId     String
-  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  role      String?  // "observer" for observer role, null for worker
-  active    Boolean  @default(true)
+  role      String? // "observer" for observer role, null for worker
+  active    Boolean @default(true)
   // Lower sortOrder = appears first. The first non-observer (sorted asc) is
   // treated as the default claimer when generating occurrences.
-  sortOrder Int      @default(100)
+  sortOrder Int     @default(100)
 
   createdAt DateTime @default(now())
 
@@ -693,19 +732,19 @@ model JobAssigneeDefault {
 }
 
 model JobOccurrenceAssignee {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  role          String?
-  assignedAt    DateTime      @default(now())
+  role       String?
+  assignedAt DateTime @default(now())
 
-  assignedById  String?
-  assignedBy    User?         @relation("JobAssignActor", fields: [assignedById], references: [id], onDelete: SetNull)
+  assignedById String?
+  assignedBy   User?   @relation("JobAssignActor", fields: [assignedById], references: [id], onDelete: SetNull)
 
   @@unique([occurrenceId, userId])
   @@index([occurrenceId])
@@ -724,76 +763,76 @@ enum PaymentMethod {
 }
 
 model Payment {
-  id             String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  occurrenceId   String        @unique
-  occurrence     JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  occurrenceId String        @unique
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  amountPaid     Float
-  method         PaymentMethod
-  note           String?
+  amountPaid Float
+  method     PaymentMethod
+  note       String?
 
-  platformFeePercent  Float?    // % charged to contractor/unclassified
-  platformFeeAmount   Float?    // calculated on contractor splits: (splitAmount - expenses) * percent / 100
-  businessMarginPercent Float?  // % retained from employee/trainee splits
-  businessMarginAmount  Float?  // calculated on employee/trainee splits: (splitAmount - expenses) * percent / 100
+  platformFeePercent    Float? // % charged to contractor/unclassified
+  platformFeeAmount     Float? // calculated on contractor splits: (splitAmount - expenses) * percent / 100
+  businessMarginPercent Float? // % retained from employee/trainee splits
+  businessMarginAmount  Float? // calculated on employee/trainee splits: (splitAmount - expenses) * percent / 100
 
-  collectedById  String
-  collectedBy    User          @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  collectedById String
+  collectedBy   User   @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  nextOccurrenceSkipReason String?   // null = created successfully, "one_off" = expected, others = warning
+  nextOccurrenceSkipReason String? // null = created successfully, "one_off" = expected, others = warning
 
-  splits         PaymentSplit[]
+  splits PaymentSplit[]
 
-  createdAt      DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([collectedById, createdAt])
   @@index([method, createdAt])
 }
 
 model PaymentSplit {
-  id         String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  paymentId  String
-  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  amount     Float
+  amount Float
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([paymentId, userId])
   @@index([userId, createdAt])
 }
 
 model Expense {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  createdById   String
-  createdBy     User          @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  cost          Float
-  description   String
+  cost        Float
+  description String
 
   // 1:1 link to the BusinessExpense (tax ledger) row. Every Expense added on
   // a job in MVP-step-2 onward gets a paired BusinessExpense — workers buy on
   // the company card, so per-job spend IS a business expense.
-  businessExpenseId String?  @unique
+  businessExpenseId String?          @unique
   businessExpense   BusinessExpense? @relation(fields: [businessExpenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   // Back-relation: when this Expense was created by consuming inventory
   // (MVP-step-3), the SupplyHold owns the link via SupplyHold.expenseId.
   // No BusinessExpense is paired in this case — the BE was already recorded
   // at purchase time, and double-recording would inflate tax-ledger totals.
-  supplyHold    SupplyHold?
+  supplyHold SupplyHold?
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([occurrenceId])
   @@index([createdById])
@@ -801,10 +840,10 @@ model Expense {
 
 // Business expenses NOT tied to a specific job/occurrence — used for general bookkeeping (insurance, fuel, equipment purchases, etc.)
 model BusinessExpense {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
 
   createdById String
-  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   date          DateTime
   cost          Float
@@ -817,16 +856,16 @@ model BusinessExpense {
   // Optional link to a piece of equipment — useful for capital purchases
   // (e.g. "$8K rider mower" categorized as Depreciation gets linked to its
   // Equipment row so we can track per-equipment lifetime cost later).
-  equipmentId   String?
-  equipment     Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  equipmentId String?
+  equipment   Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   // Optional link to a job occurrence — set when the expense was incurred for
   // a specific job (worker buys gas on the company card). The corresponding
   // per-Job Expense row drives payout reduction; this row is the tax ledger
   // entry. Linked 1:1 via Expense.businessExpenseId.
-  occurrenceId  String?
-  occurrence    JobOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  expense       Expense?
+  occurrenceId String?
+  occurrence   JobOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  expense      Expense?
 
   // Back-relation: when this BE was created by an inventory purchase
   // (MVP-step-3), the SupplyPurchase owns the link via
@@ -837,15 +876,15 @@ model BusinessExpense {
   // Optional receipt photo. Stored in the seedlings-receipts R2 bucket; the
   // R2 key is the canonical reference. Same anchor for all 3 expense
   // sources (freestanding BE, job-Expense pair, supply-purchase pair).
-  receiptR2Key         String?
-  receiptFileName      String?
-  receiptContentType   String?
-  receiptUploadedAt    DateTime?
+  receiptR2Key       String?
+  receiptFileName    String?
+  receiptContentType String?
+  receiptUploadedAt  DateTime?
 
   // Optional cadence flag for recurring expenses (e.g. monthly software
   // subscriptions). Null = one-off. The most recent row in a group keyed
   // by (description, vendor) drives "due to record" suggestions.
-  recurrence           ExpenseRecurrence?
+  recurrence ExpenseRecurrence?
 
   // When set, the next-expected date for the series is computed from this
   // date instead of `date + cadence`. Used by the "Skip" button on the Due
@@ -853,8 +892,8 @@ model BusinessExpense {
   // date, so the next suggestion is one cadence later.
   recurrenceSkippedUntil DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([date])
   @@index([category])
@@ -864,85 +903,85 @@ model BusinessExpense {
 }
 
 model Setting {
-  id            String    @id @default(cuid())
-  key           String    @unique
-  value         String
-  description   String?
-  updatedAt     DateTime  @updatedAt
-  updatedById   String?
-  updatedBy     User?     @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 }
 
 model PinnedOccurrence {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
 
-  pinnedAt      DateTime      @default(now())
+  pinnedAt DateTime @default(now())
 
   @@unique([userId, occurrenceId])
   @@index([userId])
 }
 
 model LikedOccurrence {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
 
-  likedAt       DateTime      @default(now())
+  likedAt DateTime @default(now())
 
   @@unique([userId, occurrenceId])
   @@index([userId])
 }
 
 model PinnedEquipment {
-  id           String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId       String
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  equipmentId  String
-  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
-  pinnedAt     DateTime  @default(now())
+  pinnedAt DateTime @default(now())
 
   @@unique([userId, equipmentId])
   @@index([userId])
 }
 
 model LikedEquipment {
-  id           String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId       String
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  equipmentId  String
-  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
-  likedAt      DateTime  @default(now())
+  likedAt DateTime @default(now())
 
   @@unique([userId, equipmentId])
   @@index([userId])
 }
 
 model EquipmentInstruction {
-  id           String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  equipmentId  String
-  equipment    Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
-  text         String
-  isPreset     Boolean   @default(false)
-  sortOrder    Int       @default(0)
-  createdAt    DateTime  @default(now())
+  text      String
+  isPreset  Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
 
   @@index([equipmentId])
 }
@@ -960,22 +999,23 @@ model EquipmentCollection {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  items                EquipmentCollectionItem[]
-  jobRecommendations   JobRecommendedCollection[]
+  items              EquipmentCollectionItem[]
+  jobRecommendations JobRecommendedCollection[]
+  groupPreferences   GroupPreferredEquipment[]
 
   @@index([sortOrder, name])
 }
 
 model EquipmentCollectionItem {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   collectionId String
   equipmentId  String
-  sortOrder    Int      @default(100)
+  sortOrder    Int    @default(100)
 
-  collection   EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  equipment    Equipment           @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  collection EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  equipment  Equipment           @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([collectionId, equipmentId])
   @@index([equipmentId])
@@ -983,91 +1023,91 @@ model EquipmentCollectionItem {
 }
 
 model JobRecommendedCollection {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   jobId        String
   collectionId String
-  sortOrder    Int      @default(100)
+  sortOrder    Int    @default(100)
 
-  job          Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  collection   EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  job        Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  collection EquipmentCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([jobId, collectionId])
   @@index([jobId, sortOrder])
 }
 
 model OccurrenceComment {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
 
-  authorId      String
-  author        User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
-  body          String
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([occurrenceId])
   @@index([authorId])
 }
 
 model CalendarFeedToken {
-  id              String    @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  token           String    @unique
-  label           String?
-  filters         Json
-  createdAt       DateTime  @default(now())
-  lastAccessedAt  DateTime?
+  token          String    @unique
+  label          String?
+  filters        Json
+  createdAt      DateTime  @default(now())
+  lastAccessedAt DateTime?
 
   @@index([userId])
   @@index([token])
 }
 
 model Reminder {
-  id            String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  userId        String
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
 
-  remindAt      DateTime
-  note          String?
-  dismissedAt   DateTime?
+  remindAt    DateTime
+  note        String?
+  dismissedAt DateTime?
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, occurrenceId])
   @@index([userId, remindAt])
 }
 
 model FollowupClient {
-  id            String        @id @default(cuid())
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
-  clientId      String
-  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdAt     DateTime      @default(now())
+  id           String        @id @default(cuid())
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  clientId     String
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
 
   @@unique([occurrenceId, clientId])
 }
 
 model FollowupJob {
-  id            String        @id @default(cuid())
-  occurrenceId  String
-  occurrence    JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
-  jobId         String
-  job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  createdAt     DateTime      @default(now())
+  id           String        @id @default(cuid())
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  jobId        String
+  job          Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
 
   @@unique([occurrenceId, jobId])
 }
@@ -1104,11 +1144,11 @@ model JobPropertyPhoto {
 }
 
 model OccurrencePropertyPhoto {
-  id              String         @id @default(cuid())
+  id              String        @id @default(cuid())
   occurrenceId    String
-  occurrence      JobOccurrence  @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  occurrence      JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
   propertyPhotoId String
-  propertyPhoto   PropertyPhoto  @relation(fields: [propertyPhotoId], references: [id], onDelete: Cascade)
+  propertyPhoto   PropertyPhoto @relation(fields: [propertyPhotoId], references: [id], onDelete: Cascade)
 
   @@unique([occurrenceId, propertyPhotoId])
 }
@@ -1194,40 +1234,40 @@ model OccurrenceChangeRequest {
 //   SupplyAdjustment = manual count corrections (no tax effect)
 
 model Supply {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  name            String
-  description     String?
-  unit            String                       // "bag", "spool", "lb"
+  name          String
+  description   String?
+  unit          String // "bag", "spool", "lb"
   // For future UPC-scan add-flow. Nullable; not unique because the same
   // SKU could legitimately be entered twice with different display names.
-  upc             String?
+  upc           String?
   // Schedule C category for the BusinessExpense paired with each purchase.
   // Defaults to "Supplies"; can be overridden per supply (e.g. "Car and
   // truck expenses" if you ever want to track fuel as inventory).
-  category        String   @default("Supplies")
+  category      String  @default("Supplies")
   // Reference businessCost — typically updated to the most recent
   // SupplyPurchase.unitCost. Display-only / default for new purchases.
-  businessCost    Float    @default(0)
+  businessCost  Float   @default(0)
   // Per-unit charge to the job's payout when consumed. May exceed
   // businessCost — the difference is implicit business margin (similar to
   // platform fee / employee margin). Snapshot at hold time so retroactive
   // edits don't reprice existing holds.
-  jobPayoutCost   Float    @default(0)
+  jobPayoutCost Float   @default(0)
   // Physical units in stock. Available = onHand − Σ(active holds), computed
   // at query time.
-  onHand          Int      @default(0)
+  onHand        Int     @default(0)
 
-  archivedAt      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
-  createdById     String
-  createdBy       User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
 
-  purchases       SupplyPurchase[]
-  holds           SupplyHold[]
-  adjustments     SupplyAdjustment[]
+  purchases   SupplyPurchase[]
+  holds       SupplyHold[]
+  adjustments SupplyAdjustment[]
 
   @@index([archivedAt])
   @@index([upc])
@@ -1235,61 +1275,61 @@ model Supply {
 }
 
 model SupplyPurchase {
-  id                String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  supplyId          String
-  supply            Supply   @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supplyId String
+  supply   Supply @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  quantity          Int
-  unitCost          Float    // per-unit cost at this purchase (snapshot)
-  totalCost         Float    // quantity × unitCost (denormalized for export)
-  date              DateTime @default(now())
-  vendor            String?
-  invoiceNumber    String?
-  notes             String?
+  quantity      Int
+  unitCost      Float // per-unit cost at this purchase (snapshot)
+  totalCost     Float // quantity × unitCost (denormalized for export)
+  date          DateTime @default(now())
+  vendor        String?
+  invoiceNumber String?
+  notes         String?
 
   // 1:1 link to the tax-ledger row created at the same time. Same dual-write
   // pattern as job Expense ↔ BusinessExpense in step-2. Restrict (not
   // Cascade): deleting the BE while a SupplyPurchase is linked would orphan
   // inventory; the BE-delete handler must reverse inventory and remove the
   // SupplyPurchase first.
-  businessExpenseId String   @unique
+  businessExpenseId String          @unique
   businessExpense   BusinessExpense @relation(fields: [businessExpenseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  createdById       String
-  createdBy         User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([supplyId, date])
   @@index([date])
 }
 
 model SupplyHold {
-  id              String           @id @default(cuid())
+  id String @id @default(cuid())
 
-  supplyId        String
-  supply          Supply           @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supplyId String
+  supply   Supply @relation(fields: [supplyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  occurrenceId    String
-  occurrence      JobOccurrence    @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  quantity        Int
-  jobPayoutCost   Float            // per-unit charge snapshot at hold time
-  status          SupplyHoldStatus @default(ACTIVE)
+  quantity      Int
+  jobPayoutCost Float // per-unit charge snapshot at hold time
+  status        SupplyHoldStatus @default(ACTIVE)
 
   // 1:1 link to the per-job Expense row that drives payout deduction.
   // No paired BusinessExpense — the BE was created at purchase time;
   // recording another at consumption would double-count for taxes.
-  expenseId       String?          @unique
-  expense         Expense?         @relation(fields: [expenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  expenseId String?  @unique
+  expense   Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
-  createdById     String
-  createdBy       User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt       DateTime         @default(now())
-  consumedAt      DateTime?
-  releasedAt      DateTime?
-  updatedAt       DateTime         @updatedAt
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+  consumedAt  DateTime?
+  releasedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
 
   @@index([supplyId, status])
   @@index([occurrenceId])
@@ -1297,17 +1337,17 @@ model SupplyHold {
 }
 
 model SupplyAdjustment {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  supplyId      String
-  supply        Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  supplyId String
+  supply   Supply @relation(fields: [supplyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  delta         Int      // +N or −N units
-  reason        String
+  delta  Int // +N or −N units
+  reason String
 
-  createdById   String
-  createdBy     User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt     DateTime @default(now())
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
 
   @@index([supplyId, createdAt])
 }
@@ -1323,4 +1363,80 @@ enum ExpenseRecurrence {
   MONTHLY
   QUARTERLY
   ANNUALLY
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Groups (crews)
+//
+// A Group is a saved roster of workers + observers led by a single claimer.
+// Admins manage groups via Admin → Directory → Groups. A user can be in
+// multiple groups. At job-assignment time the group is *materialized* into
+// individual JobOccurrenceAssignee rows — the group is a template, not a
+// live join. Mid-flight group edits never propagate to in-flight occurrences;
+// see the lock check in services/groups.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+model Group {
+  id          String  @id @default(cuid())
+  name        String
+  description String? @db.Text
+
+  claimerUserId String
+  claimer       User   @relation("GroupClaimer", fields: [claimerUserId], references: [id], onDelete: Restrict)
+
+  members            GroupMember[]
+  preferredEquipment GroupPreferredEquipment[]
+
+  // Back-relations
+  occurrences JobOccurrence[] @relation("OccurrenceGroup")
+  checkouts   Checkout[]
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([claimerUserId])
+  @@index([archivedAt])
+}
+
+model GroupMember {
+  id      String @id @default(cuid())
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // "worker" (null in JobOccurrenceAssignee terms) or "observer"
+  role String @default("worker")
+
+  // Per-member share of group equipment costs. Null = even-split among
+  // workers (observers always excluded). When any are non-null, every worker
+  // in the group must have a value and they must sum to exactly 100.
+  equipmentCostPercent Float?
+
+  createdAt DateTime @default(now())
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+// Preferred equipment + collections for a group. Display-only — never
+// auto-reserves. Surfaces as a "Group preferred" panel on occurrences
+// claimed by the group. Exactly one of equipmentId / equipmentCollectionId
+// must be set (enforced in app code; no Prisma CHECK constraint).
+model GroupPreferredEquipment {
+  id      String @id @default(cuid())
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  equipmentId           String?
+  equipment             Equipment?           @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipmentCollectionId String?
+  equipmentCollection   EquipmentCollection? @relation(fields: [equipmentCollectionId], references: [id], onDelete: Cascade)
+
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now())
+
+  @@index([groupId, sortOrder])
+  @@index([equipmentId])
+  @@index([equipmentCollectionId])
 }

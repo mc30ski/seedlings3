@@ -12,6 +12,7 @@ import { payments } from "./payments";
 import { expenses } from "./expenses";
 import { settings } from "./settings";
 import { supplies } from "./supplies";
+import { groups } from "./groups";
 
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
@@ -30,4 +31,5 @@ export const services: Services = {
   expenses,
   settings,
   supplies,
+  groups,
 };

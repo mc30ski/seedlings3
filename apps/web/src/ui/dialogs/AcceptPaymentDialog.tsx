@@ -26,6 +26,9 @@ type Assignee = {
   userId: string;
   displayName?: string | null;
   workerType?: string | null;
+  /** True for the job's claimer. Used to receive rounding-cent remainders
+   *  on even splits so the sum always lands exactly on the gross payout. */
+  isClaimer?: boolean;
 };
 
 type Props = {
@@ -79,17 +82,42 @@ export default function AcceptPaymentDialog({
 
     // Even split (after expenses + commission/margin)
     if (assignees.length > 0 && defaultAmount != null && defaultAmount > 0) {
-      const payout = calcPayout(defaultAmount);
-      const even = (payout / assignees.length).toFixed(2);
-      const map: Record<string, string> = {};
-      assignees.forEach((a) => { map[a.userId] = even; });
-      setSplits(map);
+      setSplits(evenSplitMap(calcPayout(defaultAmount)));
     } else {
       const map: Record<string, string> = {};
       assignees.forEach((a) => { map[a.userId] = ""; });
       setSplits(map);
     }
   }, [open, defaultAmount, assignees]);
+
+  /**
+   * Even split that lands exactly on the target payout.
+   *
+   * `toFixed(2)` rounds each share *down* to the nearest cent, which can
+   * leave the sum 1–N cents short of the target (e.g., $10 / 3 = $3.33 ×
+   * 3 = $9.99). Disabling the Accept button on that tiny gap is hostile;
+   * instead we put the leftover cents on the claimer's row. The claimer
+   * is the natural recipient — they're the responsible party for the job.
+   * If there's no claimer flag (admin-assigned roster), fall back to the
+   * first assignee. The cent rounding is non-material at any reasonable
+   * scale and the alternative is a UI dead-end.
+   */
+  function evenSplitMap(targetTotal: number): Record<string, string> {
+    const map: Record<string, string> = {};
+    if (assignees.length === 0) return map;
+    const cents = Math.round(targetTotal * 100);
+    const baseCents = Math.floor(cents / assignees.length);
+    const remainderCents = cents - baseCents * assignees.length;
+    const claimerIdx = (() => {
+      const i = assignees.findIndex((a) => a.isClaimer);
+      return i >= 0 ? i : 0;
+    })();
+    assignees.forEach((a, idx) => {
+      const cents = baseCents + (idx === claimerIdx ? remainderCents : 0);
+      map[a.userId] = (cents / 100).toFixed(2);
+    });
+    return map;
+  }
 
   function calcPayout(amt: number): number {
     const net = Math.max(0, amt - totalExpenses);
@@ -103,11 +131,7 @@ export default function AcceptPaymentDialog({
   function evenSplit() {
     const total = parseFloat(amountPaid);
     if (isNaN(total) || total <= 0 || assignees.length === 0) return;
-    const payout = calcPayout(total);
-    const even = (payout / assignees.length).toFixed(2);
-    const map: Record<string, string> = {};
-    assignees.forEach((a) => { map[a.userId] = even; });
-    setSplits(map);
+    setSplits(evenSplitMap(calcPayout(total)));
   }
 
   async function handleSubmit() {

@@ -32,6 +32,64 @@ function computeRentalCost(
   return { rentalDays, rentalCost: rentalDays * rate };
 }
 
+/**
+ * Materialize CheckoutSplit rows for a finished group rental.
+ *
+ * Workers in the group split the rental cost. Observers are excluded. If
+ * any worker has a non-null `equipmentCostPercent`, every worker must have
+ * one (validated at group save time, but we tolerate edge cases here by
+ * falling back to even-split when percents don't sum to 100). Otherwise
+ * cost is split evenly among all workers (including the claimer).
+ */
+async function writeCheckoutSplits(
+  tx: Tx,
+  params: { checkoutId: string; groupId: string; rentalCost: number },
+): Promise<void> {
+  const { checkoutId, groupId, rentalCost } = params;
+  const group = await tx.group.findUnique({
+    where: { id: groupId },
+    include: { members: { select: { userId: true, role: true, equipmentCostPercent: true } } },
+  });
+  if (!group) return;
+  // Claimer counts as a worker for cost-split purposes.
+  const workers: Array<{ userId: string; equipmentCostPercent: number | null }> = [
+    { userId: group.claimerUserId, equipmentCostPercent: null },
+    ...group.members
+      .filter((m) => m.role !== "observer")
+      .map((m) => ({ userId: m.userId, equipmentCostPercent: m.equipmentCostPercent })),
+  ];
+  if (workers.length === 0) return;
+
+  const customSet = workers.filter((w) => w.equipmentCostPercent != null);
+  const useCustom =
+    customSet.length === workers.length &&
+    Math.abs(workers.reduce((s, w) => s + (w.equipmentCostPercent ?? 0), 0) - 100) < 0.001;
+
+  const splits = workers.map((w) => {
+    const percent = useCustom
+      ? (w.equipmentCostPercent ?? 0)
+      : 100 / workers.length;
+    return {
+      userId: w.userId,
+      percent: Math.round(percent * 1e4) / 1e4,
+      amount: Math.round(rentalCost * (percent / 100) * 100) / 100,
+    };
+  });
+
+  // De-dupe in case claimer was also listed in members (shouldn't happen
+  // per group invariants, but stay defensive).
+  const seen = new Set<string>();
+  for (const s of splits) {
+    if (seen.has(s.userId)) continue;
+    seen.add(s.userId);
+    await tx.checkoutSplit.upsert({
+      where: { checkoutId_userId: { checkoutId, userId: s.userId } },
+      create: { checkoutId, userId: s.userId, percent: s.percent, amount: s.amount },
+      update: { percent: s.percent, amount: s.amount },
+    });
+  }
+}
+
 // Row-level lock helper
 async function lockEquipment(tx: Tx, id: string) {
   await tx.$queryRawUnsafe(
@@ -103,7 +161,12 @@ export const equipment: ServicesEquipment = {
       include: {
         checkouts: {
           where: { releasedAt: null },
-          include: { user: true },
+          include: {
+            user: true,
+            // Group rentals show "Alpha Crew (Alice)" in the holder label;
+            // the worker-facing equipment tab pulls from this endpoint.
+            group: { select: { id: true, name: true } },
+          },
           take: 1,
         },
         _count: { select: { photos: true } },
@@ -123,6 +186,8 @@ export const equipment: ServicesEquipment = {
             state: active.checkedOutAt
               ? EquipmentStatus.CHECKED_OUT
               : EquipmentStatus.RESERVED,
+            groupId: (active as any).groupId ?? null,
+            groupName: (active as any).group?.name ?? null,
           }
         : null;
 
@@ -192,7 +257,10 @@ export const equipment: ServicesEquipment = {
       include: {
         checkouts: {
           where: { releasedAt: null },
-          include: { user: true },
+          include: {
+            user: true,
+            group: { select: { id: true, name: true } },
+          },
           take: 1,
         },
       },
@@ -210,6 +278,8 @@ export const equipment: ServicesEquipment = {
             state: active.checkedOutAt
               ? EquipmentStatus.CHECKED_OUT
               : EquipmentStatus.RESERVED,
+            groupId: (active as any).groupId ?? null,
+            groupName: (active as any).group?.name ?? null,
           }
         : null;
 
@@ -443,6 +513,13 @@ export const equipment: ServicesEquipment = {
             ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
           },
         });
+        if ((active as any).groupId && rental?.rentalCost) {
+          await writeCheckoutSplits(tx, {
+            checkoutId: checkout.id,
+            groupId: (active as any).groupId as string,
+            rentalCost: rental.rentalCost,
+          });
+        }
         const updated = await tx.equipment.update({
           where: { id },
           data: { status: EquipmentStatus.AVAILABLE },
@@ -457,7 +534,7 @@ export const equipment: ServicesEquipment = {
     });
   },
 
-  async reserve(currentUserId: string, id: string, userId: string) {
+  async reserve(currentUserId: string, id: string, userId: string, opts?: { groupId?: string | null }) {
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
       const eq = await tx.equipment.findUnique({ where: { id } });
@@ -484,10 +561,29 @@ export const equipment: ServicesEquipment = {
         throw new ServiceError("TRAINEE_NOT_ALLOWED", "Trainees cannot reserve equipment.", 403);
       }
 
+      // Group rental gate: only the group's claimer can reserve on behalf of
+      // the group. Other group members reserve individually like today.
+      let groupId: string | null = null;
+      if (opts?.groupId) {
+        const group = await tx.group.findUnique({ where: { id: opts.groupId } });
+        if (!group) throw new ServiceError("NOT_FOUND", "Group not found.", 404);
+        if (group.archivedAt) throw new ServiceError("ARCHIVED", "Group is archived.", 400);
+        if (group.claimerUserId !== userId) {
+          throw new ServiceError(
+            "FORBIDDEN",
+            "Only the group's claimer can reserve equipment on behalf of the group.",
+            403,
+          );
+        }
+        groupId = group.id;
+      }
+
       // Insurance gate applies to CONTRACTORs only. Employees (including
       // admins/supers, who are W-2) are covered under the company's general
       // liability policy and don't need a personal certificate. Trainees are
-      // already blocked by the TRAINEE_NOT_ALLOWED check above.
+      // already blocked by the TRAINEE_NOT_ALLOWED check above. For group
+      // rentals the gate stays on the claimer (== userId here) — group
+      // members' insurance status doesn't enter the check.
       if (eq.requiresInsurance && user.workerType === "CONTRACTOR") {
         const now = new Date();
         const insured = !!(user.insuranceCertR2Key && user.insuranceExpiresAt && user.insuranceExpiresAt > now);
@@ -501,7 +597,7 @@ export const equipment: ServicesEquipment = {
       }
 
       const reserve = await tx.checkout.create({
-        data: { equipmentId: id, userId },
+        data: { equipmentId: id, userId, groupId },
       });
       await tx.equipment.update({
         where: { id },
@@ -665,6 +761,17 @@ export const equipment: ServicesEquipment = {
           ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
         },
       });
+      // Group rentals: materialize per-worker shares now that the total
+      // is known. Falls back to even-split when group percents aren't set
+      // or don't sum to 100 (defensive — the group's lock-while-in-flight
+      // rule should keep the math consistent).
+      if ((active as any).groupId && rental?.rentalCost) {
+        await writeCheckoutSplits(tx, {
+          checkoutId: returned.id,
+          groupId: (active as any).groupId as string,
+          rentalCost: rental.rentalCost,
+        });
+      }
 
       // 4) Flip equipment status back to AVAILABLE (adjust if your app uses a different state machine)
       const updated = await tx.equipment.update({
@@ -728,8 +835,87 @@ export const equipment: ServicesEquipment = {
   },
 
   async listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }) {
+    // When userId is supplied we return *that worker's share* — solo rentals
+    // (Checkout.userId === userId) plus group rentals where they have a
+    // CheckoutSplit row. Without userId we return all rentals (admin view).
+    if (params?.userId) {
+      const userId = params.userId;
+      const dateRange: any = {};
+      if (params.from) dateRange.gte = etMidnight(params.from);
+      if (params.to) dateRange.lte = etEndOfDay(params.to);
+      const hasDate = !!(params.from || params.to);
+      // Solo rentals for this user (no groupId set, rentalCost recorded).
+      const solo = await prisma.checkout.findMany({
+        where: {
+          userId,
+          groupId: null,
+          rentalCost: { not: null },
+          ...(hasDate ? { releasedAt: dateRange } : {}),
+        },
+        orderBy: { releasedAt: "desc" },
+        include: {
+          equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
+          user: { select: { id: true, displayName: true, email: true, workerType: true } },
+          group: { select: { id: true, name: true } },
+        },
+      });
+      // Group rentals where this user has a CheckoutSplit.
+      const splits = await prisma.checkoutSplit.findMany({
+        where: {
+          userId,
+          checkout: {
+            rentalCost: { not: null },
+            ...(hasDate ? { releasedAt: dateRange } : {}),
+          },
+        },
+        orderBy: { checkout: { releasedAt: "desc" } },
+        include: {
+          checkout: {
+            include: {
+              equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
+              user: { select: { id: true, displayName: true, email: true, workerType: true } },
+              group: { select: { id: true, name: true } },
+            },
+          },
+        },
+      });
+      // Normalize both shapes into a flat list — each entry represents one
+      // charge against this user with an explicit amount (their share).
+      return [
+        ...solo.map((c) => ({
+          id: c.id,
+          equipment: c.equipment,
+          user: c.user,
+          group: (c as any).group ?? null,
+          checkedOutAt: c.checkedOutAt,
+          releasedAt: c.releasedAt,
+          rentalDays: c.rentalDays,
+          rentalCost: c.rentalCost,
+          shareAmount: c.rentalCost ?? 0,
+          sharePercent: 100,
+          isGroupRental: false,
+        })),
+        ...splits.map((s) => ({
+          id: s.checkout.id,
+          equipment: s.checkout.equipment,
+          user: s.checkout.user,
+          group: (s.checkout as any).group ?? null,
+          checkedOutAt: s.checkout.checkedOutAt,
+          releasedAt: s.checkout.releasedAt,
+          rentalDays: s.checkout.rentalDays,
+          rentalCost: s.checkout.rentalCost,
+          shareAmount: s.amount,
+          sharePercent: s.percent,
+          isGroupRental: true,
+        })),
+      ].sort((a, b) => {
+        const ta = a.releasedAt ? a.releasedAt.getTime() : 0;
+        const tb = b.releasedAt ? b.releasedAt.getTime() : 0;
+        return tb - ta;
+      });
+    }
+
     const where: any = { rentalCost: { not: null } };
-    if (params?.userId) where.userId = params.userId;
     if (params?.from || params?.to) {
       where.releasedAt = {};
       if (params.from) where.releasedAt.gte = etMidnight(params.from);
@@ -741,6 +927,12 @@ export const equipment: ServicesEquipment = {
       include: {
         equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
         user: { select: { id: true, displayName: true, email: true, workerType: true } },
+        group: { select: { id: true, name: true } },
+        splits: {
+          include: {
+            user: { select: { id: true, displayName: true, email: true } },
+          },
+        },
       },
     });
   },

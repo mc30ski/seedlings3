@@ -2,10 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  Badge,
+  Box,
   Button,
   Dialog,
   HStack,
   Portal,
+  Text,
+  VStack,
 } from "@chakra-ui/react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
@@ -15,6 +19,7 @@ import {
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
 type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
+type GroupBrief = { id: string; name: string; claimer: { id: string; displayName?: string | null; email?: string | null }; members: { userId: string }[] };
 
 type Assignee = {
   userId: string;
@@ -29,18 +34,27 @@ type Props = {
   occurrenceId: string;
   myId: string;
   currentAssignees: Assignee[];
+  /** Group currently attached to the occurrence (if any). */
+  assignedGroup?: { id: string; name: string } | null;
   onChanged?: () => void;
   isAdmin?: boolean;
   /** When true, the current user is the claimer and can reassign roles */
   isClaimer?: boolean;
 };
 
-export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, onChanged, isAdmin, isClaimer }: Props) {
+export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, myId, currentAssignees, assignedGroup, onChanged, isAdmin, isClaimer }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [busyId, setBusyId] = useState("");
   const [addBusy, setAddBusy] = useState(false);
+  // Group attach UI (admin only). Either-or: an occurrence can have a group
+  // attached OR individuals, never both. When `assignedGroup` is set, the
+  // dialog hides the individual-add controls and surfaces a "Detach group"
+  // button instead.
+  const [groups, setGroups] = useState<GroupBrief[]>([]);
+  const [pickGroupId, setPickGroupId] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -55,8 +69,43 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
         const list = await apiGet<WorkerLite[]>("/api/workers");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
+      if (isAdmin) {
+        try {
+          const gs = await apiGet<GroupBrief[]>("/api/admin/groups");
+          setGroups(Array.isArray(gs) ? gs : []);
+        } catch { setGroups([]); }
+      }
     })();
   }, [open]);
+
+  async function attachGroup() {
+    if (!pickGroupId) return;
+    setGroupBusy(true);
+    try {
+      await apiPost(`/api/admin/occurrences/${occurrenceId}/attach-group`, { groupId: pickGroupId });
+      publishInlineMessage({ type: "SUCCESS", text: "Group attached." });
+      onChanged?.();
+      onOpenChange(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not attach group.", err) });
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function detachGroup() {
+    setGroupBusy(true);
+    try {
+      await apiPost(`/api/admin/occurrences/${occurrenceId}/detach-group`, {});
+      publishInlineMessage({ type: "SUCCESS", text: "Group detached." });
+      onChanged?.();
+      onOpenChange(false);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Could not detach group.", err) });
+    } finally {
+      setGroupBusy(false);
+    }
+  }
 
   async function handleAdd(userIds: string[], role: string | null) {
     setAddBusy(true);
@@ -162,21 +211,68 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
               <Dialog.Title>Manage Team</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
-              <TeamMemberList
-                members={members}
-                workers={workers}
-                busyId={busyId}
-                addBusy={addBusy}
-                onAdd={handleAdd}
-                onRemove={handleRemove}
-                onToggleRole={(isAdmin || isClaimer) ? handleToggleRole : undefined}
-                onMakeClaimer={(isAdmin || isClaimer) ? handleMakeClaimer : undefined}
-                showRoleControls={!!(isAdmin || isClaimer)}
-                showMakeClaimer={!!(isAdmin || isClaimer)}
-                allowRemoveClaimer={!!isAdmin}
-                myId={myId}
-                onLeave={handleLeave}
-              />
+              {isAdmin && assignedGroup && (
+                <Box mb={3} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
+                  <HStack justify="space-between" gap={2} wrap="wrap">
+                    <VStack align="start" gap={0}>
+                      <Text fontSize="xs" fontWeight="semibold" color="purple.800">
+                        Group attached: {assignedGroup.name}
+                      </Text>
+                      <Text fontSize="xs" color="purple.700">
+                        Detach the group to add individuals. The group itself stays intact — only this occurrence's link is removed.
+                      </Text>
+                    </VStack>
+                    <Button size="xs" variant="outline" colorPalette="purple" onClick={() => void detachGroup()} loading={groupBusy}>
+                      Detach group
+                    </Button>
+                  </HStack>
+                </Box>
+              )}
+              {isAdmin && !assignedGroup && members.length === 0 && groups.length > 0 && (
+                <Box mb={3} p={2} bg="purple.50" borderWidth="1px" borderColor="purple.200" rounded="md">
+                  <Text fontSize="xs" fontWeight="semibold" color="purple.800" mb={1}>
+                    Or assign a group
+                  </Text>
+                  <HStack gap={2} wrap="wrap">
+                    <select
+                      value={pickGroupId}
+                      onChange={(e) => setPickGroupId(e.target.value)}
+                      style={{
+                        padding: "6px 8px", fontSize: "14px", flex: 1, minWidth: "180px",
+                        border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px",
+                      }}
+                    >
+                      <option value="">— pick a group —</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name} ({g.members.length + 1})</option>
+                      ))}
+                    </select>
+                    <Button size="sm" colorPalette="purple" onClick={() => void attachGroup()} disabled={!pickGroupId} loading={groupBusy}>
+                      Attach
+                    </Button>
+                  </HStack>
+                  <Text fontSize="xs" color="purple.700" mt={1}>
+                    Materializes the full group as assignees. Either group OR individuals — not both.
+                  </Text>
+                </Box>
+              )}
+              {!assignedGroup && (
+                <TeamMemberList
+                  members={members}
+                  workers={workers}
+                  busyId={busyId}
+                  addBusy={addBusy}
+                  onAdd={handleAdd}
+                  onRemove={handleRemove}
+                  onToggleRole={(isAdmin || isClaimer) ? handleToggleRole : undefined}
+                  onMakeClaimer={(isAdmin || isClaimer) ? handleMakeClaimer : undefined}
+                  showRoleControls={!!(isAdmin || isClaimer)}
+                  showMakeClaimer={!!(isAdmin || isClaimer)}
+                  allowRemoveClaimer={!!isAdmin}
+                  myId={myId}
+                  onLeave={handleLeave}
+                />
+              )}
             </Dialog.Body>
             <Dialog.Footer>
               <HStack justify="flex-end" w="full">

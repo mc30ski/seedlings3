@@ -86,6 +86,10 @@ export type AdminHolder = {
   reservedAt: Date;
   checkedOutAt?: Date | null;
   state: "RESERVED" | "CHECKED_OUT";
+  // Group rentals: when set, the checkout was made on behalf of the group.
+  // The userId is the group's claimer; UI displays as "Alpha Crew (Alice)".
+  groupId?: string | null;
+  groupName?: string | null;
 };
 
 export type AdminUserHolding = {
@@ -211,7 +215,8 @@ export type ServicesEquipment = {
   reserve(
     currentUserId: string,
     id: string,
-    userId: string
+    userId: string,
+    opts?: { groupId?: string | null }
   ): Promise<ReserveResult>;
   cancelReservation(
     currentUserId: string,
@@ -772,6 +777,7 @@ export type Services = {
   expenses: ServicesExpenses;
   settings: ServicesSettings;
   supplies: ServicesSupplies;
+  groups: typeof import("../services/groups").groups;
 };
 
 export type ServicesSettings = {

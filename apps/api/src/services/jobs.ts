@@ -1193,6 +1193,23 @@ export const jobs: ServicesJobs = {
           },
         },
         _count: { select: { photos: true, comments: true } },
+        assignedGroup: {
+          select: {
+            id: true,
+            name: true,
+            claimerUserId: true,
+            preferredEquipment: {
+              orderBy: { sortOrder: "asc" as const },
+              select: {
+                id: true,
+                equipmentId: true,
+                equipmentCollectionId: true,
+                equipment: { select: { id: true, shortDesc: true, brand: true, model: true, type: true, status: true, retiredAt: true } },
+                equipmentCollection: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
         photos: {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
           orderBy: { createdAt: "desc" as const },
@@ -1320,6 +1337,23 @@ export const jobs: ServicesJobs = {
           },
         },
         _count: { select: { photos: true, comments: true } },
+        assignedGroup: {
+          select: {
+            id: true,
+            name: true,
+            claimerUserId: true,
+            preferredEquipment: {
+              orderBy: { sortOrder: "asc" as const },
+              select: {
+                id: true,
+                equipmentId: true,
+                equipmentCollectionId: true,
+                equipment: { select: { id: true, shortDesc: true, brand: true, model: true, type: true, status: true, retiredAt: true } },
+                equipmentCollection: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
         photos: {
           select: { id: true, r2Key: true, contentType: true, createdAt: true },
           orderBy: { createdAt: "desc" as const },
@@ -1474,6 +1508,20 @@ export const jobs: ServicesJobs = {
 
   async adminAddOccurrenceAssignee(adminUserId, occurrenceId, targetUserId, role?: string | null) {
     return prisma.$transaction(async (tx) => {
+      // Reject individual adds when the occurrence is group-attached.
+      // Admins must detach the group first if they want to switch to
+      // individual assignment.
+      const occMeta = await tx.jobOccurrence.findUniqueOrThrow({
+        where: { id: occurrenceId },
+        select: { assignedGroupId: true } as any,
+      });
+      if ((occMeta as any).assignedGroupId) {
+        throw new ServiceError(
+          "GROUP_ATTACHED",
+          "Occurrence is group-attached. Detach the group before adding individual assignees.",
+          409,
+        );
+      }
       const existing = await tx.jobOccurrenceAssignee.findFirst({
         where: { occurrenceId, userId: targetUserId },
       });
@@ -1631,6 +1679,14 @@ export const jobs: ServicesJobs = {
       }
 
       await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
+      // If this was a group-claimed occurrence, clear the link too — removes
+      // the Group chip on the card and re-opens the claim chooser for next time.
+      if ((occ as any).assignedGroupId) {
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: { assignedGroupId: null },
+        });
+      }
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,
@@ -1641,7 +1697,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async claimOccurrence(currentUserId, occurrenceId) {
+  async claimOccurrence(currentUserId, occurrenceId, opts?: { groupId?: string | null }) {
     return prisma.$transaction(async (tx) => {
       await assertWorkerAssignable(tx, currentUserId);
 
@@ -1666,6 +1722,41 @@ export const jobs: ServicesJobs = {
       }
       if ((occ as any).isAdminOnly) {
         throw new ServiceError("ADMIN_ONLY", "This job is administered and can only be assigned by an admin.", 409);
+      }
+
+      // Group attachment rules.
+      // - If occurrence is already group-attached (admin pre-attached), solo
+      //   claims aren't allowed. The group claimer must "Claim for [Group]"
+      //   or detach the group first.
+      // - If client requested a group claim, the caller must be the group's
+      //   claimer. Other group members can still claim solo.
+      const occAssignedGroupId = (occ as any).assignedGroupId as string | null;
+      if (opts?.groupId) {
+        const group = await tx.group.findUnique({
+          where: { id: opts.groupId },
+          include: { members: { select: { userId: true, role: true } } },
+        });
+        if (!group) throw new ServiceError("NOT_FOUND", "Group not found.", 404);
+        if (group.archivedAt) throw new ServiceError("ARCHIVED", "Group is archived.", 400);
+        if (group.claimerUserId !== currentUserId) {
+          throw new ServiceError("FORBIDDEN", "Only the group's claimer can claim on behalf of the group.", 403);
+        }
+        if (occAssignedGroupId && occAssignedGroupId !== group.id) {
+          throw new ServiceError("CONFLICT", "Occurrence is already assigned to a different group.", 409);
+        }
+        // Existing individuals (not from this group) block group claim.
+        const existingNonGroup = await tx.jobOccurrenceAssignee.findFirst({
+          where: { occurrenceId },
+        });
+        if (existingNonGroup && !occAssignedGroupId) {
+          throw new ServiceError("CONFLICT", "Occurrence already has individual assignees. Detach them before assigning a group.", 409);
+        }
+      } else if (occAssignedGroupId) {
+        throw new ServiceError(
+          "GROUP_ATTACHED",
+          "This occurrence is group-attached. Use 'Claim for Group' or detach the group first.",
+          409,
+        );
       }
 
       // Contractors can only claim jobs within 2 days
@@ -1702,6 +1793,45 @@ export const jobs: ServicesJobs = {
       const user = await tx.user.findUniqueOrThrow({ where: { id: currentUserId } });
       if (user.workerType === "CONTRACTOR" && !user.contractorAgreedAt) {
         throw new ServiceError("CONTRACTOR_AGREEMENT_REQUIRED", "You must acknowledge the contractor agreement before claiming jobs.", 403);
+      }
+
+      if (opts?.groupId) {
+        // Materialize group members. Re-fetch the group to read members
+        // with role info (we only had a count check above).
+        const group = await tx.group.findUniqueOrThrow({
+          where: { id: opts.groupId },
+          include: { members: { select: { userId: true, role: true } } },
+        });
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: { assignedGroupId: group.id },
+        });
+        // Claimer first, then everyone else. Claimer's assignedById === self
+        // (matches solo-claim semantics). Other members are assigned-by-claimer.
+        await tx.jobOccurrenceAssignee.upsert({
+          where: { occurrenceId_userId: { occurrenceId, userId: currentUserId } },
+          create: { occurrenceId, userId: currentUserId, assignedById: currentUserId },
+          update: { assignedById: currentUserId, role: null },
+        });
+        for (const m of group.members) {
+          if (m.userId === currentUserId) continue;
+          await tx.jobOccurrenceAssignee.upsert({
+            where: { occurrenceId_userId: { occurrenceId, userId: m.userId } },
+            create: {
+              occurrenceId,
+              userId: m.userId,
+              role: m.role === "observer" ? "observer" : null,
+              assignedById: currentUserId,
+            },
+            update: { role: m.role === "observer" ? "observer" : null },
+          });
+        }
+        await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
+          occurrenceId,
+          action: "claimed-for-group",
+          groupId: group.id,
+        });
+        return { claimed: true as const, groupId: group.id };
       }
 
       await tx.jobOccurrenceAssignee.create({
