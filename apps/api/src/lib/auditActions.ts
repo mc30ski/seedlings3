@@ -81,6 +81,18 @@ export const AUDIT = {
   NOTIFICATION: {
     SENT: [AuditScope.NOTIFICATION, AuditVerb.SENT] as const,
   },
+  DOCUMENT: {
+    CREATED: [AuditScope.DOCUMENT, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.DOCUMENT, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.DOCUMENT, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.DOCUMENT, AuditVerb.UNRETIRED] as const,
+    DELETED: [AuditScope.DOCUMENT, AuditVerb.DELETED] as const,
+    VERSION_ADDED: [AuditScope.DOCUMENT, AuditVerb.VERSION_ADDED] as const,
+    VERSION_RESTORED: [AuditScope.DOCUMENT, AuditVerb.VERSION_RESTORED] as const,
+    VERSION_DELETED: [AuditScope.DOCUMENT, AuditVerb.VERSION_DELETED] as const,
+    VIEWED: [AuditScope.DOCUMENT, AuditVerb.VIEWED] as const,
+    DOWNLOADED: [AuditScope.DOCUMENT, AuditVerb.DOWNLOADED] as const,
+  },
 } as const;
 
 // Useful types

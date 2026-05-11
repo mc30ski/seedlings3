@@ -21,8 +21,9 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { DEFAULT_SERVICE_TYPES, jobTagLabel } from "@/src/ui/components/JobTagPicker";
 
-type PricingEntry = {
+export type PricingEntry = {
   id: string;
   key: string;
   value: string;
@@ -34,16 +35,27 @@ type PricingEntry = {
     unit: string;
     amount: number;
     sortOrder: number;
+    /** Optional binding to a job tag (MOW, TRIM, …). Drives the add-on
+     *  and estimate inline-reference hints when set. */
+    jobTag?: string | null;
   } | null;
 };
 
 type Props = {
   isSuper?: boolean;
+  /** Forces read-only regardless of role. Admin + Worker views set this. */
+  readOnly?: boolean;
 };
 
-export default function PricingTab({ isSuper }: Props) {
+export default function PricingTab({ isSuper, readOnly }: Props) {
   const [entries, setEntries] = useState<PricingEntry[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Effective editability: Super only, and not forced read-only.
+  const canEdit = !!isSuper && !readOnly;
+  // Workers hit the worker-guard endpoint; admin+super read /admin/pricing
+  // which carries the updatedBy join. Mutations always go to /admin/pricing.
+  const readEndpoint = isSuper ? "/api/admin/pricing" : "/api/pricing";
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -52,6 +64,7 @@ export default function PricingTab({ isSuper }: Props) {
   const [formDescription, setFormDescription] = useState("");
   const [formUnit, setFormUnit] = useState("");
   const [formAmount, setFormAmount] = useState("");
+  const [formJobTag, setFormJobTag] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   // Delete confirm
@@ -59,7 +72,7 @@ export default function PricingTab({ isSuper }: Props) {
 
   async function load() {
     try {
-      const list = await apiGet<PricingEntry[]>("/api/admin/pricing");
+      const list = await apiGet<PricingEntry[]>(readEndpoint);
       const sorted = (Array.isArray(list) ? list : []).sort((a, b) => {
         const sa = a.parsedValue?.sortOrder ?? 100;
         const sb = b.parsedValue?.sortOrder ?? 100;
@@ -81,6 +94,7 @@ export default function PricingTab({ isSuper }: Props) {
     setFormDescription("");
     setFormUnit("");
     setFormAmount("");
+    setFormJobTag("");
     setDialogOpen(true);
   }
 
@@ -92,6 +106,7 @@ export default function PricingTab({ isSuper }: Props) {
     setFormDescription(v.description);
     setFormUnit(v.unit);
     setFormAmount(String(v.amount));
+    setFormJobTag(v.jobTag ?? "");
     setDialogOpen(true);
   }
 
@@ -107,6 +122,7 @@ export default function PricingTab({ isSuper }: Props) {
         description: formDescription.trim(),
         unit: formUnit.trim(),
         amount: Number(formAmount),
+        jobTag: formJobTag || null,
       };
       if (editKey) {
         await apiPatch(`/api/admin/pricing/${editKey}`, payload);
@@ -142,12 +158,12 @@ export default function PricingTab({ isSuper }: Props) {
       <Box mb={3} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.300" rounded="md">
         <Text fontSize="sm" fontWeight="medium" color="blue.700">Pricing Guide</Text>
         <Text fontSize="xs" color="blue.600">
-          Reference pricing for common job types. {isSuper ? "You can add, edit, and remove entries." : "Contact a super admin to make changes."}
+          Reference pricing for common job types. {canEdit ? "You can add, edit, and remove entries." : "Contact a super admin to make changes."}
           {" "}This data is used by AI features to generate accurate estimates.
         </Text>
       </Box>
 
-      {isSuper && (
+      {canEdit && (
         <Box mb={3}>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
             <Plus size={14} /> Add Pricing Entry
@@ -158,7 +174,7 @@ export default function PricingTab({ isSuper }: Props) {
       {entries.length === 0 && (
         <Box textAlign="center" py={10}>
           <Text fontSize="lg" fontWeight="semibold" color="fg.muted">No pricing entries yet</Text>
-          {isSuper && <Text fontSize="sm" color="fg.muted" mt={1}>Add your first entry to get started.</Text>}
+          {canEdit && <Text fontSize="sm" color="fg.muted" mt={1}>Add your first entry to get started.</Text>}
         </Box>
       )}
 
@@ -171,7 +187,7 @@ export default function PricingTab({ isSuper }: Props) {
               <Card.Body py="2" px="3">
                 <HStack justify="space-between" align="start" gap={3}>
                   <VStack align="start" gap={1} flex="1" minW={0}>
-                    <HStack gap={2} align="center">
+                    <HStack gap={2} align="center" wrap="wrap">
                       <Text fontSize="sm" fontWeight="semibold">{v.label}</Text>
                       <Badge colorPalette="green" variant="solid" fontSize="sm" px="2" borderRadius="full">
                         <DollarSign size={12} />{v.amount.toFixed(2)}
@@ -179,6 +195,11 @@ export default function PricingTab({ isSuper }: Props) {
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         {v.unit}
                       </Badge>
+                      {v.jobTag && (
+                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full" title="Pricing hint surfaces when this tag is added on a job">
+                          ⚡ tag: {jobTagLabel(v.jobTag)}
+                        </Badge>
+                      )}
                     </HStack>
                     {v.description && (
                       <Text fontSize="xs" color="fg.muted">{v.description}</Text>
@@ -188,7 +209,7 @@ export default function PricingTab({ isSuper }: Props) {
                       {entry.updatedBy?.displayName && ` by ${entry.updatedBy.displayName}`}
                     </Text>
                   </VStack>
-                  {isSuper && (
+                  {canEdit && (
                     <HStack gap={1} flexShrink={0}>
                       <Button size="xs" variant="ghost" onClick={() => openEdit(entry)} title="Edit">
                         <Pencil size={14} />
@@ -260,6 +281,22 @@ export default function PricingTab({ isSuper }: Props) {
                       />
                     </Box>
                   </HStack>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Inline hint for tag (optional)</Text>
+                    <select
+                      value={formJobTag}
+                      onChange={(e) => setFormJobTag(e.target.value)}
+                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
+                    >
+                      <option value="">— no inline hint —</option>
+                      {DEFAULT_SERVICE_TYPES.map((t) => (
+                        <option key={t.key} value={t.key}>{t.label} ({t.key})</option>
+                      ))}
+                    </select>
+                    <Text fontSize="xs" color="fg.muted" mt={1}>
+                      When set, this entry's price shows as an inline reference next to the matching tag in the add-on dialog and estimate workflow. Leave blank for browse-only entries.
+                    </Text>
+                  </Box>
                 </VStack>
               </Dialog.Body>
               <Dialog.Footer>

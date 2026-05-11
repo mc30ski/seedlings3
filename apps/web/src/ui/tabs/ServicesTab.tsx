@@ -52,6 +52,7 @@ import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
+import AddAddonDialog from "@/src/ui/dialogs/AddAddonDialog";
 import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
 import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
@@ -290,6 +291,10 @@ export default function ServicesTab({
   const [editOccurrenceDialogOpen, setEditOccurrenceDialogOpen] = useState(false);
   const [editingOccurrence, setEditingOccurrence] = useState<JobOccurrenceFull | null>(null);
   const [editOccurrenceJobId, setEditOccurrenceJobId] = useState<string>("");
+  // Add-on dialog state. Mirrors JobsTab so admins can add/remove add-ons
+  // inline from the Services occurrence list without the full Edit dialog.
+  const [addAddonOccId, setAddAddonOccId] = useState<string | null>(null);
+  const [addAddonJobId, setAddAddonJobId] = useState<string | null>(null);
 
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [defaultCrewDialogOpen, setDefaultCrewDialogOpen] = useState(false);
@@ -587,7 +592,9 @@ export default function ServicesTab({
     }
 
     let rows = items;
-    if (!showArchived) rows = rows.filter((i) => i.status !== "ARCHIVED");
+    // showArchived = exclusive filter ("Archived only"). Off = hide archived (default).
+    if (showArchived) rows = rows.filter((i) => i.status === "ARCHIVED");
+    else rows = rows.filter((i) => i.status !== "ARCHIVED");
     const jsf = jobStatusFilter[0];
     if (jsf !== "ALL") rows = rows.filter((i) => i.status === jsf);
     if (kind[0] !== "ALL") rows = rows.filter((i) => i.kind === kind[0]);
@@ -603,7 +610,7 @@ export default function ServicesTab({
       rows = rows.filter((r) => !!(r.property?.client as any)?.isVip);
     }
     return rows;
-  }, [items, q, kind, jobStatusFilter, showArchived]);
+  }, [items, q, kind, jobStatusFilter, showArchived, vipOnly]);
 
   if (!isAvail) return <UnavailableNotice />;
   if (loading && items.length === 0) return <LoadingCenter />;
@@ -698,9 +705,9 @@ export default function ServicesTab({
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
-          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
+          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP only</Badge>}
           {showCanceled && <Badge size="sm" colorPalette="red" variant="subtle">+ Canceled</Badge>}
-          {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">+ Archived</Badge>}
+          {showArchived && <Badge size="sm" colorPalette="gray" variant="solid">Archived only</Badge>}
           {highlightId && <Badge size="sm" colorPalette="teal" variant="subtle">Filtered to 1 job service</Badge>}
           {q && <Badge size="sm" colorPalette="gray" variant="subtle">"{q}"</Badge>}
           {!(kind[0] === "ALL" && jobStatusFilter[0] === "ALL" && occStatusFilter[0] === "ALL" && typeFilter[0] === "ALL" && !overdueActive && !skippedNextOnly && !vipOnly && !showCanceled && !showArchived && !highlightId && !q && datePreset) && (
@@ -735,7 +742,9 @@ export default function ServicesTab({
         </HStack>
       )}
       {filtersOpen && <Box borderWidth="1px" borderColor="gray.300" borderRadius="md" bg="gray.100" p={2} pb={0} mb={2} css={{ "& button": { borderColor: "var(--chakra-colors-gray-400)" } }}>
-      <HStack mb={2} gap={1} wrap="wrap" pl="1">
+      {/* Job-level filters: control which Job cards appear. */}
+      <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
+        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Job:</Text>
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -745,7 +754,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: kind[0] !== "ALL" ? "var(--chakra-colors-blue-200)" : "var(--chakra-colors-blue-100)", border: kind[0] !== "ALL" ? "1px solid var(--chakra-colors-blue-400)" : "1px solid var(--chakra-colors-blue-300)", borderRadius: "6px" }} title="Job kind">
               <LayoutList size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -769,7 +778,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: jobStatusFilter[0] !== "ALL" ? "var(--chakra-colors-purple-200)" : "var(--chakra-colors-purple-100)", border: jobStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-purple-400)" : "1px solid var(--chakra-colors-purple-300)", borderRadius: "6px" }} title="Job status">
               <Filter size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -784,6 +793,42 @@ export default function ServicesTab({
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant={vipOnly ? "solid" : "outline"}
+          px="2"
+          onClick={() => setVipOnly(!vipOnly)}
+          title={vipOnly ? "Showing VIP only — click to hide" : "Show VIP only"}
+          css={vipOnly ? {
+            background: "var(--chakra-colors-yellow-100)",
+            color: "var(--chakra-colors-yellow-800)",
+            border: "1px solid var(--chakra-colors-yellow-400)",
+            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
+          } : undefined}
+        >
+          <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
+        </Button>
+        <Button
+          size="sm"
+          variant={showArchived ? "solid" : "outline"}
+          px="2"
+          onClick={() => setShowArchived(!showArchived)}
+          title={showArchived ? "Showing archived only — click to hide" : "Show archived only"}
+          css={showArchived ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+            border: "1px solid var(--chakra-colors-gray-400)",
+            "&:hover": { background: "var(--chakra-colors-gray-300)" },
+          } : undefined}
+        >
+          <Archive size={14} />
+        </Button>
+      </HStack>
+
+      {/* Occurrence-level filters: narrow which occurrences are visible
+          inside each expanded Job card. */}
+      <HStack mb={2} gap={1} wrap="wrap" pl="1" align="center">
+        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Occurrence:</Text>
         <Select.Root
           collection={occStatusCollection}
           value={occStatusFilter}
@@ -793,7 +838,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: occStatusFilter[0] !== "ALL" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)", border: occStatusFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)", borderRadius: "6px" }} title="Occurrence status">
               <Layers size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -817,7 +862,7 @@ export default function ServicesTab({
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }}>
+            <Select.Trigger w="auto" minW="0" px="2" css={{ background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)", border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)", borderRadius: "6px" }} title="Occurrence type">
               <Tag size={14} />
               <Select.Indicator display="none" />
             </Select.Trigger>
@@ -834,20 +879,6 @@ export default function ServicesTab({
         </Select.Root>
         <Button
           size="sm"
-          variant={vipOnly ? "solid" : "outline"}
-          px="2"
-          onClick={() => setVipOnly(!vipOnly)}
-          css={vipOnly ? {
-            background: "var(--chakra-colors-yellow-100)",
-            color: "var(--chakra-colors-yellow-800)",
-            border: "1px solid var(--chakra-colors-yellow-400)",
-            "&:hover": { background: "var(--chakra-colors-yellow-200)" },
-          } : undefined}
-        >
-          <Star size={14} fill={vipOnly ? "var(--chakra-colors-yellow-500)" : "none"} color={vipOnly ? "var(--chakra-colors-yellow-500)" : undefined} />
-        </Button>
-        <Button
-          size="sm"
           variant={showCanceled ? "solid" : "outline"}
           px="2"
           onClick={() => setShowCanceled(!showCanceled)}
@@ -860,21 +891,6 @@ export default function ServicesTab({
           } : undefined}
         >
           <Ban size={14} />
-        </Button>
-        <Button
-          size="sm"
-          variant={showArchived ? "solid" : "outline"}
-          px="2"
-          onClick={() => setShowArchived(!showArchived)}
-          title={showArchived ? "Hide archived" : "Show archived"}
-          css={showArchived ? {
-            background: "var(--chakra-colors-gray-200)",
-            color: "var(--chakra-colors-gray-700)",
-            border: "1px solid var(--chakra-colors-gray-400)",
-            "&:hover": { background: "var(--chakra-colors-gray-300)" },
-          } : undefined}
-        >
-          <Archive size={14} />
         </Button>
         <Button
           size="sm"
@@ -952,7 +968,9 @@ export default function ServicesTab({
         </Button>
       </HStack>
 
-      <HStack mb={2} gap={2} align="center">
+      {/* Date range also filters occurrences (by startAt). */}
+      <HStack mb={2} gap={2} align="center" pl="1">
+        <Text fontSize="xs" fontWeight="semibold" color="gray.600" mr={1} minW="56px">Date:</Text>
         <DateInput
           value={dateFrom}
           onChange={(val) => {
@@ -1063,7 +1081,7 @@ export default function ServicesTab({
               {typeItems.find((i) => i.value === typeFilter[0])?.label}
             </Badge>
           )}
-          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP</Badge>}
+          {vipOnly && <Badge size="sm" colorPalette="yellow" variant="subtle">VIP only</Badge>}
           {showCanceled && (
             <Badge size="sm" colorPalette="red" variant="subtle">
               + Canceled
@@ -1071,7 +1089,7 @@ export default function ServicesTab({
           )}
           {showArchived && (
             <Badge size="sm" colorPalette="gray" variant="solid">
-              + Archived
+              Archived only
             </Badge>
           )}
           {highlightId && (
@@ -1807,20 +1825,51 @@ export default function ServicesTab({
                             })()}
 
                             {/* Add-on services */}
-                            {((occ as any).addons ?? []).length > 0 && (
+                            {((occ as any).addons ?? []).length > 0 && (() => {
+                              // Admin tab: removal allowed on active occurrences.
+                              const isActive =
+                                occ.status === "SCHEDULED" ||
+                                occ.status === "IN_PROGRESS" ||
+                                (occ.status as string) === "PAUSED";
+                              return (
                               <Box mt={1} p={1} bg="green.50" rounded="sm" borderWidth="1px" borderColor="green.200">
                                 <Text fontSize="xs" fontWeight="medium" color="green.700">
                                   Add-ons: +${((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0).toFixed(2)}
                                 </Text>
                                 <VStack align="start" gap={0} mt={0.5}>
                                   {((occ as any).addons ?? []).map((addon: any) => (
-                                    <Text key={addon.id} fontSize="xs" color="green.600">
-                                      +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
-                                    </Text>
+                                    <HStack key={addon.id} gap={1} align="center">
+                                      <Text fontSize="xs" color="green.600">
+                                        +${addon.price.toFixed(2)} — {addon.tag ? jobTagLabel(addon.tag) : addon.customLabel}
+                                      </Text>
+                                      {isActive && (
+                                        <Button
+                                          size="xs"
+                                          variant="ghost"
+                                          colorPalette="red"
+                                          px="1"
+                                          minW="auto"
+                                          title="Remove this service"
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            try {
+                                              await apiDelete(`/api/admin/occurrences/${occ.id}/addons/${addon.id}`);
+                                              publishInlineMessage({ type: "SUCCESS", text: "Service removed." });
+                                              void loadDetail(job.id, true);
+                                            } catch (err) {
+                                              publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to remove service.", err) });
+                                            }
+                                          }}
+                                        >
+                                          <X size={11} />
+                                        </Button>
+                                      )}
+                                    </HStack>
                                   ))}
                                 </VStack>
                               </Box>
-                            )}
+                              );
+                            })()}
                             {/* Expenses */}
                             {occ.expenses && occ.expenses.length > 0 && (
                               <Box mt={1} p={1} bg="red.50" rounded="sm" borderWidth="1px" borderColor="red.200">
@@ -2228,6 +2277,26 @@ export default function ServicesTab({
                                   busyId={statusButtonBusyId}
                                   setBusyId={setStatusButtonBusyId}
                                 />
+                                {/* Add Service — admin-only entry on this
+                                    tab; matches the worker JobsTab affordance.
+                                    Active occurrences only. Tasks/events filter
+                                    out via the surrounding occ.workflow check
+                                    already handled in the parent block. */}
+                                {(occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED") && (
+                                  <StatusButton
+                                    id="occ-add-service"
+                                    itemId={occ.id}
+                                    label="Add Service"
+                                    onClick={async () => {
+                                      setAddAddonJobId(job.id);
+                                      setAddAddonOccId(occ.id);
+                                    }}
+                                    variant="outline"
+                                    colorPalette="teal"
+                                    busyId={statusButtonBusyId}
+                                    setBusyId={setStatusButtonBusyId}
+                                  />
+                                )}
                               </>
                             )}
                             {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && occ.jobId && (
@@ -2570,6 +2639,15 @@ export default function ServicesTab({
         }}
       />
 
+      <AddAddonDialog
+        occurrenceId={addAddonOccId}
+        onClose={() => { setAddAddonOccId(null); setAddAddonJobId(null); }}
+        serviceTypes={serviceTypes}
+        forAdmin
+        onAdded={() => {
+          if (addAddonJobId) void loadDetail(addAddonJobId, true);
+        }}
+      />
 
       <ConfirmDialog
         open={!!confirmAction}

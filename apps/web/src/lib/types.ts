@@ -20,9 +20,11 @@ export type AdminTabs =
   | "notify"
   | "collections"
   | "supplies"
-  | "groups";
+  | "groups"
+  | "pricing"
+  | "documents";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies" | "pricing" | "documents";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -38,6 +40,7 @@ export type WorkerTabs =
   | "supplies"
   | "clients"
   | "properties"
+  | "pricing"
   | "jobs"
   | "profile"
   | "payments";

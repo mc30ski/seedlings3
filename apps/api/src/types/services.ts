@@ -778,6 +778,7 @@ export type Services = {
   settings: ServicesSettings;
   supplies: ServicesSupplies;
   groups: typeof import("../services/groups").groups;
+  companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
 };
 
 export type ServicesSettings = {

@@ -1,8 +1,11 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
-import { Button, Dialog, HStack, VStack, Portal, Text, Box } from "@chakra-ui/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Badge, Button, Dialog, HStack, VStack, Portal, Text, Box } from "@chakra-ui/react";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import { apiGet } from "@/src/lib/api";
+import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 
 type Props = {
   open: boolean;
@@ -24,10 +27,21 @@ type Props = {
   amountLabel?: string;
   amountPlaceholder?: string;
   amountDefaultValue?: string;
+  /** When provided alongside an amount field, fetches pricing entries and
+   *  shows a reference panel: each entry matching one of these tags
+   *  is listed, summed, and a "Use as amount" button fills the input. */
+  pricingReferenceTags?: string[];
+  /** Pricing endpoint to fetch from. Defaults to the worker route. */
+  pricingEndpoint?: string;
   /** Custom label for the cancel button */
   cancelLabel?: string;
   /** Action to perform on cancel (instead of just closing) */
   onCancelAction?: () => void;
+};
+
+type PricingHint = {
+  key: string;
+  parsedValue: { label: string; amount: number; unit: string; jobTag?: string | null } | null;
 };
 
 export default function ConfirmDialog({
@@ -45,12 +59,16 @@ export default function ConfirmDialog({
   amountLabel,
   amountPlaceholder,
   amountDefaultValue,
+  pricingReferenceTags,
+  pricingEndpoint = "/api/pricing",
   cancelLabel,
   onCancelAction,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [amountValue, setAmountValue] = useState("");
+  const [pricingHints, setPricingHints] = useState<PricingHint[]>([]);
+  const [pricingGuideOpen, setPricingGuideOpen] = useState(false);
 
   // Reset inputs when dialog opens/closes
   useEffect(() => {
@@ -59,6 +77,29 @@ export default function ConfirmDialog({
       setAmountValue(amountDefaultValue ?? "");
     }
   }, [open, inputDefaultValue, amountDefaultValue]);
+
+  // Pricing reference panel — fetched once on open when tags are provided
+  // alongside an amount input. The list is sorted server-side so we keep
+  // its order intact (matches the Pricing tab).
+  useEffect(() => {
+    if (!open) return;
+    if (!amountLabel || !pricingReferenceTags || pricingReferenceTags.length === 0) {
+      setPricingHints([]);
+      return;
+    }
+    apiGet<PricingHint[]>(pricingEndpoint)
+      .then((list) => setPricingHints(Array.isArray(list) ? list : []))
+      .catch(() => setPricingHints([]));
+  }, [open, amountLabel, pricingReferenceTags, pricingEndpoint]);
+
+  const referenceMatches = useMemo(() => {
+    if (!pricingReferenceTags || pricingReferenceTags.length === 0) return [];
+    const tagSet = new Set(pricingReferenceTags);
+    return pricingHints
+      .filter((p) => p.parsedValue?.jobTag && tagSet.has(p.parsedValue.jobTag))
+      .map((p) => p.parsedValue!);
+  }, [pricingHints, pricingReferenceTags]);
+  const referenceTotal = referenceMatches.reduce((s, r) => s + r.amount, 0);
 
   const hasInput = !!inputPlaceholder;
   const hasAmount = !!amountLabel;
@@ -130,6 +171,51 @@ export default function ConfirmDialog({
                     size="sm"
                     placeholder={amountPlaceholder ?? "0.00"}
                   />
+                  {(referenceMatches.length > 0 || hasAmount) && (
+                    <Box mt={2}>
+                      {referenceMatches.length > 0 && (
+                        <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200" mb={2}>
+                          <Text fontSize="xs" fontWeight="semibold" mb={1} color="fg.muted">
+                            Reference (based on tags)
+                          </Text>
+                          <VStack align="stretch" gap={0.5}>
+                            {referenceMatches.map((r, i) => (
+                              <HStack key={i} justify="space-between" fontSize="xs">
+                                <Text color="fg.muted">
+                                  {r.label}{r.jobTag ? ` (${jobTagLabel(r.jobTag)})` : ""}
+                                </Text>
+                                <Text fontWeight="medium">${r.amount.toFixed(2)}</Text>
+                              </HStack>
+                            ))}
+                            <HStack justify="space-between" fontSize="xs" pt={1} borderTopWidth="1px" borderColor="gray.300" mt={1}>
+                              <Text fontWeight="bold">Suggested total</Text>
+                              <Text fontWeight="bold">${referenceTotal.toFixed(2)}</Text>
+                            </HStack>
+                          </VStack>
+                          <Button
+                            size="xs"
+                            colorPalette="blue"
+                            variant="outline"
+                            mt={2}
+                            onClick={() => setAmountValue(referenceTotal.toFixed(2))}
+                          >
+                            Use as amount
+                          </Button>
+                        </Box>
+                      )}
+                      <Badge
+                        size="sm"
+                        colorPalette="blue"
+                        variant="outline"
+                        borderRadius="full"
+                        px="2"
+                        cursor="pointer"
+                        onClick={() => setPricingGuideOpen(true)}
+                      >
+                        View pricing guide ↗
+                      </Badge>
+                    </Box>
+                  )}
                 </Box>
               )}
             </Dialog.Body>
@@ -181,6 +267,13 @@ export default function ConfirmDialog({
           </Dialog.Content>
         </Dialog.Positioner>
       </Portal>
+      {/* Pricing guide overlay — layered above the confirm dialog. */}
+      <PricingGuideDialog
+        open={pricingGuideOpen}
+        onOpenChange={setPricingGuideOpen}
+        endpoint={pricingEndpoint}
+        onPick={(amount) => setAmountValue(amount.toFixed(2))}
+      />
     </Dialog.Root>
   );
 }

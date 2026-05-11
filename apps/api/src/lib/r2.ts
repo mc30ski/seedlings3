@@ -46,11 +46,25 @@ export async function getUploadUrl(key: string, contentType: string, expiresIn =
   });
 }
 
-/** Generate a presigned GET URL for viewing/downloading. */
-export async function getDownloadUrl(key: string, expiresIn = 3600, bucket: BucketType = "photos"): Promise<string> {
+/** Generate a presigned GET URL for viewing/downloading.
+ *  `disposition` controls the response Content-Disposition header that R2
+ *  will return: "inline" lets browsers render the file in a tab (PDF, image),
+ *  "attachment" forces a download with the suggested filename. If a filename
+ *  is provided, it's encoded into the disposition header.
+ */
+export async function getDownloadUrl(
+  key: string,
+  expiresIn = 3600,
+  bucket: BucketType = "photos",
+  disposition?: { mode: "inline" | "attachment"; filename?: string },
+): Promise<string> {
+  const respHeader = disposition
+    ? `${disposition.mode}${disposition.filename ? `; filename="${disposition.filename.replace(/"/g, "")}"` : ""}`
+    : undefined;
   const command = new GetObjectCommand({
     Bucket: bucketName(bucket),
     Key: key,
+    ResponseContentDisposition: respHeader,
   });
   return getSignedUrl(s3, command, { expiresIn });
 }

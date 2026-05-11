@@ -1,0 +1,604 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  HStack,
+  Input,
+  Select,
+  Spinner,
+  Text,
+  VStack,
+  createListCollection,
+} from "@chakra-ui/react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Eye,
+  EyeOff,
+  FileText,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
+import {
+  publishInlineMessage,
+  getErrorMessage,
+} from "@/src/ui/components/InlineMessage";
+import {
+  DEFAULT_DOCUMENT_TYPES,
+  documentTypeLabel,
+  isSingletonType,
+  parseDocumentTypesConfig,
+  type DocumentTypeConfig,
+} from "@/src/ui/components/DocumentTypePicker";
+import UploadDocumentDialog from "@/src/ui/dialogs/UploadDocumentDialog";
+import UploadDocumentVersionDialog from "@/src/ui/dialogs/UploadDocumentVersionDialog";
+import EditDocumentMetadataDialog from "@/src/ui/dialogs/EditDocumentMetadataDialog";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+
+type CompanyDocumentVersion = {
+  id: string;
+  documentId: string;
+  contentType: string;
+  originalFilename: string;
+  sizeBytes: number;
+  uploadedById: string;
+  uploadedAt: string;
+  uploadedBy?: { id: string; displayName: string | null; email: string | null } | null;
+};
+
+type CompanyDocument = {
+  id: string;
+  type: string;
+  title: string;
+  description: string | null;
+  expiresAt: string | null;
+  adminHidden: boolean;
+  currentVersionId: string | null;
+  currentVersion: CompanyDocumentVersion | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: { id: string; displayName: string | null; email: string | null } | null;
+  expirationStatus: "active" | "expiring" | "expired";
+  _count?: { versions: number };
+};
+
+type CompanyDocumentDetail = CompanyDocument & {
+  versions: CompanyDocumentVersion[];
+};
+
+type Props = {
+  /** Admin sees read-only without admin-hidden docs; Super gets full controls. */
+  isSuper?: boolean;
+};
+
+const STATUS_ITEMS = [
+  { label: "All active", value: "all" },
+  { label: "Active", value: "active" },
+  { label: "Expiring (≤30 days)", value: "expiring" },
+  { label: "Expired", value: "expired" },
+  { label: "Archived", value: "archived" },
+];
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fmtDateShort(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString();
+  } catch {
+    return "—";
+  }
+}
+
+function expBadgeColor(status: CompanyDocument["expirationStatus"]): string {
+  if (status === "expired") return "red";
+  if (status === "expiring") return "yellow";
+  return "green";
+}
+
+export default function DocumentsTab({ isSuper = false }: Props) {
+  const [items, setItems] = useState<CompanyDocument[]>([]);
+  const [details, setDetails] = useState<Record<string, CompanyDocumentDetail>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [types, setTypes] = useState<DocumentTypeConfig[]>(DEFAULT_DOCUMENT_TYPES);
+  const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string[]>(["ALL"]);
+  const [statusFilter, setStatusFilter] = useState<string[]>(["all"]);
+
+  // Dialog state
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadInitialType, setUploadInitialType] = useState<string | null>(null);
+  const [versionUploadDocId, setVersionUploadDocId] = useState<string | null>(null);
+  const [editingDoc, setEditingDoc] = useState<CompanyDocument | null>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    | { kind: "archive"; doc: CompanyDocument }
+    | { kind: "unarchive"; doc: CompanyDocument }
+    | { kind: "hardDelete"; doc: CompanyDocument }
+    | { kind: "deleteVersion"; doc: CompanyDocument; versionId: string; filename: string }
+    | null
+  >(null);
+
+  // Pre-applied status filter from title-bar pill navigation.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = "pendingDocumentsStatusFilter";
+    const v = sessionStorage.getItem(key);
+    if (v) {
+      setStatusFilter([v]);
+      sessionStorage.removeItem(key);
+    }
+  }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (typeFilter[0] && typeFilter[0] !== "ALL") params.set("type", typeFilter[0]);
+      if (statusFilter[0] && statusFilter[0] !== "all") params.set("status", statusFilter[0]);
+      if (q.trim()) params.set("q", q.trim());
+      const list = await apiGet<CompanyDocument[]>(`/api/admin/documents?${params}`);
+      setItems(Array.isArray(list) ? list : []);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load.", err) });
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadTypes() {
+    try {
+      const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+      const dt = (Array.isArray(settings) ? settings : []).find((s) => s.key === "DOCUMENT_TYPES");
+      const parsed = parseDocumentTypesConfig(dt?.value);
+      if (parsed) setTypes(parsed);
+    } catch {}
+  }
+
+  useEffect(() => {
+    void loadTypes();
+  }, []);
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeFilter, statusFilter]);
+
+  async function loadDetail(id: string) {
+    try {
+      const detail = await apiGet<CompanyDocumentDetail>(`/api/admin/documents/${id}`);
+      setDetails((prev) => ({ ...prev, [id]: detail }));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load detail.", err) });
+    }
+  }
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        if (!details[id]) void loadDetail(id);
+      }
+      return next;
+    });
+  }
+
+  async function openVersion(docId: string, versionId: string, mode: "view" | "download") {
+    try {
+      const { url } = await apiGet<{ url: string }>(
+        `/api/admin/documents/${docId}/versions/${versionId}/url?mode=${mode}`,
+      );
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to open.", err) });
+    }
+  }
+
+  async function archive(id: string) {
+    try {
+      await apiPost(`/api/admin/documents/${id}/archive`);
+      publishInlineMessage({ type: "SUCCESS", text: "Archived." });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to archive.", err) });
+    }
+  }
+
+  async function unarchive(id: string) {
+    try {
+      await apiPost(`/api/admin/documents/${id}/unarchive`);
+      publishInlineMessage({ type: "SUCCESS", text: "Restored from archive." });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to restore.", err) });
+    }
+  }
+
+  async function hardDelete(id: string) {
+    try {
+      await apiDelete(`/api/admin/documents/${id}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Permanently deleted." });
+      setDetails((prev) => {
+        const { [id]: _, ...rest } = prev;
+        return rest;
+      });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+    }
+  }
+
+  async function restoreVersion(docId: string, versionId: string) {
+    try {
+      await apiPost(`/api/admin/documents/${docId}/versions/${versionId}/restore`);
+      publishInlineMessage({ type: "SUCCESS", text: "Version restored." });
+      await loadDetail(docId);
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Restore failed.", err) });
+    }
+  }
+
+  async function deleteVersion(docId: string, versionId: string) {
+    try {
+      await apiDelete(`/api/admin/documents/${docId}/versions/${versionId}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Version deleted." });
+      await loadDetail(docId);
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+    }
+  }
+
+  // ---- UI helpers ----
+
+  const typeItems = useMemo(
+    () => [{ label: "All types", value: "ALL" }, ...types.map((t) => ({ label: t.label, value: t.key }))],
+    [types],
+  );
+  const typeCollection = useMemo(() => createListCollection({ items: typeItems }), [typeItems]);
+  const statusCollection = useMemo(() => createListCollection({ items: STATUS_ITEMS }), []);
+
+  const filtered = useMemo(() => {
+    if (!q.trim()) return items;
+    const qlc = q.trim().toLowerCase();
+    return items.filter((i) =>
+      [i.title, i.description ?? "", documentTypeLabel(i.type, types)].some((s) =>
+        s.toLowerCase().includes(qlc),
+      ),
+    );
+  }, [items, q, types]);
+
+  const takenSingletonKeys = useMemo(() => {
+    const taken = new Set<string>();
+    for (const i of items) {
+      if (i.archivedAt) continue;
+      if (isSingletonType(i.type, types)) taken.add(i.type);
+    }
+    return taken;
+  }, [items, types]);
+
+  return (
+    <Box w="full">
+      <HStack gap={2} mb={2} wrap="wrap">
+        <Input
+          size="sm"
+          placeholder="Search title, description, type…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          maxW="320px"
+        />
+        <Select.Root
+          collection={typeCollection}
+          value={typeFilter}
+          onValueChange={(e) => setTypeFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <Select.ValueText placeholder="All types" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {typeItems.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        <Select.Root
+          collection={statusCollection}
+          value={statusFilter}
+          onValueChange={(e) => setStatusFilter(e.value)}
+          size="sm"
+          positioning={{ strategy: "fixed", hideWhenDetached: true }}
+          css={{ width: "auto", flex: "0 0 auto" }}
+        >
+          <Select.Control>
+            <Select.Trigger w="auto" minW="0" px="2">
+              <Select.ValueText placeholder="Status" />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {STATUS_ITEMS.map((it) => (
+                <Select.Item key={it.value} item={it.value}>
+                  <Select.ItemText>{it.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select.Root>
+        {isSuper && (
+          <Button
+            size="sm"
+            colorPalette="teal"
+            onClick={() => { setUploadInitialType(null); setUploadOpen(true); }}
+          >
+            <Plus size={14} /> Add Document
+          </Button>
+        )}
+      </HStack>
+
+      {loading && items.length === 0 ? (
+        <HStack justify="center" py={6}><Spinner /></HStack>
+      ) : filtered.length === 0 ? (
+        <Box py={4} color="fg.muted" fontSize="sm">No documents.</Box>
+      ) : (
+        <VStack align="stretch" gap={2}>
+          {filtered.map((d) => {
+            const isExpanded = expanded.has(d.id);
+            const detail = details[d.id];
+            const expColor = expBadgeColor(d.expirationStatus);
+            const typeLabel = documentTypeLabel(d.type, types);
+            const singleton = isSingletonType(d.type, types);
+
+            return (
+              <Card.Root key={d.id} variant="outline">
+                <Card.Body p={3}>
+                  <VStack align="stretch" gap={2}>
+                    <HStack justify="space-between" align="start" gap={2}>
+                      <VStack align="start" gap={1} flex="1" minW={0}>
+                        <HStack gap={2} wrap="wrap">
+                          <FileText size={14} />
+                          <Text fontSize="sm" fontWeight="semibold">{d.title}</Text>
+                          {d.adminHidden && (
+                            <Badge size="xs" colorPalette="purple" variant="subtle">
+                              <EyeOff size={10} /> Hidden from Admins
+                            </Badge>
+                          )}
+                          {d.archivedAt && (
+                            <Badge size="xs" colorPalette="gray" variant="solid">Archived</Badge>
+                          )}
+                        </HStack>
+                        <HStack gap={2} wrap="wrap" fontSize="xs" color="fg.muted">
+                          <Badge size="xs" colorPalette="blue" variant="subtle">
+                            {typeLabel}{singleton ? " · singleton" : ""}
+                          </Badge>
+                          {d.expiresAt ? (
+                            <Badge size="xs" colorPalette={expColor} variant="subtle">
+                              Expires {fmtDateShort(d.expiresAt)}
+                            </Badge>
+                          ) : (
+                            <Badge size="xs" colorPalette="gray" variant="outline">No expiration</Badge>
+                          )}
+                          <Text>Versions: {d._count?.versions ?? 0}</Text>
+                          <Text>Updated {fmtDateShort(d.updatedAt)}</Text>
+                        </HStack>
+                        {d.description && (
+                          <Text fontSize="xs" color="fg.muted">{d.description}</Text>
+                        )}
+                      </VStack>
+                      <HStack gap={1} flexShrink={0}>
+                        {d.currentVersion && (
+                          <>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => openVersion(d.id, d.currentVersion!.id, "view")}
+                              title="Open in browser"
+                            >
+                              <Eye size={12} /> View
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => openVersion(d.id, d.currentVersion!.id, "download")}
+                              title="Download"
+                            >
+                              <Download size={12} />
+                            </Button>
+                          </>
+                        )}
+                        <Button size="xs" variant="ghost" onClick={() => toggleExpanded(d.id)}>
+                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </Button>
+                      </HStack>
+                    </HStack>
+
+                    {isExpanded && (
+                      <Box pl={4} borderLeftWidth="2px" borderColor="gray.200">
+                        {!detail ? (
+                          <HStack py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
+                        ) : (
+                          <VStack align="stretch" gap={2}>
+                            {isSuper && !d.archivedAt && (
+                              <HStack gap={2} wrap="wrap">
+                                <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setVersionUploadDocId(d.id)}>
+                                  <Upload size={12} /> Upload new version
+                                </Button>
+                                <Button size="xs" variant="outline" onClick={() => setEditingDoc(d)}>
+                                  <Pencil size={12} /> Edit
+                                </Button>
+                                <Button size="xs" variant="outline" colorPalette="orange" onClick={() => setConfirmAction({ kind: "archive", doc: d })}>
+                                  <Archive size={12} /> Archive
+                                </Button>
+                              </HStack>
+                            )}
+                            {isSuper && d.archivedAt && (
+                              <HStack gap={2} wrap="wrap">
+                                <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setConfirmAction({ kind: "unarchive", doc: d })}>
+                                  <ArchiveRestore size={12} /> Restore from archive
+                                </Button>
+                                <Button size="xs" variant="outline" colorPalette="red" onClick={() => setConfirmAction({ kind: "hardDelete", doc: d })}>
+                                  <Trash2 size={12} /> Delete forever
+                                </Button>
+                              </HStack>
+                            )}
+
+                            <Text fontSize="xs" fontWeight="medium" color="fg.muted">Versions</Text>
+                            {detail.versions.length === 0 ? (
+                              <Text fontSize="xs" color="fg.muted">No versions uploaded yet.</Text>
+                            ) : (
+                              <VStack align="stretch" gap={1}>
+                                {detail.versions.map((v) => {
+                                  const isCurrent = v.id === d.currentVersionId;
+                                  return (
+                                    <HStack key={v.id} gap={2} py={1} borderBottomWidth="1px" borderColor="gray.100">
+                                      <Text fontSize="xs" flex="1" minW={0} truncate>
+                                        {isCurrent && <Badge size="xs" colorPalette="green" variant="solid" mr={1}>Current</Badge>}
+                                        {v.originalFilename} · {fmtSize(v.sizeBytes)} · {fmtDateShort(v.uploadedAt)}
+                                        {v.uploadedBy?.displayName ? ` · ${v.uploadedBy.displayName}` : ""}
+                                      </Text>
+                                      <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "view")}>
+                                        <Eye size={11} />
+                                      </Button>
+                                      <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "download")}>
+                                        <Download size={11} />
+                                      </Button>
+                                      {isSuper && !isCurrent && (
+                                        <Button size="xs" variant="ghost" colorPalette="teal" onClick={() => restoreVersion(d.id, v.id)} title="Make this the current version">
+                                          <RotateCcw size={11} />
+                                        </Button>
+                                      )}
+                                      {isSuper && !isCurrent && (
+                                        <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmAction({ kind: "deleteVersion", doc: d, versionId: v.id, filename: v.originalFilename })}>
+                                          <Trash2 size={11} />
+                                        </Button>
+                                      )}
+                                    </HStack>
+                                  );
+                                })}
+                              </VStack>
+                            )}
+                            {/* Multi-instance: shortcut to add another doc of the same type. */}
+                            {isSuper && !singleton && !d.archivedAt && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="teal"
+                                alignSelf="start"
+                                onClick={() => { setUploadInitialType(d.type); setUploadOpen(true); }}
+                              >
+                                <Plus size={11} /> Add another {typeLabel}
+                              </Button>
+                            )}
+                          </VStack>
+                        )}
+                      </Box>
+                    )}
+                  </VStack>
+                </Card.Body>
+              </Card.Root>
+            );
+          })}
+        </VStack>
+      )}
+
+      {isSuper && (
+        <>
+          <UploadDocumentDialog
+            open={uploadOpen}
+            onOpenChange={setUploadOpen}
+            types={types}
+            takenSingletonKeys={takenSingletonKeys}
+            initialType={uploadInitialType}
+            onCreated={() => { void load(); }}
+          />
+          <UploadDocumentVersionDialog
+            open={!!versionUploadDocId}
+            onOpenChange={(o) => { if (!o) setVersionUploadDocId(null); }}
+            documentId={versionUploadDocId}
+            defaultExpiresAt={items.find((i) => i.id === versionUploadDocId)?.expiresAt ?? null}
+            onUploaded={() => {
+              const id = versionUploadDocId;
+              setVersionUploadDocId(null);
+              if (id) void loadDetail(id);
+              void load();
+            }}
+          />
+          <EditDocumentMetadataDialog
+            open={!!editingDoc}
+            onOpenChange={(o) => { if (!o) setEditingDoc(null); }}
+            doc={editingDoc}
+            onSaved={() => { setEditingDoc(null); void load(); }}
+          />
+          <ConfirmDialog
+            open={!!confirmAction}
+            title={
+              confirmAction?.kind === "archive" ? "Archive document?"
+                : confirmAction?.kind === "unarchive" ? "Restore document?"
+                : confirmAction?.kind === "hardDelete" ? "Permanently delete?"
+                : confirmAction?.kind === "deleteVersion" ? "Delete this version?"
+                : ""
+            }
+            message={
+              confirmAction?.kind === "archive"
+                ? `Archive "${confirmAction.doc.title}"? You can restore it later.`
+                : confirmAction?.kind === "unarchive"
+                ? `Restore "${confirmAction.doc.title}" from archive?`
+                : confirmAction?.kind === "hardDelete"
+                ? `This will permanently delete "${confirmAction.doc.title}" and all its versions from R2. This cannot be undone.`
+                : confirmAction?.kind === "deleteVersion"
+                ? `Delete version "${confirmAction.filename}"? The file will be purged from storage.`
+                : ""
+            }
+            confirmLabel={
+              confirmAction?.kind === "hardDelete" ? "Delete forever"
+                : confirmAction?.kind === "deleteVersion" ? "Delete"
+                : confirmAction?.kind === "archive" ? "Archive"
+                : "Restore"
+            }
+            confirmColorPalette={
+              confirmAction?.kind === "hardDelete" || confirmAction?.kind === "deleteVersion" ? "red" : "teal"
+            }
+            onConfirm={() => {
+              if (!confirmAction) return;
+              if (confirmAction.kind === "archive") archive(confirmAction.doc.id);
+              else if (confirmAction.kind === "unarchive") unarchive(confirmAction.doc.id);
+              else if (confirmAction.kind === "hardDelete") hardDelete(confirmAction.doc.id);
+              else if (confirmAction.kind === "deleteVersion") deleteVersion(confirmAction.doc.id, confirmAction.versionId);
+              setConfirmAction(null);
+            }}
+            onCancel={() => setConfirmAction(null)}
+          />
+        </>
+      )}
+    </Box>
+  );
+}

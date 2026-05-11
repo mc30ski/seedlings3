@@ -31,6 +31,7 @@ enum AuditScope {
   PROPERTY
   SETTING
   NOTIFICATION
+  DOCUMENT
   // add more scopes as you expand the schema
 }
 
@@ -58,6 +59,11 @@ enum AuditVerb {
   CONTRACTOR_AGREED
   W9_COLLECTED
   SENT
+  VERSION_ADDED
+  VERSION_RESTORED
+  VERSION_DELETED
+  VIEWED
+  DOWNLOADED
   // add new verbs as needed
 }
 
@@ -141,6 +147,9 @@ model User {
   supplyPurchasesCreated   SupplyPurchase[]
   supplyHoldsCreated       SupplyHold[]
   supplyAdjustmentsCreated SupplyAdjustment[]
+
+  companyDocumentsCreated  CompanyDocument[]        @relation("CompanyDocCreator")
+  documentVersionsUploaded CompanyDocumentVersion[] @relation("CompanyDocVersionUploader")
 }
 
 model NotificationTemplate {
@@ -1449,4 +1458,55 @@ model GroupPreferredEquipment {
   @@index([groupId, sortOrder])
   @@index([equipmentId])
   @@index([equipmentCollectionId])
+}
+
+// Company-level documents (Articles of Organization, Insurance certs, etc.).
+// `type` is a string key into the DOCUMENT_TYPES setting taxonomy. A type can
+// be flagged singleton in the taxonomy — enforced at the API layer.
+// `currentVersionId` points at one of this doc's CompanyDocumentVersion rows.
+model CompanyDocument {
+  id          String  @id @default(cuid())
+  type        String
+  title       String
+  description String?
+  expiresAt   DateTime?
+  // When true, Admins cannot see this document; only Super.
+  adminHidden Boolean @default(false)
+
+  // Pointer to the currently-active version. Nullable while doc has no
+  // uploaded version yet (e.g., metadata created but file not yet PUT).
+  currentVersionId String?                  @unique
+  currentVersion   CompanyDocumentVersion?  @relation("CompanyDocCurrent", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
+  versions CompanyDocumentVersion[] @relation("CompanyDocVersions")
+
+  createdById String
+  createdBy   User   @relation("CompanyDocCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  archivedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([type, archivedAt])
+  @@index([expiresAt])
+}
+
+model CompanyDocumentVersion {
+  id         String @id @default(cuid())
+  documentId String
+  document   CompanyDocument @relation("CompanyDocVersions", fields: [documentId], references: [id], onDelete: Cascade)
+
+  r2Key            String  @unique
+  contentType      String
+  originalFilename String
+  sizeBytes        Int
+
+  uploadedById String
+  uploadedBy   User   @relation("CompanyDocVersionUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedAt   DateTime @default(now())
+
+  // Back-relation for the currentVersion pointer on CompanyDocument.
+  currentForDocument CompanyDocument? @relation("CompanyDocCurrent")
+
+  @@index([documentId, uploadedAt])
 }

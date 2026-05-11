@@ -107,7 +107,16 @@ function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValu
   );
 }
 
-/** Inline editor for JSON array-of-objects settings like [{key, label}] */
+/** Inline editor for JSON array-of-objects settings like [{key, label}].
+ *  Column visibility is auto-detected from item shape: equipmentKind shows up
+ *  when any item has one (used by SERVICE_TYPES); singleton shows up when any
+ *  item has the field (used by DOCUMENT_TYPES). */
+type JsonArrayItem = {
+  key: string;
+  label: string;
+  equipmentKind?: string;
+  singleton?: boolean;
+};
 function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
   value: string;
   onChange: (v: string) => void;
@@ -116,20 +125,24 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
   saving: boolean;
   originalValue: string;
 }) {
-  let items: { key: string; label: string; equipmentKind?: string }[] = [];
+  let items: JsonArrayItem[] = [];
   try { items = JSON.parse(value); } catch {}
 
-  // Detect if any item has equipmentKind — show the column if so
   const hasEquipmentKind = items.some((i) => i.equipmentKind);
+  const hasSingleton = items.some((i) => i.singleton !== undefined);
 
   const [newKey, setNewKey] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newEquipment, setNewEquipment] = useState("");
+  const [newSingleton, setNewSingleton] = useState(false);
 
-  function updateItem(idx: number, updates: Partial<{ key: string; label: string; equipmentKind: string }>) {
+  function updateItem(idx: number, updates: Partial<JsonArrayItem>) {
     const updated = [...items];
     const item = { ...updated[idx], ...updates };
     if (!item.equipmentKind) delete item.equipmentKind;
+    // Keep singleton field present (true or false) only when the column is in
+    // use; absent for legacy types like SERVICE_TYPES.
+    if (!hasSingleton) delete item.singleton;
     updated[idx] = item;
     onChange(JSON.stringify(updated));
   }
@@ -140,12 +153,14 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
 
   function addItem() {
     if (!newKey.trim() || !newLabel.trim()) return;
-    const item: any = { key: newKey.trim().toUpperCase(), label: newLabel.trim() };
+    const item: JsonArrayItem = { key: newKey.trim().toUpperCase(), label: newLabel.trim() };
     if (newEquipment.trim()) item.equipmentKind = newEquipment.trim().toUpperCase();
+    if (hasSingleton) item.singleton = newSingleton;
     onChange(JSON.stringify([...items, item]));
     setNewKey("");
     setNewLabel("");
     setNewEquipment("");
+    setNewSingleton(false);
   }
 
   return (
@@ -155,6 +170,7 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
         <Text flex="1">Key</Text>
         <Text flex="1">Label</Text>
         {hasEquipmentKind && <Text flex="1">Equipment Kind</Text>}
+        {hasSingleton && <Text w="64px" textAlign="center">Singleton</Text>}
         <Box w="24px" />
       </HStack>
       {items.map((item, idx) => (
@@ -163,6 +179,15 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
           <Input size="sm" value={item.label} onChange={(e) => updateItem(idx, { label: e.target.value })} flex="1" placeholder="Mow" />
           {hasEquipmentKind && (
             <Input size="sm" value={item.equipmentKind ?? ""} onChange={(e) => updateItem(idx, { equipmentKind: e.target.value.toUpperCase() })} flex="1" placeholder="(optional)" />
+          )}
+          {hasSingleton && (
+            <Box w="64px" textAlign="center">
+              <input
+                type="checkbox"
+                checked={!!item.singleton}
+                onChange={(e) => updateItem(idx, { singleton: e.target.checked })}
+              />
+            </Box>
           )}
           <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removeItem(idx)}>
             <Trash2 size={12} />
@@ -174,6 +199,15 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
         <Input size="sm" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} flex="1" placeholder="Label" />
         {hasEquipmentKind && (
           <Input size="sm" value={newEquipment} onChange={(e) => setNewEquipment(e.target.value)} flex="1" placeholder="Equipment (opt)" />
+        )}
+        {hasSingleton && (
+          <Box w="64px" textAlign="center">
+            <input
+              type="checkbox"
+              checked={newSingleton}
+              onChange={(e) => setNewSingleton(e.target.checked)}
+            />
+          </Box>
         )}
         <Button size="xs" variant="outline" onClick={addItem} disabled={!newKey.trim() || !newLabel.trim()}>
           <Plus size={12} />
@@ -222,6 +256,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",
         "SERVICE_TYPES",
+        "DOCUMENT_TYPES",
+        "DOCUMENT_MAX_SIZE_MB",
         "WEATHER_API_KEY",
       ];
       const general = (Array.isArray(allSettings) ? allSettings : []).filter((s) => !s.key.startsWith("pricing_"));
@@ -327,72 +363,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   return (
     <Box w="full" pb={8}>
-      {/* ── Pricing Section ── */}
-      <Box mb={6}>
-        <HStack justify="space-between" mb={2} px={1}>
-          <Text fontSize="md" fontWeight="semibold">Pricing Guide</Text>
-          {isSuper && (
-            <Button size="xs" colorPalette="blue" onClick={openPricingCreate}>
-              <Plus size={14} /> Add Entry
-            </Button>
-          )}
-        </HStack>
-        <Box mb={2} p={3} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
-          <Text fontSize="xs" color="blue.600">
-            Reference pricing for common job types. {isSuper ? "You can add, edit, and remove entries." : "Contact a super admin to make changes."}
-            {" "}This data is used by AI features to generate accurate estimates.
-          </Text>
-        </Box>
-
-        {pricingEntries.length === 0 && (
-          <Box textAlign="center" py={6}>
-            <Text fontSize="sm" color="fg.muted">No pricing entries yet.{isSuper ? " Add your first entry above." : ""}</Text>
-          </Box>
-        )}
-
-        <VStack align="stretch" gap={2}>
-          {pricingEntries.map((entry) => {
-            const v = entry.parsedValue;
-            if (!v) return null;
-            return (
-              <Card.Root key={entry.key} variant="outline">
-                <Card.Body py="2" px="3">
-                  <HStack justify="space-between" align="start" gap={3}>
-                    <VStack align="start" gap={1} flex="1" minW={0}>
-                      <HStack gap={2} align="center" wrap="wrap">
-                        <Text fontSize="sm" fontWeight="semibold">{v.label}</Text>
-                        <Badge colorPalette="green" variant="solid" fontSize="sm" px="2" borderRadius="full">
-                          <DollarSign size={12} />{v.amount.toFixed(2)}
-                        </Badge>
-                        <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                          {v.unit}
-                        </Badge>
-                      </HStack>
-                      {v.description && (
-                        <Text fontSize="xs" color="fg.muted">{v.description}</Text>
-                      )}
-                      <Text fontSize="xs" color="fg.muted">
-                        Updated {new Date(entry.updatedAt).toLocaleDateString()}
-                        {entry.updatedBy?.displayName && ` by ${entry.updatedBy.displayName}`}
-                      </Text>
-                    </VStack>
-                    {isSuper && (
-                      <HStack gap={1} flexShrink={0}>
-                        <Button size="xs" variant="ghost" onClick={() => openPricingEdit(entry)} title="Edit">
-                          <Pencil size={14} />
-                        </Button>
-                        <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setDeleteConfirm({ key: entry.key, label: v.label })} title="Delete">
-                          <Trash2 size={14} />
-                        </Button>
-                      </HStack>
-                    )}
-                  </HStack>
-                </Card.Body>
-              </Card.Root>
-            );
-          })}
-        </VStack>
-      </Box>
+      {/* Pricing Guide moved to its own tab under Directory. Settings now
+          only carries the general key/value settings rows. */}
 
       {/* ── General Settings Section ── */}
       {settings.length > 0 && (

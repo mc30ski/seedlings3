@@ -1958,6 +1958,74 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.supplies.listHistory(String(req.params.id));
   });
 
+  // Worker-managed add-on services. Claimer of an active occurrence (or
+  // admin/super) can add and remove. Tasks/reminders/events don't carry
+  // add-ons; the workflow check happens in the create path. Removed
+  // add-ons are deleted outright — there's no carry-forward to next
+  // occurrence so no audit-trail consideration here.
+  app.post("/occurrences/:id/addons", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const { tag, customLabel, price } = (req.body || {}) as { tag?: string; customLabel?: string; price: number };
+    if (price == null || price <= 0) throw app.httpErrors.badRequest("price is required and must be positive");
+    if (!tag && !customLabel) throw app.httpErrors.badRequest("Either tag or customLabel is required");
+
+    // Authorization: claimer of this occurrence OR admin/super.
+    const me = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdminOrSuper = !!me?.roles?.some((r) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdminOrSuper) {
+      const claimer = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid, assignedById: uid },
+      });
+      if (!claimer) throw app.httpErrors.forbidden("Only the claimer or an admin can add services.");
+    }
+
+    // Only active occurrences accept new add-ons.
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, select: { status: true, workflow: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS" && (occ.status as string) !== "PAUSED") {
+      throw app.httpErrors.conflict("Add-ons can only be added on active jobs.");
+    }
+    const w = occ.workflow ?? "STANDARD";
+    if (w === "TASK" || w === "REMINDER" || w === "EVENT" || w === "FOLLOWUP" || w === "ANNOUNCEMENT") {
+      throw app.httpErrors.badRequest("This workflow doesn't carry add-on services.");
+    }
+
+    return prisma.occurrenceAddon.create({
+      data: {
+        occurrenceId,
+        tag: tag || null,
+        customLabel: customLabel?.trim() || null,
+        price: Number(price),
+        createdById: uid,
+      },
+    });
+  });
+
+  app.delete("/occurrences/:id/addons/:addonId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const addonId = String(req.params.addonId);
+
+    const me = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+    const isAdminOrSuper = !!me?.roles?.some((r) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdminOrSuper) {
+      const claimer = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid, assignedById: uid },
+      });
+      if (!claimer) throw app.httpErrors.forbidden("Only the claimer or an admin can remove services.");
+    }
+
+    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, select: { status: true } });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found");
+    if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS" && (occ.status as string) !== "PAUSED") {
+      throw app.httpErrors.conflict("Add-ons can only be removed on active jobs.");
+    }
+
+    await prisma.occurrenceAddon.delete({ where: { id: addonId } });
+    return { deleted: true };
+  });
+
   app.post("/occurrences/:id/supply-holds", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const b = req.body || {};
@@ -2172,6 +2240,24 @@ export default async function workerRoutes(app: FastifyInstance) {
   // Settings (read-only for workers)
   app.get("/settings", workerGuard, async () => {
     return services.settings.getAll();
+  });
+
+  // Pricing guide (read-only for workers). Mirrors /admin/pricing's shape
+  // so the same PricingTab component can render here. Mutations remain
+  // super-only on the /admin/pricing/* routes.
+  app.get("/pricing", workerGuard, async () => {
+    const rows = await prisma.setting.findMany({
+      where: { key: { startsWith: "pricing_" } },
+      include: { updatedBy: { select: { id: true, displayName: true } } },
+      orderBy: { key: "asc" },
+    });
+    return rows.map((r: any) => {
+      try {
+        return { ...r, parsedValue: JSON.parse(r.value) };
+      } catch {
+        return { ...r, parsedValue: null };
+      }
+    });
   });
 
   // Worker statistics (proxies to admin statistics endpoint logic, scoped to self)
