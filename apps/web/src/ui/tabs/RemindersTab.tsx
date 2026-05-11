@@ -135,17 +135,25 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
 
     // Filter to my assignments (or all if showAll). ANNOUNCEMENTs bypass the
     // assignee check — they're company-wide and visible to everyone.
+    //
+    // Admin team view, ALL workers (showAll + no subset) is special: include
+    // *unclaimed* jobs too. Tomorrow's client-confirmation work doesn't
+    // depend on a worker being assigned yet — admins still need to call
+    // the client. Subset views (specific worker(s)) stay strictly assigned-
+    // to-them; the per-worker view (showAll=false) also stays strict.
+    const isFullTeamView = !!teamView && (!visibleUserIds || visibleUserIds.length === 0);
     if (!showAll && myId) {
       rows = rows.filter((occ) =>
         occ.workflow === "ANNOUNCEMENT" ||
         (occ.assignees ?? []).some((a) => a.userId === myId)
       );
-    } else if (showAll) {
+    } else if (showAll && !isFullTeamView) {
       rows = rows.filter((occ) =>
         occ.workflow === "ANNOUNCEMENT" ||
         (occ.assignees ?? []).length > 0
       );
     }
+    // In full team view we intentionally let unclaimed jobs through.
 
     // Team-view: optional restriction to a specific subset of workers (multi-select).
     // Empty/absent visibleUserIds means "no restriction" (all workers). Announcements
