@@ -116,33 +116,38 @@ type JsonArrayItem = {
   label: string;
   equipmentKind?: string;
   singleton?: boolean;
+  description?: string;
 };
-function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalValue, forceDescription }: {
   value: string;
   onChange: (v: string) => void;
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
   originalValue: string;
+  /** Force the Description column visible even when no row has one yet —
+   *  used so editors can bootstrap the field on settings like DOCUMENT_TYPES. */
+  forceDescription?: boolean;
 }) {
   let items: JsonArrayItem[] = [];
   try { items = JSON.parse(value); } catch {}
 
   const hasEquipmentKind = items.some((i) => i.equipmentKind);
   const hasSingleton = items.some((i) => i.singleton !== undefined);
+  const hasDescription = forceDescription || items.some((i) => typeof i.description === "string");
 
   const [newKey, setNewKey] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newEquipment, setNewEquipment] = useState("");
   const [newSingleton, setNewSingleton] = useState(false);
+  const [newDescription, setNewDescription] = useState("");
 
   function updateItem(idx: number, updates: Partial<JsonArrayItem>) {
     const updated = [...items];
     const item = { ...updated[idx], ...updates };
     if (!item.equipmentKind) delete item.equipmentKind;
-    // Keep singleton field present (true or false) only when the column is in
-    // use; absent for legacy types like SERVICE_TYPES.
     if (!hasSingleton) delete item.singleton;
+    if (!item.description) delete item.description;
     updated[idx] = item;
     onChange(JSON.stringify(updated));
   }
@@ -156,11 +161,13 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
     const item: JsonArrayItem = { key: newKey.trim().toUpperCase(), label: newLabel.trim() };
     if (newEquipment.trim()) item.equipmentKind = newEquipment.trim().toUpperCase();
     if (hasSingleton) item.singleton = newSingleton;
+    if (hasDescription && newDescription.trim()) item.description = newDescription.trim();
     onChange(JSON.stringify([...items, item]));
     setNewKey("");
     setNewLabel("");
     setNewEquipment("");
     setNewSingleton(false);
+    setNewDescription("");
   }
 
   return (
@@ -171,6 +178,7 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
         <Text flex="1">Label</Text>
         {hasEquipmentKind && <Text flex="1">Equipment Kind</Text>}
         {hasSingleton && <Text w="64px" textAlign="center">Singleton</Text>}
+        {hasDescription && <Text flex="2">Description</Text>}
         <Box w="24px" />
       </HStack>
       {items.map((item, idx) => (
@@ -188,6 +196,9 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
                 onChange={(e) => updateItem(idx, { singleton: e.target.checked })}
               />
             </Box>
+          )}
+          {hasDescription && (
+            <Input size="sm" value={item.description ?? ""} onChange={(e) => updateItem(idx, { description: e.target.value })} flex="2" placeholder="(optional)" />
           )}
           <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removeItem(idx)}>
             <Trash2 size={12} />
@@ -208,6 +219,9 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
               onChange={(e) => setNewSingleton(e.target.checked)}
             />
           </Box>
+        )}
+        {hasDescription && (
+          <Input size="sm" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} flex="2" placeholder="Description (opt)" />
         )}
         <Button size="xs" variant="outline" onClick={addItem} disabled={!newKey.trim() || !newLabel.trim()}>
           <Plus size={12} />
@@ -396,11 +410,15 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
                     {editingKey === s.key ? (
                       (() => {
+                        // Settings keys that should always expose a Description
+                        // column in the editor (so admin can bootstrap the
+                        // first description on a row that has none yet).
+                        const forceDescription = s.key === "DOCUMENT_TYPES";
                         // Detect JSON format and use appropriate editor
                         try {
                           const parsed = JSON.parse(s.value);
                           if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].key) {
-                            return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                            return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} forceDescription={forceDescription} />;
                           }
                           if (typeof parsed === "object" && !Array.isArray(parsed)) {
                             return <JsonMapEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
@@ -408,7 +426,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         } catch {}
                         // Also handle empty array case
                         if (s.value === "[]") {
-                          return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                          return <JsonArrayEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} forceDescription={forceDescription} />;
                         }
                         return (
                           <HStack gap={2} w="full">

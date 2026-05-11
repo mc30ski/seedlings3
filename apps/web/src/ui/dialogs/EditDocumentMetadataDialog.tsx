@@ -31,6 +31,9 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   doc: DocMeta | null;
+  /** When true, hide the per-doc description input — singleton types use the
+   *  type-level taxonomy description instead. */
+  isSingletonType?: boolean;
   onSaved: () => void;
 };
 
@@ -49,7 +52,7 @@ function isoToDateInput(iso: string | null | undefined): string {
 }
 
 export default function EditDocumentMetadataDialog({
-  open, onOpenChange, doc, onSaved,
+  open, onOpenChange, doc, isSingletonType, onSaved,
 }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -72,7 +75,10 @@ export default function EditDocumentMetadataDialog({
     try {
       await apiPatch(`/api/admin/documents/${doc.id}`, {
         title: title.trim(),
-        description: description.trim() || null,
+        // Don't write description for singleton types (their description
+        // lives at the type-taxonomy level). Existing value, if any, is
+        // preserved in the DB since we omit the field instead of nulling it.
+        ...(isSingletonType ? {} : { description: description.trim() || null }),
         expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
         adminHidden,
       });
@@ -102,10 +108,12 @@ export default function EditDocumentMetadataDialog({
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Title *</Text>
                   <Input size="sm" value={title} onChange={(e) => setTitle(e.target.value)} />
                 </Box>
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Description</Text>
-                  <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-                </Box>
+                {!isSingletonType && (
+                  <Box>
+                    <Text fontSize="xs" fontWeight="medium" mb={1}>Description</Text>
+                    <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+                  </Box>
+                )}
                 <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Expiration date</Text>
                   <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />

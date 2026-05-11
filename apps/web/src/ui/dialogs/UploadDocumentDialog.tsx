@@ -79,7 +79,9 @@ export default function UploadDocumentDialog({
       const created = await apiPost<{ id: string }>("/api/admin/documents", {
         type,
         title: title.trim(),
-        description: description.trim() || undefined,
+        // Singleton types use the type-level description; per-doc description
+        // is intentionally omitted so it doesn't double up.
+        description: selectedType?.singleton ? undefined : (description.trim() || undefined),
         expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
         adminHidden,
       });
@@ -155,10 +157,15 @@ export default function UploadDocumentDialog({
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Title *</Text>
                   <Input size="sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g., GL — State Farm 2026" />
                 </Box>
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Description</Text>
-                  <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-                </Box>
+                {/* Per-doc description is only meaningful for multi-instance
+                    types — singleton types use the type-level description in
+                    the taxonomy instead. */}
+                {!selectedType?.singleton && (
+                  <Box>
+                    <Text fontSize="xs" fontWeight="medium" mb={1}>Description</Text>
+                    <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+                  </Box>
+                )}
                 <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Expiration date</Text>
                   <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
