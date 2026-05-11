@@ -36,6 +36,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import {
   DEFAULT_DOCUMENT_TYPES,
+  documentTypeDescription,
   documentTypeLabel,
   isSingletonType,
   parseDocumentTypesConfig,
@@ -369,166 +370,223 @@ export default function DocumentsTab({ isSuper = false }: Props) {
         <HStack justify="center" py={6}><Spinner /></HStack>
       ) : filtered.length === 0 ? (
         <Box py={4} color="fg.muted" fontSize="sm">No documents.</Box>
-      ) : (
-        <VStack align="stretch" gap={2}>
-          {filtered.map((d) => {
-            const isExpanded = expanded.has(d.id);
-            const detail = details[d.id];
-            const expColor = expBadgeColor(d.expirationStatus);
-            const typeLabel = documentTypeLabel(d.type, types);
-            const singleton = isSingletonType(d.type, types);
+      ) : (() => {
+        // Group docs by type. Iterate over the configured taxonomy first to
+        // preserve admin-defined order; collect any orphan types (docs whose
+        // type was removed from the taxonomy) into a trailing "Other" group.
+        const byType: Record<string, CompanyDocument[]> = {};
+        for (const d of filtered) {
+          (byType[d.type] ??= []).push(d);
+        }
+        const orderedTypes = types.filter((t) => byType[t.key]?.length);
+        const orphanKeys = Object.keys(byType).filter(
+          (k) => !types.some((t) => t.key === k),
+        );
 
-            return (
-              <Card.Root key={d.id} variant="outline">
-                <Card.Body p={3}>
-                  <VStack align="stretch" gap={2}>
-                    <HStack justify="space-between" align="start" gap={2}>
-                      <VStack align="start" gap={1} flex="1" minW={0}>
-                        <HStack gap={2} wrap="wrap">
-                          <FileText size={14} />
-                          <Text fontSize="sm" fontWeight="semibold">{d.title}</Text>
-                          {d.adminHidden && (
-                            <Badge size="xs" colorPalette="purple" variant="subtle">
-                              <EyeOff size={10} /> Hidden from Admins
-                            </Badge>
-                          )}
-                          {d.archivedAt && (
-                            <Badge size="xs" colorPalette="gray" variant="solid">Archived</Badge>
-                          )}
-                        </HStack>
-                        <HStack gap={2} wrap="wrap" fontSize="xs" color="fg.muted">
-                          <Badge size="xs" colorPalette="blue" variant="subtle">
-                            {typeLabel}{singleton ? " · singleton" : ""}
+        const renderDocCard = (d: CompanyDocument, withinSingletonGroup: boolean) => {
+          const isExpanded = expanded.has(d.id);
+          const detail = details[d.id];
+          const expColor = expBadgeColor(d.expirationStatus);
+          const typeLabel = documentTypeLabel(d.type, types);
+          const singleton = isSingletonType(d.type, types);
+          const versionCount = d._count?.versions ?? 0;
+          return (
+            <Card.Root key={d.id} variant="outline">
+              <Card.Body p={2}>
+                <VStack align="stretch" gap={1}>
+                  <HStack justify="space-between" align="start" gap={1}>
+                    <VStack align="start" gap={0.5} flex="1" minW={0}>
+                      <HStack gap={1.5} wrap="wrap" align="center">
+                        <FileText size={13} />
+                        <Text fontSize="sm" fontWeight="semibold" lineClamp={2}>{d.title}</Text>
+                        {d.adminHidden && (
+                          <Badge size="xs" colorPalette="purple" variant="subtle" px="1.5" title="Hidden from Admins">
+                            <EyeOff size={9} />
                           </Badge>
-                          {d.expiresAt ? (
-                            <Badge size="xs" colorPalette={expColor} variant="subtle">
-                              Expires {fmtDateShort(d.expiresAt)}
-                            </Badge>
-                          ) : (
-                            <Badge size="xs" colorPalette="gray" variant="outline">No expiration</Badge>
-                          )}
-                          <Text>Versions: {d._count?.versions ?? 0}</Text>
-                          <Text>Updated {fmtDateShort(d.updatedAt)}</Text>
-                        </HStack>
-                        {d.description && (
-                          <Text fontSize="xs" color="fg.muted">{d.description}</Text>
                         )}
-                      </VStack>
-                      <HStack gap={1} flexShrink={0}>
-                        {d.currentVersion && (
-                          <>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              onClick={() => openVersion(d.id, d.currentVersion!.id, "view")}
-                              title="Open in browser"
-                            >
-                              <Eye size={12} /> View
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              onClick={() => openVersion(d.id, d.currentVersion!.id, "download")}
-                              title="Download"
-                            >
-                              <Download size={12} />
-                            </Button>
-                          </>
+                        {d.archivedAt && (
+                          <Badge size="xs" colorPalette="gray" variant="solid" px="1.5">Archived</Badge>
                         )}
-                        <Button size="xs" variant="ghost" onClick={() => toggleExpanded(d.id)}>
-                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </Button>
                       </HStack>
-                    </HStack>
-
-                    {isExpanded && (
-                      <Box pl={4} borderLeftWidth="2px" borderColor="gray.200">
-                        {!detail ? (
-                          <HStack py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
-                        ) : (
-                          <VStack align="stretch" gap={2}>
-                            {isSuper && !d.archivedAt && (
-                              <HStack gap={2} wrap="wrap">
-                                <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setVersionUploadDocId(d.id)}>
-                                  <Upload size={12} /> Upload new version
-                                </Button>
-                                <Button size="xs" variant="outline" onClick={() => setEditingDoc(d)}>
-                                  <Pencil size={12} /> Edit
-                                </Button>
-                                <Button size="xs" variant="outline" colorPalette="orange" onClick={() => setConfirmAction({ kind: "archive", doc: d })}>
-                                  <Archive size={12} /> Archive
-                                </Button>
-                              </HStack>
-                            )}
-                            {isSuper && d.archivedAt && (
-                              <HStack gap={2} wrap="wrap">
-                                <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setConfirmAction({ kind: "unarchive", doc: d })}>
-                                  <ArchiveRestore size={12} /> Restore from archive
-                                </Button>
-                                <Button size="xs" variant="outline" colorPalette="red" onClick={() => setConfirmAction({ kind: "hardDelete", doc: d })}>
-                                  <Trash2 size={12} /> Delete forever
-                                </Button>
-                              </HStack>
-                            )}
-
-                            <Text fontSize="xs" fontWeight="medium" color="fg.muted">Versions</Text>
-                            {detail.versions.length === 0 ? (
-                              <Text fontSize="xs" color="fg.muted">No versions uploaded yet.</Text>
-                            ) : (
-                              <VStack align="stretch" gap={1}>
-                                {detail.versions.map((v) => {
-                                  const isCurrent = v.id === d.currentVersionId;
-                                  return (
-                                    <HStack key={v.id} gap={2} py={1} borderBottomWidth="1px" borderColor="gray.100">
-                                      <Text fontSize="xs" flex="1" minW={0} truncate>
-                                        {isCurrent && <Badge size="xs" colorPalette="green" variant="solid" mr={1}>Current</Badge>}
-                                        {v.originalFilename} · {fmtSize(v.sizeBytes)} · {fmtDateShort(v.uploadedAt)}
-                                        {v.uploadedBy?.displayName ? ` · ${v.uploadedBy.displayName}` : ""}
-                                      </Text>
-                                      <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "view")}>
-                                        <Eye size={11} />
-                                      </Button>
-                                      <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "download")}>
-                                        <Download size={11} />
-                                      </Button>
-                                      {isSuper && !isCurrent && (
-                                        <Button size="xs" variant="ghost" colorPalette="teal" onClick={() => restoreVersion(d.id, v.id)} title="Make this the current version">
-                                          <RotateCcw size={11} />
-                                        </Button>
-                                      )}
-                                      {isSuper && !isCurrent && (
-                                        <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmAction({ kind: "deleteVersion", doc: d, versionId: v.id, filename: v.originalFilename })}>
-                                          <Trash2 size={11} />
-                                        </Button>
-                                      )}
-                                    </HStack>
-                                  );
-                                })}
-                              </VStack>
-                            )}
-                            {/* Multi-instance: shortcut to add another doc of the same type. */}
-                            {isSuper && !singleton && !d.archivedAt && (
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                colorPalette="teal"
-                                alignSelf="start"
-                                onClick={() => { setUploadInitialType(d.type); setUploadOpen(true); }}
-                              >
-                                <Plus size={11} /> Add another {typeLabel}
-                              </Button>
-                            )}
-                          </VStack>
+                      <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
+                        {!withinSingletonGroup && (
+                          <Badge size="xs" colorPalette="blue" variant="subtle" px="1.5">
+                            {typeLabel}
+                          </Badge>
                         )}
-                      </Box>
-                    )}
-                  </VStack>
-                </Card.Body>
-              </Card.Root>
-            );
-          })}
-        </VStack>
-      )}
+                        {d.expiresAt && (
+                          <Badge size="xs" colorPalette={expColor} variant="subtle" px="1.5">
+                            Exp {fmtDateShort(d.expiresAt)}
+                          </Badge>
+                        )}
+                        <Text>{versionCount} ver · upd {fmtDateShort(d.updatedAt)}</Text>
+                      </HStack>
+                      {d.description && !withinSingletonGroup && (
+                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
+                      )}
+                    </VStack>
+                    <HStack gap={0.5} flexShrink={0}>
+                      {d.currentVersion && (
+                        <>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            px="1.5"
+                            minW="0"
+                            onClick={() => openVersion(d.id, d.currentVersion!.id, "view")}
+                            title="Open in browser"
+                          >
+                            <Eye size={13} />
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            px="1.5"
+                            minW="0"
+                            onClick={() => openVersion(d.id, d.currentVersion!.id, "download")}
+                            title="Download"
+                          >
+                            <Download size={13} />
+                          </Button>
+                        </>
+                      )}
+                      <Button size="xs" variant="ghost" px="1.5" minW="0" onClick={() => toggleExpanded(d.id)}>
+                        {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </Button>
+                    </HStack>
+                  </HStack>
+
+                  {isExpanded && (
+                    <Box pl={4} borderLeftWidth="2px" borderColor="gray.200">
+                      {!detail ? (
+                        <HStack py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
+                      ) : (
+                        <VStack align="stretch" gap={2}>
+                          {isSuper && !d.archivedAt && (
+                            <HStack gap={2} wrap="wrap">
+                              <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setVersionUploadDocId(d.id)}>
+                                <Upload size={12} /> Upload new version
+                              </Button>
+                              <Button size="xs" variant="outline" onClick={() => setEditingDoc(d)}>
+                                <Pencil size={12} /> Edit
+                              </Button>
+                              <Button size="xs" variant="outline" colorPalette="orange" onClick={() => setConfirmAction({ kind: "archive", doc: d })}>
+                                <Archive size={12} /> Archive
+                              </Button>
+                            </HStack>
+                          )}
+                          {isSuper && d.archivedAt && (
+                            <HStack gap={2} wrap="wrap">
+                              <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setConfirmAction({ kind: "unarchive", doc: d })}>
+                                <ArchiveRestore size={12} /> Restore from archive
+                              </Button>
+                              <Button size="xs" variant="outline" colorPalette="red" onClick={() => setConfirmAction({ kind: "hardDelete", doc: d })}>
+                                <Trash2 size={12} /> Delete forever
+                              </Button>
+                            </HStack>
+                          )}
+
+                          <Text fontSize="xs" fontWeight="medium" color="fg.muted">Versions</Text>
+                          {detail.versions.length === 0 ? (
+                            <Text fontSize="xs" color="fg.muted">No versions uploaded yet.</Text>
+                          ) : (
+                            <VStack align="stretch" gap={1}>
+                              {detail.versions.map((v) => {
+                                const isCurrent = v.id === d.currentVersionId;
+                                return (
+                                  <HStack key={v.id} gap={2} py={1} borderBottomWidth="1px" borderColor="gray.100">
+                                    <Text fontSize="xs" flex="1" minW={0} truncate>
+                                      {isCurrent && <Badge size="xs" colorPalette="green" variant="solid" mr={1}>Current</Badge>}
+                                      {v.originalFilename} · {fmtSize(v.sizeBytes)} · {fmtDateShort(v.uploadedAt)}
+                                      {v.uploadedBy?.displayName ? ` · ${v.uploadedBy.displayName}` : ""}
+                                    </Text>
+                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "view")}>
+                                      <Eye size={11} />
+                                    </Button>
+                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "download")}>
+                                      <Download size={11} />
+                                    </Button>
+                                    {isSuper && !isCurrent && (
+                                      <Button size="xs" variant="ghost" colorPalette="teal" onClick={() => restoreVersion(d.id, v.id)} title="Make this the current version">
+                                        <RotateCcw size={11} />
+                                      </Button>
+                                    )}
+                                    {isSuper && !isCurrent && (
+                                      <Button size="xs" variant="ghost" colorPalette="red" onClick={() => setConfirmAction({ kind: "deleteVersion", doc: d, versionId: v.id, filename: v.originalFilename })}>
+                                        <Trash2 size={11} />
+                                      </Button>
+                                    )}
+                                  </HStack>
+                                );
+                              })}
+                            </VStack>
+                          )}
+                        </VStack>
+                      )}
+                    </Box>
+                  )}
+                </VStack>
+              </Card.Body>
+            </Card.Root>
+          );
+        };
+
+        const renderGroup = (
+          typeKey: string,
+          docs: CompanyDocument[],
+          opts: { headerLabel: string; headerDescription: string | null; singleton: boolean },
+        ) => {
+          return (
+            <Box key={typeKey}>
+              <HStack mb={1} gap={2} align="baseline" wrap="wrap">
+                <Text fontSize="sm" fontWeight="semibold" color="fg.default">
+                  {opts.headerLabel}
+                </Text>
+                {opts.singleton ? (
+                  <Badge size="xs" colorPalette="gray" variant="subtle">singleton</Badge>
+                ) : (
+                  <Badge size="xs" colorPalette="gray" variant="outline">{docs.length}</Badge>
+                )}
+                {isSuper && !opts.singleton && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    colorPalette="teal"
+                    onClick={() => { setUploadInitialType(typeKey); setUploadOpen(true); }}
+                  >
+                    <Plus size={11} /> Add document
+                  </Button>
+                )}
+              </HStack>
+              {opts.headerDescription && (
+                <Text fontSize="xs" color="fg.muted" mb={2}>{opts.headerDescription}</Text>
+              )}
+              <VStack align="stretch" gap={2} pl={opts.singleton ? 0 : 2}>
+                {docs.map((d) => renderDocCard(d, opts.singleton))}
+              </VStack>
+            </Box>
+          );
+        };
+
+        return (
+          <VStack align="stretch" gap={4}>
+            {orderedTypes.map((t) =>
+              renderGroup(t.key, byType[t.key], {
+                headerLabel: t.label,
+                headerDescription: t.description ?? documentTypeDescription(t.key, types),
+                singleton: !!t.singleton,
+              }),
+            )}
+            {orphanKeys.map((k) =>
+              renderGroup(k, byType[k], {
+                headerLabel: documentTypeLabel(k, types),
+                headerDescription: null,
+                singleton: false,
+              }),
+            )}
+          </VStack>
+        );
+      })()}
 
       {isSuper && (
         <>
@@ -556,6 +614,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             open={!!editingDoc}
             onOpenChange={(o) => { if (!o) setEditingDoc(null); }}
             doc={editingDoc}
+            isSingletonType={editingDoc ? isSingletonType(editingDoc.type, types) : false}
             onSaved={() => { setEditingDoc(null); void load(); }}
           />
           <ConfirmDialog
