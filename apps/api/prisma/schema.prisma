@@ -530,6 +530,13 @@ model Job {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Default crew. EITHER set `defaultGroupId` (and the JobAssigneeDefault
+  // list stays empty) OR populate JobAssigneeDefault rows — not both. The
+  // mode is enforced in app code (services/jobs.ts). When defaultGroupId
+  // is set, new occurrences materialize the group's full roster.
+  defaultGroupId   String?
+  defaultGroup     Group?  @relation("JobDefaultGroup", fields: [defaultGroupId], references: [id], onDelete: SetNull)
+
   contacts JobContact[]
   clients  JobClient[]
 
@@ -539,6 +546,8 @@ model Job {
   defaultPropertyPhotos  JobPropertyPhoto[]
   followups              FollowupJob[]
   recommendedCollections JobRecommendedCollection[]
+
+  @@index([defaultGroupId])
 }
 
 model JobContact {
@@ -1389,6 +1398,7 @@ model Group {
   // Back-relations
   occurrences JobOccurrence[] @relation("OccurrenceGroup")
   checkouts   Checkout[]
+  defaultForJobs Job[]        @relation("JobDefaultGroup")
 
   archivedAt DateTime?
   createdAt  DateTime  @default(now())

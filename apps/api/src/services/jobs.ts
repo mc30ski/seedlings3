@@ -239,6 +239,18 @@ export const jobs: ServicesJobs = {
           orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
           include: { user: { select: { id: true, displayName: true, email: true } } },
         },
+        defaultGroup: {
+          select: {
+            id: true,
+            name: true,
+            claimerUserId: true,
+            archivedAt: true,
+            claimer: { select: { id: true, displayName: true, email: true } },
+            members: {
+              include: { user: { select: { id: true, displayName: true, email: true, workerType: true } } },
+            },
+          },
+        },
         occurrences: {
           orderBy: [{ createdAt: "desc" }],
           take: 50,
@@ -436,14 +448,46 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
-      // If caller passed assignees, use those; otherwise copy defaults (with roles).
+      // Assignee resolution order:
+      //   1. Caller-supplied list — explicit override, used as-is.
+      //   2. Job.defaultGroupId (when set) — materialize the group's roster.
+      //      Group must not be archived; if it is, fall back to unassigned.
+      //   3. Job.defaultAssignees rows — the per-user "default team" mode.
       const useCallerIds = input.assigneeUserIds?.length;
-      const assigneeSource = useCallerIds
-        ? input.assigneeUserIds!.map((uid) => ({ userId: uid, role: null as string | null }))
-        : job.defaultAssignees.filter((d) => d.active).map((d) => ({ userId: d.userId, role: d.role ?? null }));
+      let assigneeSource: { userId: string; role: string | null }[] = [];
+      let attachGroup: { id: string; claimerUserId: string; members: { userId: string; role: string }[] } | null = null;
+      if (useCallerIds) {
+        assigneeSource = input.assigneeUserIds!.map((uid) => ({ userId: uid, role: null as string | null }));
+      } else if ((job as any).defaultGroupId) {
+        const group = await tx.group.findUnique({
+          where: { id: (job as any).defaultGroupId },
+          include: { members: { select: { userId: true, role: true } } },
+        });
+        if (group && !group.archivedAt) {
+          attachGroup = group;
+          assigneeSource = [
+            { userId: group.claimerUserId, role: null },
+            ...group.members.map((m) => ({
+              userId: m.userId,
+              role: m.role === "observer" ? "observer" as const : null,
+            })),
+          ];
+        }
+      } else {
+        assigneeSource = job.defaultAssignees.filter((d) => d.active).map((d) => ({ userId: d.userId, role: d.role ?? null }));
+      }
 
       for (const a of assigneeSource) {
         await assertWorkerAssignable(tx, a.userId);
+      }
+
+      // Set assignedGroupId when materializing from a default group so the
+      // card surfaces the group chip and group-only flows light up.
+      if (attachGroup) {
+        await tx.jobOccurrence.update({
+          where: { id: occ.id },
+          data: { assignedGroupId: attachGroup.id },
+        });
       }
 
       if (assigneeSource.length) {
@@ -2048,19 +2092,51 @@ export const jobs: ServicesJobs = {
         } as any,
       });
 
-      // copy default assignees to the occurrence (with roles)
-      const defaults = job.defaultAssignees.filter((d) => d.active);
-      for (const d of defaults) {
-        await assertWorkerAssignable(tx, d.userId);
+      // Default-crew resolution mirrors createOccurrence: group default
+      // takes precedence over individual defaults; archived groups leave
+      // the occurrence unassigned (admin can fix manually).
+      const assigneeSource: { userId: string; role: string | null }[] = [];
+      let attachedGroupId: string | null = null;
+      if ((job as any).defaultGroupId) {
+        const group = await tx.group.findUnique({
+          where: { id: (job as any).defaultGroupId },
+          include: { members: { select: { userId: true, role: true } } },
+        });
+        if (group && !group.archivedAt) {
+          attachedGroupId = group.id;
+          assigneeSource.push({ userId: group.claimerUserId, role: null });
+          for (const m of group.members) {
+            assigneeSource.push({
+              userId: m.userId,
+              role: m.role === "observer" ? "observer" : null,
+            });
+          }
+        }
+      } else {
+        for (const d of job.defaultAssignees.filter((d) => d.active)) {
+          assigneeSource.push({ userId: d.userId, role: d.role ?? null });
+        }
       }
-      if (defaults.length) {
-        const claimerId = defaults[0].userId;
+
+      for (const a of assigneeSource) {
+        await assertWorkerAssignable(tx, a.userId);
+      }
+
+      if (attachedGroupId) {
+        await tx.jobOccurrence.update({
+          where: { id: occ.id },
+          data: { assignedGroupId: attachedGroupId },
+        });
+      }
+
+      if (assigneeSource.length) {
+        const claimerId = assigneeSource[0].userId;
         await tx.jobOccurrenceAssignee.createMany({
-          data: defaults.map((d, i) => ({
+          data: assigneeSource.map((a, i) => ({
             occurrenceId: occ.id,
-            userId: d.userId,
-            role: d.role ?? null,
-            assignedById: i === 0 ? d.userId : claimerId,
+            userId: a.userId,
+            role: a.role ?? null,
+            assignedById: i === 0 ? a.userId : claimerId,
           })),
           skipDuplicates: true,
         });
