@@ -295,6 +295,7 @@ export default function ServicesTab({
   const [defaultCrewDialogOpen, setDefaultCrewDialogOpen] = useState(false);
   const [defaultCrewJobId, setDefaultCrewJobId] = useState<string>("");
   const [defaultCrewCurrent, setDefaultCrewCurrent] = useState<any[]>([]);
+  const [defaultCrewGroup, setDefaultCrewGroup] = useState<{ id: string; name: string } | null>(null);
   const [assigneeOccurrenceId, setAssigneeOccurrenceId] = useState<string>("");
   const [assigneeCurrentAssignees, setAssigneeCurrentAssignees] = useState<JobOccurrenceAssigneeWithUser[]>([]);
   const [assigneeJobId, setAssigneeJobId] = useState<string>("");
@@ -1277,6 +1278,18 @@ export default function ServicesTab({
                     <TruncatedText>{job.notes}</TruncatedText>
                   )}
                   {(() => {
+                    // Group mode wins if set — defaultGroup comes from the
+                    // job detail (loaded on expand). Falls back to the
+                    // per-user "default team" or unset.
+                    const defaultGroup = (detail as any)?.defaultGroup ?? (job as any).defaultGroup ?? null;
+                    if (defaultGroup) {
+                      const memberCount = (defaultGroup.members?.length ?? 0) + 1;
+                      return (
+                        <Text fontSize="xs" color="purple.700">
+                          Default group: <Text as="span" fontWeight="semibold">{defaultGroup.name}</Text> ({memberCount} member{memberCount === 1 ? "" : "s"})
+                        </Text>
+                      );
+                    }
                     const teamSource = detail?.defaultAssignees ?? (job as any).defaultAssignees;
                     if (teamSource && teamSource.length > 0) {
                       return (
@@ -1326,6 +1339,8 @@ export default function ServicesTab({
                       onClick={async () => {
                         setDefaultCrewJobId(job.id);
                         setDefaultCrewCurrent(detail?.defaultAssignees ?? (job as any).defaultAssignees ?? []);
+                        const dg = (detail as any)?.defaultGroup ?? (job as any).defaultGroup ?? null;
+                        setDefaultCrewGroup(dg ? { id: dg.id, name: dg.name } : null);
                         setDefaultCrewDialogOpen(true);
                       }}
                       variant="outline"
@@ -2549,6 +2564,7 @@ export default function ServicesTab({
         onOpenChange={setDefaultCrewDialogOpen}
         jobId={defaultCrewJobId}
         currentAssignees={defaultCrewCurrent}
+        currentGroup={defaultCrewGroup}
         onChanged={() => {
           if (defaultCrewJobId) void loadDetail(defaultCrewJobId, true);
         }}

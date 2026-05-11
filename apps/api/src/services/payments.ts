@@ -129,6 +129,7 @@ export const payments: ServicesPayments = {
           job: {
             select: {
               id: true, status: true, frequencyDays: true, defaultPrice: true, estimatedMinutes: true, notes: true, kind: true,
+              defaultGroupId: true,
               defaultAssignees: { where: { active: true }, select: { userId: true, role: true } },
             },
           },
@@ -203,14 +204,44 @@ export const payments: ServicesPayments = {
           } as any,
         });
 
-        // Assign next occurrence from job's default team.
-        // If no default team is set, leave unassigned (claimable).
-        // Never copy from current occurrence — one-time team changes shouldn't persist.
-        const defaults = fullOcc.job?.defaultAssignees ?? [];
-        if (defaults.length > 0) {
-          const claimerId = defaults[0].userId;
+        // Assign next occurrence from job's default crew. Group default
+        // wins when set; otherwise fall back to the per-user list. An
+        // archived default group falls through to unassigned — admin can
+        // claim manually rather than the system silently un-staffing.
+        // Never copy from current occurrence — one-time team changes
+        // shouldn't persist into the next cycle.
+        let nextAssigneeSource: { userId: string; role: string | null }[] = [];
+        let nextAttachedGroupId: string | null = null;
+        const defaultGroupId = (fullOcc.job as any)?.defaultGroupId as string | null | undefined;
+        if (defaultGroupId) {
+          const group = await tx.group.findUnique({
+            where: { id: defaultGroupId },
+            include: { members: { select: { userId: true, role: true } } },
+          });
+          if (group && !group.archivedAt) {
+            nextAttachedGroupId = group.id;
+            nextAssigneeSource = [
+              { userId: group.claimerUserId, role: null },
+              ...group.members.map((m) => ({
+                userId: m.userId,
+                role: m.role === "observer" ? "observer" as const : null,
+              })),
+            ];
+          }
+        } else {
+          const defaults = fullOcc.job?.defaultAssignees ?? [];
+          nextAssigneeSource = defaults.map((d) => ({ userId: d.userId, role: d.role ?? null }));
+        }
+        if (nextAttachedGroupId) {
+          await tx.jobOccurrence.update({
+            where: { id: nextOccurrence.id },
+            data: { assignedGroupId: nextAttachedGroupId },
+          });
+        }
+        if (nextAssigneeSource.length > 0) {
+          const claimerId = nextAssigneeSource[0].userId;
           await tx.jobOccurrenceAssignee.createMany({
-            data: defaults.map((d, i) => ({
+            data: nextAssigneeSource.map((d, i) => ({
               occurrenceId: nextOccurrence.id,
               userId: d.userId,
               role: d.role ?? null,

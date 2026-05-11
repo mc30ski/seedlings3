@@ -764,24 +764,35 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     const validRole = role === "observer" ? "observer" : null;
 
-    const existing = await prisma.jobAssigneeDefault.findUnique({
-      where: { jobId_userId: { jobId, userId } },
-    });
-    if (existing) {
-      // Reactivate if inactive, or update role if it changed
-      if (!existing.active || existing.role !== validRole) {
-        await prisma.jobAssigneeDefault.update({
-          where: { id: existing.id },
-          data: { active: true, role: validRole },
-        });
+    return prisma.$transaction(async (tx) => {
+      // Switching into individuals mode clears any default group on the
+      // job so the two modes stay mutually exclusive. Without this the
+      // job would carry both, and occurrence generation would prefer the
+      // group (silently ignoring the individual the admin just added).
+      const job = await tx.job.findUnique({ where: { id: jobId }, select: { defaultGroupId: true } });
+      if (job?.defaultGroupId) {
+        await tx.job.update({ where: { id: jobId }, data: { defaultGroupId: null } });
       }
-      return { added: true };
-    }
 
-    await prisma.jobAssigneeDefault.create({
-      data: { jobId, userId, role: validRole, active: true },
+      const existing = await tx.jobAssigneeDefault.findUnique({
+        where: { jobId_userId: { jobId, userId } },
+      });
+      if (existing) {
+        // Reactivate if inactive, or update role if it changed
+        if (!existing.active || existing.role !== validRole) {
+          await tx.jobAssigneeDefault.update({
+            where: { id: existing.id },
+            data: { active: true, role: validRole },
+          });
+        }
+        return { added: true };
+      }
+
+      await tx.jobAssigneeDefault.create({
+        data: { jobId, userId, role: validRole, active: true },
+      });
+      return { added: true };
     });
-    return { added: true };
   });
 
   app.delete("/admin/jobs/:id/default-assignees/:userId", adminGuard, async (req: any) => {
@@ -841,6 +852,33 @@ export default async function adminRoutes(app: FastifyInstance) {
       data: { sortOrder: newSortOrder, role: null, active: true },
     });
     return { updated: true };
+  });
+
+  // Default crew: choose between the per-user default-assignees list OR
+  // a single Group. Setting a groupId clears the per-user list so the two
+  // modes stay mutually exclusive. Clearing groupId (passing null) leaves
+  // the per-user list intact — admins can move between modes without
+  // re-entering data each time.
+  app.put("/admin/jobs/:id/default-group", adminGuard, async (req: any) => {
+    const jobId = String(req.params.id);
+    const body = (req.body || {}) as { groupId?: string | null };
+    const groupId = body.groupId ?? null;
+    return prisma.$transaction(async (tx) => {
+      const job = await tx.job.findUnique({ where: { id: jobId } });
+      if (!job) throw app.httpErrors.notFound("Job not found.");
+      if (groupId) {
+        const group = await tx.group.findUnique({ where: { id: groupId } });
+        if (!group) throw app.httpErrors.badRequest("Group not found.");
+        if (group.archivedAt) throw app.httpErrors.badRequest("Group is archived.");
+        await tx.jobAssigneeDefault.deleteMany({ where: { jobId } });
+      }
+      const updated = await tx.job.update({
+        where: { id: jobId },
+        data: { defaultGroupId: groupId },
+        select: { id: true, defaultGroupId: true },
+      });
+      return updated;
+    });
   });
 
   // Job schedule: upsert schedule + generate occurrences

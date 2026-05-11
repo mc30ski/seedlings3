@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -10,7 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -18,32 +19,86 @@ import {
 import TeamMemberList, { type TeamMember } from "@/src/ui/components/TeamMemberList";
 
 type WorkerLite = { id: string; displayName?: string | null; email?: string | null };
+type GroupBrief = {
+  id: string;
+  name: string;
+  archivedAt: string | null;
+  claimer: { id: string; displayName?: string | null; email?: string | null };
+  members: { userId: string }[];
+};
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   jobId: string;
   currentAssignees: TeamMember[];
+  /** Currently-configured default group (if any). When set, the dialog
+   *  opens in group mode with this group selected. */
+  currentGroup?: { id: string; name: string } | null;
   onChanged?: () => void;
 };
 
-export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAssignees, onChanged }: Props) {
+export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAssignees, currentGroup, onChanged }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const [busyId, setBusyId] = useState("");
   const [addBusy, setAddBusy] = useState(false);
+  const [mode, setMode] = useState<"individuals" | "group">("individuals");
+  const [groups, setGroups] = useState<GroupBrief[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
+  const [groupBusy, setGroupBusy] = useState(false);
+  // Mirror of `currentGroup` that we can mutate locally when an action on
+  // the server clears it (e.g. adding an individual auto-clears the
+  // default group server-side). Without this the orange "default group X
+  // is set" warning would stay visible until the dialog was reopened.
+  const [activeGroup, setActiveGroup] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setMembers(currentAssignees);
+    setActiveGroup(currentGroup ?? null);
+    setMode(currentGroup ? "group" : "individuals");
+    setSelectedGroupId(currentGroup?.id ?? "");
     (async () => {
       try {
         const list = await apiGet<WorkerLite[]>("/api/admin/users?role=WORKER&approved=true");
         setWorkers(Array.isArray(list) ? list : []);
       } catch { setWorkers([]); }
+      try {
+        const gs = await apiGet<GroupBrief[]>("/api/admin/groups");
+        setGroups(Array.isArray(gs) ? gs : []);
+      } catch { setGroups([]); }
     })();
   }, [open]);
+
+  async function setDefaultGroup(groupId: string | null) {
+    setGroupBusy(true);
+    try {
+      await apiPut(`/api/admin/jobs/${jobId}/default-group`, { groupId });
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: groupId ? "Default group set." : "Default group cleared.",
+      });
+      // Local mirror — keeps the dialog in sync without waiting for the
+      // parent to re-render with a refetched detail.
+      if (groupId) {
+        const g = groups.find((x) => x.id === groupId);
+        setActiveGroup(g ? { id: g.id, name: g.name } : null);
+        setSelectedGroupId(groupId);
+        // Setting a group server-side clears any per-user defaults.
+        setMembers([]);
+      } else {
+        setActiveGroup(null);
+        setSelectedGroupId("");
+      }
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to set default group.", err) });
+    } finally {
+      setGroupBusy(false);
+    }
+  }
 
   async function handleAdd(userIds: string[], role: string | null) {
     setAddBusy(true);
@@ -55,6 +110,11 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
           setMembers((prev) => [...prev, { userId, role, user: { id: userId, displayName: worker.displayName, email: worker.email } }]);
         }
       }
+      // Server-side: adding an individual default clears the default group
+      // (mutually exclusive). Mirror locally so the dialog shows the new
+      // single-mode state right away.
+      setActiveGroup(null);
+      setSelectedGroupId("");
       publishInlineMessage({ type: "SUCCESS", text: userIds.length === 1 ? "Worker added to default team." : `${userIds.length} workers added.` });
       onChanged?.();
     } catch (err) {
@@ -124,21 +184,115 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                     The default team is automatically assigned to each new occurrence. One-time team changes on individual occurrences won't affect these defaults.
                   </Text>
                 </Box>
-                <TeamMemberList
-                  members={members}
-                  workers={workers}
-                  busyId={busyId}
-                  addBusy={addBusy}
-                  onAdd={handleAdd}
-                  onRemove={handleRemove}
-                  onToggleRole={handleToggleRole}
-                  onMakeClaimer={handleMakeClaimer}
-                  showRoleControls
-                  showMakeClaimer
-                  listTitle="Default team"
-                  addTitle="Add to default team"
-                  emptyText="No default team set. Occurrences will be unassigned (claimable)."
-                />
+                <HStack gap={2}>
+                  <Button
+                    size="sm"
+                    variant={mode === "individuals" ? "solid" : "outline"}
+                    onClick={() => setMode("individuals")}
+                  >
+                    Individuals
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={mode === "group" ? "solid" : "outline"}
+                    colorPalette={mode === "group" ? "purple" : "gray"}
+                    onClick={() => setMode("group")}
+                  >
+                    Group
+                  </Button>
+                </HStack>
+                {mode === "group" ? (
+                  <VStack align="stretch" gap={2}>
+                    <Text fontSize="xs" color="fg.muted">
+                      Pick a saved crew. Setting a group will clear any individual default assignees — the two modes are mutually exclusive.
+                    </Text>
+                    <select
+                      value={selectedGroupId}
+                      onChange={(e) => setSelectedGroupId(e.target.value)}
+                      style={{
+                        padding: "6px 8px", fontSize: "14px",
+                        border: "1px solid var(--chakra-colors-gray-200)",
+                        borderRadius: "6px", width: "100%",
+                      }}
+                    >
+                      <option value="">— pick a group —</option>
+                      {groups.filter((g) => !g.archivedAt).map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} ({g.members.length + 1} member{g.members.length === 0 ? "" : "s"}, claimer: {g.claimer.displayName ?? g.claimer.email})
+                        </option>
+                      ))}
+                    </select>
+                    {activeGroup && (
+                      <Box p={2} bg="purple.50" rounded="md" borderWidth="1px" borderColor="purple.200">
+                        <HStack justify="space-between">
+                          <Text fontSize="xs" color="purple.800">
+                            Current: <Text as="span" fontWeight="semibold">{activeGroup.name}</Text>
+                          </Text>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="red"
+                            loading={groupBusy}
+                            onClick={() => setDefaultGroup(null)}
+                          >
+                            Remove group
+                          </Button>
+                        </HStack>
+                      </Box>
+                    )}
+                    <HStack justify="flex-end">
+                      <Button
+                        size="sm"
+                        colorPalette="purple"
+                        loading={groupBusy}
+                        disabled={!selectedGroupId || selectedGroupId === activeGroup?.id}
+                        onClick={() => setDefaultGroup(selectedGroupId)}
+                      >
+                        {activeGroup ? "Save group" : "Set as default group"}
+                      </Button>
+                    </HStack>
+                  </VStack>
+                ) : (
+                  <>
+                    {activeGroup && (
+                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
+                        <HStack justify="space-between" gap={2} wrap="wrap">
+                          <Text fontSize="xs" color="orange.800">
+                            A default group <Text as="span" fontWeight="semibold">{activeGroup.name}</Text> is currently set. Adding individuals will clear it.
+                          </Text>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="red"
+                            loading={groupBusy}
+                            onClick={() => setDefaultGroup(null)}
+                          >
+                            Remove group
+                          </Button>
+                        </HStack>
+                      </Box>
+                    )}
+                    <TeamMemberList
+                      members={members}
+                      workers={workers}
+                      busyId={busyId}
+                      addBusy={addBusy}
+                      onAdd={handleAdd}
+                      onRemove={handleRemove}
+                      onToggleRole={handleToggleRole}
+                      onMakeClaimer={handleMakeClaimer}
+                      showRoleControls
+                      showMakeClaimer
+                      // Default-team context: no in-flight work depends on
+                      // who's the claimer here, so allow removing them.
+                      // The next person in sortOrder becomes the claimer.
+                      allowRemoveClaimer
+                      listTitle="Default team"
+                      addTitle="Add to default team"
+                      emptyText="No default team set. Occurrences will be unassigned (claimable)."
+                    />
+                  </>
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

@@ -246,6 +246,30 @@ export const groups = {
     const g = await this.getById(id);
     if (g.archivedAt) return g;
     await assertNotLocked(id);
+    // Reject archive when this group is the configured default crew on
+    // any active Job. Auto-clearing would silently un-staff those jobs;
+    // forcing the admin to detach first surfaces the impact and keeps
+    // the data trail clean. Lists affected jobs so the message is
+    // actionable rather than just "blocked".
+    const defaultOn = await prisma.job.findMany({
+      where: { defaultGroupId: id },
+      select: { id: true, property: { select: { displayName: true, client: { select: { displayName: true } } } } },
+      take: 5,
+    });
+    if (defaultOn.length > 0) {
+      const labels = defaultOn.map((j) => {
+        const p = j.property?.displayName ?? "(no property)";
+        const c = j.property?.client?.displayName ?? "";
+        return c ? `${p} — ${c}` : p;
+      });
+      const moreCount = await prisma.job.count({ where: { defaultGroupId: id } });
+      const extra = moreCount > defaultOn.length ? ` and ${moreCount - defaultOn.length} more` : "";
+      throw new ServiceError(
+        "GROUP_DEFAULT_ON_JOBS",
+        `Can't archive — this group is the default crew on ${moreCount} job${moreCount === 1 ? "" : "s"} (${labels.join("; ")}${extra}). Reassign or clear the default crew on those jobs first.`,
+        409,
+      );
+    }
     return prisma.group.update({
       where: { id },
       data: { archivedAt: new Date() },
