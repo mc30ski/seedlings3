@@ -101,6 +101,11 @@ export const AUDIT = {
     DELETED: [AuditScope.TIMELINE, AuditVerb.DELETED] as const,
     COMPLETED: [AuditScope.TIMELINE, AuditVerb.COMPLETED] as const,
   },
+  BANNER: {
+    POSTED: [AuditScope.BANNER, AuditVerb.CREATED] as const,
+    DISMISSED: [AuditScope.BANNER, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.BANNER, AuditVerb.DELETED] as const,
+  },
 } as const;
 
 // Useful types

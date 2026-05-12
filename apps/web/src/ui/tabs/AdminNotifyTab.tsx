@@ -65,6 +65,10 @@ export default function AdminNotifyTab() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [pushOnly, setPushOnly] = useState(false);
+  // Additional delivery channel: post the message as a persistent banner on
+  // each recipient's Worker Home tab. Stays visible until they individually
+  // dismiss it. Independent of push — they can be sent together or alone.
+  const [postBanner, setPostBanner] = useState(false);
 
   // ── Templates ──────────────────────────────────────────────────
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -196,7 +200,30 @@ export default function AdminNotifyTab() {
         s.pushDelivered > 0 ? `${s.pushDelivered} push` : null,
         s.failed > 0 ? `${s.failed} failed` : null,
       ].filter(Boolean).join(", ");
-      publishInlineMessage({ type: "SUCCESS", text: `Sent — ${parts}.` });
+
+      // If the admin opted in to a home banner alongside the message, post
+      // it as a second action. Failure here is reported separately so the
+      // primary send still counts as "delivered" if the banner errors.
+      let bannerNote = "";
+      if (postBanner) {
+        try {
+          const everyone = recipients === "all";
+          await apiPost<{ recipientCount: number }>("/api/admin/banners", {
+            title: title.trim() || undefined,
+            body: body.trim(),
+            ...(everyone ? { everyone: true } : { userIds: recipients }),
+          });
+          bannerNote = " · banner posted";
+        } catch (err) {
+          bannerNote = " · banner failed";
+          publishInlineMessage({
+            type: "ERROR",
+            text: getErrorMessage("Banner failed to post.", err),
+          });
+        }
+      }
+
+      publishInlineMessage({ type: "SUCCESS", text: `Sent — ${parts}${bannerNote}.` });
       setPreviewMode(false);
       setBody("");
       setTitle("");
@@ -246,6 +273,8 @@ export default function AdminNotifyTab() {
                 setBody={setBody}
                 pushOnly={pushOnly}
                 setPushOnly={setPushOnly}
+                postBanner={postBanner}
+                setPostBanner={setPostBanner}
                 onPreview={() => setPreviewMode(true)}
               />
             )}
@@ -304,10 +333,12 @@ function ComposeView(props: {
   setBody: (s: string) => void;
   pushOnly: boolean;
   setPushOnly: (b: boolean) => void;
+  postBanner: boolean;
+  setPostBanner: (b: boolean) => void;
   onPreview: () => void;
 }) {
   const { users, loadingUsers, filteredUsers, recipients, setRecipients, search, setSearch,
-    templates, onApplyTemplate, onManageTemplates, title, setTitle, body, setBody, pushOnly, setPushOnly, onPreview } = props;
+    templates, onApplyTemplate, onManageTemplates, title, setTitle, body, setBody, pushOnly, setPushOnly, postBanner, setPostBanner, onPreview } = props;
 
   const isAll = recipients === "all";
   const selectedSet = isAll ? new Set(users.map((u) => u.id)) : new Set(recipients);
@@ -458,6 +489,19 @@ function ComposeView(props: {
           <Text fontSize="xs" color="fg.muted">Skip SMS + email. Free, but only reaches users with notifications enabled.</Text>
         </Box>
         <Switch.Root checked={pushOnly} onCheckedChange={(d: any) => setPushOnly(!!d.checked)} colorPalette="blue">
+          <Switch.HiddenInput />
+          <Switch.Control />
+        </Switch.Root>
+      </HStack>
+
+      {/* Home-banner toggle — posts a sticky message on the Worker Home tab
+          for each recipient. They individually dismiss it. */}
+      <HStack justify="space-between" align="center">
+        <Box>
+          <Text fontSize="sm" fontWeight="semibold">Also post home banner</Text>
+          <Text fontSize="xs" color="fg.muted">Sticky message at the top of each recipient&apos;s Worker Home tab until they dismiss it.</Text>
+        </Box>
+        <Switch.Root checked={postBanner} onCheckedChange={(d: any) => setPostBanner(!!d.checked)} colorPalette="blue">
           <Switch.HiddenInput />
           <Switch.Control />
         </Switch.Root>

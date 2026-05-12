@@ -780,6 +780,7 @@ export type Services = {
   groups: typeof import("../services/groups").groups;
   companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
   timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
+  banners: typeof import("../services/banners").banners;
 };
 
 export type ServicesSettings = {

@@ -33,6 +33,7 @@ enum AuditScope {
   NOTIFICATION
   DOCUMENT
   TIMELINE
+  BANNER
   // add more scopes as you expand the schema
 }
 
@@ -154,6 +155,10 @@ model User {
   documentVersionsUploaded CompanyDocumentVersion[] @relation("CompanyDocVersionUploader")
 
   timelineEventsCreated    TimelineEvent[]          @relation("TimelineEventCreator")
+
+  bannersCreated     BannerNotification[] @relation("BannerCreator")
+  bannerRecipients   BannerRecipient[]
+  bannerDismissals   BannerDismissal[]
 }
 
 model NotificationTemplate {
@@ -1550,4 +1555,49 @@ model TimelineEvent {
   @@index([anchorDate])
   @@index([nextDueDate])
   @@index([archivedAt])
+}
+
+// Home-tab banner notifications. An admin posts a message to one or more
+// users (or everyone); each recipient sees it on Worker Home until they
+// individually dismiss it. Dismissals are per-user — one person dismissing
+// has no effect on anyone else's view.
+model BannerNotification {
+  id          String   @id @default(cuid())
+  title       String?
+  body        String   @db.Text
+  createdById String
+  createdBy   User     @relation("BannerCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  // Optional self-expire — past this date the banner stops being shown to
+  // anyone regardless of dismissal state. Null = no expiry.
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  recipients  BannerRecipient[]
+  dismissals  BannerDismissal[]
+
+  @@index([createdAt])
+  @@index([expiresAt])
+}
+
+model BannerRecipient {
+  id       String @id @default(cuid())
+  bannerId String
+  userId   String
+  banner   BannerNotification @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bannerId, userId])
+  @@index([userId])
+}
+
+model BannerDismissal {
+  id           String   @id @default(cuid())
+  bannerId     String
+  userId       String
+  dismissedAt  DateTime @default(now())
+  banner       BannerNotification @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bannerId, userId])
+  @@index([userId])
 }
