@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
 import {
   Badge,
   Box,
@@ -120,6 +121,7 @@ function expBadgeColor(status: CompanyDocument["expirationStatus"]): string {
 }
 
 export default function DocumentsTab({ isSuper = false }: Props) {
+  const router = useRouter();
   const [items, setItems] = useState<CompanyDocument[]>([]);
   const [details, setDetails] = useState<Record<string, CompanyDocumentDetail>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -159,22 +161,26 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   // Distinguishes a deep-link to a collection (`?typeKey=…`) from the user
   // just picking that type from the filter dropdown — the chip varies.
   const [highlightTypeKey, setHighlightTypeKey] = useState<string | null>(null);
+  // Read deep-link params from the Next.js router so the effect re-fires on
+  // soft (client-side) navigations — pasting a URL works because of the full
+  // reload, but clicking a link while already on the page is a soft nav and
+  // an empty-deps useEffect would never see it.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    const docId = url.searchParams.get("docId");
-    const typeKey = url.searchParams.get("typeKey");
+    const docId = typeof router.query.docId === "string" ? router.query.docId : undefined;
+    const typeKey = typeof router.query.typeKey === "string" ? router.query.typeKey : undefined;
+    if (!docId && !typeKey) return;
     if (docId) setHighlightDocId(docId);
     if (typeKey) {
       setTypeFilter([typeKey]);
       setHighlightTypeKey(typeKey);
     }
-    if (docId || typeKey) {
-      url.searchParams.delete("docId");
-      url.searchParams.delete("typeKey");
-      window.history.replaceState(null, "", url.toString());
-    }
-  }, []);
+    // Strip the params via the router so router.query stays in sync; without
+    // this the effect would keep re-firing with the same values.
+    const rest = { ...router.query };
+    delete rest.docId;
+    delete rest.typeKey;
+    router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
+  }, [router.query.docId, router.query.typeKey]);
 
   // If the user changes the type filter manually, the deep-link highlight no
   // longer reflects what's on screen — drop the special "linked to collection"
