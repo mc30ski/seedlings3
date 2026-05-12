@@ -11,6 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { Plus } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -52,12 +53,15 @@ export default function UploadDocumentVersionDialog({
 }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
+  const [showExpiration, setShowExpiration] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
       setFile(null);
-      setExpiresAt(isoToDateInput(defaultExpiresAt));
+      const initial = isoToDateInput(defaultExpiresAt);
+      setExpiresAt(initial);
+      setShowExpiration(!!initial);
     }
   }, [open, defaultExpiresAt]);
 
@@ -78,7 +82,7 @@ export default function UploadDocumentVersionDialog({
       if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status}`);
       await apiPost(
         `${apiBase}/${documentId}/versions/${init.versionId}/confirm`,
-        { expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
+        { expiresAt: showExpiration && expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
       );
       publishInlineMessage({ type: "SUCCESS", text: "New version uploaded." });
       onUploaded();
@@ -106,11 +110,19 @@ export default function UploadDocumentVersionDialog({
                   <Text fontSize="xs" fontWeight="medium" mb={1}>File *</Text>
                   <Input type="file" p="1" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
                 </Box>
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Expiration date</Text>
-                  <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-                  <Text fontSize="xs" color="fg.muted" mt={1}>Leave blank to clear the expiration.</Text>
-                </Box>
+                {showExpiration ? (
+                  <Box>
+                    <HStack justify="space-between" mb={1}>
+                      <Text fontSize="xs" fontWeight="medium">Expiration date</Text>
+                      <Button size="xs" variant="ghost" onClick={() => { setShowExpiration(false); setExpiresAt(""); }}>Remove</Button>
+                    </HStack>
+                    <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+                  </Box>
+                ) : (
+                  <Button size="xs" variant="ghost" alignSelf="start" onClick={() => setShowExpiration(true)}>
+                    <Plus size={12} /> Add expiration date
+                  </Button>
+                )}
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>
