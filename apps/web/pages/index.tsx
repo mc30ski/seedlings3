@@ -698,7 +698,7 @@ export default function HomePage() {
     },
     {
       value: "activity",
-      label: "Activity",
+      label: "Engagement",
       icon: FiActivity,
 
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),

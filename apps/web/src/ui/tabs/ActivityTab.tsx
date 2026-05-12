@@ -152,7 +152,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
   return (
     <Box>
       <Heading size="md" mb="3">
-        Activity by User (for last 30 days)
+        Engagement by User (for last 30 days)
       </Heading>
 
       {/* Controls */}
@@ -189,7 +189,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
         </Text>
         <Text>·</Text>
         <Text>
-          {totalEvents} event{totalEvents !== 1 ? "s" : ""}
+          {totalEvents} engagement{totalEvents !== 1 ? "s" : ""}
         </Text>
       </HStack>
 
@@ -248,7 +248,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
                     </HStack>
                     <HStack gap="8px">
                       <Badge colorPalette="gray">
-                        {u.count} event{u.count !== 1 ? "s" : ""}
+                        {u.count} engagement{u.count !== 1 ? "s" : ""}
                       </Badge>
                       <Badge>Last: {prettyDate(u.lastActivityAt)}</Badge>
                       <Accordion.ItemIndicator />

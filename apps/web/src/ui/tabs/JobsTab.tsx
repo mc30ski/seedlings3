@@ -61,6 +61,18 @@ import EventDialog from "@/src/ui/dialogs/EventDialog";
 import FollowupDialog from "@/src/ui/dialogs/FollowupDialog";
 import AnnouncementDialog from "@/src/ui/dialogs/AnnouncementDialog";
 import PinnedNoteDialog from "@/src/ui/dialogs/PinnedNoteDialog";
+import {
+  DEFAULT_TIMELINE_CATEGORIES,
+  categoryLabel as timelineCategoryLabel,
+  parseTimelineCategoriesConfig,
+  type TimelineCategoryConfig,
+} from "@/src/ui/components/TimelineCategoryPicker";
+import {
+  DEFAULT_DOCUMENT_TYPES,
+  documentTypeLabel,
+  parseDocumentTypesConfig,
+  type DocumentTypeConfig,
+} from "@/src/ui/components/DocumentTypePicker";
 
 function localDate(d: Date): string {
   return bizDateKey(d);
@@ -247,8 +259,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Announcement", value: "ANNOUNCEMENT" },
       { label: "Notices", value: "NOTICES" },
       { label: "Due (Tasks + Reminders)", value: "DUE" },
+      // Admin-only: foreign rows from the Timeline tab (activities) and
+      // Documents (per-day expirations). Read-only in this feed.
+      ...(forAdmin ? [
+        { label: "Activity", value: "ACTIVITY" },
+        { label: "Doc expiration", value: "DOC_EXPIRATION" },
+      ] : []),
     ],
-    []
+    [forAdmin]
   );
   const typeCollection = useMemo(
     () => createListCollection({ items: typeItems }),
@@ -271,6 +289,51 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [showArchived, setShowArchived] = useState(false);
   const [items, setItems] = useState<WorkerOccurrence[]>([]);
   const [loading, setLoading] = useState(false);
+  // Admin-only foreign rows — Timeline activities + doc expirations — that
+  // mix into the date-bucketed feed alongside jobs. Activities slot at their
+  // nextDueDate and stick around as overdue until completed. Doc expirations
+  // appear ONLY on the day matching expiresAt (no overdue carryover here —
+  // overdue docs are surfaced in the Timeline tab + title-bar pill).
+  type ActivityForeignRow = {
+    kind: "activity";
+    id: string;
+    title: string;
+    description: string | null;
+    category: string | null;
+    rrule: string | null;
+    nextDueDate: string;
+    adminHidden: boolean;
+  };
+  type DocExpirationForeignRow = {
+    kind: "doc_expiration";
+    documentId: string;
+    title: string;
+    type: string;
+    expiresAt: string;
+    adminHidden: boolean;
+  };
+  type ForeignRow = ActivityForeignRow | DocExpirationForeignRow;
+  const [foreignRows, setForeignRows] = useState<ForeignRow[]>([]);
+  // Label lookups for the foreign rows' category / type fields — pulled from
+  // the configurable taxonomies so cards display the admin-defined label,
+  // not the raw enum key (e.g., "Taxes" instead of "TAXES").
+  const [timelineCategories, setTimelineCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
+  const [documentTypes, setDocumentTypes] = useState<DocumentTypeConfig[]>(DEFAULT_DOCUMENT_TYPES);
+  useEffect(() => {
+    if (!forAdmin) return;
+    (async () => {
+      try {
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        if (!Array.isArray(settings)) return;
+        const tc = settings.find((s) => s.key === "TIMELINE_CATEGORIES");
+        const dt = settings.find((s) => s.key === "DOCUMENT_TYPES");
+        const tcp = parseTimelineCategoriesConfig(tc?.value);
+        const dtp = parseDocumentTypesConfig(dt?.value);
+        if (tcp) setTimelineCategories(tcp);
+        if (dtp) setDocumentTypes(dtp);
+      } catch {}
+    })();
+  }, [forAdmin]);
   // Live tick — re-render every minute so "X actual" elapsed time updates while the page is open.
   // (Once a job is completed, effectiveMinutes() uses completedAt and stops counting naturally.)
   const [, setNowTick] = useState(0);
@@ -1070,6 +1133,60 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       // Re-check seq before mutating state in case state-deriving filters above were async.
       if (seq !== loadSeqRef.current) return;
       setItems(list);
+      // Admin-only: pull Timeline activities + doc expirations and mix them
+      // into the feed. Failures are non-fatal — the main jobs view still
+      // renders if the timeline endpoint is unhappy.
+      if (forAdmin) {
+        try {
+          type UpcomingApiRow =
+            | {
+                kind: "event";
+                id: string;
+                title: string;
+                description: string | null;
+                category: string | null;
+                rrule: string | null;
+                nextDate: string;
+                adminHidden: boolean;
+              }
+            | {
+                kind: "document_expiration";
+                documentId: string;
+                title: string;
+                type: string;
+                nextDate: string;
+                adminHidden: boolean;
+              };
+          const fr = await apiGet<UpcomingApiRow[]>("/api/admin/timeline/upcoming?includeDocs=1");
+          if (seq !== loadSeqRef.current) return;
+          const rows: ForeignRow[] = (Array.isArray(fr) ? fr : []).map((r) =>
+            r.kind === "event"
+              ? {
+                  kind: "activity" as const,
+                  id: r.id,
+                  title: r.title,
+                  description: r.description,
+                  category: r.category,
+                  rrule: r.rrule,
+                  nextDueDate: r.nextDate,
+                  adminHidden: r.adminHidden,
+                }
+              : {
+                  kind: "doc_expiration" as const,
+                  documentId: r.documentId,
+                  title: r.title,
+                  type: r.type,
+                  expiresAt: r.nextDate,
+                  adminHidden: r.adminHidden,
+                },
+          );
+          setForeignRows(rows);
+        } catch {
+          setForeignRows([]);
+        }
+      } else {
+        setForeignRows([]);
+      }
       window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
@@ -1620,8 +1737,51 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       const db = (b._isReminderGhost && b._ghostDate) ? b._ghostDate : (b.startAt ?? "");
       return da < db ? -1 : da > db ? 1 : 0;
     });
+
+    // Admin-only: inject Timeline activities + doc expirations into the feed
+    // as WorkerOccurrence-shaped ghosts. The renderer short-circuits on the
+    // `_foreignKind` marker to render a distinct (read-only) card. Activities
+    // slot at their nextDueDate; doc expirations only appear on their exact
+    // expiry date (no overdue carryover).
+    if (forAdmin && foreignRows.length > 0) {
+      const tf = typeFilter[0];
+      const showActivities = tf === "ALL" || tf === "ACTIVITY";
+      const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
+      const qlc = q.trim().toLowerCase();
+      const todayKey = bizDateKey(new Date());
+      for (const f of foreignRows) {
+        if (f.kind === "activity") {
+          if (!showActivities) continue;
+          const day = bizDateKey(f.nextDueDate);
+          if (dateFrom && day < dateFrom) continue;
+          if (dateTo && day > dateTo) continue;
+          if (qlc && !f.title.toLowerCase().includes(qlc) && !(f.description ?? "").toLowerCase().includes(qlc)) continue;
+          rows.push({
+            id: `__activity_${f.id}`,
+            startAt: f.nextDueDate,
+            _foreignKind: "activity",
+            _foreignPayload: f,
+          } as any);
+        } else {
+          if (!showDocs) continue;
+          // Single-day pinning: doc expirations only surface on the exact
+          // calendar date matching expiresAt. No overdue carryover here.
+          const day = bizDateKey(f.expiresAt);
+          if (day !== todayKey && (dateFrom && day < dateFrom)) continue;
+          if (dateTo && day > dateTo) continue;
+          if (qlc && !f.title.toLowerCase().includes(qlc)) continue;
+          rows.push({
+            id: `__doc_${f.documentId}`,
+            startAt: f.expiresAt,
+            _foreignKind: "doc_expiration",
+            _foreignPayload: f,
+          } as any);
+        }
+      }
+    }
+
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, forAdmin, foreignRows]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -2613,6 +2773,190 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               )}
               {!collapsedGroups.has(group.key) && <VStack align="stretch" gap={3}>
           {group.items.map((occ, occIdx) => {
+            // Admin-only foreign rows (Timeline activities + doc expirations)
+            // short-circuit here with a distinct, read-only render. The rest
+            // of this giant callback assumes a WorkerOccurrence shape and
+            // would error on the synthetic ghosts otherwise. Foreign rows
+            // respect the same ultra/semi/expanded density model as jobs:
+            //   - global density via cardDensity, per-card override via
+            //     cardOverrides, click cycles through ultra → semi → expanded.
+            if ((occ as any)._foreignKind === "activity") {
+              const p = (occ as any)._foreignPayload as ActivityForeignRow;
+              const dueDays = Math.round((new Date(p.nextDueDate).getTime() - Date.now()) / 86400000);
+              const isOverdue = dueDays < 0;
+              const dueLabel = isOverdue
+                ? `overdue ${-dueDays} ${-dueDays === 1 ? "day" : "days"}`
+                : dueDays === 0 ? "today"
+                : dueDays === 1 ? "tomorrow"
+                : `in ${dueDays} days`;
+              const fMode: CardDensity = cardOverrides.get(occ.id) ?? cardDensity;
+              const fToggle = () =>
+                setCardOverrides((prev) => {
+                  const next = new Map(prev);
+                  next.set(occ.id, nextDensity(fMode));
+                  return next;
+                });
+              const openTimeline = (e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                try {
+                  localStorage.setItem("seedlings_deeplink_event", p.id);
+                  localStorage.setItem("seedlings_deeplink_event_ts", String(Date.now()));
+                } catch {}
+                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "timeline" } }));
+                setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("timelineTab:applyDeepLink", { detail: { eventId: p.id } }));
+                }, 250);
+              };
+              if (fMode === "ultra") {
+                return (
+                  <Card.Root
+                    key={occ.id}
+                    variant="outline"
+                    overflow="hidden"
+                    cursor="pointer"
+                    onClick={fToggle}
+                    css={{ borderLeft: `4px solid var(--chakra-colors-${isOverdue ? "red" : "purple"}-500)` }}
+                  >
+                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                      <Badge size="xs" colorPalette="purple" variant="solid" px="1.5" borderRadius="full" flexShrink={0}>
+                        Activity
+                      </Badge>
+                      <Text fontWeight="semibold" lineClamp={1} flex="1" minW={0}>
+                        {p.title}
+                      </Text>
+                      <Badge size="xs" colorPalette={isOverdue ? "red" : "purple"} variant="subtle" px="1.5" flexShrink={0}>
+                        {dueLabel}
+                      </Badge>
+                    </HStack>
+                  </Card.Root>
+                );
+              }
+              return (
+                <Card.Root key={occ.id} variant="outline" borderLeftWidth="4px" borderLeftColor={isOverdue ? "red.500" : "purple.500"} cursor="pointer" onClick={fToggle}>
+                  <Card.Body p={2}>
+                    <HStack justify="space-between" align="start" gap={2}>
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <HStack gap={1.5} wrap="nowrap" align="center" minW={0}>
+                          <Badge size="sm" colorPalette="purple" variant="solid" px="2" borderRadius="full" flexShrink={0}>
+                            Activity
+                          </Badge>
+                          <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>
+                            {p.title}
+                          </Text>
+                        </HStack>
+                        <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted">
+                          <Badge size="xs" colorPalette={isOverdue ? "red" : "purple"} variant="subtle" px="1.5">
+                            {dueLabel}
+                          </Badge>
+                          {p.rrule && (
+                            <Badge size="xs" colorPalette="gray" variant="subtle" px="1.5">recurring</Badge>
+                          )}
+                          {p.adminHidden && (
+                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Super-only</Badge>
+                          )}
+                        </HStack>
+                      </VStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="purple"
+                        flexShrink={0}
+                        onClick={openTimeline}
+                      >
+                        Open in Timeline →
+                      </Button>
+                    </HStack>
+                    {/* Description only shown in fully-expanded mode to match
+                        how job cards reveal extra detail on expand. */}
+                    {fMode === "expanded" && p.description && (
+                      <Text fontSize="xs" color="fg.muted" mt={1}>{p.description}</Text>
+                    )}
+                    {fMode === "expanded" && p.category && (
+                      <Text fontSize="xs" color="fg.subtle" mt={1}>
+                        Category: {timelineCategoryLabel(p.category, timelineCategories)}
+                      </Text>
+                    )}
+                  </Card.Body>
+                </Card.Root>
+              );
+            }
+            if ((occ as any)._foreignKind === "doc_expiration") {
+              const p = (occ as any)._foreignPayload as DocExpirationForeignRow;
+              const fMode: CardDensity = cardOverrides.get(occ.id) ?? cardDensity;
+              const fToggle = () =>
+                setCardOverrides((prev) => {
+                  const next = new Map(prev);
+                  next.set(occ.id, nextDensity(fMode));
+                  return next;
+                });
+              const openDocs = (e?: React.MouseEvent) => {
+                e?.stopPropagation();
+                try {
+                  localStorage.setItem("seedlings_deeplink_document", p.documentId);
+                  localStorage.setItem("seedlings_deeplink_document_ts", String(Date.now()));
+                } catch {}
+                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "documents" } }));
+                setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("documentsTab:applyDeepLink", { detail: { docId: p.documentId } }));
+                }, 250);
+              };
+              if (fMode === "ultra") {
+                return (
+                  <Card.Root
+                    key={occ.id}
+                    variant="outline"
+                    overflow="hidden"
+                    cursor="pointer"
+                    onClick={fToggle}
+                    css={{ borderLeft: "4px solid var(--chakra-colors-red-500)" }}
+                  >
+                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                      <Badge size="xs" colorPalette="red" variant="solid" px="1.5" borderRadius="full" flexShrink={0}>
+                        Doc expires
+                      </Badge>
+                      <Text fontWeight="semibold" lineClamp={1} flex="1" minW={0}>
+                        {p.title}
+                      </Text>
+                    </HStack>
+                  </Card.Root>
+                );
+              }
+              return (
+                <Card.Root key={occ.id} variant="outline" borderLeftWidth="4px" borderLeftColor="red.500" cursor="pointer" onClick={fToggle}>
+                  <Card.Body p={2}>
+                    <HStack justify="space-between" align="start" gap={2}>
+                      <VStack align="start" gap={0.5} flex="1" minW={0}>
+                        <HStack gap={1.5} wrap="nowrap" align="center" minW={0}>
+                          <Badge size="sm" colorPalette="red" variant="solid" px="2" borderRadius="full" flexShrink={0}>
+                            Document expires today
+                          </Badge>
+                          <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>
+                            {p.title}
+                          </Text>
+                        </HStack>
+                        {p.adminHidden && (
+                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">Super-only</Badge>
+                        )}
+                      </VStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        flexShrink={0}
+                        onClick={openDocs}
+                      >
+                        Open in Documents →
+                      </Button>
+                    </HStack>
+                    {fMode === "expanded" && p.type && (
+                      <Text fontSize="xs" color="fg.subtle" mt={1}>
+                        Type: {documentTypeLabel(p.type, documentTypes)}
+                      </Text>
+                    )}
+                  </Card.Body>
+                </Card.Root>
+              );
+            }
             const assignees = occ.assignees ?? [];
             const myAssignee = assignees.find((a) => a.userId === myId);
             const isObserver = myAssignee?.role === "observer";

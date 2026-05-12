@@ -110,10 +110,10 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
       };
       if (isEdit && event) {
         await apiPatch(`/api/super/timeline/${event.id}`, payload);
-        publishInlineMessage({ type: "SUCCESS", text: "Event updated." });
+        publishInlineMessage({ type: "SUCCESS", text: "Activity updated." });
       } else {
         await apiPost("/api/super/timeline", payload);
-        publishInlineMessage({ type: "SUCCESS", text: "Event created." });
+        publishInlineMessage({ type: "SUCCESS", text: "Activity created." });
       }
       onSaved();
       onOpenChange(false);
@@ -132,7 +132,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
           <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
             <Dialog.CloseTrigger />
             <Dialog.Header>
-              <Dialog.Title>{isEdit ? "Edit Timeline Event" : "Add Timeline Event"}</Dialog.Title>
+              <Dialog.Title>{isEdit ? "Edit Activity" : "Add Activity"}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
