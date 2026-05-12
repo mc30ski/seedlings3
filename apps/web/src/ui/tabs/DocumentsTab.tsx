@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/router";
 import {
   Badge,
   Box,
@@ -121,7 +120,6 @@ function expBadgeColor(status: CompanyDocument["expirationStatus"]): string {
 }
 
 export default function DocumentsTab({ isSuper = false }: Props) {
-  const router = useRouter();
   const [items, setItems] = useState<CompanyDocument[]>([]);
   const [details, setDetails] = useState<Record<string, CompanyDocumentDetail>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -161,26 +159,27 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   // Distinguishes a deep-link to a collection (`?typeKey=…`) from the user
   // just picking that type from the filter dropdown — the chip varies.
   const [highlightTypeKey, setHighlightTypeKey] = useState<string | null>(null);
-  // Read deep-link params from the Next.js router so the effect re-fires on
-  // soft (client-side) navigations — pasting a URL works because of the full
-  // reload, but clicking a link while already on the page is a soft nav and
-  // an empty-deps useEffect would never see it.
+  // Deep links are routed via pages/index.tsx: that file stashes the URL
+  // params, navigates to the right Documents tab, then dispatches this event
+  // once we signal readiness. We don't read router.query here because the
+  // params have already been consumed/stripped by the time we mount on a
+  // cold link click.
   useEffect(() => {
-    const docId = typeof router.query.docId === "string" ? router.query.docId : undefined;
-    const typeKey = typeof router.query.typeKey === "string" ? router.query.typeKey : undefined;
-    if (!docId && !typeKey) return;
-    if (docId) setHighlightDocId(docId);
-    if (typeKey) {
-      setTypeFilter([typeKey]);
-      setHighlightTypeKey(typeKey);
+    (window as any).__documentsTabReady = true;
+    function onApply(e: Event) {
+      const { docId, typeKey } = (e as CustomEvent<{ docId?: string | null; typeKey?: string | null }>).detail || {};
+      if (docId) setHighlightDocId(docId);
+      if (typeKey) {
+        setTypeFilter([typeKey]);
+        setHighlightTypeKey(typeKey);
+      }
     }
-    // Strip the params via the router so router.query stays in sync; without
-    // this the effect would keep re-firing with the same values.
-    const rest = { ...router.query };
-    delete rest.docId;
-    delete rest.typeKey;
-    router.replace({ pathname: router.pathname, query: rest }, undefined, { shallow: true });
-  }, [router.query.docId, router.query.typeKey]);
+    window.addEventListener("documentsTab:applyDeepLink", onApply as EventListener);
+    return () => {
+      window.removeEventListener("documentsTab:applyDeepLink", onApply as EventListener);
+      (window as any).__documentsTabReady = false;
+    };
+  }, []);
 
   // If the user changes the type filter manually, the deep-link highlight no
   // longer reflects what's on screen — drop the special "linked to collection"
@@ -231,6 +230,33 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   useEffect(() => {
     void loadTypes();
   }, []);
+
+  // Default: multi-instance collections start collapsed so the list reads as
+  // a tidy index. Tracked separately so user-driven toggles (after this seed)
+  // are preserved. Runs once when types are first known.
+  const [collapseSeeded, setCollapseSeeded] = useState(false);
+  useEffect(() => {
+    if (collapseSeeded) return;
+    if (!types || types.length === 0) return;
+    const seed = new Set<string>();
+    for (const t of types) {
+      if (!t.singleton) seed.add(t.key);
+    }
+    setCollapsedTypes(seed);
+    setCollapseSeeded(true);
+  }, [types, collapseSeeded]);
+
+  // Deep-linked collection should be visible — pull it out of the collapsed
+  // set when a deep link targets it.
+  useEffect(() => {
+    if (!highlightTypeKey) return;
+    setCollapsedTypes((prev) => {
+      if (!prev.has(highlightTypeKey)) return prev;
+      const next = new Set(prev);
+      next.delete(highlightTypeKey);
+      return next;
+    });
+  }, [highlightTypeKey]);
 
   useEffect(() => {
     void load();
@@ -596,10 +622,16 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               <Card.Body p={2}>
                 <VStack align="stretch" gap={1}>
                   <HStack justify="space-between" align="start" gap={1}>
-                    <VStack align="start" gap={0.5} flex="1" minW={0}>
-                      <HStack gap={1.5} wrap="wrap" align="center">
-                        <FileText size={13} />
-                        <Text fontSize="sm" fontWeight="semibold" lineClamp={2}>{d.title}</Text>
+                    <VStack align="start" gap={0.5} flex="1" minW={0} w="full">
+                      <HStack gap={1.5} wrap="wrap" align="center" w="full" minW={0}>
+                        {/* Inner HStack keeps the icon and title locked
+                            together — on narrow screens the icon was wrapping
+                            onto its own row when the outer HStack wrapped
+                            after every child. */}
+                        <HStack gap={1.5} wrap="nowrap" align="center" minW={0} flex="1">
+                          <Box flexShrink={0} display="inline-flex"><FileText size={13} /></Box>
+                          <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>{d.title}</Text>
+                        </HStack>
                         {d.adminHidden && (
                           <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Hidden from Admins">
                             <EyeOff size={9} />
@@ -791,20 +823,21 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               <Card.Body p={2}>
                 <VStack align="stretch" gap={1}>
                   <HStack justify="space-between" align="start" gap={1}>
-                    <VStack align="start" gap={0.5} flex="1" minW={0}>
+                    <VStack align="start" gap={0.5} flex="1" minW={0} w="full">
                       <HStack
                         gap={1.5}
-                        wrap="wrap"
+                        wrap="nowrap"
                         align="center"
                         cursor="pointer"
+                        minW={0}
                         onClick={toggleCollapsed}
                       >
-                        <FileText size={13} />
-                        <Text fontSize="sm" fontWeight="semibold">{opts.headerLabel}</Text>
-                        <Badge size="sm" colorPalette="teal" variant="solid" px="2" borderRadius="full">
-                          {docs.length} {docs.length === 1 ? "document" : "documents"}
-                        </Badge>
+                        <Box flexShrink={0} display="inline-flex"><FileText size={13} /></Box>
+                        <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>{opts.headerLabel}</Text>
                       </HStack>
+                      <Badge size="sm" colorPalette="teal" variant="solid" px="2" borderRadius="full">
+                        {docs.length} {docs.length === 1 ? "document" : "documents"}
+                      </Badge>
                       {(expiredCount > 0 || (expiringCount > 0 && collectionExpStatus !== "expired")) && (
                         <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
                           {expiredCount > 0 && (

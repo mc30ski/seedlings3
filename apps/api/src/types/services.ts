@@ -779,6 +779,7 @@ export type Services = {
   supplies: ServicesSupplies;
   groups: typeof import("../services/groups").groups;
   companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
+  timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
 };
 
 export type ServicesSettings = {

@@ -4420,4 +4420,104 @@ Respond ONLY with valid JSON in this exact format:
       );
     },
   );
+
+  // ----------------------------------------------------------------------
+  // Timeline
+  // ----------------------------------------------------------------------
+  // Same admin/super audience split as Documents — the URL prefix decides
+  // whether admin-hidden rows are filtered, regardless of caller role.
+
+  // ----- Admin namespace (read-only, never includes adminHidden) ---------
+
+  app.get("/admin/timeline", adminGuard, async (req: any) => {
+    const { archived } = (req.query || {}) as Record<string, string>;
+    return services.timelineEvents.list({
+      adminHiddenVisible: false,
+      archived: archived === "1" || archived === "true",
+    });
+  });
+
+  app.get("/admin/timeline/upcoming", adminGuard, async (req: any) => {
+    const { includeDocs, includePast } = (req.query || {}) as Record<string, string>;
+    return services.timelineEvents.listUpcoming({
+      adminHiddenVisible: false,
+      includeDocs: includeDocs !== "0" && includeDocs !== "false",
+      includePast: includePast === "1" || includePast === "true",
+    });
+  });
+
+  app.get("/admin/timeline/upcoming-counts", adminGuard, async () => {
+    return services.timelineEvents.upcomingCounts({ adminHiddenVisible: false });
+  });
+
+  app.get("/admin/timeline/:id", adminGuard, async (req: any) => {
+    return services.timelineEvents.get(String(req.params.id), {
+      adminHiddenVisible: false,
+    });
+  });
+
+  // ----- Super namespace (read + write, includes adminHidden) ------------
+
+  app.get("/super/timeline", superGuard, async (req: any) => {
+    const { archived } = (req.query || {}) as Record<string, string>;
+    return services.timelineEvents.list({
+      adminHiddenVisible: true,
+      archived: archived === "1" || archived === "true",
+    });
+  });
+
+  app.get("/super/timeline/upcoming", superGuard, async (req: any) => {
+    const { includeDocs, includePast } = (req.query || {}) as Record<string, string>;
+    return services.timelineEvents.listUpcoming({
+      adminHiddenVisible: true,
+      includeDocs: includeDocs !== "0" && includeDocs !== "false",
+      includePast: includePast === "1" || includePast === "true",
+    });
+  });
+
+  app.get("/super/timeline/upcoming-counts", superGuard, async () => {
+    return services.timelineEvents.upcomingCounts({ adminHiddenVisible: true });
+  });
+
+  app.get("/super/timeline/:id", superGuard, async (req: any) => {
+    return services.timelineEvents.get(String(req.params.id), {
+      adminHiddenVisible: true,
+    });
+  });
+
+  app.post("/super/timeline", superGuard, async (req: any) => {
+    return services.timelineEvents.create(
+      await currentUserId(req),
+      req.body || {},
+    );
+  });
+
+  app.patch("/super/timeline/:id", superGuard, async (req: any) => {
+    return services.timelineEvents.update(
+      await currentUserId(req),
+      String(req.params.id),
+      req.body || {},
+    );
+  });
+
+  app.post("/super/timeline/:id/archive", superGuard, async (req: any) => {
+    return services.timelineEvents.archive(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
+
+  app.post("/super/timeline/:id/unarchive", superGuard, async (req: any) => {
+    return services.timelineEvents.unarchive(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
+
+  app.delete("/super/timeline/:id", superGuard, async (req: any) => {
+    return services.timelineEvents.hardDelete(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
 }

@@ -93,6 +93,13 @@ export const AUDIT = {
     VIEWED: [AuditScope.DOCUMENT, AuditVerb.VIEWED] as const,
     DOWNLOADED: [AuditScope.DOCUMENT, AuditVerb.DOWNLOADED] as const,
   },
+  TIMELINE: {
+    CREATED: [AuditScope.TIMELINE, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.TIMELINE, AuditVerb.UPDATED] as const,
+    ARCHIVED: [AuditScope.TIMELINE, AuditVerb.RETIRED] as const,
+    UNARCHIVED: [AuditScope.TIMELINE, AuditVerb.UNRETIRED] as const,
+    DELETED: [AuditScope.TIMELINE, AuditVerb.DELETED] as const,
+  },
 } as const;
 
 // Useful types

@@ -1638,6 +1638,162 @@ async function seedDatabase() {
     update: { description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
   });
 
+  // ── Company documents (metadata only — for Timeline tab demo) ─────────────
+  // These docs have no uploaded version, which means they won't be openable
+  // from the Documents tab, but they appear in the Timeline as doc expirations
+  // so we can see the mixed-feed UX without uploading real files.
+  console.log("  Creating example company documents...");
+  const docDaysFromNow = (n: number): Date => {
+    const d = new Date();
+    d.setUTCHours(12, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d;
+  };
+  const docSeed: Array<{
+    type: string;
+    title: string;
+    description?: string;
+    expiresAt: Date;
+    adminHidden?: boolean;
+  }> = [
+    {
+      type: "INSURANCE_CERT",
+      title: "GL — State Farm 2026",
+      description: "Primary general liability, $1M/$2M limits.",
+      expiresAt: docDaysFromNow(25), // soon (within 30d)
+    },
+    {
+      type: "INSURANCE_CERT",
+      title: "Auto policy — Geico 2026",
+      description: "Commercial auto coverage on the fleet trucks.",
+      expiresAt: docDaysFromNow(5), // urgent (within 7d)
+    },
+    {
+      type: "INSURANCE_CERT",
+      title: "Workers comp — Hartford 2025",
+      description: "Workers comp policy, last renewed previous year.",
+      expiresAt: docDaysFromNow(-3), // expired (past)
+    },
+    {
+      type: "BUSINESS_LICENSE",
+      title: "State business license — VA",
+      expiresAt: docDaysFromNow(90), // future (>30d)
+    },
+    {
+      type: "BUSINESS_LICENSE",
+      title: "Fairfax County operating permit",
+      expiresAt: docDaysFromNow(45),
+    },
+  ];
+  for (const d of docSeed) {
+    const existing = await prisma.companyDocument.findFirst({
+      where: { title: d.title, type: d.type },
+    });
+    if (existing) {
+      await prisma.companyDocument.update({
+        where: { id: existing.id },
+        data: {
+          description: d.description ?? null,
+          expiresAt: d.expiresAt,
+          adminHidden: !!d.adminHidden,
+        },
+      });
+    } else {
+      await prisma.companyDocument.create({
+        data: {
+          type: d.type,
+          title: d.title,
+          description: d.description ?? null,
+          expiresAt: d.expiresAt,
+          adminHidden: !!d.adminHidden,
+          createdById: MICHAEL_ID,
+        },
+      });
+    }
+  }
+
+  // ── Timeline events ───────────────────────────────────────────────────────
+  console.log("  Creating timeline events...");
+  // Helper to anchor a recurring event on a date this calendar year (the
+  // RRULE will roll it forward to the next future occurrence at read time).
+  const thisYear = new Date().getFullYear();
+  const date = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const timelineSeed: Array<{
+    title: string;
+    description?: string;
+    rrule: string | null;
+    anchorDate: Date;
+    adminHidden?: boolean;
+  }> = [
+    {
+      title: "Tax filing deadline",
+      description: "Federal income tax returns due. Make sure books are closed and the CPA has everything.",
+      rrule: "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15",
+      anchorDate: date(thisYear, 4, 15),
+    },
+    {
+      title: "Q1 estimated taxes",
+      description: "Quarterly estimated tax payment due to IRS.",
+      rrule: "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15",
+      anchorDate: date(thisYear, 4, 15),
+    },
+    {
+      title: "Q2 estimated taxes",
+      rrule: "FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=15",
+      anchorDate: date(thisYear, 6, 15),
+    },
+    {
+      title: "Q3 estimated taxes",
+      rrule: "FREQ=YEARLY;BYMONTH=9;BYMONTHDAY=15",
+      anchorDate: date(thisYear, 9, 15),
+    },
+    {
+      title: "Q4 estimated taxes",
+      rrule: "FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=15",
+      anchorDate: date(thisYear + 1, 1, 15),
+    },
+    {
+      title: "Annual workers comp audit",
+      description: "Carrier audit window — submit payroll figures.",
+      rrule: "FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=1",
+      anchorDate: date(thisYear, 3, 1),
+      adminHidden: true, // example of a Super-only event
+    },
+    {
+      title: "Spring season kickoff meeting",
+      description: "Standalone (non-recurring) example.",
+      rrule: null,
+      anchorDate: date(thisYear, 3, 15),
+    },
+  ];
+  for (const e of timelineSeed) {
+    const existing = await prisma.timelineEvent.findFirst({
+      where: { title: e.title },
+    });
+    if (existing) {
+      await prisma.timelineEvent.update({
+        where: { id: existing.id },
+        data: {
+          description: e.description ?? null,
+          rrule: e.rrule,
+          anchorDate: e.anchorDate,
+          adminHidden: !!e.adminHidden,
+        },
+      });
+    } else {
+      await prisma.timelineEvent.create({
+        data: {
+          title: e.title,
+          description: e.description ?? null,
+          rrule: e.rrule,
+          anchorDate: e.anchorDate,
+          adminHidden: !!e.adminHidden,
+          createdById: MICHAEL_ID,
+        },
+      });
+    }
+  }
+
   // ── Notification templates ────────────────────────────────────────────────
   console.log("  Creating notification templates...");
   const notifTemplates = [
