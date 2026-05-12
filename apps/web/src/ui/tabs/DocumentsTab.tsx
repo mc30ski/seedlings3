@@ -655,15 +655,6 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                           )}
                         </HStack>
                       )}
-                      {/* Singletons inherit the type-level description (their
-                          own description field is hidden everywhere). Multi-
-                          instance docs show their per-doc description. */}
-                      {singleton && documentTypeDescription(d.type, types) && (
-                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{documentTypeDescription(d.type, types)}</Text>
-                      )}
-                      {d.description && !singleton && (
-                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
-                      )}
                     </VStack>
                     <HStack gap={0.5} flexShrink={0}>
                       {d.currentVersion && (
@@ -705,6 +696,18 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                       </Button>
                     </HStack>
                   </HStack>
+
+                  {/* Description spans the full card width, outside the
+                      top HStack, so it isn't squeezed by the action button
+                      column on narrow screens. Singletons inherit the
+                      type-level description; multi-instance docs use their
+                      own per-doc description. */}
+                  {singleton && documentTypeDescription(d.type, types) && (
+                    <Text fontSize="xs" color="fg.muted" lineClamp={2}>{documentTypeDescription(d.type, types)}</Text>
+                  )}
+                  {d.description && !singleton && (
+                    <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
+                  )}
 
                   {isExpanded && (
                     <Box pl={4} borderLeftWidth="2px" borderColor="gray.200">

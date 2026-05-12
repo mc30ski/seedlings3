@@ -338,7 +338,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
           value={q}
           onChange={(v) => setQ(v)}
           inputId="timeline-search"
-          placeholder="Search events…"
+          placeholder="Search activities…"
         />
         <Select.Root
           collection={kindCollection}
@@ -433,7 +433,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
             minW="0"
             flexShrink={0}
             onClick={() => { setEditingEvent(null); setDialogOpen(true); }}
-            title="Add event"
+            title="Add activity"
           >
             <Plus size={16} strokeWidth={2.5} />
           </Button>
@@ -505,9 +505,9 @@ export default function TimelineTab({ isSuper = false }: Props) {
               cursor="pointer"
               px="2"
               onClick={() => setHighlightEventId(null)}
-              title="Show all events"
+              title="Show all activities"
             >
-              Linked to one event
+              Linked to one activity
               <X size={11} style={{ marginLeft: 4 }} />
             </Badge>
           )}
@@ -549,6 +549,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
               return (
                 <Card.Root key={(isDoc ? "d_" : "e_") + (isDoc ? r.documentId : r.id)} variant="outline">
                   <Card.Body p={2}>
+                    <VStack align="stretch" gap={1}>
                     <HStack justify="space-between" align="start" gap={1}>
                       <VStack align="start" gap={0.5} flex="1" minW={0} w="full">
                         <HStack gap={1.5} wrap="nowrap" align="center" minW={0}>
@@ -582,14 +583,6 @@ export default function TimelineTab({ isSuper = false }: Props) {
                             <Badge size="xs" colorPalette="blue" variant="subtle" px="1.5">Document</Badge>
                           )}
                         </HStack>
-                        {!isDoc && r.description && (
-                          <Text fontSize="xs" color="fg.muted" lineClamp={2}>{r.description}</Text>
-                        )}
-                        {!isDoc && r.lastCompletedAt && (
-                          <Text fontSize="xs" color="fg.subtle">
-                            Last completed {fmtDate(r.lastCompletedAt)}
-                          </Text>
-                        )}
                       </VStack>
                       <HStack gap={0.5} flexShrink={0}>
                         {isDoc ? (
@@ -611,7 +604,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                               px="1.5"
                               minW="0"
                               onClick={() => copyShareLink(r.id, r.title)}
-                              title="Copy link to this event"
+                              title="Copy link to this activity"
                             >
                               <Link2 size={13} />
                             </Button>
@@ -667,6 +660,19 @@ export default function TimelineTab({ isSuper = false }: Props) {
                         )}
                       </HStack>
                     </HStack>
+                    {/* Description + last-completed live OUTSIDE the top
+                        HStack so they span the full card width on narrow
+                        screens instead of being squeezed alongside the
+                        right-aligned action buttons. */}
+                    {!isDoc && r.description && (
+                      <Text fontSize="xs" color="fg.muted" lineClamp={2}>{r.description}</Text>
+                    )}
+                    {!isDoc && r.lastCompletedAt && (
+                      <Text fontSize="xs" color="fg.subtle">
+                        Last completed {fmtDate(r.lastCompletedAt)}
+                      </Text>
+                    )}
+                    </VStack>
                   </Card.Body>
                 </Card.Root>
               );
@@ -686,8 +692,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
           <ConfirmDialog
             open={!!confirmAction}
             title={
-              confirmAction?.kind === "archive" ? "Archive event?"
-                : confirmAction?.kind === "delete" ? "Delete event?"
+              confirmAction?.kind === "archive" ? "Archive activity?"
+                : confirmAction?.kind === "delete" ? "Delete activity?"
                 : confirmAction?.kind === "complete" ? "Mark complete?"
                 : ""
             }
@@ -699,7 +705,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
                 : confirmAction?.kind === "complete"
                 ? (confirmAction.ev.rrule
                   ? `Mark "${confirmAction.ev.title}" complete? It will roll forward to its next occurrence.`
-                  : `Mark "${confirmAction.ev.title}" complete? This is a one-time event and will be archived.`)
+                  : `Mark "${confirmAction.ev.title}" complete? This is a one-time activity and will be archived.`)
                 : ""
             }
             confirmLabel={
