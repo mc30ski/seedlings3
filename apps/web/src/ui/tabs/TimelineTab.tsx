@@ -17,6 +17,7 @@ import {
   Archive,
   ArchiveRestore,
   CalendarClock,
+  Check,
   ExternalLink,
   EyeOff,
   Filter,
@@ -38,14 +39,23 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import TimelineEventDialog from "@/src/ui/dialogs/TimelineEventDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { rruleLabel } from "@/src/ui/components/RRuleEditor";
+import {
+  DEFAULT_TIMELINE_CATEGORIES,
+  categoryLabel,
+  parseTimelineCategoriesConfig,
+  type TimelineCategoryConfig,
+} from "@/src/ui/components/TimelineCategoryPicker";
 
 type EventRow = {
   kind: "event";
   id: string;
   title: string;
   description: string | null;
+  category: string | null;
   rrule: string | null;
   anchorDate: string;
+  lastCompletedAt: string | null;
+  archivedAt: string | null;
   adminHidden: boolean;
   nextDate: string;
 };
@@ -61,11 +71,11 @@ type UpcomingRow = EventRow | DocRow;
 
 type Props = { isSuper?: boolean };
 
-const SHOW_ITEMS = [
-  { label: "All", value: "all" },
-  { label: "Events only", value: "events" },
-  { label: "Doc expirations only", value: "docs" },
-];
+// Combined "kind/category" filter — one of:
+//   "all"        → everything (events + doc expirations)
+//   "docs"       → doc expirations only
+//   "<CAT_KEY>"  → events whose category matches
+// Built dynamically once categories load (see filterItems below).
 
 const URGENCY_ITEMS = [
   { label: "All upcoming", value: "all" },
@@ -82,7 +92,7 @@ function diffDays(iso: string, from: Date = new Date()): number {
 }
 function relativeLabel(iso: string): string {
   const d = diffDays(iso);
-  if (d < 0) return `${-d} ${-d === 1 ? "day" : "days"} ago`;
+  if (d < 0) return `overdue ${-d} ${-d === 1 ? "day" : "days"}`;
   if (d === 0) return "today";
   if (d === 1) return "tomorrow";
   if (d < 30) return `in ${d} days`;
@@ -112,14 +122,30 @@ export default function TimelineTab({ isSuper = false }: Props) {
   const [rows, setRows] = useState<UpcomingRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
-  const [showFilter, setShowFilter] = useState<string[]>(["all"]);
+  // kindFilter values: "all" | "docs" | "<CATEGORY_KEY>"
+  const [kindFilter, setKindFilter] = useState<string[]>(["all"]);
   const [urgencyFilter, setUrgencyFilter] = useState<string[]>(["all"]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [categories, setCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
+
+  // Load the configurable category taxonomy from settings.
+  useEffect(() => {
+    (async () => {
+      try {
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        const tc = (Array.isArray(settings) ? settings : []).find((s) => s.key === "TIMELINE_CATEGORIES");
+        const parsed = parseTimelineCategoriesConfig(tc?.value);
+        if (parsed) setCategories(parsed);
+      } catch {}
+    })();
+  }, []);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventRow | null>(null);
   const [confirmAction, setConfirmAction] = useState<
     | { kind: "archive"; ev: EventRow }
     | { kind: "delete"; ev: EventRow }
+    | { kind: "complete"; ev: EventRow }
     | null
   >(null);
   const [highlightEventId, setHighlightEventId] = useState<string | null>(null);
@@ -142,9 +168,12 @@ export default function TimelineTab({ isSuper = false }: Props) {
   async function load() {
     setLoading(true);
     try {
-      // Server merges + sorts. Filters are applied client-side so toggling
-      // doesn't round-trip.
-      const list = await apiGet<UpcomingRow[]>(`${apiBase}/upcoming?includeDocs=1`);
+      // Server merges + sorts. `showArchived` round-trips because archived
+      // rows aren't in the same dataset; other filters are client-side.
+      const params = new URLSearchParams();
+      params.set("includeDocs", "1");
+      if (showArchived) params.set("archived", "1");
+      const list = await apiGet<UpcomingRow[]>(`${apiBase}/upcoming?${params}`);
       setRows(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load.", err) });
@@ -154,15 +183,20 @@ export default function TimelineTab({ isSuper = false }: Props) {
     }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [showArchived]);
 
   const filtered = useMemo(() => {
     let out = rows;
     if (highlightEventId) {
       out = out.filter((r) => r.kind === "event" && r.id === highlightEventId);
     }
-    if (showFilter[0] === "events") out = out.filter((r) => r.kind === "event");
-    else if (showFilter[0] === "docs") out = out.filter((r) => r.kind === "document_expiration");
+    if (kindFilter[0] === "docs") {
+      out = out.filter((r) => r.kind === "document_expiration");
+    } else if (kindFilter[0] && kindFilter[0] !== "all") {
+      // Category key — filter to events with that category. Doc-expirations
+      // don't carry a category so they're hidden.
+      out = out.filter((r) => r.kind === "event" && r.category === kindFilter[0]);
+    }
     if (urgencyFilter[0] !== "all") {
       // Cumulative semantics: each filter widens the window inclusively.
       //   urgent → past + ≤7 days
@@ -187,7 +221,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
       );
     }
     return out;
-  }, [rows, q, showFilter, urgencyFilter, highlightEventId]);
+  }, [rows, q, kindFilter, urgencyFilter, highlightEventId]);
 
   // Apply a pre-set urgency filter from the title-bar pill navigation.
   useEffect(() => {
@@ -244,6 +278,24 @@ export default function TimelineTab({ isSuper = false }: Props) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to archive.", err) });
     }
   }
+  async function markComplete(id: string, title: string) {
+    try {
+      await apiPost(`${apiBase}/${id}/complete`);
+      publishInlineMessage({ type: "SUCCESS", text: `Marked "${title}" complete.` });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to mark complete.", err) });
+    }
+  }
+  async function unarchive(id: string) {
+    try {
+      await apiPost(`${apiBase}/${id}/unarchive`);
+      publishInlineMessage({ type: "SUCCESS", text: "Restored from archive." });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to restore.", err) });
+    }
+  }
   async function hardDelete(id: string) {
     try {
       await apiPost(`${apiBase}/${id}/archive`).catch(() => {}); // ensure archived first
@@ -255,8 +307,18 @@ export default function TimelineTab({ isSuper = false }: Props) {
     }
   }
 
-  const showCollection = useMemo(() => createListCollection({ items: SHOW_ITEMS }), []);
   const urgencyCollection = useMemo(() => createListCollection({ items: URGENCY_ITEMS }), []);
+  // Combined kind filter: All / Documents / each category. Built once
+  // categories load so admin-defined order is preserved.
+  const kindItems = useMemo(
+    () => [
+      { label: "All", value: "all" },
+      { label: "Documents", value: "docs" },
+      ...categories.map((c) => ({ label: c.label, value: c.key })),
+    ],
+    [categories],
+  );
+  const kindCollection = useMemo(() => createListCollection({ items: kindItems }), [kindItems]);
 
   return (
     <Box w="full">
@@ -279,9 +341,9 @@ export default function TimelineTab({ isSuper = false }: Props) {
           placeholder="Search events…"
         />
         <Select.Root
-          collection={showCollection}
-          value={showFilter}
-          onValueChange={(e) => setShowFilter(e.value)}
+          collection={kindCollection}
+          value={kindFilter}
+          onValueChange={(e) => setKindFilter(e.value)}
           size="sm"
           positioning={{ strategy: "fixed", hideWhenDetached: true }}
           css={{ width: "auto", flex: "0 0 auto" }}
@@ -292,11 +354,11 @@ export default function TimelineTab({ isSuper = false }: Props) {
               minW="0"
               px="2"
               css={{
-                background: showFilter[0] !== "all" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)",
-                border: showFilter[0] !== "all" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)",
+                background: kindFilter[0] !== "all" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)",
+                border: kindFilter[0] !== "all" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)",
                 borderRadius: "6px",
               }}
-              title={SHOW_ITEMS.find((i) => i.value === showFilter[0])?.label}
+              title={kindItems.find((i) => i.value === kindFilter[0])?.label}
             >
               <Tag size={14} />
               <Select.Indicator display="none" />
@@ -304,7 +366,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
           </Select.Control>
           <Select.Positioner>
             <Select.Content>
-              {SHOW_ITEMS.map((it) => (
+              {kindItems.map((it) => (
                 <Select.Item key={it.value} item={it.value}>
                   <Select.ItemText>{it.label}</Select.ItemText>
                 </Select.Item>
@@ -346,6 +408,23 @@ export default function TimelineTab({ isSuper = false }: Props) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        <Button
+          size="sm"
+          variant={showArchived ? "solid" : "outline"}
+          px="2"
+          minW="0"
+          flexShrink={0}
+          onClick={() => setShowArchived((v) => !v)}
+          title={showArchived ? "Showing archived — click to hide" : "Show archived only"}
+          css={showArchived ? {
+            background: "var(--chakra-colors-gray-200)",
+            color: "var(--chakra-colors-gray-700)",
+            border: "1px solid var(--chakra-colors-gray-400)",
+            "&:hover": { background: "var(--chakra-colors-gray-300)" },
+          } : undefined}
+        >
+          <Archive size={14} />
+        </Button>
         {isSuper && (
           <Button
             size="sm"
@@ -360,19 +439,33 @@ export default function TimelineTab({ isSuper = false }: Props) {
           </Button>
         )}
       </HStack>
-      {(showFilter[0] !== "all" || urgencyFilter[0] !== "all" || q.trim() || highlightEventId) && (
+      {(kindFilter[0] !== "all" || urgencyFilter[0] !== "all" || showArchived || q.trim() || highlightEventId) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
-          {showFilter[0] !== "all" && (
+          {kindFilter[0] !== "all" && (
             <Badge
               size="sm"
               colorPalette="orange"
               variant="subtle"
               cursor="pointer"
               px="2"
-              onClick={() => setShowFilter(["all"])}
-              title="Clear show filter"
+              onClick={() => setKindFilter(["all"])}
+              title="Clear filter"
             >
-              {SHOW_ITEMS.find((i) => i.value === showFilter[0])?.label}
+              {kindItems.find((i) => i.value === kindFilter[0])?.label}
+              <X size={11} style={{ marginLeft: 4 }} />
+            </Badge>
+          )}
+          {showArchived && (
+            <Badge
+              size="sm"
+              colorPalette="gray"
+              variant="solid"
+              cursor="pointer"
+              px="2"
+              onClick={() => setShowArchived(false)}
+              title="Hide archived"
+            >
+              Archived only
               <X size={11} style={{ marginLeft: 4 }} />
             </Badge>
           )}
@@ -424,8 +517,9 @@ export default function TimelineTab({ isSuper = false }: Props) {
             variant="outline"
             cursor="pointer"
             onClick={() => {
-              setShowFilter(["all"]);
+              setKindFilter(["all"]);
               setUrgencyFilter(["all"]);
+              setShowArchived(false);
               setQ("");
               setHighlightEventId(null);
             }}
@@ -474,8 +568,13 @@ export default function TimelineTab({ isSuper = false }: Props) {
                           <Badge size="sm" colorPalette={color} variant="subtle" px="2" borderRadius="full">
                             {fmtDate(r.nextDate)} · {relativeLabel(r.nextDate)}
                           </Badge>
-                          {!isDoc && r.rrule && (
+                          {!isDoc && r.category && (
                             <Badge size="xs" colorPalette="purple" variant="subtle" px="1.5">
+                              {categoryLabel(r.category, categories)}
+                            </Badge>
+                          )}
+                          {!isDoc && r.rrule && (
+                            <Badge size="xs" colorPalette="gray" variant="subtle" px="1.5">
                               <Repeat size={9} style={{ marginRight: 3 }} />{rruleLabel(r.rrule)}
                             </Badge>
                           )}
@@ -485,6 +584,11 @@ export default function TimelineTab({ isSuper = false }: Props) {
                         </HStack>
                         {!isDoc && r.description && (
                           <Text fontSize="xs" color="fg.muted" lineClamp={2}>{r.description}</Text>
+                        )}
+                        {!isDoc && r.lastCompletedAt && (
+                          <Text fontSize="xs" color="fg.subtle">
+                            Last completed {fmtDate(r.lastCompletedAt)}
+                          </Text>
                         )}
                       </VStack>
                       <HStack gap={0.5} flexShrink={0}>
@@ -511,8 +615,19 @@ export default function TimelineTab({ isSuper = false }: Props) {
                             >
                               <Link2 size={13} />
                             </Button>
-                            {isSuper && (
+                            {isSuper && !r.archivedAt && (
                               <>
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="teal"
+                                  px="1.5"
+                                  minW="0"
+                                  onClick={() => setConfirmAction({ kind: "complete", ev: r })}
+                                  title="Mark this occurrence complete (advances to the next)"
+                                >
+                                  <Check size={13} />
+                                </Button>
                                 <Button
                                   size="xs"
                                   variant="ghost"
@@ -534,6 +649,19 @@ export default function TimelineTab({ isSuper = false }: Props) {
                                   <Archive size={13} />
                                 </Button>
                               </>
+                            )}
+                            {isSuper && r.archivedAt && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="teal"
+                                px="1.5"
+                                minW="0"
+                                onClick={() => unarchive(r.id)}
+                                title="Restore from archive"
+                              >
+                                <ArchiveRestore size={13} />
+                              </Button>
                             )}
                           </>
                         )}
@@ -560,6 +688,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
             title={
               confirmAction?.kind === "archive" ? "Archive event?"
                 : confirmAction?.kind === "delete" ? "Delete event?"
+                : confirmAction?.kind === "complete" ? "Mark complete?"
                 : ""
             }
             message={
@@ -567,14 +696,27 @@ export default function TimelineTab({ isSuper = false }: Props) {
                 ? `Archive "${confirmAction.ev.title}"? You can restore it from the archived view.`
                 : confirmAction?.kind === "delete"
                 ? `Permanently delete "${confirmAction.ev.title}"? This cannot be undone.`
+                : confirmAction?.kind === "complete"
+                ? (confirmAction.ev.rrule
+                  ? `Mark "${confirmAction.ev.title}" complete? It will roll forward to its next occurrence.`
+                  : `Mark "${confirmAction.ev.title}" complete? This is a one-time event and will be archived.`)
                 : ""
             }
-            confirmLabel={confirmAction?.kind === "delete" ? "Delete" : "Archive"}
-            confirmColorPalette={confirmAction?.kind === "delete" ? "red" : "orange"}
+            confirmLabel={
+              confirmAction?.kind === "delete" ? "Delete"
+                : confirmAction?.kind === "complete" ? "Mark complete"
+                : "Archive"
+            }
+            confirmColorPalette={
+              confirmAction?.kind === "delete" ? "red"
+                : confirmAction?.kind === "complete" ? "teal"
+                : "orange"
+            }
             onConfirm={() => {
               if (!confirmAction) return;
               if (confirmAction.kind === "archive") archive(confirmAction.ev.id);
               else if (confirmAction.kind === "delete") hardDelete(confirmAction.ev.id);
+              else if (confirmAction.kind === "complete") markComplete(confirmAction.ev.id, confirmAction.ev.title);
               setConfirmAction(null);
             }}
             onCancel={() => setConfirmAction(null)}

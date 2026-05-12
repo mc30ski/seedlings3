@@ -1712,6 +1712,21 @@ async function seedDatabase() {
     }
   }
 
+  // ── Timeline categories taxonomy ──────────────────────────────────────────
+  const timelineCategoriesValue = JSON.stringify([
+    { key: "TAXES", label: "Taxes", description: "Tax filings, estimated payments, and IRS deadlines." },
+    { key: "INSURANCE", label: "Insurance", description: "Policy renewals, premium payments, and carrier audits." },
+    { key: "LICENSING", label: "Licensing", description: "Business licenses, permits, and renewals across jurisdictions." },
+    { key: "COMPLIANCE", label: "Compliance", description: "Regulatory filings and compliance reviews." },
+    { key: "OPERATIONS", label: "Operations", description: "Internal operational milestones (season kickoffs, off-season prep)." },
+    { key: "FINANCE", label: "Finance", description: "Bookkeeping, audits, and other financial calendar items." },
+  ]);
+  await prisma.setting.upsert({
+    where: { key: "TIMELINE_CATEGORIES" },
+    create: { key: "TIMELINE_CATEGORIES", value: timelineCategoriesValue, description: "Timeline event categories. Array of {key, label, description}.", updatedById: MICHAEL_ID },
+    update: { value: timelineCategoriesValue, description: "Timeline event categories. Array of {key, label, description}.", updatedById: MICHAEL_ID },
+  });
+
   // ── Timeline events ───────────────────────────────────────────────────────
   console.log("  Creating timeline events...");
   // Helper to anchor a recurring event on a date this calendar year (the
@@ -1721,6 +1736,7 @@ async function seedDatabase() {
   const timelineSeed: Array<{
     title: string;
     description?: string;
+    category?: string;
     rrule: string | null;
     anchorDate: Date;
     adminHidden?: boolean;
@@ -1728,33 +1744,39 @@ async function seedDatabase() {
     {
       title: "Tax filing deadline",
       description: "Federal income tax returns due. Make sure books are closed and the CPA has everything.",
+      category: "TAXES",
       rrule: "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15",
       anchorDate: date(thisYear, 4, 15),
     },
     {
       title: "Q1 estimated taxes",
       description: "Quarterly estimated tax payment due to IRS.",
+      category: "TAXES",
       rrule: "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15",
       anchorDate: date(thisYear, 4, 15),
     },
     {
       title: "Q2 estimated taxes",
+      category: "TAXES",
       rrule: "FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=15",
       anchorDate: date(thisYear, 6, 15),
     },
     {
       title: "Q3 estimated taxes",
+      category: "TAXES",
       rrule: "FREQ=YEARLY;BYMONTH=9;BYMONTHDAY=15",
       anchorDate: date(thisYear, 9, 15),
     },
     {
       title: "Q4 estimated taxes",
+      category: "TAXES",
       rrule: "FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=15",
       anchorDate: date(thisYear + 1, 1, 15),
     },
     {
       title: "Annual workers comp audit",
       description: "Carrier audit window — submit payroll figures.",
+      category: "INSURANCE",
       rrule: "FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=1",
       anchorDate: date(thisYear, 3, 1),
       adminHidden: true, // example of a Super-only event
@@ -1762,7 +1784,28 @@ async function seedDatabase() {
     {
       title: "Spring season kickoff meeting",
       description: "Standalone (non-recurring) example.",
+      category: "OPERATIONS",
       rrule: null,
+      anchorDate: date(thisYear, 3, 15),
+    },
+    {
+      title: "Annual GL policy renewal",
+      description: "Renew general liability policy with carrier.",
+      category: "INSURANCE",
+      rrule: "FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=1",
+      anchorDate: date(thisYear, 6, 1),
+    },
+    {
+      title: "Business license renewal — VA",
+      category: "LICENSING",
+      rrule: "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=31",
+      anchorDate: date(thisYear, 12, 31),
+    },
+    {
+      title: "Quarterly bookkeeping reconciliation",
+      description: "Match books to bank/credit card statements.",
+      category: "FINANCE",
+      rrule: "FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=15",
       anchorDate: date(thisYear, 3, 15),
     },
   ];
@@ -1775,6 +1818,7 @@ async function seedDatabase() {
         where: { id: existing.id },
         data: {
           description: e.description ?? null,
+          category: e.category ?? null,
           rrule: e.rrule,
           anchorDate: e.anchorDate,
           adminHidden: !!e.adminHidden,
@@ -1785,6 +1829,7 @@ async function seedDatabase() {
         data: {
           title: e.title,
           description: e.description ?? null,
+          category: e.category ?? null,
           rrule: e.rrule,
           anchorDate: e.anchorDate,
           adminHidden: !!e.adminHidden,

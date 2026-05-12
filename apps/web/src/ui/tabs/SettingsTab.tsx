@@ -272,6 +272,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "SERVICE_TYPES",
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
+        "TIMELINE_CATEGORIES",
         "WEATHER_API_KEY",
       ];
       const general = (Array.isArray(allSettings) ? allSettings : []).filter((s) => !s.key.startsWith("pricing_"));
@@ -413,7 +414,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         // Settings keys that should always expose a Description
                         // column in the editor (so admin can bootstrap the
                         // first description on a row that has none yet).
-                        const forceDescription = s.key === "DOCUMENT_TYPES";
+                        const forceDescription = s.key === "DOCUMENT_TYPES" || s.key === "TIMELINE_CATEGORIES";
                         // Detect JSON format and use appropriate editor
                         try {
                           const parsed = JSON.parse(s.value);
