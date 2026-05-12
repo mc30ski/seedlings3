@@ -111,13 +111,21 @@ export default function RRuleEditor({ value, onChange, anchorDate }: Props) {
   // empty — never overwrites a value the user picked manually.
   useEffect(() => {
     if (!anchorDate) return;
-    const d = new Date(anchorDate);
-    if (isNaN(d.getTime())) return;
+    // The anchor input is a YYYY-MM-DD string (calendar date, not a moment),
+    // but `new Date("YYYY-MM-DD")` parses as UTC midnight — then reading
+    // .getMonth()/.getDate() returns local-time components, which shifts a
+    // day earlier in negative-offset zones (e.g., 2027-01-15 → "Jan 14" in
+    // Eastern). Parse the string parts directly so the picker matches what
+    // the user typed.
+    const [yStr, mStr, dStr] = anchorDate.split("-");
+    const m = Number(mStr);
+    const day = Number(dStr);
+    if (!yStr || !m || !day) return;
     if (freq === "YEARLY") {
-      if (!byMonth) setByMonth(d.getMonth() + 1);
-      if (!byMonthDay) setByMonthDay(d.getDate());
+      if (!byMonth) setByMonth(m);
+      if (!byMonthDay) setByMonthDay(day);
     } else if (freq === "MONTHLY") {
-      if (!byMonthDay) setByMonthDay(d.getDate());
+      if (!byMonthDay) setByMonthDay(day);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freq, anchorDate]);

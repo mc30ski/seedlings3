@@ -211,10 +211,13 @@ export default function TimelineTab({ isSuper = false }: Props) {
   }
 
   function navigateToDoc(docId: string) {
+    // Important: do NOT preset a status filter on Documents. The Timeline
+    // surfaces docs across every status (expired, expiring, future), and
+    // the receiving tab fetches with whichever status is set. If we forced
+    // "expiring" here, clicking an already-expired doc would 404 client-side
+    // because the API wouldn't return it.
     try {
-      sessionStorage.setItem("pendingDocumentsStatusFilter", "expiring");
-      // Use the existing Documents deep-link mechanism (localStorage stash +
-      // event dispatch from pages/index.tsx).
+      sessionStorage.removeItem("pendingDocumentsStatusFilter");
       localStorage.setItem("seedlings_deeplink_document", docId);
       localStorage.setItem("seedlings_deeplink_document_ts", String(Date.now()));
     } catch {}
@@ -223,8 +226,8 @@ export default function TimelineTab({ isSuper = false }: Props) {
     } else {
       window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "documents" } }));
     }
-    // After navigation, pages/index.tsx's consume-effect reads localStorage
-    // and dispatches the documentsTab:applyDeepLink event.
+    // DocumentsTab listens for this event and applies the highlight once it's
+    // mounted. The 250ms delay gives the tab time to render and register.
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("documentsTab:applyDeepLink", {
         detail: { docId },

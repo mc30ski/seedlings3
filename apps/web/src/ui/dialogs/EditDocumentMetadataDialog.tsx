@@ -13,6 +13,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
+import { Plus } from "lucide-react";
 import { apiPatch } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -59,6 +60,9 @@ export default function EditDocumentMetadataDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  // Separate visibility flag so the picker can be shown empty without the
+  // native date input rendering today as a phantom default.
+  const [showExpiration, setShowExpiration] = useState(false);
   const [adminHidden, setAdminHidden] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -66,7 +70,9 @@ export default function EditDocumentMetadataDialog({
     if (open && doc) {
       setTitle(doc.title);
       setDescription(doc.description ?? "");
-      setExpiresAt(isoToDateInput(doc.expiresAt));
+      const initialDate = isoToDateInput(doc.expiresAt);
+      setExpiresAt(initialDate);
+      setShowExpiration(!!initialDate);
       setAdminHidden(doc.adminHidden);
     }
   }, [open, doc]);
@@ -81,7 +87,9 @@ export default function EditDocumentMetadataDialog({
         // lives at the type-taxonomy level). Existing value, if any, is
         // preserved in the DB since we omit the field instead of nulling it.
         ...(isSingletonType ? {} : { description: description.trim() || null }),
-        expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
+        // Send null when the picker is hidden or empty — that's the user
+        // saying "no expiration." Send a real ISO when they've picked a date.
+        expiresAt: showExpiration && expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null,
         adminHidden,
       });
       publishInlineMessage({ type: "SUCCESS", text: "Document updated." });
@@ -116,10 +124,19 @@ export default function EditDocumentMetadataDialog({
                     <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
                   </Box>
                 )}
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Expiration date</Text>
-                  <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-                </Box>
+                {showExpiration ? (
+                  <Box>
+                    <HStack justify="space-between" mb={1}>
+                      <Text fontSize="xs" fontWeight="medium">Expiration date</Text>
+                      <Button size="xs" variant="ghost" onClick={() => { setShowExpiration(false); setExpiresAt(""); }}>Remove</Button>
+                    </HStack>
+                    <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+                  </Box>
+                ) : (
+                  <Button size="xs" variant="ghost" alignSelf="start" onClick={() => setShowExpiration(true)}>
+                    <Plus size={12} /> Add expiration date
+                  </Button>
+                )}
                 <Checkbox.Root
                   checked={adminHidden}
                   onCheckedChange={(e) => setAdminHidden(!!e.checked)}
