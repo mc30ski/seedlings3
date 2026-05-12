@@ -249,6 +249,38 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     }
   }
 
+  /**
+   * Trigger downloads of every current-version file for the listed docs.
+   * The presigned URLs already include Content-Disposition: attachment, so
+   * each anchor click forces a save. We stagger them slightly so browsers
+   * accept the burst (Chrome/Firefox prompt once, then allow batches).
+   */
+  async function downloadAll(docs: CompanyDocument[], collectionLabel: string) {
+    const eligible = docs.filter((d) => d.currentVersion);
+    if (eligible.length === 0) {
+      publishInlineMessage({ type: "ERROR", text: "Nothing to download — no versions uploaded yet." });
+      return;
+    }
+    publishInlineMessage({ type: "SUCCESS", text: `Downloading ${eligible.length} ${collectionLabel} document${eligible.length === 1 ? "" : "s"}…` });
+    for (const d of eligible) {
+      try {
+        const { url } = await apiGet<{ url: string }>(
+          `${apiBase}/${d.id}/versions/${d.currentVersion!.id}/url?mode=download`,
+        );
+        const a = document.createElement("a");
+        a.href = url;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (err) {
+        publishInlineMessage({ type: "ERROR", text: getErrorMessage(`Failed to download "${d.title}".`, err) });
+      }
+      // Brief gap so the browser processes each download before the next.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
   async function archive(id: string) {
     try {
       await apiPost(`${apiBase}/${id}/archive`);
@@ -496,6 +528,13 @@ export default function DocumentsTab({ isSuper = false }: Props) {
         </HStack>
       )}
 
+      <Box position="relative">
+        {loading && items.length > 0 && (
+          <>
+            <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+            <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+          </>
+        )}
       {loading && items.length === 0 ? (
         <HStack justify="center" py={6}><Spinner /></HStack>
       ) : filtered.length === 0 ? (
@@ -530,7 +569,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                         <FileText size={13} />
                         <Text fontSize="sm" fontWeight="semibold" lineClamp={2}>{d.title}</Text>
                         {d.adminHidden && (
-                          <Badge size="xs" colorPalette="purple" variant="subtle" px="1.5" title="Hidden from Admins">
+                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5" title="Hidden from Admins">
                             <EyeOff size={9} />
                           </Badge>
                         )}
@@ -538,23 +577,26 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                           <Badge size="xs" colorPalette="gray" variant="solid" px="1.5">Archived</Badge>
                         )}
                       </HStack>
-                      <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
-                        {!nestedInGroup && (
-                          <Badge size="xs" colorPalette="blue" variant="subtle" px="1.5">
-                            {typeLabel}
-                          </Badge>
-                        )}
-                        {d.expiresAt && (
-                          <Badge size="xs" colorPalette={expColor} variant="subtle" px="1.5">
-                            Exp {fmtDateShort(d.expiresAt)}
-                          </Badge>
-                        )}
-                        <Text>{versionCount} ver · upd {fmtDateShort(d.updatedAt)}</Text>
-                      </HStack>
-                      {/* Per-doc description shown for multi-instance docs
-                          only — singleton docs use the type-level description
-                          rendered on the (non-existent for singletons) wrapper
-                          or, when standalone, omitted entirely. */}
+                      {(!nestedInGroup || d.expiresAt) && (
+                        <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
+                          {!nestedInGroup && (
+                            <Badge size="xs" colorPalette="blue" variant="subtle" px="1.5">
+                              {typeLabel}
+                            </Badge>
+                          )}
+                          {d.expiresAt && (
+                            <Badge size="xs" colorPalette={expColor} variant="subtle" px="1.5">
+                              Exp {fmtDateShort(d.expiresAt)}
+                            </Badge>
+                          )}
+                        </HStack>
+                      )}
+                      {/* Singletons inherit the type-level description (their
+                          own description field is hidden everywhere). Multi-
+                          instance docs show their per-doc description. */}
+                      {singleton && documentTypeDescription(d.type, types) && (
+                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{documentTypeDescription(d.type, types)}</Text>
+                      )}
                       {d.description && !singleton && (
                         <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
                       )}
@@ -606,6 +648,9 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                         <HStack py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading…</Text></HStack>
                       ) : (
                         <VStack align="stretch" gap={2}>
+                          <Text fontSize="xs" color="fg.muted">
+                            {versionCount} {versionCount === 1 ? "version" : "versions"} · updated {fmtDateShort(d.updatedAt)}
+                          </Text>
                           {isSuper && !d.archivedAt && (
                             <HStack gap={2} wrap="wrap">
                               <Button size="xs" variant="outline" colorPalette="teal" onClick={() => setVersionUploadDocId(d.id)}>
@@ -724,27 +769,41 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                       >
                         <FileText size={13} />
                         <Text fontSize="sm" fontWeight="semibold">{opts.headerLabel}</Text>
-                      </HStack>
-                      <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
-                        <Badge size="xs" colorPalette="gray" variant="subtle" px="1.5">
+                        <Badge size="sm" colorPalette="teal" variant="solid" px="2" borderRadius="full">
                           {docs.length} {docs.length === 1 ? "document" : "documents"}
                         </Badge>
-                        {expiredCount > 0 && (
-                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">
-                            {expiredCount} expired
-                          </Badge>
-                        )}
-                        {expiringCount > 0 && collectionExpStatus !== "expired" && (
-                          <Badge size="xs" colorPalette="yellow" variant="subtle" px="1.5">
-                            {expiringCount} expiring
-                          </Badge>
-                        )}
                       </HStack>
+                      {(expiredCount > 0 || (expiringCount > 0 && collectionExpStatus !== "expired")) && (
+                        <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
+                          {expiredCount > 0 && (
+                            <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">
+                              {expiredCount} expired
+                            </Badge>
+                          )}
+                          {expiringCount > 0 && collectionExpStatus !== "expired" && (
+                            <Badge size="xs" colorPalette="yellow" variant="subtle" px="1.5">
+                              {expiringCount} expiring
+                            </Badge>
+                          )}
+                        </HStack>
+                      )}
                       {opts.headerDescription && (
                         <Text fontSize="xs" color="fg.muted" lineClamp={2}>{opts.headerDescription}</Text>
                       )}
                     </VStack>
                     <HStack gap={0.5} flexShrink={0}>
+                      {docs.some((d) => d.currentVersion) && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          px="1.5"
+                          minW="0"
+                          onClick={() => downloadAll(docs, opts.headerLabel)}
+                          title="Download all documents in this collection"
+                        >
+                          <Download size={13} />
+                        </Button>
+                      )}
                       <Button
                         size="xs"
                         variant="ghost"
@@ -811,6 +870,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           </VStack>
         );
       })()}
+      </Box>
 
       {isSuper && (
         <>
