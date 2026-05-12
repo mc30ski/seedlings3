@@ -4255,44 +4255,37 @@ Respond ONLY with valid JSON in this exact format:
   // ----------------------------------------------------------------------
   // Company Documents
   // ----------------------------------------------------------------------
-  // Super has full access (read, write, hidden docs). Admin can view + open
-  // non-hidden docs but cannot mutate.
+  // The endpoint defines the audience, not the caller's role. The `/admin/...`
+  // namespace ALWAYS hides admin-hidden documents — even from Super users —
+  // so the Admin tab can't accidentally surface a Super-only doc. Super users
+  // get full access through the parallel `/super/...` namespace.
 
-  async function callerIsSuper(req: any): Promise<boolean> {
-    const me = await services.currentUser.me(req.auth?.clerkUserId);
-    return (me.roles ?? []).includes(RoleVal.SUPER);
-  }
+  // ----- Admin namespace (read-only, never includes adminHidden) ---------
 
-  // List
   app.get("/admin/documents", adminGuard, async (req: any) => {
-    const adminHiddenVisible = await callerIsSuper(req);
     const { type, status, q } = (req.query || {}) as Record<string, string>;
     return services.companyDocuments.list({
-      adminHiddenVisible,
+      adminHiddenVisible: false,
       type,
       status: (status as any) || undefined,
       q,
     });
   });
 
-  // Expiration counts (title-bar pill)
-  app.get("/admin/documents/expiration-counts", adminGuard, async (req: any) => {
-    const adminHiddenVisible = await callerIsSuper(req);
-    return services.companyDocuments.expirationCounts({ adminHiddenVisible });
+  app.get("/admin/documents/expiration-counts", adminGuard, async () => {
+    return services.companyDocuments.expirationCounts({ adminHiddenVisible: false });
   });
 
-  // Detail
   app.get("/admin/documents/:id", adminGuard, async (req: any) => {
-    const adminHiddenVisible = await callerIsSuper(req);
-    return services.companyDocuments.get(String(req.params.id), { adminHiddenVisible });
+    return services.companyDocuments.get(String(req.params.id), {
+      adminHiddenVisible: false,
+    });
   });
 
-  // Open / download a version (presigned URL)
   app.get(
     "/admin/documents/:id/versions/:versionId/url",
     adminGuard,
     async (req: any) => {
-      const adminHiddenVisible = await callerIsSuper(req);
       const mode = (req.query?.mode === "download" ? "download" : "view") as
         | "view"
         | "download";
@@ -4301,21 +4294,58 @@ Respond ONLY with valid JSON in this exact format:
         String(req.params.id),
         String(req.params.versionId),
         mode,
-        { adminHiddenVisible },
+        { adminHiddenVisible: false },
       );
     },
   );
 
-  // ----- Super-only writes ------------------------------------------------
+  // ----- Super namespace (read + write, includes adminHidden) ------------
 
-  app.post("/admin/documents", superGuard, async (req: any) => {
+  app.get("/super/documents", superGuard, async (req: any) => {
+    const { type, status, q } = (req.query || {}) as Record<string, string>;
+    return services.companyDocuments.list({
+      adminHiddenVisible: true,
+      type,
+      status: (status as any) || undefined,
+      q,
+    });
+  });
+
+  app.get("/super/documents/expiration-counts", superGuard, async () => {
+    return services.companyDocuments.expirationCounts({ adminHiddenVisible: true });
+  });
+
+  app.get("/super/documents/:id", superGuard, async (req: any) => {
+    return services.companyDocuments.get(String(req.params.id), {
+      adminHiddenVisible: true,
+    });
+  });
+
+  app.get(
+    "/super/documents/:id/versions/:versionId/url",
+    superGuard,
+    async (req: any) => {
+      const mode = (req.query?.mode === "download" ? "download" : "view") as
+        | "view"
+        | "download";
+      return services.companyDocuments.getVersionUrl(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+        mode,
+        { adminHiddenVisible: true },
+      );
+    },
+  );
+
+  app.post("/super/documents", superGuard, async (req: any) => {
     return services.companyDocuments.create(
       await currentUserId(req),
       req.body || {},
     );
   });
 
-  app.patch("/admin/documents/:id", superGuard, async (req: any) => {
+  app.patch("/super/documents/:id", superGuard, async (req: any) => {
     return services.companyDocuments.update(
       await currentUserId(req),
       String(req.params.id),
@@ -4323,14 +4353,14 @@ Respond ONLY with valid JSON in this exact format:
     );
   });
 
-  app.post("/admin/documents/:id/archive", superGuard, async (req: any) => {
+  app.post("/super/documents/:id/archive", superGuard, async (req: any) => {
     return services.companyDocuments.archive(
       await currentUserId(req),
       String(req.params.id),
     );
   });
 
-  app.post("/admin/documents/:id/unarchive", superGuard, async (req: any) => {
+  app.post("/super/documents/:id/unarchive", superGuard, async (req: any) => {
     return services.companyDocuments.unarchive(
       await currentUserId(req),
       String(req.params.id),
@@ -4338,7 +4368,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   // Hard delete — requires the document to be archived first.
-  app.delete("/admin/documents/:id", superGuard, async (req: any) => {
+  app.delete("/super/documents/:id", superGuard, async (req: any) => {
     return services.companyDocuments.hardDelete(
       await currentUserId(req),
       String(req.params.id),
@@ -4346,7 +4376,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   // Versions
-  app.post("/admin/documents/:id/versions/init", superGuard, async (req: any) => {
+  app.post("/super/documents/:id/versions/init", superGuard, async (req: any) => {
     return services.companyDocuments.initVersion(
       await currentUserId(req),
       String(req.params.id),
@@ -4355,7 +4385,7 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.post(
-    "/admin/documents/:id/versions/:versionId/confirm",
+    "/super/documents/:id/versions/:versionId/confirm",
     superGuard,
     async (req: any) => {
       return services.companyDocuments.confirmVersion(
@@ -4368,7 +4398,7 @@ Respond ONLY with valid JSON in this exact format:
   );
 
   app.post(
-    "/admin/documents/:id/versions/:versionId/restore",
+    "/super/documents/:id/versions/:versionId/restore",
     superGuard,
     async (req: any) => {
       return services.companyDocuments.restoreVersion(
@@ -4380,7 +4410,7 @@ Respond ONLY with valid JSON in this exact format:
   );
 
   app.delete(
-    "/admin/documents/:id/versions/:versionId",
+    "/super/documents/:id/versions/:versionId",
     superGuard,
     async (req: any) => {
       return services.companyDocuments.deleteVersion(

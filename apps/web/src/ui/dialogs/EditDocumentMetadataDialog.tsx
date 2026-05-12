@@ -31,6 +31,8 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   doc: DocMeta | null;
+  /** API base path for documents (writes always hit `/api/super/...`). */
+  apiBase: string;
   /** When true, hide the per-doc description input — singleton types use the
    *  type-level taxonomy description instead. */
   isSingletonType?: boolean;
@@ -52,7 +54,7 @@ function isoToDateInput(iso: string | null | undefined): string {
 }
 
 export default function EditDocumentMetadataDialog({
-  open, onOpenChange, doc, isSingletonType, onSaved,
+  open, onOpenChange, doc, apiBase, isSingletonType, onSaved,
 }: Props) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -73,7 +75,7 @@ export default function EditDocumentMetadataDialog({
     if (!doc) return;
     setBusy(true);
     try {
-      await apiPatch(`/api/admin/documents/${doc.id}`, {
+      await apiPatch(`${apiBase}/${doc.id}`, {
         title: title.trim(),
         // Don't write description for singleton types (their description
         // lives at the type-taxonomy level). Existing value, if any, is

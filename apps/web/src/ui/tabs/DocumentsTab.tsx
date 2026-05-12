@@ -23,11 +23,13 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Link2,
   Pencil,
   Plus,
   RotateCcw,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import {
@@ -128,6 +130,10 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   const [uploadInitialType, setUploadInitialType] = useState<string | null>(null);
   const [versionUploadDocId, setVersionUploadDocId] = useState<string | null>(null);
   const [editingDoc, setEditingDoc] = useState<CompanyDocument | null>(null);
+  // Multi-instance groups can be collapsed to show just the header (so the
+  // collection reads like a single document). Singleton groups already show
+  // one doc, so collapse doesn't apply to them.
+  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<
     | { kind: "archive"; doc: CompanyDocument }
     | { kind: "unarchive"; doc: CompanyDocument }
@@ -135,6 +141,30 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     | { kind: "deleteVersion"; doc: CompanyDocument; versionId: string; filename: string }
     | null
   >(null);
+
+  // Endpoint base reflects the audience, not the caller's role: the Admin
+  // tab always uses `/api/admin/documents` so Super-only docs are filtered
+  // server-side even when the caller happens to be Super. The Super tab uses
+  // `/api/super/documents` for the full view + writes.
+  const apiBase = isSuper ? "/api/super/documents" : "/api/admin/documents";
+
+  // Deep-link target: `?docId=<id>` filters to a single doc; `?typeKey=<key>`
+  // filters to a type group. Applied once on mount and stripped from the URL
+  // so a subsequent reload doesn't keep re-applying.
+  const [highlightDocId, setHighlightDocId] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const docId = url.searchParams.get("docId");
+    const typeKey = url.searchParams.get("typeKey");
+    if (docId) setHighlightDocId(docId);
+    if (typeKey) setTypeFilter([typeKey]);
+    if (docId || typeKey) {
+      url.searchParams.delete("docId");
+      url.searchParams.delete("typeKey");
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, []);
 
   // Pre-applied status filter from title-bar pill navigation.
   useEffect(() => {
@@ -154,7 +184,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       if (typeFilter[0] && typeFilter[0] !== "ALL") params.set("type", typeFilter[0]);
       if (statusFilter[0] && statusFilter[0] !== "all") params.set("status", statusFilter[0]);
       if (q.trim()) params.set("q", q.trim());
-      const list = await apiGet<CompanyDocument[]>(`/api/admin/documents?${params}`);
+      const list = await apiGet<CompanyDocument[]>(`${apiBase}?${params}`);
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load.", err) });
@@ -184,7 +214,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function loadDetail(id: string) {
     try {
-      const detail = await apiGet<CompanyDocumentDetail>(`/api/admin/documents/${id}`);
+      const detail = await apiGet<CompanyDocumentDetail>(`${apiBase}/${id}`);
       setDetails((prev) => ({ ...prev, [id]: detail }));
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load detail.", err) });
@@ -207,7 +237,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   async function openVersion(docId: string, versionId: string, mode: "view" | "download") {
     try {
       const { url } = await apiGet<{ url: string }>(
-        `/api/admin/documents/${docId}/versions/${versionId}/url?mode=${mode}`,
+        `${apiBase}/${docId}/versions/${versionId}/url?mode=${mode}`,
       );
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) {
@@ -217,7 +247,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function archive(id: string) {
     try {
-      await apiPost(`/api/admin/documents/${id}/archive`);
+      await apiPost(`${apiBase}/${id}/archive`);
       publishInlineMessage({ type: "SUCCESS", text: "Archived." });
       void load();
     } catch (err) {
@@ -227,7 +257,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function unarchive(id: string) {
     try {
-      await apiPost(`/api/admin/documents/${id}/unarchive`);
+      await apiPost(`${apiBase}/${id}/unarchive`);
       publishInlineMessage({ type: "SUCCESS", text: "Restored from archive." });
       void load();
     } catch (err) {
@@ -237,7 +267,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function hardDelete(id: string) {
     try {
-      await apiDelete(`/api/admin/documents/${id}`);
+      await apiDelete(`${apiBase}/${id}`);
       publishInlineMessage({ type: "SUCCESS", text: "Permanently deleted." });
       setDetails((prev) => {
         const { [id]: _, ...rest } = prev;
@@ -251,7 +281,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function restoreVersion(docId: string, versionId: string) {
     try {
-      await apiPost(`/api/admin/documents/${docId}/versions/${versionId}/restore`);
+      await apiPost(`${apiBase}/${docId}/versions/${versionId}/restore`);
       publishInlineMessage({ type: "SUCCESS", text: "Version restored." });
       await loadDetail(docId);
       void load();
@@ -262,12 +292,35 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   async function deleteVersion(docId: string, versionId: string) {
     try {
-      await apiDelete(`/api/admin/documents/${docId}/versions/${versionId}`);
+      await apiDelete(`${apiBase}/${docId}/versions/${versionId}`);
       publishInlineMessage({ type: "SUCCESS", text: "Version deleted." });
       await loadDetail(docId);
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+    }
+  }
+
+  // Build a shareable deep-link URL. We encode the audience (super/admin) in
+  // the tab slug so the recipient lands in the right context — and the server
+  // enforces permission either way.
+  function buildShareUrl(params: { docId?: string; typeKey?: string }): string {
+    if (typeof window === "undefined") return "";
+    const url = new URL(window.location.origin);
+    const tabSlug = isSuper ? "super-system-documents" : "admin-system-documents";
+    url.searchParams.set("tab", tabSlug);
+    if (params.docId) url.searchParams.set("docId", params.docId);
+    if (params.typeKey) url.searchParams.set("typeKey", params.typeKey);
+    return url.toString();
+  }
+
+  async function copyShareLink(params: { docId?: string; typeKey?: string; label: string }) {
+    const url = buildShareUrl({ docId: params.docId, typeKey: params.typeKey });
+    try {
+      await navigator.clipboard.writeText(url);
+      publishInlineMessage({ type: "SUCCESS", text: `Link to "${params.label}" copied.` });
+    } catch {
+      publishInlineMessage({ type: "ERROR", text: `Copy failed. Link: ${url}` });
     }
   }
 
@@ -281,14 +334,36 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   const statusCollection = useMemo(() => createListCollection({ items: STATUS_ITEMS }), []);
 
   const filtered = useMemo(() => {
-    if (!q.trim()) return items;
+    let rows = items;
+    if (highlightDocId) {
+      rows = rows.filter((i) => i.id === highlightDocId);
+    }
+    if (!q.trim()) return rows;
     const qlc = q.trim().toLowerCase();
-    return items.filter((i) =>
+    return rows.filter((i) =>
       [i.title, i.description ?? "", documentTypeLabel(i.type, types)].some((s) =>
         s.toLowerCase().includes(qlc),
       ),
     );
-  }, [items, q, types]);
+  }, [items, q, types, highlightDocId]);
+
+  // Auto-expand and detect-not-found for deep links.
+  useEffect(() => {
+    if (!highlightDocId) return;
+    if (loading) return;
+    const found = items.find((i) => i.id === highlightDocId);
+    if (found) {
+      setExpanded((prev) => prev.has(highlightDocId) ? prev : new Set(prev).add(highlightDocId));
+      if (!details[highlightDocId]) void loadDetail(highlightDocId);
+    } else {
+      publishInlineMessage({
+        type: "ERROR",
+        text: "That document isn't available — it may have been removed or you don't have permission to view it.",
+      });
+      setHighlightDocId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightDocId, loading, items.length]);
 
   const takenSingletonKeys = useMemo(() => {
     const taken = new Set<string>();
@@ -363,6 +438,19 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           >
             <Plus size={14} /> Add Document
           </Button>
+        )}
+        {highlightDocId && (
+          <Badge
+            size="sm"
+            colorPalette="teal"
+            variant="subtle"
+            cursor="pointer"
+            px="2"
+            onClick={() => setHighlightDocId(null)}
+            title="Show all documents"
+          >
+            Linked to one document <X size={11} style={{ marginLeft: 4 }} />
+          </Badge>
         )}
       </HStack>
 
@@ -450,6 +538,16 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                           </Button>
                         </>
                       )}
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        px="1.5"
+                        minW="0"
+                        onClick={() => copyShareLink({ docId: d.id, label: d.title })}
+                        title="Copy link to this document"
+                      >
+                        <Link2 size={13} />
+                      </Button>
                       <Button size="xs" variant="ghost" px="1.5" minW="0" onClick={() => toggleExpanded(d.id)}>
                         {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </Button>
@@ -536,10 +634,41 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           docs: CompanyDocument[],
           opts: { headerLabel: string; headerDescription: string | null; singleton: boolean },
         ) => {
+          // Singleton groups don't collapse — they're always one doc, so the
+          // toggle would be confusing. Multi-instance groups respect the user
+          // toggle. A deep-link to one doc bypasses collapse by filtering the
+          // list to a single item upstream.
+          const collapsible = !opts.singleton;
+          const collapsed = collapsible && collapsedTypes.has(typeKey);
+          const toggleCollapsed = () =>
+            setCollapsedTypes((prev) => {
+              const next = new Set(prev);
+              if (next.has(typeKey)) next.delete(typeKey);
+              else next.add(typeKey);
+              return next;
+            });
           return (
             <Box key={typeKey}>
-              <HStack mb={1} gap={2} align="baseline" wrap="wrap">
-                <Text fontSize="sm" fontWeight="semibold" color="fg.default">
+              <HStack mb={1} gap={2} align="center" wrap="wrap">
+                {collapsible && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    px="1"
+                    minW="0"
+                    onClick={toggleCollapsed}
+                    title={collapsed ? "Expand collection" : "Collapse collection"}
+                  >
+                    {collapsed ? <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} /> : <ChevronDown size={14} />}
+                  </Button>
+                )}
+                <Text
+                  fontSize="sm"
+                  fontWeight="semibold"
+                  color="fg.default"
+                  cursor={collapsible ? "pointer" : "default"}
+                  onClick={collapsible ? toggleCollapsed : undefined}
+                >
                   {opts.headerLabel}
                 </Text>
                 {opts.singleton ? (
@@ -547,23 +676,41 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                 ) : (
                   <Badge size="xs" colorPalette="gray" variant="outline">{docs.length}</Badge>
                 )}
-                {isSuper && !opts.singleton && (
+                {/* Share link for the collection — multi-instance types get a
+                    group-scoped link (?typeKey=…). Singletons don't need one
+                    since their single doc already has a per-doc link. */}
+                {!opts.singleton && (
                   <Button
                     size="xs"
                     variant="ghost"
-                    colorPalette="teal"
-                    onClick={() => { setUploadInitialType(typeKey); setUploadOpen(true); }}
+                    px="1.5"
+                    minW="0"
+                    onClick={() => copyShareLink({ typeKey, label: opts.headerLabel })}
+                    title="Copy link to this collection"
                   >
-                    <Plus size={11} /> Add document
+                    <Link2 size={12} />
                   </Button>
                 )}
               </HStack>
-              {opts.headerDescription && (
+              {opts.headerDescription && !collapsed && (
                 <Text fontSize="xs" color="fg.muted" mb={2}>{opts.headerDescription}</Text>
               )}
-              <VStack align="stretch" gap={2} pl={opts.singleton ? 0 : 2}>
-                {docs.map((d) => renderDocCard(d, opts.singleton))}
-              </VStack>
+              {!collapsed && (
+                <VStack align="stretch" gap={2} pl={opts.singleton ? 0 : 2}>
+                  {docs.map((d) => renderDocCard(d, opts.singleton))}
+                  {isSuper && !opts.singleton && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      colorPalette="teal"
+                      alignSelf="start"
+                      onClick={() => { setUploadInitialType(typeKey); setUploadOpen(true); }}
+                    >
+                      <Plus size={11} /> Add {opts.headerLabel}
+                    </Button>
+                  )}
+                </VStack>
+              )}
             </Box>
           );
         };
@@ -595,6 +742,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             onOpenChange={setUploadOpen}
             types={types}
             takenSingletonKeys={takenSingletonKeys}
+            apiBase={apiBase}
             initialType={uploadInitialType}
             onCreated={() => { void load(); }}
           />
@@ -602,6 +750,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             open={!!versionUploadDocId}
             onOpenChange={(o) => { if (!o) setVersionUploadDocId(null); }}
             documentId={versionUploadDocId}
+            apiBase={apiBase}
             defaultExpiresAt={items.find((i) => i.id === versionUploadDocId)?.expiresAt ?? null}
             onUploaded={() => {
               const id = versionUploadDocId;
@@ -614,6 +763,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             open={!!editingDoc}
             onOpenChange={(o) => { if (!o) setEditingDoc(null); }}
             doc={editingDoc}
+            apiBase={apiBase}
             isSingletonType={editingDoc ? isSingletonType(editingDoc.type, types) : false}
             onSaved={() => { setEditingDoc(null); void load(); }}
           />
