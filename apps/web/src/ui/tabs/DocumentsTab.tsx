@@ -156,19 +156,34 @@ export default function DocumentsTab({ isSuper = false }: Props) {
   // filters to a type group. Applied once on mount and stripped from the URL
   // so a subsequent reload doesn't keep re-applying.
   const [highlightDocId, setHighlightDocId] = useState<string | null>(null);
+  // Distinguishes a deep-link to a collection (`?typeKey=…`) from the user
+  // just picking that type from the filter dropdown — the chip varies.
+  const [highlightTypeKey, setHighlightTypeKey] = useState<string | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     const docId = url.searchParams.get("docId");
     const typeKey = url.searchParams.get("typeKey");
     if (docId) setHighlightDocId(docId);
-    if (typeKey) setTypeFilter([typeKey]);
+    if (typeKey) {
+      setTypeFilter([typeKey]);
+      setHighlightTypeKey(typeKey);
+    }
     if (docId || typeKey) {
       url.searchParams.delete("docId");
       url.searchParams.delete("typeKey");
       window.history.replaceState(null, "", url.toString());
     }
   }, []);
+
+  // If the user changes the type filter manually, the deep-link highlight no
+  // longer reflects what's on screen — drop the special "linked to collection"
+  // chip so it doesn't lie.
+  useEffect(() => {
+    if (highlightTypeKey && typeFilter[0] !== highlightTypeKey) {
+      setHighlightTypeKey(null);
+    }
+  }, [typeFilter, highlightTypeKey]);
 
   // Pre-applied status filter from title-bar pill navigation.
   useEffect(() => {
@@ -512,7 +527,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           </Button>
         )}
       </HStack>
-      {highlightDocId && (
+      {(highlightDocId || highlightTypeKey) && (
         <HStack mb={2} gap={1} wrap="wrap" pl="1">
           <Badge
             size="sm"
@@ -520,10 +535,21 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             variant="subtle"
             cursor="pointer"
             px="2"
-            onClick={() => setHighlightDocId(null)}
+            onClick={() => {
+              setHighlightDocId(null);
+              if (highlightTypeKey) {
+                setHighlightTypeKey(null);
+                setTypeFilter(["ALL"]);
+              }
+            }}
             title="Show all documents"
           >
-            Linked to one document <X size={11} style={{ marginLeft: 4 }} />
+            {highlightDocId
+              ? "Linked to one document"
+              : `Linked to one document collection (${
+                  items.filter((i) => i.type === highlightTypeKey && !i.archivedAt).length
+                })`}
+            <X size={11} style={{ marginLeft: 4 }} />
           </Badge>
         </HStack>
       )}

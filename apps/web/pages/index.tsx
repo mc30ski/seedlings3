@@ -1713,7 +1713,11 @@ export default function HomePage() {
     } else if (outerValue === "client") {
       setClientInnerTab(matched.value as any);
     }
-    router.replace("/", undefined, { shallow: true });
+    // Strip only the `tab` param; preserve everything else (e.g., `docId`,
+    // `typeKey`, `occ=…`) so the receiving tab can read its deep-link params.
+    const rest = { ...router.query };
+    delete rest.tab;
+    router.replace({ pathname: "/", query: rest }, undefined, { shallow: true });
   }, [router.query.tab, isSignedIn, meLoading]);
 
   // Deep-link to a specific occurrence (e.g., ?occ=OCCURRENCE_ID or ?occ=OCCURRENCE_ID&view=admin)
