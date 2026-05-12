@@ -22,6 +22,7 @@ import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
+import TimelineTab from "@/src/ui/tabs/TimelineTab";
 import WeatherBar from "@/src/ui/components/WeatherBar";
 import EquipmentTab from "@/src/ui/tabs/EquipmentTab";
 import JobsTab from "@/src/ui/tabs/JobsTab";
@@ -79,6 +80,7 @@ import {
   FiSun,
   FiSearch,
   FiFolder,
+  FiCalendar,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -716,6 +718,13 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<DocumentsTab />),
     },
     {
+      value: "timeline",
+      label: "Timeline",
+      icon: FiCalendar,
+
+      content: wrapWithInlineMessage(<TimelineTab />),
+    },
+    {
       value: "settings",
       label: "Settings",
       icon: FiSettings,
@@ -884,7 +893,7 @@ export default function HomePage() {
           equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
           payments: "Money", statistics: "Money",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory", pricing: "Directory",
-          profile: "System", activity: "System", history: "System", documents: "System", settings: "System", notify: "System",
+          profile: "System", activity: "System", history: "System", documents: "System", timeline: "System", settings: "System", notify: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
           Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
@@ -928,6 +937,14 @@ export default function HomePage() {
           label: "Documents",
           icon: FiFolder,
           content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          value: "timeline",
+          label: "Timeline",
+          icon: FiCalendar,
+          content: wrapWithInlineMessage(<TimelineTab isSuper />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -1369,40 +1386,45 @@ export default function HomePage() {
     setWorkerInnerTab("reminders" as any);
   }, []);
 
-  // Expired company documents alert — visible to admins (read-only) and super.
-  // Super uses the /super/ endpoint so the count includes hidden docs; admin
-  // uses /admin/ so hidden docs are filtered out server-side.
-  const [expiredDocsCount, setExpiredDocsCount] = useState(0);
-  const loadExpiredDocs = useCallback(async () => {
-    if (!isAdmin) { setExpiredDocsCount(0); if (me) markAlertLoaded("documents"); return; }
+  // Timeline alert — merged count of urgent timeline events + expiring
+  // documents (urgent = past or ≤7 days). Super uses /super/ for the full
+  // view including hidden items; admin uses /admin/ which filters hidden
+  // server-side.
+  const [timelineUrgentCount, setTimelineUrgentCount] = useState(0);
+  const loadTimelineCount = useCallback(async () => {
+    if (!isAdmin) { setTimelineUrgentCount(0); if (me) markAlertLoaded("timeline"); return; }
     try {
       const endpoint = isSuper
-        ? "/api/super/documents/expiration-counts"
-        : "/api/admin/documents/expiration-counts";
-      const r = await apiGet<{ expired: number; expiring: number }>(endpoint);
-      setExpiredDocsCount(r?.expired ?? 0);
+        ? "/api/super/timeline/upcoming-counts"
+        : "/api/admin/timeline/upcoming-counts";
+      const r = await apiGet<{ urgent: number; soon: number }>(endpoint);
+      setTimelineUrgentCount(r?.urgent ?? 0);
     } catch {
-      setExpiredDocsCount(0);
+      setTimelineUrgentCount(0);
     }
-    markAlertLoaded("documents");
+    markAlertLoaded("timeline");
   }, [isAdmin, isSuper, me]);
 
   useEffect(() => {
-    void loadExpiredDocs();
-    const onRefresh = () => void loadExpiredDocs();
+    void loadTimelineCount();
+    const onRefresh = () => void loadTimelineCount();
     window.addEventListener("seedlings3:documents-changed", onRefresh);
-    return () => window.removeEventListener("seedlings3:documents-changed", onRefresh);
-  }, [loadExpiredDocs]);
+    window.addEventListener("seedlings3:timeline-changed", onRefresh);
+    return () => {
+      window.removeEventListener("seedlings3:documents-changed", onRefresh);
+      window.removeEventListener("seedlings3:timeline-changed", onRefresh);
+    };
+  }, [loadTimelineCount]);
 
-  const goToDocuments = useCallback(() => {
-    try { sessionStorage.setItem("pendingDocumentsStatusFilter", "expired"); } catch {}
+  const goToTimeline = useCallback(() => {
+    try { sessionStorage.setItem("pendingTimelineUrgencyFilter", "urgent"); } catch {}
     if (isSuper) {
       setTopTab("super");
-      setSuperInnerTab("documents" as any);
+      setSuperInnerTab("timeline" as any);
       setSuperCategory("System");
     } else if (isAdmin) {
       setTopTab("admin");
-      setAdminInnerTab("documents" as any);
+      setAdminInnerTab("timeline" as any);
       setAdminCategory("System");
     }
   }, [isSuper, isAdmin]);
@@ -1567,7 +1589,7 @@ export default function HomePage() {
       setSuperInnerTab(tab as any);
       if (tab === "supplies") setSuperCategory("Inventory");
       else if (tab === "business-expenses") setSuperCategory("Money");
-      else if (tab === "operations" || tab === "audit" || tab === "settings" || tab === "documents") setSuperCategory("System");
+      else if (tab === "operations" || tab === "audit" || tab === "settings" || tab === "documents" || tab === "timeline") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
     window.addEventListener("navigate:superTab", onNav as EventListener);
@@ -1761,6 +1783,158 @@ export default function HomePage() {
       }
     }
   }, [router.query.equipment, isSignedIn]);
+
+  // Deep-link to a CompanyDocument (`?docId=…`) or a Documents collection
+  // (`?typeKey=…`). Stash to localStorage so the value survives Clerk auth,
+  // then strip the URL once signed in. A separate consume-effect below
+  // navigates to the right Documents tab and dispatches a custom event with
+  // the deep-link payload — DocumentsTab listens for that event.
+  useEffect(() => {
+    const docId = router.query.docId as string | undefined;
+    const typeKey = router.query.typeKey as string | undefined;
+    if (docId || typeKey) {
+      try {
+        if (docId) localStorage.setItem("seedlings_deeplink_document", docId);
+        if (typeKey) localStorage.setItem("seedlings_deeplink_document_typekey", typeKey);
+        localStorage.setItem("seedlings_deeplink_document_ts", String(Date.now()));
+      } catch {}
+      if (isSignedIn) {
+        const rest = { ...router.query };
+        delete rest.docId;
+        delete rest.typeKey;
+        router.replace({ pathname: "/", query: rest }, undefined, { shallow: true });
+      }
+    }
+  }, [router.query.docId, router.query.typeKey, isSignedIn]);
+
+  // Consume the stashed Documents deep-link once auth is settled. Navigates
+  // to Super → Documents if the user is Super, else Admin → Documents. Then
+  // dispatches `documentsTab:applyDeepLink` repeatedly until DocumentsTab
+  // signals readiness (via window.__documentsTabReady) — same retry-pattern
+  // used by the occurrence deep-link above.
+  useEffect(() => {
+    if (meLoading || !me?.isApproved) return;
+    let docId: string | null = null;
+    let typeKey: string | null = null;
+    try {
+      docId = localStorage.getItem("seedlings_deeplink_document");
+      typeKey = localStorage.getItem("seedlings_deeplink_document_typekey");
+      const ts = localStorage.getItem("seedlings_deeplink_document_ts");
+      // Drop stale links (older than 5 minutes) so a refresh doesn't replay.
+      if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
+        docId = null;
+        typeKey = null;
+      }
+    } catch {}
+    if (!docId && !typeKey) {
+      try {
+        localStorage.removeItem("seedlings_deeplink_document");
+        localStorage.removeItem("seedlings_deeplink_document_typekey");
+        localStorage.removeItem("seedlings_deeplink_document_ts");
+      } catch {}
+      return;
+    }
+    try {
+      localStorage.removeItem("seedlings_deeplink_document");
+      localStorage.removeItem("seedlings_deeplink_document_typekey");
+      localStorage.removeItem("seedlings_deeplink_document_ts");
+    } catch {}
+
+    if (isSuper) {
+      setTopTab("super");
+      setSuperInnerTab("documents" as any);
+      setSuperCategory("System");
+    } else if (isAdmin) {
+      setTopTab("admin");
+      setAdminInnerTab("documents" as any);
+      setAdminCategory("System");
+    } else {
+      // No documents tab visible to this role; nothing to do.
+      return;
+    }
+
+    const savedDocId = docId;
+    const savedTypeKey = typeKey;
+    let attempts = 0;
+    const maxAttempts = 30;
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__documentsTabReady || attempts >= maxAttempts) {
+        clearInterval(interval);
+        window.dispatchEvent(new CustomEvent("documentsTab:applyDeepLink", {
+          detail: { docId: savedDocId, typeKey: savedTypeKey },
+        }));
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [me?.isApproved, meLoading, isSuper, isAdmin]);
+
+  // Deep-link to a Timeline event (?eventId=…). Mirrors the Documents pattern:
+  // stash on detect, navigate after auth, dispatch event once Timeline tab is
+  // mounted and ready.
+  useEffect(() => {
+    const eventId = router.query.eventId as string | undefined;
+    if (eventId) {
+      try {
+        localStorage.setItem("seedlings_deeplink_event", eventId);
+        localStorage.setItem("seedlings_deeplink_event_ts", String(Date.now()));
+      } catch {}
+      if (isSignedIn) {
+        const rest = { ...router.query };
+        delete rest.eventId;
+        router.replace({ pathname: "/", query: rest }, undefined, { shallow: true });
+      }
+    }
+  }, [router.query.eventId, isSignedIn]);
+
+  useEffect(() => {
+    if (meLoading || !me?.isApproved) return;
+    let eventId: string | null = null;
+    try {
+      eventId = localStorage.getItem("seedlings_deeplink_event");
+      const ts = localStorage.getItem("seedlings_deeplink_event_ts");
+      if (ts && Date.now() - Number(ts) > 5 * 60 * 1000) {
+        eventId = null;
+      }
+    } catch {}
+    if (!eventId) {
+      try {
+        localStorage.removeItem("seedlings_deeplink_event");
+        localStorage.removeItem("seedlings_deeplink_event_ts");
+      } catch {}
+      return;
+    }
+    try {
+      localStorage.removeItem("seedlings_deeplink_event");
+      localStorage.removeItem("seedlings_deeplink_event_ts");
+    } catch {}
+
+    if (isSuper) {
+      setTopTab("super");
+      setSuperInnerTab("timeline" as any);
+      setSuperCategory("System");
+    } else if (isAdmin) {
+      setTopTab("admin");
+      setAdminInnerTab("timeline" as any);
+      setAdminCategory("System");
+    } else {
+      return;
+    }
+
+    const savedEventId = eventId;
+    let attempts = 0;
+    const maxAttempts = 30;
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__timelineTabReady || attempts >= maxAttempts) {
+        clearInterval(interval);
+        window.dispatchEvent(new CustomEvent("timelineTab:applyDeepLink", {
+          detail: { eventId: savedEventId },
+        }));
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [me?.isApproved, meLoading, isSuper, isAdmin]);
 
   useEffect(() => {
     if (meLoading || !me?.isApproved) return;
@@ -2066,7 +2240,7 @@ export default function HomePage() {
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
-              if (isAdmin && expiredDocsCount > 0) alerts.push({ label: "Documents", count: expiredDocsCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToDocuments });
+              if (isAdmin && timelineUrgentCount > 0) alerts.push({ label: "Timeline", count: timelineUrgentCount, bg: "#E0E7FF", color: "#3730A3", dotColor: "#6366F1", onClick: goToTimeline });
               if (alerts.length === 0) return null;
               const total = alerts.reduce((s, a) => s + a.count, 0);
               const topAlert = alerts[0]; // highest priority for badge color

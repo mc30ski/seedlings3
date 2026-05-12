@@ -22,9 +22,10 @@ export type AdminTabs =
   | "supplies"
   | "groups"
   | "pricing"
-  | "documents";
+  | "documents"
+  | "timeline";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies" | "pricing" | "documents";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 

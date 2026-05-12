@@ -32,6 +32,7 @@ enum AuditScope {
   SETTING
   NOTIFICATION
   DOCUMENT
+  TIMELINE
   // add more scopes as you expand the schema
 }
 
@@ -150,6 +151,8 @@ model User {
 
   companyDocumentsCreated  CompanyDocument[]        @relation("CompanyDocCreator")
   documentVersionsUploaded CompanyDocumentVersion[] @relation("CompanyDocVersionUploader")
+
+  timelineEventsCreated    TimelineEvent[]          @relation("TimelineEventCreator")
 }
 
 model NotificationTemplate {
@@ -1509,4 +1512,26 @@ model CompanyDocumentVersion {
   currentForDocument CompanyDocument? @relation("CompanyDocCurrent")
 
   @@index([documentId, uploadedAt])
+}
+
+// Timeline events — important upcoming dates surfaced in the Timeline tab
+// alongside CompanyDocument expirations. `rrule` is a RFC 5545 RRULE string
+// (e.g., "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=15"); empty/null = one-time at
+// `anchorDate`. Hidden events (adminHidden=true) are visible to Super only.
+model TimelineEvent {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  rrule       String?
+  anchorDate  DateTime
+  adminHidden Boolean  @default(false)
+  archivedAt  DateTime?
+
+  createdById String
+  createdBy   User     @relation("TimelineEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([anchorDate])
+  @@index([archivedAt])
 }
