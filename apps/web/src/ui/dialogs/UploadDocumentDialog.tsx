@@ -14,6 +14,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
+import { Plus } from "lucide-react";
 import { apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -50,6 +51,9 @@ export default function UploadDocumentDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  // Separate from `expiresAt` so the picker can be visible while empty — keeps
+  // the "no default" promise when the user reveals it.
+  const [showExpiration, setShowExpiration] = useState(false);
   const [adminHidden, setAdminHidden] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +64,7 @@ export default function UploadDocumentDialog({
       setTitle("");
       setDescription("");
       setExpiresAt("");
+      setShowExpiration(false);
       setAdminHidden(false);
       setFile(null);
     }
@@ -74,6 +79,23 @@ export default function UploadDocumentDialog({
       setTitle(selectedType.label);
     }
   }, [selectedType, title]);
+
+  // Turn "Articles_of_Org-2024.pdf" → "Articles of Org 2024". Strips the
+  // extension and normalizes separators so the title reads naturally.
+  function filenameToTitle(name: string): string {
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    return stem.replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function handleFileChange(f: File | null) {
+    setFile(f);
+    // Only auto-populate when the title is empty so we don't clobber user
+    // typing. A subsequent file change won't overwrite an already-set title.
+    if (f && !title.trim()) {
+      setTitle(filenameToTitle(f.name));
+    }
+  }
 
   async function handleUpload() {
     if (!type || !title.trim() || !file) return;
@@ -132,6 +154,10 @@ export default function UploadDocumentDialog({
             <Dialog.Body>
               <VStack align="stretch" gap={3}>
                 <Box>
+                  <Text fontSize="xs" fontWeight="medium" mb={1}>File *</Text>
+                  <Input type="file" p="1" onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)} />
+                </Box>
+                <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Type *</Text>
                   <Box display="flex" gap="4px" flexWrap="wrap">
                     {list.map((t) => {
@@ -169,10 +195,19 @@ export default function UploadDocumentDialog({
                     <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
                   </Box>
                 )}
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>Expiration date</Text>
-                  <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-                </Box>
+                {showExpiration ? (
+                  <Box>
+                    <HStack justify="space-between" mb={1}>
+                      <Text fontSize="xs" fontWeight="medium">Expiration date</Text>
+                      <Button size="xs" variant="ghost" onClick={() => { setShowExpiration(false); setExpiresAt(""); }}>Remove</Button>
+                    </HStack>
+                    <Input type="date" size="sm" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} autoFocus />
+                  </Box>
+                ) : (
+                  <Button size="xs" variant="ghost" alignSelf="start" onClick={() => setShowExpiration(true)}>
+                    <Plus size={12} /> Add expiration date
+                  </Button>
+                )}
                 <Checkbox.Root
                   checked={adminHidden}
                   onCheckedChange={(e) => setAdminHidden(!!e.checked)}
@@ -183,10 +218,6 @@ export default function UploadDocumentDialog({
                     Hide from Admins (Super-only)
                   </Checkbox.Label>
                 </Checkbox.Root>
-                <Box>
-                  <Text fontSize="xs" fontWeight="medium" mb={1}>File *</Text>
-                  <Input type="file" p="1" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-                </Box>
               </VStack>
             </Dialog.Body>
             <Dialog.Footer>

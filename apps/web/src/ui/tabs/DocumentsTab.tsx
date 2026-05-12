@@ -23,14 +23,18 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Filter,
   Link2,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
+  Tag,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
+import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -376,13 +380,23 @@ export default function DocumentsTab({ isSuper = false }: Props) {
 
   return (
     <Box w="full">
-      <HStack gap={2} mb={2} wrap="wrap">
-        <Input
+      <HStack gap={2} mb={2}>
+        <Button
           size="sm"
-          placeholder="Search title, description, type…"
+          variant="ghost"
+          onClick={() => void load()}
+          loading={loading}
+          px="2"
+          flexShrink={0}
+          css={{ background: "var(--chakra-colors-gray-100)" }}
+        >
+          <RefreshCw size={14} />
+        </Button>
+        <SearchWithClear
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          maxW="320px"
+          onChange={(v) => setQ(v)}
+          inputId="documents-search"
+          placeholder="Search title, description, type…"
         />
         <Select.Root
           collection={typeCollection}
@@ -393,8 +407,19 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2">
-              <Select.ValueText placeholder="All types" />
+            <Select.Trigger
+              w="auto"
+              minW="0"
+              px="2"
+              css={{
+                background: typeFilter[0] !== "ALL" ? "var(--chakra-colors-orange-200)" : "var(--chakra-colors-orange-100)",
+                border: typeFilter[0] !== "ALL" ? "1px solid var(--chakra-colors-orange-400)" : "1px solid var(--chakra-colors-orange-300)",
+                borderRadius: "6px",
+              }}
+              title={typeItems.find((i) => i.value === typeFilter[0])?.label}
+            >
+              <Tag size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -416,8 +441,19 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           css={{ width: "auto", flex: "0 0 auto" }}
         >
           <Select.Control>
-            <Select.Trigger w="auto" minW="0" px="2">
-              <Select.ValueText placeholder="Status" />
+            <Select.Trigger
+              w="auto"
+              minW="0"
+              px="2"
+              css={{
+                background: statusFilter[0] !== "all" ? "var(--chakra-colors-teal-200)" : "var(--chakra-colors-teal-100)",
+                border: statusFilter[0] !== "all" ? "1px solid var(--chakra-colors-teal-400)" : "1px solid var(--chakra-colors-teal-300)",
+                borderRadius: "6px",
+              }}
+              title={STATUS_ITEMS.find((i) => i.value === statusFilter[0])?.label}
+            >
+              <Filter size={14} />
+              <Select.Indicator display="none" />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
@@ -434,12 +470,18 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           <Button
             size="sm"
             colorPalette="teal"
+            px="2"
+            minW="0"
+            flexShrink={0}
             onClick={() => { setUploadInitialType(null); setUploadOpen(true); }}
+            title="Add document"
           >
-            <Plus size={14} /> Add Document
+            <Plus size={16} strokeWidth={2.5} />
           </Button>
         )}
-        {highlightDocId && (
+      </HStack>
+      {highlightDocId && (
+        <HStack mb={2} gap={1} wrap="wrap" pl="1">
           <Badge
             size="sm"
             colorPalette="teal"
@@ -451,8 +493,8 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           >
             Linked to one document <X size={11} style={{ marginLeft: 4 }} />
           </Badge>
-        )}
-      </HStack>
+        </HStack>
+      )}
 
       {loading && items.length === 0 ? (
         <HStack justify="center" py={6}><Spinner /></HStack>
@@ -471,7 +513,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           (k) => !types.some((t) => t.key === k),
         );
 
-        const renderDocCard = (d: CompanyDocument, withinSingletonGroup: boolean) => {
+        const renderDocCard = (d: CompanyDocument, nestedInGroup: boolean) => {
           const isExpanded = expanded.has(d.id);
           const detail = details[d.id];
           const expColor = expBadgeColor(d.expirationStatus);
@@ -497,7 +539,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                         )}
                       </HStack>
                       <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
-                        {!withinSingletonGroup && (
+                        {!nestedInGroup && (
                           <Badge size="xs" colorPalette="blue" variant="subtle" px="1.5">
                             {typeLabel}
                           </Badge>
@@ -509,7 +551,11 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                         )}
                         <Text>{versionCount} ver · upd {fmtDateShort(d.updatedAt)}</Text>
                       </HStack>
-                      {d.description && !withinSingletonGroup && (
+                      {/* Per-doc description shown for multi-instance docs
+                          only — singleton docs use the type-level description
+                          rendered on the (non-existent for singletons) wrapper
+                          or, when standalone, omitted entirely. */}
+                      {d.description && !singleton && (
                         <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
                       )}
                     </VStack>
@@ -634,12 +680,19 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           docs: CompanyDocument[],
           opts: { headerLabel: string; headerDescription: string | null; singleton: boolean },
         ) => {
-          // Singleton groups don't collapse — they're always one doc, so the
-          // toggle would be confusing. Multi-instance groups respect the user
-          // toggle. A deep-link to one doc bypasses collapse by filtering the
-          // list to a single item upstream.
-          const collapsible = !opts.singleton;
-          const collapsed = collapsible && collapsedTypes.has(typeKey);
+          // Singleton groups: render the single doc card directly — no wrapping
+          // collection card needed since there's exactly one item per type.
+          if (opts.singleton) {
+            return (
+              <Box key={typeKey}>
+                {docs.map((d) => renderDocCard(d, true))}
+              </Box>
+            );
+          }
+
+          // Multi-instance groups: render a "collection card" that visually
+          // matches a doc card. When expanded, member doc cards nest inside.
+          const collapsed = collapsedTypes.has(typeKey);
           const toggleCollapsed = () =>
             setCollapsedTypes((prev) => {
               const next = new Set(prev);
@@ -647,71 +700,95 @@ export default function DocumentsTab({ isSuper = false }: Props) {
               else next.add(typeKey);
               return next;
             });
+
+          // Roll up expiration status so a collapsed collection conveys risk.
+          const collectionExpStatus: "expired" | "expiring" | "active" =
+            docs.some((d) => d.expirationStatus === "expired") ? "expired"
+              : docs.some((d) => d.expirationStatus === "expiring") ? "expiring"
+              : "active";
+          const expiredCount = docs.filter((d) => d.expirationStatus === "expired").length;
+          const expiringCount = docs.filter((d) => d.expirationStatus === "expiring").length;
+
           return (
-            <Box key={typeKey}>
-              <HStack mb={1} gap={2} align="center" wrap="wrap">
-                {collapsible && (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    px="1"
-                    minW="0"
-                    onClick={toggleCollapsed}
-                    title={collapsed ? "Expand collection" : "Collapse collection"}
-                  >
-                    {collapsed ? <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} /> : <ChevronDown size={14} />}
-                  </Button>
-                )}
-                <Text
-                  fontSize="sm"
-                  fontWeight="semibold"
-                  color="fg.default"
-                  cursor={collapsible ? "pointer" : "default"}
-                  onClick={collapsible ? toggleCollapsed : undefined}
-                >
-                  {opts.headerLabel}
-                </Text>
-                {opts.singleton ? (
-                  <Badge size="xs" colorPalette="gray" variant="subtle">singleton</Badge>
-                ) : (
-                  <Badge size="xs" colorPalette="gray" variant="outline">{docs.length}</Badge>
-                )}
-                {/* Share link for the collection — multi-instance types get a
-                    group-scoped link (?typeKey=…). Singletons don't need one
-                    since their single doc already has a per-doc link. */}
-                {!opts.singleton && (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    px="1.5"
-                    minW="0"
-                    onClick={() => copyShareLink({ typeKey, label: opts.headerLabel })}
-                    title="Copy link to this collection"
-                  >
-                    <Link2 size={12} />
-                  </Button>
-                )}
-              </HStack>
-              {opts.headerDescription && !collapsed && (
-                <Text fontSize="xs" color="fg.muted" mb={2}>{opts.headerDescription}</Text>
-              )}
-              {!collapsed && (
-                <VStack align="stretch" gap={2} pl={opts.singleton ? 0 : 2}>
-                  {docs.map((d) => renderDocCard(d, opts.singleton))}
-                  {isSuper && !opts.singleton && (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      colorPalette="teal"
-                      alignSelf="start"
-                      onClick={() => { setUploadInitialType(typeKey); setUploadOpen(true); }}
-                    >
-                      <Plus size={11} /> Add {opts.headerLabel}
-                    </Button>
+            <Card.Root key={typeKey} variant="outline">
+              <Card.Body p={2}>
+                <VStack align="stretch" gap={1}>
+                  <HStack justify="space-between" align="start" gap={1}>
+                    <VStack align="start" gap={0.5} flex="1" minW={0}>
+                      <HStack
+                        gap={1.5}
+                        wrap="wrap"
+                        align="center"
+                        cursor="pointer"
+                        onClick={toggleCollapsed}
+                      >
+                        <FileText size={13} />
+                        <Text fontSize="sm" fontWeight="semibold">{opts.headerLabel}</Text>
+                      </HStack>
+                      <HStack gap={1.5} wrap="wrap" fontSize="xs" color="fg.muted" align="center">
+                        <Badge size="xs" colorPalette="gray" variant="subtle" px="1.5">
+                          {docs.length} {docs.length === 1 ? "document" : "documents"}
+                        </Badge>
+                        {expiredCount > 0 && (
+                          <Badge size="xs" colorPalette="red" variant="subtle" px="1.5">
+                            {expiredCount} expired
+                          </Badge>
+                        )}
+                        {expiringCount > 0 && collectionExpStatus !== "expired" && (
+                          <Badge size="xs" colorPalette="yellow" variant="subtle" px="1.5">
+                            {expiringCount} expiring
+                          </Badge>
+                        )}
+                      </HStack>
+                      {opts.headerDescription && (
+                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{opts.headerDescription}</Text>
+                      )}
+                    </VStack>
+                    <HStack gap={0.5} flexShrink={0}>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        px="1.5"
+                        minW="0"
+                        onClick={() => copyShareLink({ typeKey, label: opts.headerLabel })}
+                        title="Copy link to this collection"
+                      >
+                        <Link2 size={13} />
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        px="1.5"
+                        minW="0"
+                        onClick={toggleCollapsed}
+                        title={collapsed ? "Expand collection" : "Collapse collection"}
+                      >
+                        {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                      </Button>
+                    </HStack>
+                  </HStack>
+
+                  {!collapsed && (
+                    <Box pl={3} borderLeftWidth="2px" borderColor="gray.200" mt={1}>
+                      <VStack align="stretch" gap={2}>
+                        {docs.map((d) => renderDocCard(d, true))}
+                        {isSuper && (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="teal"
+                            alignSelf="start"
+                            onClick={() => { setUploadInitialType(typeKey); setUploadOpen(true); }}
+                          >
+                            <Plus size={11} /> Add {opts.headerLabel}
+                          </Button>
+                        )}
+                      </VStack>
+                    </Box>
                   )}
                 </VStack>
-              )}
-            </Box>
+              </Card.Body>
+            </Card.Root>
           );
         };
 
