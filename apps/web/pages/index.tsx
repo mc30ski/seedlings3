@@ -1840,17 +1840,25 @@ export default function HomePage() {
       localStorage.removeItem("seedlings_deeplink_document_ts");
     } catch {}
 
-    if (isSuper) {
-      setTopTab("super");
-      setSuperInnerTab("documents" as any);
-      setSuperCategory("System");
-    } else if (isAdmin) {
-      setTopTab("admin");
-      setAdminInnerTab("documents" as any);
-      setAdminCategory("System");
-    } else {
-      // No documents tab visible to this role; nothing to do.
-      return;
+    // Don't override the tab the slug-resolver already routed to. If the
+    // user is already sitting on Documents (admin or super), keep them
+    // there and just dispatch — only choose a default when the link came
+    // in without a `tab=` slug so nothing routed yet.
+    const onAdminDocs = topTab === "admin" && adminInnerTab === "documents";
+    const onSuperDocs = topTab === "super" && superInnerTab === "documents";
+    if (!onAdminDocs && !onSuperDocs) {
+      if (isSuper) {
+        setTopTab("super");
+        setSuperInnerTab("documents" as any);
+        setSuperCategory("System");
+      } else if (isAdmin) {
+        setTopTab("admin");
+        setAdminInnerTab("documents" as any);
+        setAdminCategory("System");
+      } else {
+        // No documents tab visible to this role; nothing to do.
+        return;
+      }
     }
 
     const savedDocId = docId;
@@ -1867,6 +1875,8 @@ export default function HomePage() {
       }
     }, 100);
     return () => clearInterval(interval);
+    // topTab/innerTab read at run-time intentionally — not in deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.isApproved, meLoading, isSuper, isAdmin]);
 
   // Deep-link to a Timeline event (?eventId=…). Mirrors the Documents pattern:
@@ -1909,16 +1919,24 @@ export default function HomePage() {
       localStorage.removeItem("seedlings_deeplink_event_ts");
     } catch {}
 
-    if (isSuper) {
-      setTopTab("super");
-      setSuperInnerTab("timeline" as any);
-      setSuperCategory("System");
-    } else if (isAdmin) {
-      setTopTab("admin");
-      setAdminInnerTab("timeline" as any);
-      setAdminCategory("System");
-    } else {
-      return;
+    // Don't override the tab the slug-resolver already routed to. If the
+    // user is sitting on a Timeline tab (either admin or super), keep them
+    // there and just dispatch the deep-link event. Only choose a default
+    // when the link came in without a `tab=` slug (so nothing routed yet).
+    const onAdminTimeline = topTab === "admin" && adminInnerTab === "timeline";
+    const onSuperTimeline = topTab === "super" && superInnerTab === "timeline";
+    if (!onAdminTimeline && !onSuperTimeline) {
+      if (isSuper) {
+        setTopTab("super");
+        setSuperInnerTab("timeline" as any);
+        setSuperCategory("System");
+      } else if (isAdmin) {
+        setTopTab("admin");
+        setAdminInnerTab("timeline" as any);
+        setAdminCategory("System");
+      } else {
+        return;
+      }
     }
 
     const savedEventId = eventId;
@@ -1934,6 +1952,9 @@ export default function HomePage() {
       }
     }, 100);
     return () => clearInterval(interval);
+    // topTab/innerTab read at run-time intentionally — not in deps, so we
+    // don't re-fire on tab navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.isApproved, meLoading, isSuper, isAdmin]);
 
   useEffect(() => {
