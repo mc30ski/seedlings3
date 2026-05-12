@@ -65,6 +65,7 @@ enum AuditVerb {
   VERSION_DELETED
   VIEWED
   DOWNLOADED
+  COMPLETED
   // add new verbs as needed
 }
 
@@ -1522,8 +1523,21 @@ model TimelineEvent {
   id          String   @id @default(cuid())
   title       String
   description String?
+  // String key into the TIMELINE_CATEGORIES setting taxonomy. Null = no
+  // category (uncategorized in the UI).
+  category    String?
   rrule       String?
+  // First/canonical occurrence — used as RRULE DTSTART. Immutable reference.
   anchorDate  DateTime
+  // The currently-active due date. Starts at anchorDate on create. The user
+  // explicitly advances it via "mark complete," which sets it to the next
+  // rrule occurrence after the current value. If it drifts into the past
+  // without being marked complete, the event renders as OVERDUE — that's the
+  // whole point of this field vs. live-computing next-future-date.
+  nextDueDate     DateTime?
+  // Timestamp of the most recent "mark complete" action — used for display
+  // ("last completed Jan 2026") and audit trail.
+  lastCompletedAt DateTime?
   adminHidden Boolean  @default(false)
   archivedAt  DateTime?
 
@@ -1532,6 +1546,8 @@ model TimelineEvent {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  @@index([category])
   @@index([anchorDate])
+  @@index([nextDueDate])
   @@index([archivedAt])
 }

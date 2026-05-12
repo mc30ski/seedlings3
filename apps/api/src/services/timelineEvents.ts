@@ -15,31 +15,23 @@ function msIn(days: number): number {
 }
 
 /**
- * Returns the next occurrence of an event from `now` forward (inclusive).
- * - One-time events (rrule empty/null): returns anchorDate if it's >= now,
- *   else null (rolled off).
- * - Recurring events: parses the RRULE, anchored on anchorDate, and returns
- *   the first instance >= now. Returns null when RRULE has finite end and
- *   no more future instances.
+ * Returns the next-rrule occurrence STRICTLY AFTER the given date, anchored
+ * on anchorDate. Used by `markComplete` to advance `nextDueDate`. Returns
+ * null when there's no rrule (one-time) or the rule has finite end with no
+ * more instances.
  */
-export function nextOccurrence(
+export function computeNextAfter(
   event: { rrule: string | null; anchorDate: Date },
-  from: Date = new Date(),
+  after: Date,
 ): Date | null {
-  const anchor = event.anchorDate;
-  if (!event.rrule) {
-    return anchor.getTime() >= from.getTime() ? anchor : null;
-  }
+  if (!event.rrule) return null;
   try {
-    // Parse the RRULE; ensure DTSTART is the anchor so BY* fields resolve
-    // relative to it. We pass dtstart explicitly rather than relying on the
-    // string format so anchorDate is the single source of truth.
-    const rule = RRule.fromString(`DTSTART:${formatDtStart(anchor)}\n${event.rrule.startsWith("RRULE:") ? event.rrule : `RRULE:${event.rrule}`}`);
-    const next = rule.after(from, true); // `inc=true` includes `from` exactly
-    return next ?? null;
+    const rule = RRule.fromString(
+      `DTSTART:${formatDtStart(event.anchorDate)}\n${event.rrule.startsWith("RRULE:") ? event.rrule : `RRULE:${event.rrule}`}`,
+    );
+    return rule.after(after, false) ?? null;
   } catch {
-    // Malformed rule — degrade gracefully to anchor-as-one-time.
-    return anchor.getTime() >= from.getTime() ? anchor : null;
+    return null;
   }
 }
 
@@ -57,8 +49,11 @@ export type UpcomingRow =
       id: string;
       title: string;
       description: string | null;
+      category: string | null;
       rrule: string | null;
       anchorDate: Date;
+      lastCompletedAt: Date | null;
+      archivedAt: Date | null;
       adminHidden: boolean;
       nextDate: Date;
     }
@@ -87,15 +82,12 @@ export const timelineEvents = {
     };
     const rows = await prisma.timelineEvent.findMany({
       where,
-      orderBy: [{ anchorDate: "asc" }],
+      orderBy: [{ nextDueDate: "asc" }],
       include: {
         createdBy: { select: { id: true, displayName: true, email: true } },
       },
     });
-    return rows.map((r) => ({
-      ...r,
-      nextDate: nextOccurrence(r),
-    }));
+    return rows.map((r) => ({ ...r, nextDate: r.nextDueDate ?? null }));
   },
 
   async get(id: string, opts: { adminHiddenVisible: boolean }) {
@@ -109,7 +101,7 @@ export const timelineEvents = {
     if (!opts.adminHiddenVisible && ev.adminHidden) {
       throw new ServiceError("NOT_FOUND", "Event not found.", 404);
     }
-    return { ...ev, nextDate: nextOccurrence(ev) };
+    return { ...ev, nextDate: ev.nextDueDate ?? null };
   },
 
   /**
@@ -121,36 +113,45 @@ export const timelineEvents = {
     adminHiddenVisible: boolean;
     includeDocs?: boolean;
     includePast?: boolean;
+    archived?: boolean;
   }): Promise<UpcomingRow[]> {
-    const now = new Date();
     const events = await prisma.timelineEvent.findMany({
       where: {
-        archivedAt: null,
+        ...(params.archived
+          ? { archivedAt: { not: null } }
+          : { archivedAt: null, nextDueDate: { not: null } }),
         ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
       },
     });
     const eventRows: UpcomingRow[] = [];
     for (const ev of events) {
-      const next = nextOccurrence(ev, params.includePast ? new Date(0) : now);
+      // For active rows nextDueDate must be present (filter enforces this).
+      // For archived rows it may be null — fall back to the anchor so the
+      // archived view still has a date to sort/display.
+      const next = ev.nextDueDate ?? (params.archived ? ev.anchorDate : null);
       if (!next) continue;
       eventRows.push({
         kind: "event",
         id: ev.id,
         title: ev.title,
         description: ev.description,
+        category: ev.category,
         rrule: ev.rrule,
         anchorDate: ev.anchorDate,
+        lastCompletedAt: ev.lastCompletedAt,
+        archivedAt: ev.archivedAt,
         adminHidden: ev.adminHidden,
         nextDate: next,
       });
     }
 
     let docRows: UpcomingRow[] = [];
-    if (params.includeDocs !== false) {
+    // Doc expirations are never archived — the archived view is timeline-only.
+    if (params.includeDocs !== false && !params.archived) {
       const docs = await prisma.companyDocument.findMany({
         where: {
           archivedAt: null,
-          expiresAt: params.includePast ? { not: null } : { gte: now },
+          expiresAt: params.includePast ? { not: null } : { not: null },
           ...(params.adminHiddenVisible ? {} : { adminHidden: false }),
         },
         select: {
@@ -199,6 +200,7 @@ export const timelineEvents = {
     payload: {
       title: string;
       description?: string | null;
+      category?: string | null;
       rrule?: string | null;
       anchorDate: string;
       adminHidden?: boolean;
@@ -215,12 +217,18 @@ export const timelineEvents = {
       }
     }
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const anchor = new Date(payload.anchorDate);
       const ev = await tx.timelineEvent.create({
         data: {
           title: payload.title.trim(),
           description: payload.description?.trim() || null,
+          category: payload.category?.trim() || null,
           rrule: payload.rrule?.trim() || null,
-          anchorDate: new Date(payload.anchorDate),
+          anchorDate: anchor,
+          // Start the active due date at the anchor. If the user picked a past
+          // date the event renders as overdue immediately — that's intended;
+          // they explicitly chose that date.
+          nextDueDate: anchor,
           adminHidden: !!payload.adminHidden,
           createdById: currentUserId,
         },
@@ -238,6 +246,7 @@ export const timelineEvents = {
     patch: {
       title?: string;
       description?: string | null;
+      category?: string | null;
       rrule?: string | null;
       anchorDate?: string;
       adminHidden?: boolean;
@@ -250,8 +259,20 @@ export const timelineEvents = {
       const data: Prisma.TimelineEventUpdateInput = {};
       if (patch.title !== undefined) data.title = patch.title.trim();
       if (patch.description !== undefined) data.description = patch.description?.trim() || null;
+      if (patch.category !== undefined) data.category = patch.category?.trim() || null;
       if (patch.rrule !== undefined) data.rrule = patch.rrule?.trim() || null;
-      if (patch.anchorDate !== undefined) data.anchorDate = new Date(patch.anchorDate);
+      if (patch.anchorDate !== undefined) {
+        const newAnchor = new Date(patch.anchorDate);
+        data.anchorDate = newAnchor;
+        // If the event has never been completed (nextDueDate still equals the
+        // old anchor), follow the anchor edit through to the active due date.
+        // Once a user has completed at least once, leave nextDueDate alone so
+        // we don't undo their progress.
+        if (existing.lastCompletedAt == null &&
+            existing.nextDueDate?.getTime() === existing.anchorDate.getTime()) {
+          data.nextDueDate = newAnchor;
+        }
+      }
       if (patch.adminHidden !== undefined) data.adminHidden = !!patch.adminHidden;
 
       // Validate RRULE against the new (or existing) anchor.
@@ -268,6 +289,43 @@ export const timelineEvents = {
       const updated = await tx.timelineEvent.update({ where: { id }, data });
       await writeAudit(tx, AUDIT.TIMELINE.UPDATED, currentUserId, {
         eventId: id, changed: Object.keys(data),
+      });
+      return updated;
+    });
+  },
+
+  /**
+   * Mark the current occurrence as complete. For recurring events this
+   * advances `nextDueDate` to the next rrule instance strictly after the
+   * current due date. For one-time events (or recurring rules that have
+   * run out), `nextDueDate` is set to null and the event is archived —
+   * there's nothing left to surface.
+   */
+  async markComplete(currentUserId: string, id: string) {
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const ev = await tx.timelineEvent.findUnique({ where: { id } });
+      if (!ev) throw new ServiceError("NOT_FOUND", "Event not found.", 404);
+      if (ev.archivedAt) throw new ServiceError("ARCHIVED", "Event is archived.", 409);
+      if (!ev.nextDueDate) {
+        throw new ServiceError("NO_PENDING", "Nothing to mark complete — already done.", 409);
+      }
+      const completedDate = ev.nextDueDate;
+      const next = computeNextAfter(ev, completedDate);
+      const now = new Date();
+      const updated = await tx.timelineEvent.update({
+        where: { id },
+        data: {
+          nextDueDate: next, // null if one-time or rule exhausted
+          lastCompletedAt: now,
+          // Auto-archive when there's nothing more coming up — keeps the
+          // active list focused on actionable items.
+          archivedAt: next ? null : now,
+        },
+      });
+      await writeAudit(tx, AUDIT.TIMELINE.COMPLETED, currentUserId, {
+        eventId: id,
+        completedDate,
+        nextDueDate: next,
       });
       return updated;
     });
@@ -292,11 +350,31 @@ export const timelineEvents = {
       const ev = await tx.timelineEvent.findUnique({ where: { id } });
       if (!ev) throw new ServiceError("NOT_FOUND", "Event not found.", 404);
       if (!ev.archivedAt) throw new ServiceError("NOT_ARCHIVED", "Not archived.", 409);
+
+      // Smart restore: for recurring events, set nextDueDate to the next
+      // future instance computed from the rrule (anchored on anchorDate,
+      // advanced past lastCompletedAt if we have one — otherwise past now).
+      // For one-time events with no rule, restore to the anchor (which may
+      // be in the past, surfacing as overdue — user can edit if needed).
+      let restoredNext: Date | null = ev.nextDueDate;
+      if (ev.rrule) {
+        const cursor = ev.lastCompletedAt ?? new Date();
+        restoredNext = computeNextAfter(ev, cursor);
+        // Fall back to anchor if the rule somehow produces nothing — keeps
+        // the event visible so the user can see + edit it.
+        if (!restoredNext) restoredNext = ev.anchorDate;
+      } else if (!restoredNext) {
+        restoredNext = ev.anchorDate;
+      }
+
       const updated = await tx.timelineEvent.update({
         where: { id },
-        data: { archivedAt: null },
+        data: { archivedAt: null, nextDueDate: restoredNext },
       });
-      await writeAudit(tx, AUDIT.TIMELINE.UNARCHIVED, currentUserId, { eventId: id });
+      await writeAudit(tx, AUDIT.TIMELINE.UNARCHIVED, currentUserId, {
+        eventId: id,
+        restoredNextDueDate: restoredNext,
+      });
       return updated;
     });
   },

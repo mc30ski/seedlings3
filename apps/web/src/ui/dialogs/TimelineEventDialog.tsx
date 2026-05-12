@@ -13,17 +13,24 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { apiPatch, apiPost } from "@/src/lib/api";
+import { Badge } from "@chakra-ui/react";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import RRuleEditor from "@/src/ui/components/RRuleEditor";
+import {
+  DEFAULT_TIMELINE_CATEGORIES,
+  parseTimelineCategoriesConfig,
+  type TimelineCategoryConfig,
+} from "@/src/ui/components/TimelineCategoryPicker";
 
 type TimelineEvent = {
   id: string;
   title: string;
   description: string | null;
+  category: string | null;
   rrule: string | null;
   anchorDate: string;
   adminHidden: boolean;
@@ -55,15 +62,32 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
   const isEdit = !!event;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<string>("");
   const [anchorDate, setAnchorDate] = useState("");
   const [rrule, setRRule] = useState("");
   const [adminHidden, setAdminHidden] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Categories come from the TIMELINE_CATEGORIES setting (configurable). Falls
+  // back to the hardcoded defaults if the setting isn't present.
+  const [categories, setCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try {
+        const settings = await apiGet<{ key: string; value: string }[]>("/api/admin/settings");
+        const tc = (Array.isArray(settings) ? settings : []).find((s) => s.key === "TIMELINE_CATEGORIES");
+        const parsed = parseTimelineCategoriesConfig(tc?.value);
+        if (parsed) setCategories(parsed);
+      } catch {}
+    })();
+  }, [open]);
+
   useEffect(() => {
     if (open) {
       setTitle(event?.title ?? "");
       setDescription(event?.description ?? "");
+      setCategory(event?.category ?? "");
       setAnchorDate(isoToDateInput(event?.anchorDate));
       setRRule(event?.rrule ?? "");
       setAdminHidden(event?.adminHidden ?? false);
@@ -77,6 +101,7 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
       const payload = {
         title: title.trim(),
         description: description.trim() || null,
+        category: category.trim() || null,
         // Anchor at midday UTC so the date the user typed doesn't drift
         // when crossing timezones.
         anchorDate: new Date(anchorDate + "T12:00:00Z").toISOString(),
@@ -118,6 +143,28 @@ export default function TimelineEventDialog({ open, onOpenChange, event, onSaved
                 <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Description</Text>
                   <Textarea size="sm" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+                </Box>
+                <Box>
+                  <Text fontSize="xs" fontWeight="medium" mb={1}>Category</Text>
+                  <Box display="flex" gap="4px" flexWrap="wrap">
+                    {categories.map((c) => {
+                      const active = category === c.key;
+                      return (
+                        <Badge
+                          key={c.key}
+                          size="sm"
+                          colorPalette={active ? "teal" : "gray"}
+                          variant={active ? "solid" : "outline"}
+                          cursor="pointer"
+                          px="2"
+                          borderRadius="full"
+                          onClick={() => setCategory(active ? "" : c.key)}
+                        >
+                          {c.label}
+                        </Badge>
+                      );
+                    })}
+                  </Box>
                 </Box>
                 <Box>
                   <Text fontSize="xs" fontWeight="medium" mb={1}>Anchor date *</Text>

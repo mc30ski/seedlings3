@@ -4438,11 +4438,12 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/admin/timeline/upcoming", adminGuard, async (req: any) => {
-    const { includeDocs, includePast } = (req.query || {}) as Record<string, string>;
+    const { includeDocs, includePast, archived } = (req.query || {}) as Record<string, string>;
     return services.timelineEvents.listUpcoming({
       adminHiddenVisible: false,
       includeDocs: includeDocs !== "0" && includeDocs !== "false",
       includePast: includePast === "1" || includePast === "true",
+      archived: archived === "1" || archived === "true",
     });
   });
 
@@ -4467,11 +4468,12 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/super/timeline/upcoming", superGuard, async (req: any) => {
-    const { includeDocs, includePast } = (req.query || {}) as Record<string, string>;
+    const { includeDocs, includePast, archived } = (req.query || {}) as Record<string, string>;
     return services.timelineEvents.listUpcoming({
       adminHiddenVisible: true,
       includeDocs: includeDocs !== "0" && includeDocs !== "false",
       includePast: includePast === "1" || includePast === "true",
+      archived: archived === "1" || archived === "true",
     });
   });
 
@@ -4497,6 +4499,13 @@ Respond ONLY with valid JSON in this exact format:
       await currentUserId(req),
       String(req.params.id),
       req.body || {},
+    );
+  });
+
+  app.post("/super/timeline/:id/complete", superGuard, async (req: any) => {
+    return services.timelineEvents.markComplete(
+      await currentUserId(req),
+      String(req.params.id),
     );
   });
 

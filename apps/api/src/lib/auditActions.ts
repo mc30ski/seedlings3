@@ -99,6 +99,7 @@ export const AUDIT = {
     ARCHIVED: [AuditScope.TIMELINE, AuditVerb.RETIRED] as const,
     UNARCHIVED: [AuditScope.TIMELINE, AuditVerb.UNRETIRED] as const,
     DELETED: [AuditScope.TIMELINE, AuditVerb.DELETED] as const,
+    COMPLETED: [AuditScope.TIMELINE, AuditVerb.COMPLETED] as const,
   },
 } as const;
 
