@@ -4529,4 +4529,23 @@ Respond ONLY with valid JSON in this exact format:
       String(req.params.id),
     );
   });
+
+  // ── Home banners (admin posting + history) ────────────────────────────────
+  app.get("/admin/banners", adminGuard, async () => {
+    return services.banners.listAdmin();
+  });
+
+  app.post("/admin/banners", adminGuard, async (req: any) => {
+    return services.banners.post(
+      await currentUserId(req),
+      req.body || {},
+    );
+  });
+
+  app.delete("/admin/banners/:id", adminGuard, async (req: any) => {
+    return services.banners.delete(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
 }

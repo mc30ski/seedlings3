@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import { Badge, Box, Button, Container, Dialog, HStack, Portal, Text, VStack } from "@chakra-ui/react";
-import { AlertTriangle, ArrowLeftCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
@@ -55,7 +55,7 @@ import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
 import NoRoleNotice from "@/src/ui/notices/NoRoleNotice";
 
-import InlineMessage from "@/src/ui/components/InlineMessage";
+import InlineMessage, { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import NewJobSetupWorkflow from "@/src/ui/components/NewJobSetupWorkflow";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -2459,6 +2459,51 @@ export default function HomePage() {
               style={{ pointerEvents: canGoBack ? "auto" : "none" }}
             >
               <ArrowLeftCircle size={18} />
+            </Box>
+          }
+          headerRight={
+            <Box
+              as="button"
+              aria-label="Copy link to this tab"
+              title="Copy link to this tab"
+              pl="1"
+              pr="1"
+              py={1}
+              display="inline-flex"
+              alignItems="center"
+              color="gray.500"
+              cursor="pointer"
+              _hover={{ color: "blue.600" }}
+              transition="color 0.1s"
+              onClick={() => {
+                // Build the deep-link URL for the current tab using the same
+                // slug convention the resolver consumes: <outer>-<category>-<inner>
+                // (with a 2-part fallback for outers that don't have categories).
+                const slugify = (s: string) =>
+                  (s || "").toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+                const outer = topTab;
+                const inner =
+                  outer === "client" ? clientInnerTab
+                  : outer === "worker" ? workerInnerTab
+                  : outer === "admin" ? adminInnerTab
+                  : superInnerTab;
+                const category =
+                  outer === "worker" ? workerCategory
+                  : outer === "admin" ? adminCategory
+                  : outer === "super" ? superCategory
+                  : undefined;
+                const slug = category
+                  ? `${outer}-${slugify(category)}-${slugify(inner)}`
+                  : `${outer}-${slugify(inner)}`;
+                const url = new URL(window.location.origin);
+                url.searchParams.set("tab", slug);
+                navigator.clipboard.writeText(url.toString()).then(
+                  () => publishInlineMessage({ type: "SUCCESS", text: "Link to this tab copied." }),
+                  () => publishInlineMessage({ type: "ERROR", text: `Copy failed. Link: ${url.toString()}` }),
+                );
+              }}
+            >
+              <Link2 size={16} />
             </Box>
           }
         />

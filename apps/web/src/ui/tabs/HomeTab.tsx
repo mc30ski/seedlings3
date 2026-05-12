@@ -10,6 +10,7 @@ import { apiGet } from "@/src/lib/api";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import TomorrowWeatherWarning from "@/src/ui/components/TomorrowWeatherWarning";
+import HomeBanners from "@/src/ui/components/HomeBanners";
 import type { Me } from "@/src/lib/types";
 
 type Props = {
@@ -416,6 +417,11 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
         </>
       )}
       <VStack align="stretch" gap={4}>
+
+        {/* Admin-posted home banners — stack newest-first at the top until
+            the user dismisses them. Hidden while impersonating since the
+            data is always the *current* user's, which would be misleading. */}
+        <HomeBanners disabled={isViewingOther} />
 
         {/* Enable-notifications banner — about the logged-in user's own
             device. Hidden only in impersonation (admin viewing-as worker);

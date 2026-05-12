@@ -34,6 +34,8 @@ type Props = {
   onCategoryChange?: (value: string) => void;
   /** Content rendered before the outer tab selector (e.g., back button) */
   headerLeft?: React.ReactNode;
+  /** Content rendered at the right edge of the row (e.g., share-link icon) */
+  headerRight?: React.ReactNode;
 };
 
 function isVisible(v?: boolean | (() => boolean)): boolean {
@@ -50,6 +52,7 @@ export default function BreadcrumbNav({
   categoryValue,
   onCategoryChange,
   headerLeft,
+  headerRight,
 }: Props) {
   const [outerOpen, setOuterOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
@@ -320,6 +323,11 @@ export default function BreadcrumbNav({
               innerValue,
               (v) => { onInnerChange(v); setInnerOpen(false); },
             )}
+          </Box>
+        )}
+        {headerRight && (
+          <Box flexShrink={0}>
+            {headerRight}
           </Box>
         )}
       </HStack>

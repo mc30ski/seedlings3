@@ -15,6 +15,7 @@ import { supplies } from "./supplies";
 import { groups } from "./groups";
 import { companyDocuments } from "./companyDocuments";
 import { timelineEvents } from "./timelineEvents";
+import { banners } from "./banners";
 
 if (!process.env.CLERK_SECRET_KEY) {
   throw new Error("Missing CLERK_SECRET_KEY for server-side Clerk client");
@@ -36,4 +37,5 @@ export const services: Services = {
   groups,
   companyDocuments,
   timelineEvents,
+  banners,
 };

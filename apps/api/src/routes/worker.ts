@@ -2785,4 +2785,18 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
     return { ok: true };
   });
+
+  // ── Home banners ──────────────────────────────────────────────────────────
+  // Pending banners for the current user (stacked at the top of Worker Home).
+  app.get("/banners", workerGuard, async (req: any) => {
+    return services.banners.listForUser(await currentUserId(req));
+  });
+
+  // Per-user dismissal — only affects the caller.
+  app.post("/banners/:id/dismiss", workerGuard, async (req: any) => {
+    return services.banners.dismiss(
+      await currentUserId(req),
+      String(req.params.id),
+    );
+  });
 }
