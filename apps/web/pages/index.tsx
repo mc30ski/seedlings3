@@ -1370,21 +1370,22 @@ export default function HomePage() {
   }, []);
 
   // Expired company documents alert — visible to admins (read-only) and super.
-  // Hidden docs are filtered server-side when caller is not super, so the
-  // count an admin sees never reveals the existence of hidden docs.
+  // Super uses the /super/ endpoint so the count includes hidden docs; admin
+  // uses /admin/ so hidden docs are filtered out server-side.
   const [expiredDocsCount, setExpiredDocsCount] = useState(0);
   const loadExpiredDocs = useCallback(async () => {
     if (!isAdmin) { setExpiredDocsCount(0); if (me) markAlertLoaded("documents"); return; }
     try {
-      const r = await apiGet<{ expired: number; expiring: number }>(
-        "/api/admin/documents/expiration-counts",
-      );
+      const endpoint = isSuper
+        ? "/api/super/documents/expiration-counts"
+        : "/api/admin/documents/expiration-counts";
+      const r = await apiGet<{ expired: number; expiring: number }>(endpoint);
       setExpiredDocsCount(r?.expired ?? 0);
     } catch {
       setExpiredDocsCount(0);
     }
     markAlertLoaded("documents");
-  }, [isAdmin, me]);
+  }, [isAdmin, isSuper, me]);
 
   useEffect(() => {
     void loadExpiredDocs();

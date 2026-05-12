@@ -21,6 +21,8 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   documentId: string | null;
+  /** API base — `/api/super/documents` for super, omitted/none for admin. */
+  apiBase: string;
   /** Current expiration on the doc, ISO string or null. Used as default. */
   defaultExpiresAt?: string | null;
   onUploaded: () => void;
@@ -44,6 +46,7 @@ export default function UploadDocumentVersionDialog({
   open,
   onOpenChange,
   documentId,
+  apiBase,
   defaultExpiresAt,
   onUploaded,
 }: Props) {
@@ -64,7 +67,7 @@ export default function UploadDocumentVersionDialog({
     try {
       const contentType = file.type || "application/octet-stream";
       const init = await apiPost<{ uploadUrl: string; versionId: string }>(
-        `/api/admin/documents/${documentId}/versions/init`,
+        `${apiBase}/${documentId}/versions/init`,
         { filename: file.name, contentType, sizeBytes: file.size },
       );
       const putRes = await fetch(init.uploadUrl, {
@@ -74,7 +77,7 @@ export default function UploadDocumentVersionDialog({
       });
       if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status}`);
       await apiPost(
-        `/api/admin/documents/${documentId}/versions/${init.versionId}/confirm`,
+        `${apiBase}/${documentId}/versions/${init.versionId}/confirm`,
         { expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
       );
       publishInlineMessage({ type: "SUCCESS", text: "New version uploaded." });

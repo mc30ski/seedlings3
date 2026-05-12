@@ -30,6 +30,8 @@ type Props = {
   types: DocumentTypeConfig[];
   /** Used to disable singleton types that already have an active doc. */
   takenSingletonKeys: Set<string>;
+  /** API base path for documents (Super writes always hit `/api/super/...`). */
+  apiBase: string;
   onCreated: () => void;
   /** When set, lock the type picker to this key (e.g., "Add another GL cert"). */
   initialType?: string | null;
@@ -40,6 +42,7 @@ export default function UploadDocumentDialog({
   onOpenChange,
   types,
   takenSingletonKeys,
+  apiBase,
   onCreated,
   initialType,
 }: Props) {
@@ -76,7 +79,7 @@ export default function UploadDocumentDialog({
     if (!type || !title.trim() || !file) return;
     setBusy(true);
     try {
-      const created = await apiPost<{ id: string }>("/api/admin/documents", {
+      const created = await apiPost<{ id: string }>(apiBase, {
         type,
         title: title.trim(),
         // Singleton types use the type-level description; per-doc description
@@ -88,7 +91,7 @@ export default function UploadDocumentDialog({
 
       const contentType = file.type || "application/octet-stream";
       const init = await apiPost<{ uploadUrl: string; versionId: string }>(
-        `/api/admin/documents/${created.id}/versions/init`,
+        `${apiBase}/${created.id}/versions/init`,
         { filename: file.name, contentType, sizeBytes: file.size },
       );
 
@@ -100,7 +103,7 @@ export default function UploadDocumentDialog({
       if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status}`);
 
       await apiPost(
-        `/api/admin/documents/${created.id}/versions/${init.versionId}/confirm`,
+        `${apiBase}/${created.id}/versions/${init.versionId}/confirm`,
         { expiresAt: expiresAt ? new Date(expiresAt + "T00:00:00").toISOString() : null },
       );
 
