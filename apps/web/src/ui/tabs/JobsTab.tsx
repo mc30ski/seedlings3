@@ -258,7 +258,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       { label: "Followup", value: "FOLLOWUP" },
       { label: "Announcement", value: "ANNOUNCEMENT" },
       { label: "Notices", value: "NOTICES" },
-      { label: "Due (Tasks + Reminders)", value: "DUE" },
       // Admin-only: foreign rows from the Timeline tab (activities) and
       // Documents (per-day expirations). Read-only in this feed.
       ...(forAdmin ? [
@@ -1633,6 +1632,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     else if (tf === "FOLLOWUP") rows = rows.filter((occ) => occ.workflow === "FOLLOWUP");
     else if (tf === "ANNOUNCEMENT") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT");
     else if (tf === "NOTICES") rows = rows.filter((occ) => occ.workflow === "ANNOUNCEMENT" || occ.workflow === "FOLLOWUP" || occ.workflow === "EVENT");
+    else if (tf === "ACTIVITY" || tf === "DOC_EXPIRATION") {
+      // Foreign-only filter — strip every real job/task/reminder row. The
+      // matching foreign rows (activities or doc expirations) are appended
+      // further down respecting the same `tf`.
+      rows = [];
+    }
     else if (tf === "DUE") {
       const todayKey = bizDateKey(new Date());
       // A reminder attached to an already-finished job is stale (the work is done) —
