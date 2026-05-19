@@ -25,7 +25,7 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "profile" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -92,6 +92,8 @@ export type Me = {
     canPullInventory: boolean;
     canChargeBusinessExpenses: boolean;
   };
+  // Payment-request delivery channel override. null = use org default.
+  paymentCommsMode?: "SERVER" | "CLAIMER" | null;
 };
 
 export type TabPropsType = {
@@ -454,11 +456,31 @@ export type ExpenseItem = {
 export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "APPLE_PAY", "CASH_APP", "OTHER"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
 
+// Subset of PAYMENT_METHOD currently offered when recording a NEW payment
+// or editing an existing one's method. The full set above is kept so the
+// admin filter dropdown can still match historical payments recorded with
+// APPLE_PAY / CASH_APP / OTHER before those were removed.
+export const PAYMENT_METHOD_OFFERED = ["CASH", "CHECK", "ZELLE", "VENMO"] as const;
+
+// Methods a worker can record when accepting payment in person (no app/
+// link involved). Digital methods (Zelle, Venmo, etc.) only arrive via the
+// /pay/[token] flow where the client picks the method themselves at
+// payment time, so they're intentionally excluded here.
+export const PAYMENT_METHOD_IN_PERSON = ["CASH", "CHECK", "OTHER"] as const;
+
 export type PaymentSplitItem = {
   id: string;
   userId: string;
   amount: number;
-  user: { id: string; displayName?: string | null; email?: string | null };
+  // Per-worker breakdown fields (populated on rows created after the
+  // reconciliation migration). Used to display the % split applied at
+  // payment time (computed as grossAmount / Σ grossAmount).
+  grossAmount?: number | null;
+  ratePercent?: number | null;
+  feeAmount?: number | null;
+  netAmount?: number | null;
+  topUpAmount?: number | null;
+  user: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 };
 
 export type PaymentInfo = {
@@ -475,6 +497,10 @@ export type PaymentInfo = {
   nextOccurrenceSkipReason?: string | null;
   splits: PaymentSplitItem[];
   createdAt: string;
+  /** False = self-reported / worker-direct, awaiting admin approval.
+   *  True = confirmed (admin approved or admin direct-recorded). */
+  confirmed?: boolean;
+  selfReported?: boolean;
 };
 
 export type PaymentListItem = PaymentInfo & {
@@ -493,11 +519,22 @@ export type PaymentListItem = PaymentInfo & {
 export type WorkerPaymentItem = {
   splitId: string;
   myAmount: number;
+  // What the worker was *promised* at Initiate-Payment time. For
+  // employees this matches myAmount (they're made whole). For contractors
+  // on underpaid jobs, myAmount < myPromisedNet — the difference is the
+  // pro-rata reduction they absorbed.
+  myPromisedNet?: number | null;
   payment: {
     id: string;
     amountPaid: number;
     method: PaymentMethod;
     note?: string | null;
+    // confirmed = admin has approved the payment. Splits exist for both
+    // confirmed and pending payments (since `createPayment` writes splits
+    // immediately), so the UI shows a "Pending approval" badge on rows
+    // where this is false to flag that the amount may still change at
+    // admin approval (especially for contractors).
+    confirmed?: boolean;
     platformFeePercent?: number | null;
     platformFeeAmount?: number | null;
     businessMarginPercent?: number | null;
@@ -578,6 +615,22 @@ export type WorkerOccurrence = {
   startLng?: number | null;
   completeLat?: number | null;
   completeLng?: number | null;
+  /** Latest payment-rejection reason for this occurrence — surfaced on the
+   *  PENDING_PAYMENT card so the claimer / admin can see why the most
+   *  recent self-reported Payment was rejected. Cleared when a payment is
+   *  approved (occurrence transitions to CLOSED). */
+  lastPaymentRejectionReason?: string | null;
+  lastPaymentRejectedAt?: string | null;
+  /** Latest payment-revert reason. Set when admin reverts a previously-
+   *  approved payment via the Services tab. Same display semantics as
+   *  lastPaymentRejection*; cleared on the next approval. */
+  lastPaymentRevertReason?: string | null;
+  lastPaymentRevertedAt?: string | null;
+  /** Set when the Request Payment path is committed (server-side
+   *  auto-send in SERVER mode, or claimer tap in CLAIMER mode). Drives
+   *  the "either-or" workflow on the job card — once set, Accept
+   *  Payment is hidden and the worker either re-sends or cancels. */
+  paymentRequestSentAt?: string | null;
   payment?: PaymentInfo | null;
   expenses?: ExpenseItem[];
   _count?: { photos: number; comments?: number };

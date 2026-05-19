@@ -138,12 +138,11 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     window.addEventListener("admin:openUsers", onOpen as EventListener);
     return () => window.removeEventListener("admin:openUsers", onOpen as EventListener);
   }, []);
-  const [showInfoOverlay, setShowInfoOverlay] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return !localStorage.getItem("seedlings_users_infoDismissed");
-    } catch { return false; }
-  });
+  // Info overlay is opt-in only — opens when the user taps the (i) button.
+  // Used to auto-open on first visit (gated by a localStorage dismiss flag);
+  // that behavior was removed to stop surprise modals from interrupting
+  // returning users on fresh devices / browser sessions.
+  const [showInfoOverlay, setShowInfoOverlay] = useState(false);
 
   // current holdings map (userId -> Holding[])
   const [holdingsByUser, setHoldingsByUser] = useState<
@@ -1065,23 +1064,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
                   <Button
-                    variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      try { localStorage.removeItem("seedlings_users_infoDismissed"); } catch {}
-                      setShowInfoOverlay(false);
-                    }}
+                    onClick={() => setShowInfoOverlay(false)}
                   >
-                    Dismiss
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      try { localStorage.setItem("seedlings_users_infoDismissed", "1"); } catch {}
-                      setShowInfoOverlay(false);
-                    }}
-                  >
-                    Don't show again
+                    Close
                   </Button>
                 </HStack>
               </Dialog.Footer>

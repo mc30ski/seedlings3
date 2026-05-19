@@ -34,6 +34,7 @@ enum AuditScope {
   DOCUMENT
   TIMELINE
   BANNER
+  PAYMENT
   // add more scopes as you expand the schema
 }
 
@@ -67,6 +68,12 @@ enum AuditVerb {
   VIEWED
   DOWNLOADED
   COMPLETED
+  SELF_REPORTED
+  REJECTED
+  REQUEST_SENT
+  TOKEN_ACCESSED
+  WRITTEN_OFF
+  ADJUSTED
   // add new verbs as needed
 }
 
@@ -110,6 +117,10 @@ model User {
   w9Collected              Boolean   @default(false)
   w9CollectedAt            DateTime?
 
+  // Per-user override for payment-request delivery channel.
+  // null = use the org-wide DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting.
+  paymentCommsMode PaymentCommsMode?
+
   roles          UserRole[]
   checkouts      Checkout[]
   checkoutSplits CheckoutSplit[]
@@ -126,7 +137,10 @@ model User {
   jobOccurrenceAssignments JobOccurrenceAssignee[]
   jobAssignmentAuditActor  JobOccurrenceAssignee[] @relation("JobAssignActor")
 
-  paymentsCollected       Payment[]
+  paymentsCollected       Payment[]       @relation("PaymentCollector")
+  paymentsConfirmed       Payment[]       @relation("PaymentConfirmer")
+  paymentsAdjusted        Payment[]       @relation("PaymentAdjuster")
+  paymentsWrittenOff      Payment[]       @relation("PaymentWriteOff")
   paymentSplits           PaymentSplit[]
   expenses                Expense[]
   photos                  JobOccurrencePhoto[]
@@ -401,6 +415,16 @@ model ClientContact {
 
   clerkUserId String? @unique
 
+  // Auto-learned from each approved payment — used to pre-select the method
+  // in the worker's Record Payment dialog and to highlight the same method
+  // first on the public /pay/[token] page.
+  preferredPaymentMethod PaymentMethod?
+
+  // Set when this contact signs up for an account via the post-payment
+  // nudge on /pay/[token]. Drives future discount/credit logic — kept now
+  // so we can apply retroactive credits when that feature ships.
+  clientAccountCreatedFromPaymentPageAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -668,6 +692,45 @@ model JobOccurrence {
   pinnedNote        String?
   pinnedNoteRepeats Boolean @default(true)
 
+  // Payment-request flow (set when occurrence transitions to PENDING_PAYMENT).
+  // The token is the URL slug for the public /pay/[token] page; createdAt
+  // anchors the expiry (controlled by PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS).
+  paymentRequestToken          String?   @unique
+  paymentRequestTokenCreatedAt DateTime?
+  // Stamped when the Request Payment path is committed: either the worker
+  // tapped the button (CLAIMER mode) or sendForOccurrence fired
+  // (SERVER mode). Drives the "either-or" workflow on the job card —
+  // once set, Accept Payment is hidden and the worker either re-sends
+  // or cancels. Cleared by paymentRequests.cancelPaymentRequest.
+  paymentRequestSentAt DateTime?
+  // Per-worker percentage allocation locked in by the claimer at completion
+  // time. Stored as JSON: [{ userId: "...", percent: 50 }, ...]. Drives the
+  // PaymentSplit math; survives overpayments (extras distribute pro-rata).
+  // Null = even-split fallback applies.
+  completionSplits Json?
+
+  // Immutable snapshot taken when the occurrence is completed with splits.
+  // Locks in what each worker is OWED regardless of what the client ends up
+  // paying. Used at approval time to top employees/trainees up to their
+  // promised net even when the client underpays.
+  // Shape: [{ userId, workerType, splitPercent, gross, ratePercent, fee, net }]
+  promisedPayouts Json?
+
+  // Latest payment-rejection metadata (denormalized from the audit log so
+  // the job card can display the reason without a per-card query). Set by
+  // payments.rejectPayment when admin rejects a self-reported payment.
+  // Cleared when a payment is approved (occurrence transitions to CLOSED)
+  // or the occurrence is reverted to SCHEDULED.
+  lastPaymentRejectionReason String?
+  lastPaymentRejectedAt      DateTime?
+
+  // Latest payment-revert metadata. Set when admin reverts an already-
+  // approved payment (CLOSED → PENDING_PAYMENT) on the Services tab.
+  // Same display semantics as the rejection fields above; cleared on the
+  // next approved payment.
+  lastPaymentRevertReason String?
+  lastPaymentRevertedAt   DateTime?
+
   startedAt     DateTime?
   completedAt   DateTime?
   pausedAt      DateTime?
@@ -789,6 +852,11 @@ enum PaymentMethod {
   OTHER
 }
 
+enum PaymentCommsMode {
+  SERVER
+  CLAIMER
+}
+
 model Payment {
   id String @id @default(cuid())
 
@@ -804,10 +872,55 @@ model Payment {
   businessMarginPercent Float? // % retained from employee/trainee splits
   businessMarginAmount  Float? // calculated on employee/trainee splits: (splitAmount - expenses) * percent / 100
 
-  collectedById String
-  collectedBy   User   @relation(fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  // Nullable: client self-reports via /pay/[token] without a logged-in user;
+  // claimer on-site reports set this to themselves; admin direct-records sets
+  // this to the admin.
+  collectedById String?
+  collectedBy   User?   @relation("PaymentCollector", fields: [collectedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // Approval flow:
+  //   confirmed=false means the payment was reported (by client or worker)
+  //   but hasn't been verified against the actual bank/account yet. The
+  //   occurrence stays PENDING_PAYMENT until confirmed=true. Admin-direct
+  //   records are confirmed=true at creation (admin = approver).
+  confirmed     Boolean   @default(false)
+  confirmedAt   DateTime?
+  confirmedById String?
+  confirmedBy   User?     @relation("PaymentConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // True when the row was created via /pay/[token] client action OR a worker
+  // on-site report — distinguished from an admin-direct record for audit + UI.
+  selfReported Boolean @default(false)
 
   nextOccurrenceSkipReason String? // null = created successfully, "one_off" = expected, others = warning
+
+  // Reconciliation against promisedPayouts (see JobOccurrence.promisedPayouts).
+  // shortfallAmount > 0 when collected < promised: employees+trainees are
+  // still paid their promised net, contractors share the shortfall pro-rata,
+  // and the business absorbs the gap recorded here.
+  // overageAmount  > 0 when collected > promised: workers paid promised net,
+  // overage stays with the business.
+  // Both are denormalized for fast reporting; never appear as a separate
+  // accounting entry (cash-basis: it's already reflected in collected revenue
+  // and labor cost).
+  shortfallAmount Float @default(0)
+  overageAmount   Float @default(0)
+
+  // Admin-adjusted amount at approval time (e.g. client wrote $100 but
+  // actually paid $80). adjustedFromAmount preserves the originally-reported
+  // value for audit.
+  adjustedAt          DateTime?
+  adjustedById        String?
+  adjustedBy          User?     @relation("PaymentAdjuster", fields: [adjustedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  adjustedFromAmount  Float?
+
+  // Write-off path: admin closes the books with collected=0 because client
+  // never paid. Employees+trainees still get their promised net; contractors
+  // get $0; full promised amount lands in shortfallAmount.
+  writtenOff      Boolean   @default(false)
+  writtenOffAt    DateTime?
+  writtenOffById  String?
+  writtenOffBy    User?     @relation("PaymentWriteOff", fields: [writtenOffById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  writeOffReason  String?
 
   splits PaymentSplit[]
 
@@ -815,6 +928,8 @@ model Payment {
 
   @@index([collectedById, createdAt])
   @@index([method, createdAt])
+  @@index([confirmed, createdAt])
+  @@index([writtenOff, createdAt])
 }
 
 model PaymentSplit {
@@ -826,7 +941,22 @@ model PaymentSplit {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  amount Float
+  // `amount` is the worker's final net payout (gross − fee + topUp).
+  // The breakdown columns below are populated for transparency/reporting:
+  //   grossAmount  = N × splitPercent  (worker's share before fee)
+  //   ratePercent  = the fee/margin rate applied to THIS worker
+  //   feeAmount    = grossAmount × ratePercent / 100
+  //   netAmount    = grossAmount − feeAmount  (pre-topUp)
+  //   topUpAmount  = extra the business paid out to make an employee/trainee
+  //                  whole when the client underpaid
+  // All nullable on historical rows; populated on rows created after the
+  // 20260518_payment_reconciliation migration.
+  amount      Float
+  grossAmount Float?
+  ratePercent Float?
+  feeAmount   Float?
+  netAmount   Float?
+  topUpAmount Float  @default(0)
 
   createdAt DateTime @default(now())
 

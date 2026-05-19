@@ -29,6 +29,7 @@ import {
   type PaymentListItem,
   type EquipmentCharge,
   PAYMENT_METHOD,
+  PAYMENT_METHOD_OFFERED,
 } from "@/src/lib/types";
 import {
   publishInlineMessage,
@@ -40,6 +41,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import StatusButton from "@/src/ui/components/StatusButton";
 import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
+import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
 
 const methodFilterItems = [
   { label: "All Methods", value: "ALL" },
@@ -119,6 +121,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
     { label: "Today", value: "today" },
     { label: "Last week", value: "lastWeek" },
     { label: "Last month", value: "lastMonth" },
+    { label: "Last year", value: "lastYear" },
     { label: "All time", value: "all" },
   ], []);
 
@@ -298,13 +301,26 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         // totalAmount already represents the worker's post-deduction payout (commission/margin/expenses removed at acceptance time).
         // Equipment rental charges are separate — billed AFTER payout, so they're a real additional deduction here.
         const totalEquipCost = showEquip ? equipCharges.reduce((s, c) => s + (c.rentalCost ?? 0), 0) : 0;
+        // Split the visible payout into confirmed and pending-approval. For
+        // contractors, the pending portion is provisional — admin may
+        // adjust it. For employees/trainees the pending portion is what
+        // they'll receive via payroll regardless.
+        const pendingTotal = showJobs
+          ? items.reduce((s, it) => s + (it.payment.confirmed === false ? it.myAmount : 0), 0)
+          : 0;
         const visibleTotal = showJobs ? totalAmount : 0;
+        const confirmedTotal = visibleTotal - pendingTotal;
         const finalNet = visibleTotal - totalEquipCost;
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
             {showJobs && (
               <Text fontSize="lg" fontWeight="bold" color="green.700">
                 Payout: ${visibleTotal.toFixed(2)}
+              </Text>
+            )}
+            {showJobs && pendingTotal > 0 && (
+              <Text fontSize="xs" color="orange.700">
+                ${confirmedTotal.toFixed(2)} confirmed · ${pendingTotal.toFixed(2)} pending admin approval
               </Text>
             )}
             {totalEquipCost > 0 && (
@@ -369,6 +385,18 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       {client?.displayName && <> — {clientLabel(client.displayName)}</>}
                     </Text>
                     <HStack gap={2} flexShrink={0}>
+                      {/* Contractors get a louder, more explicit pending badge
+                          because their amount can actually shrink at admin
+                          approval (adjustment / write-off). Employees /
+                          trainees get the muted "Pending" — for them the
+                          amount won't change at approval. */}
+                      {item.payment.confirmed === false && (
+                        (me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE") ? (
+                          <Badge size="sm" colorPalette="orange" variant="subtle">Pending</Badge>
+                        ) : (
+                          <Badge size="sm" colorPalette="orange" variant="solid">Pending — may change</Badge>
+                        )
+                      )}
                       <Badge size="sm" colorPalette="gray">{prettyStatus(item.payment.method)}</Badge>
                       <Text fontWeight="bold" color="green.700" fontSize="lg">
                         ${item.myAmount.toFixed(2)}
@@ -418,15 +446,28 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                         Paid on {fmtDate(item.payment.createdAt)}
                       </Text>
                     )}
-                    {item.payment.splits.length > 1 && (
-                      <VStack align="start" gap={0} mt={0.5}>
-                        {item.payment.splits.map((sp) => (
-                          <Text key={sp.userId} fontSize="xs" color="fg.muted">
-                            {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
-                          </Text>
-                        ))}
-                      </VStack>
-                    )}
+                    {item.payment.splits.length > 1 && (() => {
+                      // Per-worker percent split is derived from grossAmount
+                      // shares — sums to ~100 of the actual collected amount.
+                      // For legacy rows that don't have grossAmount, the
+                      // percent is omitted.
+                      const totalGross = item.payment.splits.reduce((s, sp) => s + (sp.grossAmount ?? 0), 0);
+                      return (
+                        <VStack align="start" gap={0} mt={0.5}>
+                          {item.payment.splits.map((sp) => {
+                            const pct = totalGross > 0 && sp.grossAmount != null
+                              ? Math.round((sp.grossAmount / totalGross) * 100)
+                              : null;
+                            return (
+                              <Text key={sp.userId} fontSize="xs" color="fg.muted">
+                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
+                              </Text>
+                            );
+                          })}
+                        </VStack>
+                      );
+                    })()}
                     {(() => {
                       const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                       return expTotal > 0 ? (
@@ -446,11 +487,46 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                     const expTotal = (item.occurrence?.expenses ?? []).reduce((s, e) => s + e.cost, 0);
                     const fee = item.payment.platformFeeAmount ?? 0;
                     const margin = item.payment.businessMarginAmount ?? 0;
+                    const isPending = item.payment.confirmed === false;
+                    const isEmployeeClass = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
                     return (
                       <VStack align="end" gap={0}>
+                        {/* Same split-by-worker-type treatment as the compact
+                            view: louder solid badge + inline caption for
+                            contractors because their amount can shrink at
+                            approval. Employees get the muted reminder
+                            since their number won't change. */}
+                        {isPending && (
+                          isEmployeeClass ? (
+                            <Badge size="sm" colorPalette="orange" variant="subtle" title="Recorded but not yet approved by admin. You'll receive this amount via payroll regardless.">
+                              Pending approval
+                            </Badge>
+                          ) : (
+                            <Badge size="sm" colorPalette="orange" variant="solid">
+                              Pending — may change
+                            </Badge>
+                          )
+                        )}
                         <Text fontWeight="bold" color="green.700" fontSize="lg">
                           ${item.myAmount.toFixed(2)}
                         </Text>
+                        {/* Pro-rata reduction (contractors only). When the
+                            client underpaid, the contractor's actual
+                            payout is below what was promised at Initiate-
+                            Payment time. Surface the gap so the worker
+                            understands why their take is lower than
+                            expected on this row. Employees skip this —
+                            they're made whole, so the gap is always 0. */}
+                        {!isEmployeeClass && item.myPromisedNet != null && item.myPromisedNet > item.myAmount && (
+                          <Text fontSize="2xs" color="orange.700" textAlign="right" maxW="220px">
+                            Pro-rata reduction: −${(item.myPromisedNet - item.myAmount).toFixed(2)} due to client underpay
+                          </Text>
+                        )}
+                        {isPending && !isEmployeeClass && (
+                          <Text fontSize="2xs" color="orange.700" textAlign="right" maxW="200px">
+                            If admin adjusts the payment or writes it off, this amount may shrink.
+                          </Text>
+                        )}
                         {item.payment.amountPaid !== item.myAmount && (
                           <Text fontSize="xs" color="fg.muted">
                             of ${item.payment.amountPaid.toFixed(2)} total
@@ -468,12 +544,12 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                         )}
                         {fee > 0 && (
                           <Text fontSize="2xs" color="fg.muted">
-                            {item.payment.platformFeePercent}% commission applied
+                            {item.payment.platformFeePercent}% commission on contractor's share
                           </Text>
                         )}
                         {margin > 0 && (
                           <Text fontSize="2xs" color="fg.muted">
-                            {item.payment.businessMarginPercent}% margin applied
+                            {item.payment.businessMarginPercent}% margin on employee's share
                           </Text>
                         )}
                       </VStack>
@@ -560,7 +636,10 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
 
 // ─── Admin Payments ──────────────────────────────────────────────────
 
-const editMethodItems = PAYMENT_METHOD.map((m) => ({ label: prettyStatus(m), value: m }));
+// Editing an existing payment offers only the currently-supported methods.
+// Historical rows with APPLE_PAY/CASH_APP/OTHER still render correctly
+// (display side uses PAYMENT_METHOD); they just can't be re-selected.
+const editMethodItems = PAYMENT_METHOD_OFFERED.map((m) => ({ label: prettyStatus(m), value: m }));
 const editMethodCollection = createListCollection({ items: editMethodItems });
 
 function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
@@ -568,6 +647,13 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
   const [totalBusinessMargin, setTotalBusinessMargin] = useState(0);
+  const [totalOverage, setTotalOverage] = useState(0);
+  const [totalShortfall, setTotalShortfall] = useState(0);
+  // Money-flow total revenue = sum of (amountPaid − worker payouts − expenses)
+  // across all payments in the filtered range. Always correct regardless
+  // of overpay / underpay / write-off; computed server-side so the
+  // breakdown components (fees, margin, overage) don't need to add up.
+  const [totalRevenue, setTotalRevenue] = useState(0);
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
@@ -595,6 +681,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     { label: "Today", value: "today" },
     { label: "Last week", value: "lastWeek" },
     { label: "Last month", value: "lastMonth" },
+    { label: "Last year", value: "lastYear" },
     { label: "All time", value: "all" },
   ], []);
 
@@ -650,10 +737,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [editBusy, setEditBusy] = useState(false);
   const [editConfirm, setEditConfirm] = useState(false);
 
-  // Delete state
-  const [deletePayment, setDeletePayment] = useState<PaymentListItem | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-
   // Delete expense state
   const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
   const [deleteExpenseBusy, setDeleteExpenseBusy] = useState(false);
@@ -698,6 +781,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
           totalPlatformFees: number;
           totalBusinessMargin: number;
+          totalOverage?: number;
+          totalShortfall?: number;
+          totalRevenue?: number;
         }>(`/api/admin/payments${qs.toString() ? `?${qs}` : ""}`),
         apiGet<EquipmentCharge[]>(
           `/api/admin/payments/equipment-charges${eqs.toString() ? `?${eqs}` : ""}`
@@ -707,6 +793,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
       setPersonTotals(res.personTotals ?? []);
       setTotalPlatformFees(res.totalPlatformFees ?? 0);
       setTotalBusinessMargin(res.totalBusinessMargin ?? 0);
+      setTotalOverage(res.totalOverage ?? 0);
+      setTotalShortfall(res.totalShortfall ?? 0);
+      setTotalRevenue(res.totalRevenue ?? 0);
       setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
@@ -717,6 +806,17 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
 
   useEffect(() => {
     void load();
+  }, [dateFrom, dateTo, methodFilter]);
+
+  // Listen for admin payment mutations (approve / adjust / reject / write
+  // off in the Pending Approvals section, or edit/delete from this list).
+  // Refetch with current filters so the row's badge + numbers update
+  // immediately without a hard refresh.
+  useEffect(() => {
+    const onChanged = () => void load();
+    window.addEventListener("seedlings:admin-payments-changed", onChanged);
+    return () => window.removeEventListener("seedlings:admin-payments-changed", onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, methodFilter]);
 
   const grandTotal = useMemo(
@@ -813,23 +913,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     }
   }
 
-  async function handleDelete() {
-    if (!deletePayment) return;
-    setDeleteBusy(true);
-    try {
-      await apiDelete(`/api/admin/payments/${deletePayment.id}`);
-      publishInlineMessage({ type: "SUCCESS", text: "Payment deleted. Occurrence reverted to pending payment." });
-      setDeletePayment(null);
-      void load();
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete payment failed.", err) });
-    } finally {
-      setDeleteBusy(false);
-    }
-  }
-
   return (
     <Box w="full">
+      <PendingApprovalsSection />
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -1216,7 +1302,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                   Equipment Total: −${totalEquipCost.toFixed(2)}
                 </Text>
               )}
-        {showJobs && (totalPlatformFees > 0 || totalBusinessMargin > 0) && (
+        {showJobs && (totalPlatformFees > 0 || totalBusinessMargin > 0 || totalOverage > 0 || totalShortfall > 0) && (
           <VStack align="start" gap={0} mt={1}>
             {totalPlatformFees > 0 && (
               <Text fontSize="sm" fontWeight="medium" color="blue.600">
@@ -1228,8 +1314,18 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 Employee Business Margin: ${totalBusinessMargin.toFixed(2)}
               </Text>
             )}
-            <Text fontSize="sm" fontWeight="bold" color="blue.700">
-              Total Revenue: ${(totalPlatformFees + totalBusinessMargin).toFixed(2)}
+            {totalOverage > 0 && (
+              <Text fontSize="sm" fontWeight="medium" color="green.600">
+                Overage retained: ${totalOverage.toFixed(2)}
+              </Text>
+            )}
+            {totalShortfall > 0 && (
+              <Text fontSize="sm" fontWeight="medium" color="red.600">
+                Shortfall absorbed: −${totalShortfall.toFixed(2)}
+              </Text>
+            )}
+            <Text fontSize="sm" fontWeight="bold" color="blue.700" title="Money-flow total = collected − worker payouts − expenses. Always correct regardless of overpay/underpay.">
+              Total Revenue: ${totalRevenue.toFixed(2)}
             </Text>
           </VStack>
         )}
@@ -1287,8 +1383,14 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       {client?.displayName && <> — {clientLabel(client.displayName)}</>}
                     </Text>
                     <HStack gap={2} flexShrink={0}>
+                      {p.confirmed === false && !(p as any).writtenOff && (
+                        <Badge size="sm" colorPalette="orange" variant="subtle">Pending</Badge>
+                      )}
+                      {(p as any).writtenOff && (
+                        <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
+                      )}
                       <Badge size="sm" colorPalette="gray">{prettyStatus(p.method)}</Badge>
-                      <Text fontWeight="bold" color="green.700" fontSize="lg">
+                      <Text fontWeight="bold" color={(p as any).writtenOff ? "red.700" : "green.700"} fontSize="lg">
                         ${p.amountPaid.toFixed(2)}
                       </Text>
                     </HStack>
@@ -1342,16 +1444,26 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       </Text>
                     )}
                     {p.splits && p.splits.length > 0 && (() => {
-                      // sp.amount is the post-deduction payout — already net of expenses/commission/margin.
+                      // Same per-worker percent derivation as the worker view —
+                      // grossAmount / Σ grossAmount × 100. Skipped for legacy
+                      // rows that don't carry grossAmount.
+                      const totalGross = p.splits.reduce((s, sp) => s + ((sp as any).grossAmount ?? 0), 0);
                       return (
                         <VStack align="start" gap={1} mt={0.5}>
-                          {p.splits.map((sp) => (
-                            <Box key={sp.userId} fontSize="xs">
-                              <Text fontWeight="medium" color="green.700">
-                                {sp.user?.displayName ?? sp.user?.email ?? sp.userId}: ${sp.amount.toFixed(2)}
-                              </Text>
-                            </Box>
-                          ))}
+                          {p.splits.map((sp) => {
+                            const g = (sp as any).grossAmount as number | null | undefined;
+                            const pct = totalGross > 0 && g != null
+                              ? Math.round((g / totalGross) * 100)
+                              : null;
+                            return (
+                              <Box key={sp.userId} fontSize="xs">
+                                <Text fontWeight="medium" color="green.700">
+                                  {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                  {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
+                                </Text>
+                              </Box>
+                            );
+                          })}
                         </VStack>
                       );
                     })()}
@@ -1376,11 +1488,31 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     const margin = (p as any).businessMarginAmount ?? 0;
                     const splitTotal = (p.splits ?? []).reduce((s, sp) => s + sp.amount, 0);
                     const hasDeductions = expTotal > 0 || fee > 0 || margin > 0;
+                    const writtenOff = !!(p as any).writtenOff;
+                    const shortfall = (p as any).shortfallAmount ?? 0;
+                    const overage = (p as any).overageAmount ?? 0;
+                    const adjustedFrom = (p as any).adjustedFromAmount as number | null | undefined;
+                    const isPending = p.confirmed === false && !writtenOff;
                     return (
                       <VStack align="end" gap={0}>
-                        <Text fontWeight="bold" color="green.700" fontSize="lg">
-                          ${p.amountPaid.toFixed(2)}
-                        </Text>
+                        <HStack gap={1} align="center" wrap="wrap" justify="flex-end">
+                          {isPending && (
+                            <Badge size="sm" colorPalette="orange" variant="subtle" title="Awaiting admin approval in the Pending Approvals queue.">
+                              Pending approval
+                            </Badge>
+                          )}
+                          {writtenOff && (
+                            <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
+                          )}
+                          {adjustedFrom != null && adjustedFrom !== p.amountPaid && (
+                            <Badge size="sm" colorPalette="orange" variant="subtle" title={`Originally reported as $${adjustedFrom.toFixed(2)}`}>
+                              Adjusted
+                            </Badge>
+                          )}
+                          <Text fontWeight="bold" color={writtenOff ? "red.700" : "green.700"} fontSize="lg">
+                            ${p.amountPaid.toFixed(2)}
+                          </Text>
+                        </HStack>
                         {expTotal > 0 && (
                           <Text fontSize="xs" color="orange.600">
                             −${expTotal.toFixed(2)} expenses
@@ -1401,6 +1533,16 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                             Worker payout: ${splitTotal.toFixed(2)}
                           </Text>
                         )}
+                        {shortfall > 0 && (
+                          <Text fontSize="xs" color="red.600" mt={1}>
+                            Business absorbed ${shortfall.toFixed(2)} shortfall
+                          </Text>
+                        )}
+                        {overage > 0 && (
+                          <Text fontSize="xs" color="green.600" mt={1}>
+                            Business kept ${overage.toFixed(2)} overage
+                          </Text>
+                        )}
                       </VStack>
                     );
                   })()}
@@ -1416,16 +1558,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     label="Edit"
                     onClick={async () => openEdit(p)}
                     variant="outline"
-                    busyId={statusButtonBusyId}
-                    setBusyId={setStatusButtonBusyId}
-                  />
-                  <StatusButton
-                    id="payment-delete"
-                    itemId={p.id}
-                    label="Delete"
-                    onClick={async () => setDeletePayment(p)}
-                    variant="outline"
-                    colorPalette="red"
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
                   />
@@ -1634,37 +1766,6 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     disabled={!editAmount || !editMethod[0]}
                   >
                     {editConfirm ? "Yes, Save Changes" : "Save"}
-                  </Button>
-                </HStack>
-              </Dialog.Footer>
-            </Dialog.Content>
-          </Dialog.Positioner>
-        </Portal>
-      </Dialog.Root>
-
-      {/* ── Delete Payment Confirmation ── */}
-      <Dialog.Root open={!!deletePayment} onOpenChange={(e) => { if (!e.open) setDeletePayment(null); }}>
-        <Portal>
-          <Dialog.Backdrop />
-          <Dialog.Positioner>
-            <Dialog.Content mx="4" maxW="sm" w="full" rounded="2xl" p="4" shadow="lg">
-              <Dialog.CloseTrigger />
-              <Dialog.Header>
-                <Dialog.Title>Delete Payment</Dialog.Title>
-              </Dialog.Header>
-              <Dialog.Body>
-                <Text>
-                  Are you sure you want to delete this ${deletePayment?.amountPaid.toFixed(2)} payment?
-                  The occurrence will be reverted to pending payment status.
-                </Text>
-              </Dialog.Body>
-              <Dialog.Footer>
-                <HStack justify="flex-end" w="full">
-                  <Button variant="ghost" onClick={() => setDeletePayment(null)} disabled={deleteBusy}>
-                    Cancel
-                  </Button>
-                  <Button colorPalette="red" onClick={handleDelete} loading={deleteBusy}>
-                    Delete Payment
                   </Button>
                 </HStack>
               </Dialog.Footer>

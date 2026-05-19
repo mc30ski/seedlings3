@@ -57,6 +57,7 @@ export async function sendEmail(
   to: string,
   subject: string,
   body: string,
+  options?: { html?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   const client = getResend();
   if (!client) return { ok: false, error: "Resend not configured" };
@@ -67,6 +68,7 @@ export async function sendEmail(
       to,
       subject,
       text: body,
+      ...(options?.html ? { html: options.html } : {}),
     });
     return { ok: true };
   } catch (err: any) {
@@ -96,7 +98,15 @@ type NotifyResult = {
 export async function notifyWorker(
   userId: string,
   message: string | { sms?: string; email?: string; push?: PushPayload },
-  options?: { subject?: string; link?: string },
+  options?: {
+    subject?: string;
+    link?: string;
+    /** When true, skip the paid channels (Twilio SMS, Resend email) and
+     *  only fire web-push. Web-push is free, so callers that want a
+     *  low-cost default pass this. The user can still opt back into
+     *  paid channels by flipping a setting in the Settings tab. */
+    pushOnly?: boolean;
+  },
 ): Promise<NotifyResult> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -133,6 +143,12 @@ export async function notifyWorker(
         return { attempted: 0, delivered: 0, pruned: 0, failed: 0 };
       })
     : Promise.resolve({ attempted: 0, delivered: 0, pruned: 0, failed: 0 });
+
+  // Caller-requested push-only mode — skip the paid channels entirely.
+  if (options?.pushOnly) {
+    const push = await pushPromise;
+    return { method: "none", ok: true, push };
+  }
 
   // Prefer SMS if phone available
   if (user.phone) {

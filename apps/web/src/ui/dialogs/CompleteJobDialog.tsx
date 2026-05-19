@@ -17,6 +17,14 @@ import {
 
 type Expense = { id: string; cost: number; description: string };
 
+type DialogAssignee = {
+  userId: string;
+  role?: string | null;
+  user: { id: string; displayName?: string | null; email?: string | null };
+};
+
+type ContactHint = { firstName?: string; lastName?: string; phone?: string | null; email?: string | null } | null;
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -33,8 +41,16 @@ type Props = {
   existingCompletedAt?: string | null;
   /** Number of non-observer assignees. */
   workerCount?: number;
-  onCompleted: (completedAt?: string, startedAt?: string, totalPausedMs?: number) => void;
+  /** Non-observer assignees for split allocation. */
+  assignees?: DialogAssignee[];
+  /** Job workflow — splits only apply to paying jobs. */
+  workflow?: string | null;
+  /** Property point-of-contact (hint for contact-info gate). */
+  pointOfContact?: ContactHint;
+  onCompleted: (completedAt?: string, startedAt?: string, totalPausedMs?: number, completionSplits?: Array<{ userId: string; percent: number }>) => void;
 };
+
+const PAYING_WORKFLOWS = new Set(["STANDARD", "ONE_OFF", "ESTIMATE"]);
 
 export default function CompleteJobDialog({
   open,
@@ -47,6 +63,9 @@ export default function CompleteJobDialog({
   pausedAt,
   existingCompletedAt,
   workerCount,
+  assignees,
+  workflow,
+  pointOfContact,
   onCompleted,
 }: Props) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -57,6 +76,18 @@ export default function CompleteJobDialog({
   const [offHours, setOffHours] = useState("0");
   const [offMinutes, setOffMinutes] = useState("0");
   const [acknowledgedDiscrepancy, setAcknowledgedDiscrepancy] = useState(false);
+  const [splits, setSplits] = useState<Record<string, string>>({});
+
+  const nonObserverAssignees = (assignees ?? []).filter((a) => a.role !== "observer");
+  const isPayingWorkflow = !workflow || PAYING_WORKFLOWS.has(workflow);
+  // Splits are no longer set at completion — they're set in the Take Payment
+  // dialog along with the actual collected amount. Keep the variables (used
+  // by the existing onCompleted callback signature) but render nothing and
+  // skip validation.
+  const showSplits = false;
+  const splitsSum = Object.values(splits).reduce((s, v) => s + (Number(v) || 0), 0);
+  const splitsValid = true;
+  const contactMissing = isPayingWorkflow && !pointOfContact?.phone && !pointOfContact?.email;
 
   const toLocalInput = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -96,6 +127,20 @@ export default function CompleteJobDialog({
       .then((list) => setExpenses(Array.isArray(list) ? list : []))
       .catch(() => setExpenses([]))
       .finally(() => setLoading(false));
+    // Initialise even split across non-observer assignees.
+    const ws = (assignees ?? []).filter((a) => a.role !== "observer");
+    if (ws.length > 0) {
+      const even = 100 / ws.length;
+      const base = Math.floor(even * 100) / 100;
+      const residual = Math.round((100 - base * ws.length) * 100) / 100;
+      const next: Record<string, string> = {};
+      ws.forEach((a, i) => {
+        next[a.userId] = (i === 0 ? (base + residual).toFixed(2) : base.toFixed(2));
+      });
+      setSplits(next);
+    } else {
+      setSplits({});
+    }
   }, [open, occurrenceId]);
 
   const totalExpenses = expenses.reduce((s, e) => s + e.cost, 0);
@@ -138,6 +183,10 @@ export default function CompleteJobDialog({
       publishInlineMessage({ type: "WARNING", text: "Off-the-clock time exceeds the span between start and end." });
       return;
     }
+    if (!splitsValid) {
+      publishInlineMessage({ type: "WARNING", text: `Splits must total 100% (currently ${splitsSum.toFixed(2)}%).` });
+      return;
+    }
     setBusy(true);
     try {
       const completedAtIso = completedAtTime ? new Date(completedAtTime).toISOString() : undefined;
@@ -145,7 +194,10 @@ export default function CompleteJobDialog({
       // Only forward startedAt if it actually changed from the original prop value.
       const origStartedIso = startedAt ? new Date(startedAt).toISOString() : undefined;
       const startedAtChanged = startedAtIso !== origStartedIso ? startedAtIso : undefined;
-      onCompleted(completedAtIso, startedAtChanged, offMs);
+      const completionSplits = showSplits
+        ? nonObserverAssignees.map((a) => ({ userId: a.userId, percent: Number(splits[a.userId]) || 0 }))
+        : undefined;
+      onCompleted(completedAtIso, startedAtChanged, offMs, completionSplits);
       onOpenChange(false);
     } finally {
       setBusy(false);
@@ -249,6 +301,57 @@ export default function CompleteJobDialog({
                   </Box>
                 )}
 
+                {contactMissing && (
+                  <Box p={3} bg="red.50" borderWidth="2px" borderColor="red.400" rounded="md">
+                    <Text fontSize="sm" fontWeight="semibold" color="red.800" mb={1}>
+                      Missing client contact info
+                    </Text>
+                    <Text fontSize="xs" color="red.700">
+                      This client has no phone or email on file. They need at least one so they can receive the payment request. Add a phone or email on the client&apos;s page before completing this job.
+                    </Text>
+                  </Box>
+                )}
+
+                {showSplits && (
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>Payout split</Text>
+                    <Text fontSize="xs" color="fg.muted" mb={2}>
+                      Set each worker&apos;s share of the payout. Must total 100%.
+                    </Text>
+                    <VStack align="stretch" gap={1}>
+                      {nonObserverAssignees.map((a) => (
+                        <HStack key={a.userId} gap={2}>
+                          <Text fontSize="sm" flex="1" lineClamp={1}>
+                            {a.user.displayName || a.user.email || "Worker"}
+                          </Text>
+                          <Box w="90px">
+                            <HStack gap={1}>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step="0.01"
+                                value={splits[a.userId] ?? ""}
+                                onChange={(e) => setSplits((prev) => ({ ...prev, [a.userId]: e.target.value }))}
+                                style={{ width: "100%", padding: "4px 8px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px", textAlign: "right" }}
+                              />
+                              <Text fontSize="sm" color="fg.muted">%</Text>
+                            </HStack>
+                          </Box>
+                        </HStack>
+                      ))}
+                    </VStack>
+                    <HStack justify="space-between" mt={2}>
+                      <Text fontSize="xs" color={splitsValid ? "fg.muted" : "red.600"} fontWeight={splitsValid ? "normal" : "semibold"}>
+                        Total: {splitsSum.toFixed(2)}%
+                      </Text>
+                      {!splitsValid && (
+                        <Text fontSize="xs" color="red.600">Must total 100%</Text>
+                      )}
+                    </HStack>
+                  </Box>
+                )}
+
                 {/* Summary */}
                 {occurrencePrice != null && (
                   <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
@@ -300,6 +403,8 @@ export default function CompleteJobDialog({
                     !completedAtTime ||
                     endBeforeStart ||
                     offTooLarge ||
+                    contactMissing ||
+                    !splitsValid ||
                     (showDiscrepancyWarning && !acknowledgedDiscrepancy)
                   }
                 >

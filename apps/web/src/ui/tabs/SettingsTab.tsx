@@ -45,6 +45,74 @@ type PricingValue = {
 
 type PricingEntry = Setting & { parsedValue: PricingValue | null };
 
+/** Numeric setting registry. Keys listed here get a number input in the
+ *  editor with min/max/step bounds and matching client-side validation.
+ *  `kind: "integer"` rejects decimals; `kind: "float"` accepts any finite
+ *  number inside [min, max]. Add a new entry when introducing a numeric
+ *  setting so admins can't save it as free text. */
+type NumericSettingConfig = {
+  kind: "integer" | "float";
+  min: number;
+  max?: number;
+  step?: number;
+  /** Error message shown next to the input + in the toast on save. */
+  hint: string;
+};
+
+const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
+  MAX_PHOTOS_PER_JOB: {
+    kind: "integer",
+    min: 1,
+    step: 1,
+    hint: "Must be a positive whole number (1 or greater).",
+  },
+  PHOTO_MAX_EDGE_PX: {
+    kind: "integer",
+    min: 100,
+    max: 8000,
+    step: 1,
+    hint: "Must be a whole number between 100 and 8000 pixels.",
+  },
+  PHOTO_JPEG_QUALITY: {
+    kind: "float",
+    min: 0.1,
+    max: 1.0,
+    step: 0.05,
+    hint: "Must be a number between 0.1 and 1.0 (e.g., 0.8 for the typical balance, 0.6 for smaller files).",
+  },
+};
+
+/** Setting keys whose value is a boolean toggle (stored as "true"/"false").
+ *  Rendered as a two-state Off/On toggle in the editor, like the
+ *  payment-comms-mode picker. Add a key here when introducing a yes/no
+ *  setting so admins can't save it as free text. */
+const BOOLEAN_SETTINGS = new Set([
+  "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
+  "REQUEST_PAYMENT_FROM_CLIENT_ENABLED",
+]);
+
+function validateNumericSetting(key: string, value: string): { ok: boolean; error?: string } {
+  const cfg = NUMERIC_SETTINGS[key];
+  if (!cfg) return { ok: true };
+  const trimmed = value.trim();
+  if (trimmed === "") return { ok: false, error: cfg.hint };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return { ok: false, error: cfg.hint };
+  if (cfg.kind === "integer" && !Number.isInteger(n)) return { ok: false, error: cfg.hint };
+  if (n < cfg.min) return { ok: false, error: cfg.hint };
+  if (cfg.max != null && n > cfg.max) return { ok: false, error: cfg.hint };
+  return { ok: true };
+}
+
+/** Convert a SNAKE_CASE setting key into a human-readable Title Case label.
+ *  Used for both the card title and any toast that references a setting. */
+function prettySettingName(key: string): string {
+  return key
+    .split("_")
+    .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
 /** Inline editor for JSON key-value map settings */
 function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
   value: string;
@@ -301,11 +369,33 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
 
   // General settings save
   async function handleSave(key: string) {
+    // Numeric keys (integer or float, bounded by NUMERIC_SETTINGS) get
+    // validated client-side first. Anything failing the registry's bounds
+    // gets rejected before hitting the API.
+    const numericCheck = validateNumericSetting(key, editValue);
+    if (!numericCheck.ok) {
+      publishInlineMessage({ type: "ERROR", text: numericCheck.error ?? "Invalid value." });
+      return;
+    }
     setSaving(true);
     try {
       await apiPatch(`/api/admin/settings/${key}`, { value: editValue });
-      publishInlineMessage({ type: "SUCCESS", text: `Setting "${key}" updated.` });
+      publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
       setEditingKey(null);
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Direct write for inline-toggle settings (no edit-mode flow).
+  async function saveSettingValue(key: string, value: string) {
+    setSaving(true);
+    try {
+      await apiPatch(`/api/admin/settings/${key}`, { value });
+      publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
@@ -393,28 +483,122 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                     <HStack justify="space-between" w="full" align="start">
                       <VStack align="start" gap={0}>
                         <Text fontSize="sm" fontWeight="semibold">
-                          {s.key
-                            .split("_")
-                            .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-                            .join(" ")}
+                          {prettySettingName(s.key)}
                         </Text>
                         {s.description && (
                           <Text fontSize="xs" color="fg.muted">{s.description}</Text>
                         )}
                       </VStack>
-                      {isSuper && editingKey !== s.key && (
+                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && (
                         <Button size="xs" variant="outline" onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
                       )}
                     </HStack>
 
-                    {editingKey === s.key ? (
+                    {s.key === "PAYROLL_PERIOD_CADENCE" ? (
+                      // Three-state cadence selector — only WEEKLY, BIWEEKLY,
+                      // or MONTHLY are valid. Free text would corrupt the
+                      // Exports tab period math. Super-only writes.
+                      <HStack gap={2}>
+                        {(["WEEKLY", "BIWEEKLY", "MONTHLY"] as const).map((v) => (
+                          <Button
+                            key={v}
+                            size="xs"
+                            variant={s.value === v ? "solid" : "outline"}
+                            colorPalette="blue"
+                            loading={saving && s.value !== v}
+                            disabled={!isSuper || s.value === v}
+                            onClick={() => void saveSettingValue(s.key, v)}
+                          >
+                            {v.charAt(0) + v.slice(1).toLowerCase()}
+                          </Button>
+                        ))}
+                      </HStack>
+                    ) : s.key === "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" ? (
+                      // Two-state toggle — the only valid values are SERVER
+                      // or CLAIMER, so no free-text input. Super-only writes.
+                      <HStack gap={2}>
+                        <Button
+                          size="xs"
+                          variant={s.value === "SERVER" ? "solid" : "outline"}
+                          colorPalette="blue"
+                          loading={saving && s.value !== "SERVER"}
+                          disabled={!isSuper || s.value === "SERVER"}
+                          onClick={() => void saveSettingValue(s.key, "SERVER")}
+                        >
+                          Server
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant={s.value === "CLAIMER" ? "solid" : "outline"}
+                          colorPalette="purple"
+                          loading={saving && s.value !== "CLAIMER"}
+                          disabled={!isSuper || s.value === "CLAIMER"}
+                          onClick={() => void saveSettingValue(s.key, "CLAIMER")}
+                        >
+                          Claimer
+                        </Button>
+                      </HStack>
+                    ) : BOOLEAN_SETTINGS.has(s.key) ? (
+                      // Off/On toggle — value is "true"/"false". Super-only.
+                      <HStack gap={2}>
+                        <Button
+                          size="xs"
+                          variant={s.value !== "true" ? "solid" : "outline"}
+                          colorPalette="gray"
+                          loading={saving && s.value !== "false"}
+                          disabled={!isSuper || s.value !== "true"}
+                          onClick={() => void saveSettingValue(s.key, "false")}
+                        >
+                          Off
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant={s.value === "true" ? "solid" : "outline"}
+                          colorPalette="green"
+                          loading={saving && s.value !== "true"}
+                          disabled={!isSuper || s.value === "true"}
+                          onClick={() => void saveSettingValue(s.key, "true")}
+                        >
+                          On
+                        </Button>
+                      </HStack>
+                    ) : editingKey === s.key ? (
                       (() => {
                         // Settings keys that should always expose a Description
                         // column in the editor (so admin can bootstrap the
                         // first description on a row that has none yet).
                         const forceDescription = s.key === "DOCUMENT_TYPES" || s.key === "TIMELINE_CATEGORIES";
+                        // Numeric keys: use a number input with bounds from
+                        // NUMERIC_SETTINGS. inputMode hints the right mobile
+                        // keyboard. handleSave is still the source of truth.
+                        const numericCfg = NUMERIC_SETTINGS[s.key];
+                        if (numericCfg) {
+                          const valid = validateNumericSetting(s.key, editValue).ok;
+                          return (
+                            <HStack gap={2} w="full" align="start">
+                              <VStack align="stretch" flex="1" gap={1}>
+                                <Input
+                                  type="number"
+                                  inputMode={numericCfg.kind === "integer" ? "numeric" : "decimal"}
+                                  min={numericCfg.min}
+                                  max={numericCfg.max}
+                                  step={numericCfg.step ?? (numericCfg.kind === "integer" ? 1 : "any")}
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  size="sm"
+                                  autoFocus
+                                />
+                                {!valid && (
+                                  <Text fontSize="xs" color="red.600">{numericCfg.hint}</Text>
+                                )}
+                              </VStack>
+                              <Button size="sm" onClick={() => handleSave(s.key)} loading={saving} disabled={editValue === s.value || !valid}>Save</Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
+                            </HStack>
+                          );
+                        }
                         // Detect JSON format and use appropriate editor
                         try {
                           const parsed = JSON.parse(s.value);

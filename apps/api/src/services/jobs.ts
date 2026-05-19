@@ -1066,12 +1066,59 @@ export const jobs: ServicesJobs = {
       }
 
       // If reverting from CLOSED to a pre-payment state, clean up the payment
+      // AND the auto-created next occurrence (if still untouched). This used
+      // to be split across the deletePayment service and updateOccurrence —
+      // unified here so Revert Payment is the single canonical undo path.
       if (data.status && data.status !== JobOccurrenceStatus.CLOSED && data.status !== JobOccurrenceStatus.ARCHIVED) {
         const existingPayment = await tx.payment.findUnique({ where: { occurrenceId } });
         if (existingPayment) {
+          // Find the auto-created next occurrence (if any). The cron-driven
+          // generator + the in-line createPayment auto-create both emit a
+          // GENERATED + SCHEDULED occurrence dated after this one's startAt
+          // and created at or after the payment's own createdAt.
+          if (original?.jobId) {
+            const nextOcc = await tx.jobOccurrence.findFirst({
+              where: {
+                jobId: original.jobId,
+                source: "GENERATED",
+                status: "SCHEDULED",
+                startAt: { gt: original.startAt ?? new Date() },
+                createdAt: { gte: existingPayment.createdAt },
+              },
+              orderBy: { createdAt: "asc" },
+            });
+            // Only delete the ghost if no one has touched it (still
+            // SCHEDULED, never started). If a worker already claimed or
+            // started it, we leave it alone so their work isn't blown away.
+            if (nextOcc && !nextOcc.startedAt) {
+              await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId: nextOcc.id } });
+              await tx.pinnedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
+              await tx.likedOccurrence.deleteMany({ where: { occurrenceId: nextOcc.id } });
+              await tx.occurrenceComment.deleteMany({ where: { occurrenceId: nextOcc.id } });
+              await tx.jobOccurrence.delete({ where: { id: nextOcc.id } });
+            }
+          }
           await tx.paymentSplit.deleteMany({ where: { paymentId: existingPayment.id } });
           await tx.payment.delete({ where: { id: existingPayment.id } });
         }
+      }
+
+      // Stamp the latest-revert metadata onto the occurrence when admin
+      // reverts an already-approved payment (CLOSED → PENDING_PAYMENT).
+      // Same semantics as lastPaymentRejection*: the job card surfaces a
+      // banner with the reason; cleared on the next approval.
+      const isRevertingPayment =
+        original.status === JobOccurrenceStatus.CLOSED &&
+        data.status === JobOccurrenceStatus.PENDING_PAYMENT;
+      if (isRevertingPayment) {
+        const rawReason = typeof patch.paymentRevertReason === "string" ? patch.paymentRevertReason.trim() : "";
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: {
+            lastPaymentRevertReason: rawReason || "Reverted",
+            lastPaymentRevertedAt: new Date(),
+          },
+        });
       }
 
       await writeAudit(tx, AUDIT.JOB.OCCURRENCE_UPDATED, currentUserId, {
@@ -1891,7 +1938,7 @@ export const jobs: ServicesJobs = {
     });
   },
 
-  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }) {
+  async updateOccurrenceStatus(currentUserId, occurrenceId, status, notes?: string, location?: { lat: number; lng: number }, timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }, extras?: { completionSplits?: Array<{ userId: string; percent: number }> }) {
     return prisma.$transaction(async (tx) => {
       const actionUser = await tx.user.findUniqueOrThrow({ where: { id: currentUserId }, include: { roles: true } });
       const isAdmin = actionUser.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
@@ -1986,6 +2033,12 @@ export const jobs: ServicesJobs = {
       ) {
         data.completedAt = timestamps?.completedAt ? new Date(timestamps.completedAt) : new Date();
       }
+      // Splits + promised-payout snapshot are NOT set here anymore. They're
+      // deferred to the Take Payment stage (services/payments.ts +
+      // services/paymentRequests.ts), which writes JobOccurrence.completionSplits
+      // and JobOccurrence.promisedPayouts atomically when the user actually
+      // commits to recording or requesting a payment. Completing the job
+      // leaves both fields untouched.
       // Allow caller to explicitly override startedAt (e.g., worker adjusting start time on complete).
       if (timestamps?.startedAt) {
         data.startedAt = new Date(timestamps.startedAt);
@@ -2015,6 +2068,11 @@ export const jobs: ServicesJobs = {
         data.startLng = null;
         data.completeLat = null;
         data.completeLng = null;
+        // Reverting wipes payment lifecycle metadata too.
+        data.lastPaymentRejectionReason = null;
+        data.lastPaymentRejectedAt = null;
+        data.lastPaymentRevertReason = null;
+        data.lastPaymentRevertedAt = null;
         // Delete payment and splits if they exist
         const existingPayment = await tx.payment.findFirst({ where: { occurrenceId } });
         if (existingPayment) {

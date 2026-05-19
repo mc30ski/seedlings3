@@ -18,7 +18,7 @@ import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
 import { fmtDateTime } from "@/src/lib/lib";
 import { compressOnly } from "@/src/lib/imageRedact";
-import RedactPhotoDialog from "@/src/ui/components/RedactPhotoDialog";
+import PhotoUploadDialog from "@/src/ui/components/PhotoUploadDialog";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -102,18 +102,32 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
     void loadPhotos();
   }, [occurrenceId]);
 
+  // Per-job photo cap — read from the MAX_PHOTOS_PER_JOB setting at mount
+  // so the Add Photos button hides at the right threshold. Falls back to 10
+  // (historical default) when the setting is missing or unparseable. Lowering
+  // the cap only restricts future uploads; the API gates the actual write.
+  const [maxPhotos, setMaxPhotos] = useState<number>(10);
+  useEffect(() => {
+    apiGet<Array<{ key: string; value: string }>>("/api/settings")
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        const row = list.find((s) => s.key === "MAX_PHOTOS_PER_JOB");
+        const n = Number(row?.value);
+        if (Number.isFinite(n) && n > 0) setMaxPhotos(Math.floor(n));
+      })
+      .catch(() => {});
+  }, []);
+
   const displayCount = loaded ? photos.length : (photoCount ?? 0);
 
-  // Manual-redaction queue. Files picked → shown one at a time in the
-  // RedactPhotoDialog → on commit (with or without redactions) or skip,
-  // we upload that file and advance to the next. On Cancel, the file is
-  // dropped without uploading.
-  const [pendingQueue, setPendingQueue] = useState<File[]>([]);
-  const [redactingFile, setRedactingFile] = useState<File | null>(null);
-  const completedRef = useRef(0);
-  const skippedRef = useRef(0);
+  // Batch upload — files picked are handed to PhotoUploadDialog which lets
+  // the user blur/remove individual photos before tapping "Upload all". Per-
+  // tile status (pending → uploading → uploaded / failed) keeps progress
+  // visible throughout the batch, which matters on slow mobile connections.
+  const [batchFiles, setBatchFiles] = useState<File[] | null>(null);
 
   // Single-file upload (compress + R2 + confirm; handles offline queue too).
+  // Throws on failure so the dialog can mark the tile failed.
   const uploadOneFile = useCallback(async (file: File) => {
     const compressed = await compressOnly(file);
 
@@ -154,74 +168,40 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
     });
   }, [occurrenceId, isOffline]);
 
-  // Pull the next file off the queue and show it in the dialog. When the
-  // queue is empty, finalize: refresh the list and toast a summary.
-  const advanceQueue = useCallback(async () => {
-    setPendingQueue((prev) => {
-      if (prev.length === 0) {
-        // Done — finalize.
-        const completed = completedRef.current;
-        const skipped = skippedRef.current;
-        completedRef.current = 0;
-        skippedRef.current = 0;
-        setUploading(false);
-        setRedactingFile(null);
-        if (completed > 0) {
-          if (isOffline) {
-            publishInlineMessage({
-              type: "INFO",
-              text: `${completed} photo${completed === 1 ? "" : "s"} queued for upload when online.${skipped ? ` ${skipped} canceled.` : ""}`,
-            });
-          } else {
-            publishInlineMessage({
-              type: "SUCCESS",
-              text: `${completed} photo${completed === 1 ? "" : "s"} uploaded.${skipped ? ` ${skipped} canceled.` : ""}`,
-            });
-            setExpanded(true);
-            void loadPhotos(true);
-          }
-        } else if (skipped > 0) {
-          publishInlineMessage({ type: "INFO", text: "Upload canceled." });
-        }
-        return prev;
-      }
-      const [next, ...rest] = prev;
-      setRedactingFile(next);
-      return rest;
-    });
-  }, [isOffline]);
-
   const handleFiles = useCallback((files: FileList) => {
     if (files.length === 0) return;
-    completedRef.current = 0;
-    skippedRef.current = 0;
     setUploading(true);
-    const arr = Array.from(files);
-    setPendingQueue(arr.slice(1));
-    setRedactingFile(arr[0]);
+    setBatchFiles(Array.from(files));
   }, []);
 
-  // User clicked "Skip & upload as-is" or "Apply & upload" — file may have
-  // redactions baked in (in which case it's a fresh File from the dialog
-  // export). Upload it and move on.
-  const handleRedactCommit = useCallback(async (file: File) => {
-    setRedactingFile(null);
-    try {
-      await uploadOneFile(file);
-      completedRef.current += 1;
-    } catch (err) {
-      console.error("Photo upload error:", err);
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
+  const handleBatchClose = useCallback((summary: { uploaded: number; failed: number; canceled: number }) => {
+    setBatchFiles(null);
+    setUploading(false);
+    const { uploaded, failed, canceled } = summary;
+    if (uploaded > 0) {
+      const tail = [
+        failed ? `${failed} failed` : null,
+        canceled ? `${canceled} canceled` : null,
+      ].filter(Boolean).join(", ");
+      if (isOffline) {
+        publishInlineMessage({
+          type: "INFO",
+          text: `${uploaded} photo${uploaded === 1 ? "" : "s"} queued for upload when online${tail ? ` (${tail})` : ""}.`,
+        });
+      } else {
+        publishInlineMessage({
+          type: "SUCCESS",
+          text: `${uploaded} photo${uploaded === 1 ? "" : "s"} uploaded${tail ? ` (${tail})` : ""}.`,
+        });
+        setExpanded(true);
+        void loadPhotos(true);
+      }
+    } else if (failed > 0) {
+      publishInlineMessage({ type: "ERROR", text: `Upload failed for ${failed} photo${failed === 1 ? "" : "s"}.` });
+    } else if (canceled > 0) {
+      publishInlineMessage({ type: "INFO", text: "Upload canceled." });
     }
-    void advanceQueue();
-  }, [uploadOneFile, advanceQueue]);
-
-  // User clicked Cancel — drop the current file, advance.
-  const handleRedactCancel = useCallback(() => {
-    skippedRef.current += 1;
-    setRedactingFile(null);
-    void advanceQueue();
-  }, [advanceQueue]);
+  }, [isOffline]);
 
   const openPicker = useFileUpload(handleFiles);
 
@@ -257,7 +237,7 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
             Photos ({displayCount})
           </Button>
         )}
-        {canUpload && displayCount < 10 && (
+        {canUpload && displayCount < maxPhotos && (
           <Button
             size="xs"
             variant="outline"
@@ -268,11 +248,11 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
             loading={uploading}
           >
             <Camera size={14} />
-            Add Photos ({displayCount}/10)
+            Add Photos ({displayCount}/{maxPhotos})
           </Button>
         )}
-        {canUpload && displayCount >= 10 && (
-          <Text fontSize="xs" color="fg.muted">Max 10 photos reached</Text>
+        {canUpload && displayCount >= maxPhotos && (
+          <Text fontSize="xs" color="fg.muted">Max {maxPhotos} photos reached</Text>
         )}
       </HStack>
 
@@ -317,12 +297,14 @@ export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, pho
         onDelete={handleDelete}
       />}
 
-      {/* Optional manual-redaction step — opens automatically per file
-          after picking. Skip & upload as-is leaves the photo unchanged. */}
-      <RedactPhotoDialog
-        file={redactingFile}
-        onCommit={handleRedactCommit}
-        onCancel={handleRedactCancel}
+      {/* Batch review / upload dialog. Lets the worker blur or remove
+          individual photos before sending, then shows per-photo progress
+          throughout the upload. */}
+      <PhotoUploadDialog
+        files={batchFiles}
+        onUpload={uploadOneFile}
+        onClose={handleBatchClose}
+        isOffline={isOffline}
       />
     </VStack>
   );

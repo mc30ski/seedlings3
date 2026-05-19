@@ -478,7 +478,8 @@ export type ServicesJobs = {
     status: JobOccurrenceStatus,
     notes?: string,
     location?: { lat: number; lng: number },
-    timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number }
+    timestamps?: { startedAt?: string; completedAt?: string; totalPausedMs?: number },
+    extras?: { completionSplits?: Array<{ userId: string; percent: number }> }
   ): Promise<JobOccurrence>;
 
   get(id: string): Promise<
@@ -609,7 +610,10 @@ export type ServicesPayments = {
       amountPaid: number;
       method: string;
       note?: string | null;
-      splits: Array<{ userId: string; amount: number }>;
+      // Worker percentages set by the claimer in the Take Payment dialog.
+      // Server persists these to JobOccurrence.completionSplits and re-
+      // snapshots promisedPayouts before creating the Payment row.
+      completionSplits: Array<{ userId: string; percent: number }>;
     }
   ): Promise<any>;
 
@@ -648,6 +652,55 @@ export type ServicesPayments = {
 
   recalculateSplits(occurrenceId: string): Promise<any>;
   forceCreateNextOccurrence(currentUserId: string, occurrenceId: string): Promise<any>;
+
+  /**
+   * Client-or-worker self-reported payment. Creates an unconfirmed Payment
+   * row attached to the occurrence; occurrence stays in PENDING_PAYMENT
+   * until an admin/super approves. Splits are not materialized here —
+   * they're computed at approval time from JobOccurrence.completionSplits.
+   */
+  selfReportPayment(
+    actorUserId: string | null,
+    input: { occurrenceId: string; method: string; amountPaid: number; note?: string | null },
+  ): Promise<any>;
+
+  /**
+   * Admin/super flips an existing self-reported Payment to confirmed=true.
+   * Optionally adjusts amount/method (e.g., "client said $150 Zelle but I
+   * see $140"). Materializes splits using completionSplits + final amount.
+   * Closes the occurrence and runs the next-occurrence creation logic.
+   */
+  approvePayment(
+    currentUserId: string,
+    paymentId: string,
+    overrides?: { amountPaid?: number; method?: string; note?: string | null },
+  ): Promise<any>;
+
+  /**
+   * Admin/super deletes a pending self-reported Payment. Occurrence stays
+   * PENDING_PAYMENT so the client can be re-prompted or admin can record
+   * directly later.
+   */
+  rejectPayment(
+    currentUserId: string,
+    paymentId: string,
+    reason?: string | null,
+  ): Promise<void>;
+
+  /**
+   * Admin/super closes the books on a payment that will never be collected
+   * (client refused, check bounced, etc.). Approves with collected=0;
+   * employees+trainees get their promised net topped up from business funds,
+   * contractors get $0, and Payment.shortfallAmount captures the absorbed
+   * loss.
+   */
+  writeOffPayment(
+    currentUserId: string,
+    paymentId: string,
+    reason?: string | null,
+  ): Promise<any>;
+
+  listPendingApprovals(): Promise<any[]>;
 };
 
 export type ExpenseInput = {
@@ -781,6 +834,7 @@ export type Services = {
   companyDocuments: typeof import("../services/companyDocuments").companyDocuments;
   timelineEvents: typeof import("../services/timelineEvents").timelineEvents;
   banners: typeof import("../services/banners").banners;
+  paymentRequests: typeof import("../services/paymentRequests").paymentRequests;
 };
 
 export type ServicesSettings = {

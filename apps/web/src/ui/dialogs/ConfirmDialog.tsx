@@ -37,6 +37,13 @@ type Props = {
   cancelLabel?: string;
   /** Action to perform on cancel (instead of just closing) */
   onCancelAction?: () => void;
+  /** Yellow warning shown below the message. Use for "why this matters"
+   *  hints — e.g. why one of the offered actions is the recommended path. */
+  warning?: string;
+  /** In tri-action mode (onCancelAction set), render the secondary
+   *  (cancel-action) button ABOVE the primary confirm button. Use when the
+   *  cancel-action is actually the recommended next step. */
+  secondaryActionFirst?: boolean;
 };
 
 type PricingHint = {
@@ -63,6 +70,8 @@ export default function ConfirmDialog({
   pricingEndpoint = "/api/pricing",
   cancelLabel,
   onCancelAction,
+  warning,
+  secondaryActionFirst,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -133,7 +142,21 @@ export default function ConfirmDialog({
               <Dialog.Title>{title}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
-              <Text>{message}</Text>
+              {message && <Text>{message}</Text>}
+              {warning && (
+                <Box
+                  mt={3}
+                  p={3}
+                  bg="blue.50"
+                  borderWidth="1px"
+                  borderColor="blue.300"
+                  borderLeftWidth="4px"
+                  borderLeftColor="blue.500"
+                  rounded="md"
+                >
+                  <Text fontSize="sm" color="blue.900">{warning}</Text>
+                </Box>
+              )}
               {hasInput && (
                 <Box mt={3}>
                   {inputLabel && (
@@ -171,7 +194,13 @@ export default function ConfirmDialog({
                     size="sm"
                     placeholder={amountPlaceholder ?? "0.00"}
                   />
-                  {(referenceMatches.length > 0 || hasAmount) && (
+                  {/* Pricing reference panel + "View pricing guide" badge
+                      only render when the caller passes pricingReferenceTags.
+                      Without that prop the amount field is for something
+                      that has nothing to do with job pricing (e.g.
+                      "Actual amount collected" on payment adjustment), and
+                      offering a pricing guide there is misleading. */}
+                  {pricingReferenceTags && pricingReferenceTags.length > 0 && (
                     <Box mt={2}>
                       {referenceMatches.length > 0 && (
                         <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200" mb={2}>
@@ -222,22 +251,35 @@ export default function ConfirmDialog({
             <Dialog.Footer>
               {onCancelAction ? (
                 <VStack w="full" gap={2}>
+                  {secondaryActionFirst && (
+                    <Button
+                      w="full"
+                      variant="outline"
+                      colorPalette="gray"
+                      onClick={() => { onCancelAction(); onCancel(); }}
+                    >
+                      {cancelLabel}
+                    </Button>
+                  )}
                   <Button
                     w="full"
+                    variant="solid"
                     colorPalette={confirmColorPalette}
                     onClick={handleConfirm}
                     disabled={!canConfirm}
                   >
                     {confirmLabel}
                   </Button>
-                  <Button
-                    w="full"
-                    variant="outline"
-                    colorPalette="gray"
-                    onClick={() => { onCancelAction(); onCancel(); }}
-                  >
-                    {cancelLabel}
-                  </Button>
+                  {!secondaryActionFirst && (
+                    <Button
+                      w="full"
+                      variant="outline"
+                      colorPalette="gray"
+                      onClick={() => { onCancelAction(); onCancel(); }}
+                    >
+                      {cancelLabel}
+                    </Button>
+                  )}
                   <Button
                     ref={cancelRef}
                     w="full"

@@ -153,6 +153,38 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.users.pendingApprovalCount();
   });
 
+  // Super-only override for a single user's payment-comms preference.
+  // null clears the override → falls back to the global
+  // DEFAULT_PAYMENT_COMMUNICATIONS_MODE setting on next resolution.
+  app.patch("/admin/users/:id/payment-comms-mode", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const targetId = String(req.params.id);
+    const body = (req.body || {}) as { mode?: string | null };
+    const raw = body.mode;
+    let next: "SERVER" | "CLAIMER" | null;
+    if (raw === null || raw === undefined || raw === "") next = null;
+    else if (raw === "SERVER" || raw === "CLAIMER") next = raw;
+    else throw app.httpErrors.badRequest('mode must be "SERVER", "CLAIMER", or null');
+
+    const before = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: { paymentCommsMode: true },
+    });
+    if (!before) throw app.httpErrors.notFound("User not found");
+
+    await prisma.user.update({
+      where: { id: targetId },
+      data: { paymentCommsMode: next },
+    });
+    await writeAudit(prisma, AUDIT.USER.PAYMENT_COMMS_MODE_UPDATED, uid, {
+      targetUserId: targetId,
+      field: "paymentCommsMode",
+      from: before.paymentCommsMode ?? null,
+      to: next,
+    });
+    return { ok: true, paymentCommsMode: next };
+  });
+
   app.get("/admin/activity", adminGuard, async (req: any) => {
     return services.activity.listUserActivity();
   });
@@ -1269,6 +1301,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       }
 
       if ("jobId" in body) patch.jobId = body.jobId || null;
+      // Free-text reason captured by the Revert Payment dialog on the
+      // Services tab. Only meaningful when this PATCH is taking the
+      // occurrence from CLOSED back to PENDING_PAYMENT; ignored otherwise.
+      if ("paymentRevertReason" in body) patch.paymentRevertReason = body.paymentRevertReason ? String(body.paymentRevertReason) : null;
 
       // You’ll want to implement services.jobs.updateOccurrence(...) OR do prisma here.
       return services.jobs.updateOccurrence(
@@ -1327,7 +1363,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
   );
 
-  // Accept payment for an occurrence (admin)
+  // Accept payment for an occurrence (admin). Every record from this
+  // path lands in the Pending Approvals queue, regardless of who clicks —
+  // there is no admin shortcut. Admins approve via the queue afterward,
+  // even for entries they recorded themselves. Consistent flow > clever
+  // shortcuts that hide bugs.
   app.post(
     "/admin/occurrences/:occurrenceId/accept-payment",
     adminGuard,
@@ -1339,7 +1379,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         amountPaid: Number(body.amountPaid),
         method: String(body.method || "CASH"),
         note: body.note ? String(body.note) : null,
-        splits: Array.isArray(body.splits) ? body.splits : [],
+        completionSplits: Array.isArray(body.completionSplits) ? body.completionSplits : [],
       });
     }
   );
@@ -1642,6 +1682,7 @@ Respond ONLY with valid JSON in this exact format:
       select: {
         id: true, email: true, phone: true, firstName: true, lastName: true, displayName: true, workerType: true, homeBaseAddress: true, availableDays: true, availableHoursPerDay: true,
         isApproved: true, insuranceExpiresAt: true, contractorAgreedAt: true, w9Collected: true,
+        paymentCommsMode: true,
       },
     });
     return user;
@@ -2332,14 +2373,18 @@ Respond ONLY with valid JSON in this exact format:
     const key = String(req.params.key);
     const body = req.body || {};
     if (body.value === undefined) throw app.httpErrors.badRequest("value is required");
+    const value = String(body.value);
     // Cross-check setting-driven taxonomies before persisting. Today we only
     // guard DOCUMENT_TYPES (singleton flips with conflicting active docs);
     // other settings have no such cross-table constraint.
     if (key === "DOCUMENT_TYPES") {
       const { validateDocumentTypesUpdate } = await import("../services/companyDocuments");
-      await validateDocumentTypesUpdate(String(body.value));
+      await validateDocumentTypesUpdate(value);
     }
-    return services.settings.set(uid, key, String(body.value));
+    if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
+      throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
+    }
+    return services.settings.set(uid, key, value);
   });
 
   // ── Tasks ──
@@ -4547,5 +4592,119 @@ Respond ONLY with valid JSON in this exact format:
       await currentUserId(req),
       String(req.params.id),
     );
+  });
+
+  // ── Payment approval queue ──────────────────────────────────────────────
+  // Admins (and super) approve self-reported payments before the occurrence
+  // closes. See services/payments.ts for the approve/reject/list logic.
+
+  app.get("/admin/payments/pending", adminGuard, async () => {
+    return services.payments.listPendingApprovals();
+  });
+
+  app.post("/admin/payments/:id/approve", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const body = req.body || {};
+    const overrides: { amountPaid?: number; method?: string; note?: string | null } = {};
+    if (body.amountPaid !== undefined) overrides.amountPaid = Number(body.amountPaid);
+    if (body.method) overrides.method = String(body.method);
+    if (body.note !== undefined) overrides.note = body.note === null ? null : String(body.note);
+    return services.payments.approvePayment(uid, String(req.params.id), overrides);
+  });
+
+  app.post("/admin/payments/:id/reject", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    await services.payments.rejectPayment(uid, String(req.params.id), reason);
+    return { ok: true };
+  });
+
+  // Write-off path: client never paid. Approves with collected=0 so
+  // employees+trainees still get their promised net (business absorbs the
+  // shortfall) and contractors get $0. See services/payments.ts.
+  app.post("/admin/payments/:id/write-off", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    return services.payments.writeOffPayment(uid, String(req.params.id), reason);
+  });
+
+  // Resend payment request for an occurrence already in PENDING_PAYMENT.
+  // Reuses the existing token by default; passing `regenerate=true` rotates
+  // it (use when a previous link was shared publicly or otherwise blown).
+  // Gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED — super admins bypass for
+  // controlled rollout.
+  app.post("/admin/occurrences/:id/resend-payment-request", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const regenerate = !!req.body?.regenerate;
+    const featureSetting = await prisma.setting.findUnique({
+      where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+    });
+    const featureOn = featureSetting?.value === "true";
+    if (!featureOn) {
+      const actor = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isSuper = !!actor?.roles?.some((r: any) => r.role === "SUPER");
+      if (!isSuper) {
+        throw app.httpErrors.forbidden("Request Payment is currently disabled by an admin.");
+      }
+    }
+    return services.paymentRequests.sendForOccurrence(uid, String(req.params.id), { regenerateToken: regenerate });
+  });
+
+  // ── Exports (super-admin only) ──────────────────────────────────────────
+  // CSV downloads for verifying payroll/bookkeeping data before Gusto/QB
+  // subscriptions go live. All routes anchor on Payment.confirmedAt (cash-
+  // basis) except qb-expenses which uses BusinessExpense.date.
+  const { gustoW2Csv, gustoContractorsCsv, qbIncomeCsv, qbExpensesCsv, exportPreview } =
+    await import("../services/exports");
+
+  function readDateRange(req: any): { start: Date; end: Date } {
+    const startStr = String(req.query?.start ?? "");
+    const endStr = String(req.query?.end ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startStr) || !/^\d{4}-\d{2}-\d{2}$/.test(endStr)) {
+      throw app.httpErrors.badRequest("start and end query params must be YYYY-MM-DD");
+    }
+    const start = etMidnight(startStr);
+    const end = etEndOfDay(endStr);
+    if (end < start) throw app.httpErrors.badRequest("end must be on or after start");
+    return { start, end };
+  }
+
+  function sendCsv(reply: FastifyReply, filename: string, body: string) {
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+    return reply.send(body);
+  }
+
+  app.get("/admin/exports/preview", superGuard, async (req: any) => {
+    const { start, end } = readDateRange(req);
+    return exportPreview(start, end);
+  });
+
+  app.get("/admin/exports/gusto-w2.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const csv = await gustoW2Csv(start, end);
+    const fn = `gusto-w2-${String(req.query.start)}_${String(req.query.end)}.csv`;
+    return sendCsv(reply, fn, csv);
+  });
+
+  app.get("/admin/exports/gusto-contractors.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const csv = await gustoContractorsCsv(start, end);
+    const fn = `gusto-contractors-${String(req.query.start)}_${String(req.query.end)}.csv`;
+    return sendCsv(reply, fn, csv);
+  });
+
+  app.get("/admin/exports/qb-income.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const csv = await qbIncomeCsv(start, end);
+    const fn = `qb-income-${String(req.query.start)}_${String(req.query.end)}.csv`;
+    return sendCsv(reply, fn, csv);
+  });
+
+  app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const csv = await qbExpensesCsv(start, end);
+    const fn = `qb-expenses-${String(req.query.start)}_${String(req.query.end)}.csv`;
+    return sendCsv(reply, fn, csv);
   });
 }
