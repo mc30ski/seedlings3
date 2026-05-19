@@ -75,8 +75,8 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
 
   const [q, setQ] = useState("");
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_w_datePreset", "thisMonth");
-  const presetDates = useMemo(() => computeDatesFromPreset("thisMonth"), []);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_w_datePreset", "lastMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
   const [dateFrom, setDateFrom] = usePersistedState("pay_w_dateFrom", presetDates.from);
   const [dateTo, setDateTo] = usePersistedState("pay_w_dateTo", presetDates.to);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
@@ -119,6 +119,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   // Recompute dates from preset on each mount (so "last month" stays current)
   const quickDateItems = useMemo(() => [
     { label: "Today", value: "today" },
+    { label: "Yesterday", value: "yesterday" },
     { label: "Last week", value: "lastWeek" },
     { label: "Last month", value: "lastMonth" },
     { label: "Last year", value: "lastYear" },
@@ -311,11 +312,16 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
         const visibleTotal = showJobs ? totalAmount : 0;
         const confirmedTotal = visibleTotal - pendingTotal;
         const finalNet = visibleTotal - totalEquipCost;
+        // Viewer is the LLC owner when every row is flagged as owner earnings.
+        // Render "Owner Earnings" instead of "Payout" so the label matches the
+        // accounting treatment (a draw, not payroll).
+        const allOwner = showJobs && items.length > 0 && items.every((it) => it.myOwnerEarnings === true);
+        const payoutLabel = allOwner ? "Owner Earnings" : "Payout";
         return (
           <Box mb={3} p={3} bg="green.50" rounded="md">
             {showJobs && (
               <Text fontSize="lg" fontWeight="bold" color="green.700">
-                Payout: ${visibleTotal.toFixed(2)}
+                {payoutLabel}: ${visibleTotal.toFixed(2)}
               </Text>
             )}
             {showJobs && pendingTotal > 0 && (
@@ -507,6 +513,11 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                             </Badge>
                           )
                         )}
+                        {item.myOwnerEarnings && (
+                          <Badge size="sm" colorPalette="purple" variant="subtle" title="Owner's earnings — taken as a draw, not paid through payroll.">
+                            Owner Earnings
+                          </Badge>
+                        )}
                         <Text fontWeight="bold" color="green.700" fontSize="lg">
                           ${item.myAmount.toFixed(2)}
                         </Text>
@@ -660,8 +671,8 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [q, setQ] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
-  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "thisMonth");
-  const presetDates = useMemo(() => computeDatesFromPreset("thisMonth"), []);
+  const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_a_datePreset", "lastMonth");
+  const presetDates = useMemo(() => computeDatesFromPreset("lastMonth"), []);
   const [dateFrom, setDateFrom] = usePersistedState("pay_a_dateFrom", presetDates.from);
   const [dateTo, setDateTo] = usePersistedState("pay_a_dateTo", presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
@@ -679,6 +690,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   // Recompute dates from preset on each mount (so "last month" stays current)
   const quickDateItems = useMemo(() => [
     { label: "Today", value: "today" },
+    { label: "Yesterday", value: "yesterday" },
     { label: "Last week", value: "lastWeek" },
     { label: "Last month", value: "lastMonth" },
     { label: "Last year", value: "lastYear" },
@@ -1455,12 +1467,20 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                             const pct = totalGross > 0 && g != null
                               ? Math.round((g / totalGross) * 100)
                               : null;
+                            const isOwner = (sp as any).ownerEarnings === true;
                             return (
                               <Box key={sp.userId} fontSize="xs">
-                                <Text fontWeight="medium" color="green.700">
-                                  {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
-                                  {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
-                                </Text>
+                                <HStack gap={1} wrap="wrap">
+                                  <Text fontWeight="medium" color={isOwner ? "purple.700" : "green.700"}>
+                                    {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
+                                    {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
+                                  </Text>
+                                  {isOwner && (
+                                    <Badge size="sm" colorPalette="purple" variant="subtle" title="Owner's earnings — excluded from Gusto payroll and QB labor expense.">
+                                      Owner Earnings
+                                    </Badge>
+                                  )}
+                                </HStack>
                               </Box>
                             );
                           })}

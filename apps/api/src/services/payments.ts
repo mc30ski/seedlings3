@@ -208,6 +208,19 @@ async function loadRates(client: typeof prisma | any): Promise<Rates> {
   };
 }
 
+// Resolve which of the given user IDs is flagged as the LLC owner. Returns a
+// Set so split-write loops can do a single O(1) lookup per row. The schema
+// enforces at most one owner via a partial unique index, but the Set works
+// fine either way.
+async function loadOwnerSet(client: typeof prisma | any, userIds: string[]): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const rows = await client.user.findMany({
+    where: { id: { in: userIds }, isOwner: true },
+    select: { id: true },
+  });
+  return new Set(rows.map((r: any) => r.id));
+}
+
 // Resolves the per-worker split list from the occurrence (completionSplits
 // preferred; else even split across active assignees). Pairs each entry
 // with the worker's current type.
@@ -437,6 +450,7 @@ export const payments: ServicesPayments = {
       const recon = reconcileApproval(amountPaid, totalExpenses, workersList, promised, rates);
       const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
       const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
+      const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
 
       // Create payment + splits. Always unconfirmed — admin sign-off via
       // approvePayment is the only path to confirmed=true. selfReported
@@ -474,6 +488,7 @@ export const payments: ServicesPayments = {
               feeAmount: s.feeAmount,
               netAmount: s.netAmount,
               topUpAmount: s.topUpAmount,
+              ownerEarnings: ownerSet.has(s.userId),
             })),
           },
         },
@@ -482,6 +497,19 @@ export const payments: ServicesPayments = {
           collectedBy: { select: { id: true, displayName: true } },
         },
       });
+
+      // Audit: flag the payment when any split is owner earnings (excluded
+      // from Gusto/payroll exports; informational for downstream reporting).
+      if (recon.splits.some((s) => ownerSet.has(s.userId))) {
+        await writeAudit(tx, AUDIT.PAYMENT.OWNER_EARNINGS_RECORDED, currentUserId, {
+          paymentId: payment.id,
+          occurrenceId,
+          ownerUserIds: recon.splits.filter((s) => ownerSet.has(s.userId)).map((s) => s.userId),
+          totalOwnerAmount: round2(
+            recon.splits.filter((s) => ownerSet.has(s.userId)).reduce((sum, s) => sum + s.amount, 0),
+          ),
+        });
+      }
 
       // Auto-create-next is intentionally NOT run here. With every
       // createPayment record landing unconfirmed, the next occurrence
@@ -645,6 +673,7 @@ export const payments: ServicesPayments = {
       splitId: sp.id,
       myAmount: sp.amount,
       myPromisedNet,
+      myOwnerEarnings: (sp as any).ownerEarnings === true,
       payment: {
         id: sp.payment.id,
         amountPaid: sp.payment.amountPaid,
@@ -840,12 +869,14 @@ export const payments: ServicesPayments = {
       await tx.payment.update({ where: { id: paymentId }, data });
 
       if (input.splits) {
+        const ownerSet = await loadOwnerSet(tx, input.splits.map((sp) => sp.userId));
         await tx.paymentSplit.deleteMany({ where: { paymentId } });
         await tx.paymentSplit.createMany({
           data: input.splits.map((sp) => ({
             paymentId,
             userId: sp.userId,
             amount: sp.amount,
+            ownerEarnings: ownerSet.has(sp.userId),
           })),
         });
       }
@@ -949,12 +980,14 @@ export const payments: ServicesPayments = {
         - ((await tx.expense.aggregate({ where: { occurrenceId }, _sum: { cost: true } }))._sum.cost ?? 0);
       const splitAmount = Math.round((Math.max(0, totalPayout) / assigneeIds.length) * 100) / 100;
 
+      const ownerSet = await loadOwnerSet(tx, assigneeIds);
       await tx.paymentSplit.deleteMany({ where: { paymentId: payment.id } });
       await tx.paymentSplit.createMany({
         data: assigneeIds.map((uid) => ({
           paymentId: payment.id,
           userId: uid,
           amount: splitAmount,
+          ownerEarnings: ownerSet.has(uid),
         })),
       });
 
@@ -1109,6 +1142,7 @@ export const payments: ServicesPayments = {
 
     return prisma.$transaction(async (tx) => {
       // Replace splits to reflect the reconciled amounts (gross/fee/net/topUp).
+      const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
       await tx.paymentSplit.deleteMany({ where: { paymentId } });
       if (recon.splits.length > 0) {
         await tx.paymentSplit.createMany({
@@ -1121,6 +1155,7 @@ export const payments: ServicesPayments = {
             feeAmount: s.feeAmount,
             netAmount: s.netAmount,
             topUpAmount: s.topUpAmount,
+            ownerEarnings: ownerSet.has(s.userId),
           })),
         });
       }
@@ -1191,6 +1226,16 @@ export const payments: ServicesPayments = {
           occurrenceId: existing.occurrence.id,
           fromAmount: existing.amountPaid,
           toAmount: finalAmount,
+        });
+      }
+      if (recon.splits.some((s) => ownerSet.has(s.userId))) {
+        await writeAudit(tx, AUDIT.PAYMENT.OWNER_EARNINGS_RECORDED, currentUserId, {
+          paymentId,
+          occurrenceId: existing.occurrence.id,
+          ownerUserIds: recon.splits.filter((s) => ownerSet.has(s.userId)).map((s) => s.userId),
+          totalOwnerAmount: round2(
+            recon.splits.filter((s) => ownerSet.has(s.userId)).reduce((sum, s) => sum + s.amount, 0),
+          ),
         });
       }
 

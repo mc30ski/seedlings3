@@ -281,6 +281,7 @@ export type ServicesUsers = {
   }>;
 
   setWorkerType(currentUserId: string, userId: string, workerType: string | null): Promise<User>;
+  setIsOwner(currentUserId: string, userId: string, isOwner: boolean): Promise<User>;
   updateInsuranceCert(userId: string, r2Key: string, fileName: string | null, contentType: string | null, expiresAt: string): Promise<User>;
   recordContractorAgreement(userId: string): Promise<User>;
   setW9Collected(currentUserId: string, userId: string, collected: boolean): Promise<User>;

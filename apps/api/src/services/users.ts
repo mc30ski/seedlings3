@@ -316,6 +316,7 @@ export const users: ServicesUsers = {
       lastName: user!.lastName ?? null,
       displayName: user!.displayName ?? null,
       workerType: user!.workerType ?? null,
+      isOwner: !!user!.isOwner,
       homeBaseAddress: user!.homeBaseAddress ?? null,
       availableDays: user!.availableDays ? JSON.parse(user!.availableDays) : [],
       availableHoursPerDay: user!.availableHoursPerDay ?? 4,
@@ -348,6 +349,38 @@ export const users: ServicesUsers = {
       });
       await writeAudit(tx, AUDIT.USER.WORKER_TYPE_SET, currentUserId, {
         userId, workerType: workerType ?? "UNCLASSIFIED",
+      });
+      return updated;
+    });
+  },
+
+  // Set/unset the LLC-owner flag on a user. Singleton-enforced both in app
+  // logic and via a partial unique index on User(isOwner) WHERE isOwner=true.
+  // Route layer must restrict this to SUPER role — the service trusts its
+  // caller, like setWorkerType.
+  async setIsOwner(currentUserId: string, userId: string, isOwner: boolean) {
+    return prisma.$transaction(async (tx) => {
+      const target = await tx.user.findUnique({ where: { id: userId }, select: { id: true, isOwner: true } });
+      if (!target) throw new ServiceError("NOT_FOUND", "User not found", 404);
+      if (isOwner) {
+        const existing = await tx.user.findFirst({
+          where: { isOwner: true, NOT: { id: userId } },
+          select: { id: true, displayName: true, email: true },
+        });
+        if (existing) {
+          throw new ServiceError(
+            "OWNER_ALREADY_SET",
+            `Another user is already flagged as owner (${existing.displayName ?? existing.email ?? existing.id}). Clear that one first.`,
+            409,
+          );
+        }
+      }
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { isOwner },
+      });
+      await writeAudit(tx, AUDIT.USER.OWNER_FLAG_UPDATED, currentUserId, {
+        userId, isOwner,
       });
       return updated;
     });

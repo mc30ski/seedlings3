@@ -14,6 +14,7 @@ export const AUDIT = {
     // which privilege changed and to what. Keeps schema enums small.
     PRIVILEGES_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
     PAYMENT_COMMS_MODE_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
+    OWNER_FLAG_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
   },
   EQUIPMENT: {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,
@@ -121,6 +122,7 @@ export const AUDIT = {
     TOKEN_ACCESSED: [AuditScope.PAYMENT, AuditVerb.TOKEN_ACCESSED] as const,
     WRITTEN_OFF: [AuditScope.PAYMENT, AuditVerb.WRITTEN_OFF] as const,
     ADJUSTED: [AuditScope.PAYMENT, AuditVerb.ADJUSTED] as const,
+    OWNER_EARNINGS_RECORDED: [AuditScope.PAYMENT, AuditVerb.OWNER_EARNINGS_RECORDED] as const,
   },
 } as const;
 

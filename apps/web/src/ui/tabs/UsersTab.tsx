@@ -38,6 +38,7 @@ type ApiUser = {
   isApproved: boolean;
   roles: { role: Role }[];
   workerType?: string | null;
+  isOwner?: boolean;
   insuranceCertR2Key?: string | null;
   insuranceExpiresAt?: string | null;
   contractorAgreedAt?: string | null;
@@ -371,6 +372,25 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
     }
   }
 
+  // Owner-flag toggle (super-only). Singleton enforced server-side. We mirror
+  // it client-side so the button doesn't render on users who can't take it
+  // anyway — clicking would just 409 with OWNER_ALREADY_SET.
+  const hasOwner = useMemo(() => items.some((u) => u.isOwner), [items]);
+  const [ownerConfirm, setOwnerConfirm] = useState<{ userId: string; isOwner: boolean; displayName: string } | null>(null);
+  async function confirmOwner() {
+    if (!ownerConfirm) return;
+    const { userId, isOwner } = ownerConfirm;
+    setOwnerConfirm(null);
+    try {
+      await apiPatch(`/api/admin/users/${userId}/owner`, { isOwner });
+      publishInlineMessage({ type: "SUCCESS", text: isOwner ? "Flagged as LLC owner." : "Owner flag cleared." });
+      try { window.dispatchEvent(new Event("seedlings3:users-changed")); } catch {}
+      load();
+    } catch (err: any) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Owner flag update failed", err) });
+    }
+  }
+
   // Privilege overrides — set to null (use default), true (grant), or false (deny).
   // Optimistic in-place update so the row doesn't unmount and the page doesn't
   // jump back to the top from a full re-fetch.
@@ -637,6 +657,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                     {isWorker && <Badge>Worker</Badge>}
                     {isAdmin && <Badge colorPalette="purple">Admin</Badge>}
                     {isSuper && <Badge colorPalette="yellow">Super</Badge>}
+                    {u.isOwner && <Badge colorPalette="purple" variant="solid">LLC Owner</Badge>}
                     {u.isApproved && !isWorker && !isAdmin && <Badge colorPalette="green">Client</Badge>}
                     {isEmployee && <Badge colorPalette="blue">Employee</Badge>}
                     {isContractor && <Badge colorPalette="orange">Contractor</Badge>}
@@ -829,6 +850,22 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                         {u.w9Collected ? "W-9 ✓" : "Collect W-9"}
                       </Button>
                     )}
+                    {/* LLC-owner toggle. SUPER-only — the route enforces it
+                        too. Singleton: only one user can hold the flag, so
+                        once any user is flagged, the "Set as Owner" button
+                        is hidden on everyone else (server would 409 anyway).
+                        The current owner keeps the "Owner ✓" button so they
+                        can be unflagged. */}
+                    {me?.roles?.includes("SUPER") && (u.isOwner || !hasOwner) && (
+                      <Button
+                        size={{ base: "xs", md: "sm" }}
+                        onClick={() => setOwnerConfirm({ userId: u.id, isOwner: !u.isOwner, displayName: u.displayName ?? u.email ?? u.id })}
+                        variant={u.isOwner ? "subtle" : "outline"}
+                        colorPalette={u.isOwner ? "purple" : "gray"}
+                      >
+                        {u.isOwner ? "Owner ✓" : "Set as Owner"}
+                      </Button>
+                    )}
                   </Stack>
                 )}
 
@@ -1001,6 +1038,18 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
         confirmLabel="Confirm"
         onConfirm={confirmWorkerType}
         onCancel={() => setWorkerTypeConfirm(null)}
+      />
+      <ConfirmDialog
+        open={!!ownerConfirm}
+        title={ownerConfirm?.isOwner ? "Flag as LLC Owner" : "Clear Owner Flag"}
+        message={
+          ownerConfirm?.isOwner
+            ? `Flag ${ownerConfirm?.displayName} as the LLC owner? Their job earnings will continue to be tracked but will be EXCLUDED from Gusto payroll and QB labor-expense exports. Only one user can hold this flag.`
+            : `Clear the LLC-owner flag from ${ownerConfirm?.displayName}? Future job earnings for this user will appear in Gusto/QB exports like any other worker.`
+        }
+        confirmLabel="Confirm"
+        onConfirm={confirmOwner}
+        onCancel={() => setOwnerConfirm(null)}
       />
 
       {/* Roles & Types Info Overlay */}
