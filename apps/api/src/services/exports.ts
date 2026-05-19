@@ -92,6 +92,10 @@ async function loadConfirmedPayments(start: Date, end: Date) {
         },
       },
       splits: {
+        // Exclude owner-earnings splits from every export. The owner takes a
+        // draw, not a paycheck — they should never appear in Gusto payroll
+        // or in worker payout reports.
+        where: { ownerEarnings: false },
         include: {
           user: {
             select: {

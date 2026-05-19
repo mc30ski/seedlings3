@@ -4378,9 +4378,10 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
                           const deduction = Math.round(net * pct) / 100;
                           const payout = net - deduction;
+                          const label = me?.isOwner ? "Owner Earnings" : "Payout";
                           return pct > 0 ? (
-                            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                              Payout: ${payout.toFixed(2)}
+                            <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                              {label}: ${payout.toFixed(2)}
                             </Badge>
                           ) : null;
                         })()}
@@ -4640,8 +4641,8 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                 {pct > 0 && (
                                   <>
                                     <HStack gap={2}>
-                                      <Text>Est. your payout:</Text>
-                                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                      <Text>{me?.isOwner ? "Est. your owner earnings:" : "Est. your payout:"}</Text>
+                                      <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
                                         ${myPayout.toFixed(2)}
                                       </Badge>
                                     </HStack>

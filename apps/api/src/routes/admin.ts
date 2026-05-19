@@ -1704,6 +1704,19 @@ Respond ONLY with valid JSON in this exact format:
     return { ok: true };
   });
 
+  // Set/unset the LLC-owner flag on a user. SUPER-only — admins shouldn't be
+  // able to self-assign this. Singleton enforcement lives in the service.
+  app.patch("/admin/users/:id/owner", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const userId = String(req.params.id);
+    const body = req.body || {};
+    if (typeof body.isOwner !== "boolean") {
+      throw app.httpErrors.badRequest("isOwner must be true or false");
+    }
+    await services.users.setIsOwner(uid, userId, body.isOwner);
+    return { ok: true };
+  });
+
   app.patch("/admin/users/:id/w9", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const userId = String(req.params.id);

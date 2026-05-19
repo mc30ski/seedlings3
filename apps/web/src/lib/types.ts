@@ -76,6 +76,7 @@ export type Me = {
   lastName?: string | null;
   displayName?: string | null;
   workerType?: WorkerType | null;
+  isOwner?: boolean;
   homeBaseAddress?: string | null;
   availableDays?: number[];
   availableHoursPerDay?: number;
@@ -480,6 +481,9 @@ export type PaymentSplitItem = {
   feeAmount?: number | null;
   netAmount?: number | null;
   topUpAmount?: number | null;
+  // True when this split belongs to the LLC owner. UI renders these as
+  // "Owner Earnings" instead of "Worker payout" to distinguish them.
+  ownerEarnings?: boolean;
   user: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 };
 
@@ -524,6 +528,9 @@ export type WorkerPaymentItem = {
   // on underpaid jobs, myAmount < myPromisedNet — the difference is the
   // pro-rata reduction they absorbed.
   myPromisedNet?: number | null;
+  // True when the viewing user is the LLC owner. Row label changes from
+  // "Payout" to "Owner Earnings" so it's visually distinct.
+  myOwnerEarnings?: boolean;
   payment: {
     id: string;
     amountPaid: number;
