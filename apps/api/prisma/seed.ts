@@ -1568,6 +1568,8 @@ async function seedDatabase() {
     { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "10", description: "Platform fee percentage charged on contractor (1099) payment splits" },
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "20", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
+    { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
+    { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
   ];
   for (const s of feeSettings) {
     await prisma.setting.upsert({
@@ -1637,6 +1639,26 @@ async function seedDatabase() {
     create: { key: "DOCUMENT_MAX_SIZE_MB", value: "25", description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
     update: { description: "Max file size (MB) for a single CompanyDocument version upload.", updatedById: MICHAEL_ID },
   });
+
+  // ── Payment request settings ──────────────────────────────────────────────
+  const paymentSettings = [
+    { key: "VENMO_BUSINESS_HANDLE", value: "SeedlingsLawnCare", description: "@handle clients use to send Venmo payments (no @ prefix)." },
+    { key: "ZELLE_ADDRESS", value: "seedlingslawncare", description: "Email or phone clients use to send Zelle payments." },
+    { key: "PAYMENT_REQUEST_BASE_URL", value: "https://www.seedlings.team", description: "Base URL used when generating payment-request SMS/email links (e.g., {BASE}/pay/{token})." },
+    { key: "PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS", value: "72", description: "Hours a payment-request token stays valid after the job transitions to PENDING_PAYMENT." },
+    { key: "DEFAULT_PAYMENT_COMMUNICATIONS_MODE", value: "CLAIMER", description: "How clients are notified when a payment is due after a finished job. Set to 'Server' to have the app automatically text or email the client. Set to 'Claimer' to have whoever finished the job send the message from their own phone or email. Workers can override this on their profile." },
+    { key: "MAX_PHOTOS_PER_JOB", value: "10", description: "Maximum number of photos a worker can upload to a single job. Lowering this only restricts future uploads — photos already on a job are never removed." },
+    { key: "PHOTO_MAX_EDGE_PX", value: "1200", description: "Longest edge in pixels for uploaded photos. Photos are resized down to this size before upload to save bandwidth. Only applies to new uploads — already-stored photos keep their original size." },
+    { key: "PHOTO_JPEG_QUALITY", value: "0.8", description: "JPEG quality for uploaded photos (0.1 = smaller files, lower quality; 1.0 = largest files, best quality). 0.8 is the recommended balance. Only applies to new uploads." },
+    { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL", value: "false", description: "When a client reports they sent a payment, push notifications to admins always fire (free). Turn this on to also send a paid SMS (Twilio) or email (Resend) on top of the push. Default is off to keep notification costs at zero." },
+  ];
+  for (const s of paymentSettings) {
+    await prisma.setting.upsert({
+      where: { key: s.key },
+      create: { key: s.key, value: s.value, description: s.description, updatedById: MICHAEL_ID },
+      update: { description: s.description, updatedById: MICHAEL_ID },
+    });
+  }
 
   // ── Company documents (metadata only — for Timeline tab demo) ─────────────
   // These docs have no uploaded version, which means they won't be openable
@@ -2313,18 +2335,489 @@ async function seedDatabase() {
   console.log("  Seed complete!");
 }
 
+// ── Payments-focused template ──────────────────────────────────────────────
+//
+// A minimal, intentionally-noisy-free dataset for end-to-end testing of the
+// payment lifecycle. Creates 4 clients with varied contact configurations,
+// a single recurring job per client, and a handful of occurrences each
+// representing one distinct payment-related scenario. Reuse `WORKERS` and
+// `MICHAEL_ID` from the existing user constants — same fixed user IDs as
+// the main seed so Clerk auth keeps working without re-onboarding.
+// Snapshot per-worker promised payouts using the canonical math. Mirrors
+// services/payments.ts → computeBreakdown — kept inline here to avoid an
+// API↔seed import cycle. Reads rates from Setting.
+async function computePromisedPayoutsForSeed(
+  price: number,
+  expenses: number,
+  splits: { userId: string; percent: number }[],
+) {
+  const [feeS, marginS] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: "CONTRACTOR_PLATFORM_FEE_PERCENT" } }),
+    prisma.setting.findUnique({ where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" } }),
+  ]);
+  const contractorFee = Number(feeS?.value ?? 0);
+  const employeeMargin = Number(marginS?.value ?? 0);
+  const N = Math.max(0, price - expenses);
+  const totalPct = splits.reduce((s, x) => s + x.percent, 0) || 100;
+  const users = await prisma.user.findMany({
+    where: { id: { in: splits.map((s) => s.userId) } },
+    select: { id: true, workerType: true },
+  });
+  const typeById = new Map(users.map((u) => [u.id, u.workerType]));
+  const rows = splits.map((s) => {
+    const normalized = (s.percent / totalPct) * 100;
+    const gross = N * (normalized / 100);
+    const wt = typeById.get(s.userId) ?? null;
+    const isEmp = wt === "EMPLOYEE" || wt === "TRAINEE";
+    const ratePercent = isEmp ? employeeMargin : contractorFee;
+    const fee = gross * (ratePercent / 100);
+    return {
+      userId: s.userId,
+      workerType: wt,
+      splitPercent: Math.round(normalized * 100) / 100,
+      gross: Math.round(gross * 100) / 100,
+      ratePercent,
+      fee: Math.round(fee * 100) / 100,
+      net: Math.round((gross - fee) * 100) / 100,
+    };
+  });
+  const distributed = rows.reduce((s, r) => s + r.net + r.fee, 0);
+  const residual = Math.round((N - distributed) * 100) / 100;
+  if (Math.abs(residual) >= 0.01 && rows.length > 0) {
+    rows[0].net = Math.round((rows[0].net + residual) * 100) / 100;
+  }
+  return rows;
+}
+
+// Shared infrastructure for both payment-flow templates: the 5 sample
+// clients/properties/jobs plus a 2-week spread of SCHEDULED occurrences so
+// the worker JobsTab always has work to pick up. Returns the job rows so
+// the caller can layer PENDING_PAYMENT scenarios on top (active variant)
+// or leave the dataset alone (clean variant).
+async function seedPaymentsBase() {
+  console.log("  Worker types in use: CONTRACTOR_ID=CONTRACTOR, EMPLOYEE_ID=EMPLOYEE, TRAINEE_ID=TRAINEE, ADMIN_WORKER_ID=EMPLOYEE");
+  // Ensure the Exports tab cadence setting exists even when this template is
+  // run on a DB that hasn't had the default seed applied yet. Idempotent —
+  // won't clobber an existing value the user has tuned.
+  await prisma.setting.upsert({
+    where: { key: "PAYROLL_PERIOD_CADENCE" },
+    create: { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab.", updatedById: MICHAEL_ID },
+    update: { description: "How often you run payroll. Sets the default date range on the Exports tab." },
+  });
+  await prisma.setting.upsert({
+    where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+    create: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting.", updatedById: MICHAEL_ID },
+    update: { description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
+  });
+  console.log("    Clients + contacts...");
+  const adams = await prisma.client.create({ data: { type: "PERSON", displayName: "Adams (normal)" } });
+  const banks = await prisma.client.create({ data: { type: "PERSON", displayName: "Banks (overpay)" } });
+  const cohen = await prisma.client.create({ data: { type: "PERSON", displayName: "Cohen (underpay-mixed)" } });
+  const davis = await prisma.client.create({ data: { type: "PERSON", displayName: "Davis (underpay-employees)" } });
+  const evans = await prisma.client.create({ data: { type: "PERSON", displayName: "Evans (write-off)" } });
+
+  const adamsContact = await prisma.clientContact.create({
+    data: { clientId: adams.id, firstName: "Alice", lastName: "Adams", role: "OWNER", isPrimary: true, email: "alice@example.com", phone: "(555) 111-0001", normalizedPhone: "+15551110001" },
+  });
+  const banksContact = await prisma.clientContact.create({
+    data: { clientId: banks.id, firstName: "Ben", lastName: "Banks", role: "OWNER", isPrimary: true, email: "ben@example.com", phone: "(555) 222-0001", normalizedPhone: "+15552220001" },
+  });
+  const cohenContact = await prisma.clientContact.create({
+    data: { clientId: cohen.id, firstName: "Cara", lastName: "Cohen", role: "OWNER", isPrimary: true, email: "cara@example.com", phone: "(555) 333-0001", normalizedPhone: "+15553330001" },
+  });
+  const davisContact = await prisma.clientContact.create({
+    data: { clientId: davis.id, firstName: "Dan", lastName: "Davis", role: "OWNER", isPrimary: true, email: "dan@example.com", phone: "(555) 444-0001", normalizedPhone: "+15554440001" },
+  });
+  const evansContact = await prisma.clientContact.create({
+    data: { clientId: evans.id, firstName: "Erin", lastName: "Evans", role: "OWNER", isPrimary: true, email: "erin@example.com", phone: "(555) 555-0001", normalizedPhone: "+15555550001" },
+  });
+
+  console.log("    Properties...");
+  const adamsProp = await prisma.property.create({
+    data: { clientId: adams.id, displayName: "Home", street1: "100 Adams Lane", city: "Test City", state: "TX", postalCode: "00001", country: "US", kind: "SINGLE", pointOfContactId: adamsContact.id },
+  });
+  const banksProp = await prisma.property.create({
+    data: { clientId: banks.id, displayName: "Home", street1: "200 Banks Way", city: "Test City", state: "TX", postalCode: "00002", country: "US", kind: "SINGLE", pointOfContactId: banksContact.id },
+  });
+  const cohenProp = await prisma.property.create({
+    data: { clientId: cohen.id, displayName: "Home", street1: "300 Cohen Rd", city: "Test City", state: "TX", postalCode: "00003", country: "US", kind: "SINGLE", pointOfContactId: cohenContact.id },
+  });
+  const davisProp = await prisma.property.create({
+    data: { clientId: davis.id, displayName: "Home", street1: "400 Davis Blvd", city: "Test City", state: "TX", postalCode: "00004", country: "US", kind: "SINGLE", pointOfContactId: davisContact.id },
+  });
+  const evansProp = await prisma.property.create({
+    data: { clientId: evans.id, displayName: "Home", street1: "500 Evans St", city: "Test City", state: "TX", postalCode: "00005", country: "US", kind: "SINGLE", pointOfContactId: evansContact.id },
+  });
+
+  console.log("    Jobs...");
+  const adamsJob = await prisma.job.create({
+    data: { propertyId: adamsProp.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 100.0, estimatedMinutes: 45, notes: "$100 mow — normal payment scenario" },
+  });
+  const banksJob = await prisma.job.create({
+    data: { propertyId: banksProp.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 100.0, estimatedMinutes: 45, notes: "$100 mow — overpayment scenario" },
+  });
+  const cohenJob = await prisma.job.create({
+    data: { propertyId: cohenProp.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 100.0, estimatedMinutes: 45, notes: "$100 mow — underpayment (mixed crew) scenario" },
+  });
+  const davisJob = await prisma.job.create({
+    data: { propertyId: davisProp.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 100.0, estimatedMinutes: 45, notes: "$100 mow — underpayment (all-employee) scenario" },
+  });
+  const evansJob = await prisma.job.create({
+    data: { propertyId: evansProp.id, kind: "SINGLE_ADDRESS", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 100.0, estimatedMinutes: 45, notes: "$100 mow — write-off scenario" },
+  });
+
+  for (const job of [adamsJob, banksJob, cohenJob, davisJob, evansJob]) {
+    await prisma.jobClient.create({
+      data: {
+        jobId: job.id,
+        clientId: (await prisma.property.findUniqueOrThrow({ where: { id: job.propertyId } })).clientId,
+        role: "owner",
+      },
+    });
+  }
+
+  // Default assignees — same set used by both templates so workers see a
+  // consistent crew on each job's card.
+  await prisma.jobAssigneeDefault.create({ data: { jobId: adamsJob.id, userId: CONTRACTOR_ID, role: "primary" } });
+  await prisma.jobAssigneeDefault.create({ data: { jobId: banksJob.id, userId: CONTRACTOR_ID, role: "primary" } });
+  await prisma.jobAssigneeDefault.create({ data: { jobId: cohenJob.id, userId: CONTRACTOR_ID, role: "primary" } });
+  await prisma.jobAssigneeDefault.create({ data: { jobId: davisJob.id, userId: EMPLOYEE_ID, role: "primary" } });
+  await prisma.jobAssigneeDefault.create({ data: { jobId: evansJob.id, userId: CONTRACTOR_ID, role: "primary" } });
+
+  // ─── Context: scheduled jobs spread across today + next 2 weeks ──────────
+  // FIVE jobs SCHEDULED for today, all assigned to CONTRACTOR_ID — gives a
+  // ready-made path for testing the contractor Initiate-Payment flow on
+  // five separate occurrences (e.g. normal, overpay, underpay, severe
+  // underpay, write-off) without setting them up by hand. The remaining
+  // context jobs span the next 2 weeks with a mix of workers so the
+  // JobsTab / month view doesn't look empty.
+  console.log("    Scheduled context jobs (5 today for Contractor + next 2 weeks)...");
+  const contextSchedule: Array<{ jobId: string; daysOut: number; hour: number; assigneeUserId: string; price?: number }> = [
+    { jobId: adamsJob.id, daysOut: 0, hour: 8,  assigneeUserId: CONTRACTOR_ID },
+    { jobId: banksJob.id, daysOut: 0, hour: 10, assigneeUserId: CONTRACTOR_ID },
+    { jobId: cohenJob.id, daysOut: 0, hour: 12, assigneeUserId: CONTRACTOR_ID },
+    { jobId: davisJob.id, daysOut: 0, hour: 14, assigneeUserId: CONTRACTOR_ID },
+    { jobId: evansJob.id, daysOut: 0, hour: 16, assigneeUserId: CONTRACTOR_ID },
+    { jobId: adamsJob.id, daysOut: 2, hour: 10, assigneeUserId: EMPLOYEE_ID },
+    { jobId: banksJob.id, daysOut: 3, hour: 8,  assigneeUserId: ADMIN_WORKER_ID },
+    { jobId: cohenJob.id, daysOut: 4, hour: 13, assigneeUserId: EMPLOYEE_ID },
+    { jobId: davisJob.id, daysOut: 5, hour: 9,  assigneeUserId: CONTRACTOR_ID },
+    { jobId: evansJob.id, daysOut: 8, hour: 9,  assigneeUserId: CONTRACTOR_ID },
+    { jobId: adamsJob.id, daysOut: 9, hour: 10, assigneeUserId: EMPLOYEE_ID },
+    { jobId: banksJob.id, daysOut: 11, hour: 8, assigneeUserId: ADMIN_WORKER_ID },
+    { jobId: cohenJob.id, daysOut: 12, hour: 13, assigneeUserId: EMPLOYEE_ID },
+    { jobId: davisJob.id, daysOut: 14, hour: 9, assigneeUserId: CONTRACTOR_ID },
+  ];
+  for (let i = 0; i < contextSchedule.length; i++) {
+    const c = contextSchedule[i];
+    const occ = await prisma.jobOccurrence.create({
+      data: {
+        jobId: c.jobId,
+        kind: "SINGLE_ADDRESS",
+        startAt: daysFromNow(c.daysOut, c.hour),
+        endAt: daysFromNow(c.daysOut, c.hour + 1),
+        status: "SCHEDULED",
+        workflow: "STANDARD",
+        jobTags: '["MOW"]',
+        price: c.price ?? 100.0,
+        estimatedMinutes: 45,
+        isClientConfirmed: true,
+      },
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: {
+        occurrenceId: occ.id,
+        userId: c.assigneeUserId,
+        role: "primary",
+        assignedById: c.assigneeUserId,
+      },
+    });
+  }
+
+  // ─── Mixed-crew scenarios scheduled for today ────────────────────────────
+  // Two occurrences with both an EMPLOYEE and a CONTRACTOR on the same job
+  // so the mixed-class payment math can be tested end-to-end. Each one
+  // alternates which worker type is the claimer:
+  //   • 6 PM Cohen: EMPLOYEE claims, CONTRACTOR helps
+  //   • 7 PM Davis: CONTRACTOR claims, EMPLOYEE helps
+  //
+  // assignedById = the claimer's own userId on the claimer's row, and =
+  // the claimer's userId on the helper's row (the system convention).
+  console.log("    Mixed-crew scenarios (today, 2 jobs)...");
+  const mixedScenarios = [
+    { jobId: cohenJob.id, hour: 18, claimerUserId: EMPLOYEE_ID, helperUserId: CONTRACTOR_ID, note: "Employee claims, contractor helps" },
+    { jobId: davisJob.id, hour: 19, claimerUserId: CONTRACTOR_ID, helperUserId: EMPLOYEE_ID, note: "Contractor claims, employee helps" },
+  ];
+  for (const m of mixedScenarios) {
+    const occ = await prisma.jobOccurrence.create({
+      data: {
+        jobId: m.jobId,
+        kind: "SINGLE_ADDRESS",
+        startAt: daysFromNow(0, m.hour),
+        endAt: daysFromNow(0, m.hour + 1),
+        status: "SCHEDULED",
+        workflow: "STANDARD",
+        jobTags: '["MOW"]',
+        price: 100.0,
+        estimatedMinutes: 45,
+        isClientConfirmed: true,
+        notes: m.note,
+      },
+    });
+    // Claimer (primary role, assignedById = self).
+    await prisma.jobOccurrenceAssignee.create({
+      data: {
+        occurrenceId: occ.id,
+        userId: m.claimerUserId,
+        role: "primary",
+        assignedById: m.claimerUserId,
+      },
+    });
+    // Helper (role null = standard worker, NOT observer so they earn a
+    // share; assignedById = the claimer).
+    await prisma.jobOccurrenceAssignee.create({
+      data: {
+        occurrenceId: occ.id,
+        userId: m.helperUserId,
+        role: null,
+        assignedById: m.claimerUserId,
+      },
+    });
+  }
+
+  // Minimal supplies catalog so the "From inventory" picker has stock to
+  // pull from when testing the on-job expense flow under payments-clean /
+  // payments-active. Mirrors the default seed shape (Supply + paired
+  // BusinessExpense + SupplyPurchase + onHand increment).
+  console.log("    Supplies (minimal catalog)...");
+  const paymentsSupplyCatalog: Array<{
+    name: string; unit: string; category: string;
+    businessCost: number; jobPayoutCost: number;
+    description?: string; quantity: number;
+  }> = [
+    { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                businessCost: 4.00,  jobPayoutCost: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
+    { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                businessCost: 18.00, jobPayoutCost: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
+    { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                businessCost: 0.60,  jobPayoutCost: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
+    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Car and truck expenses",  businessCost: 24.00, jobPayoutCost: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
+  ];
+  for (const s of paymentsSupplyCatalog) {
+    const totalCost = Math.round(s.quantity * s.businessCost * 100) / 100;
+    const created = await prisma.supply.create({
+      data: {
+        createdById: ADMIN_WORKER_ID,
+        name: s.name,
+        unit: s.unit,
+        category: s.category,
+        businessCost: s.businessCost,
+        jobPayoutCost: s.jobPayoutCost,
+        description: s.description ?? null,
+        onHand: 0,
+      },
+    });
+    const be = await prisma.businessExpense.create({
+      data: {
+        createdById: ADMIN_WORKER_ID,
+        date: daysAgo(7, 10),
+        cost: totalCost,
+        description: `${s.name} × ${s.quantity} ${s.unit}`,
+        category: s.category,
+        vendor: "Pro Lawn Supply",
+      },
+    });
+    await prisma.supplyPurchase.create({
+      data: {
+        supplyId: created.id,
+        quantity: s.quantity,
+        unitCost: s.businessCost,
+        totalCost,
+        date: daysAgo(7, 10),
+        vendor: "Pro Lawn Supply",
+        businessExpenseId: be.id,
+        createdById: ADMIN_WORKER_ID,
+      },
+    });
+    await prisma.supply.update({
+      where: { id: created.id },
+      data: { onHand: { increment: s.quantity } },
+    });
+  }
+
+  return { adamsJob, banksJob, cohenJob, davisJob, evansJob };
+}
+
+// Clean variant — no pending payments, no payment history. Drops you at
+// a state that looks like the company is set up but hasn't yet collected
+// any payments. Workers can complete one of the TODAY SCHEDULED jobs (set
+// up in base) and walk the full Initiate Payment → approval flow from
+// scratch.
+async function seedPaymentsClean() {
+  console.log("  Creating CLEAN payment-flow dataset (no pending payments)...");
+  await seedPaymentsBase();
+  console.log("  Clean payments seed complete!");
+  console.log("");
+  console.log("  No pending approvals, no payment history. JobsTab has 16");
+  console.log("  SCHEDULED occurrences:");
+  console.log("    • 5 today, all assigned to CONTRACTOR_ID (Adams 8am, Banks 10am,");
+  console.log("      Cohen 12pm, Davis 2pm, Evans 4pm) — single-worker contractor");
+  console.log("      scenarios.");
+  console.log("    • 2 mixed-crew today (Cohen 6pm: employee claims + contractor helps;");
+  console.log("      Davis 7pm: contractor claims + employee helps) — for testing the");
+  console.log("      mixed-class payment math.");
+  console.log("    • 9 across the next 14 days with mixed workers for context.");
+}
+
+// Active variant — clean base + 5 PENDING_PAYMENT scenarios already
+// queued in Pending Approvals. Use for testing the admin approval /
+// adjust / reject / write-off paths and the per-worker reconciliation math.
+async function seedPaymentsActive() {
+  console.log("  Creating ACTIVE payment-flow dataset (5 pending approvals)...");
+  const { adamsJob, banksJob, cohenJob, davisJob, evansJob } = await seedPaymentsBase();
+
+  // Helper to create a PENDING_PAYMENT occurrence + self-reported Payment.
+  async function makeOcc(
+    jobId: string,
+    completionSplits: { userId: string; percent: number }[],
+    extras: { paymentRequestToken: string; selfReportedAmount: number; note?: string },
+  ) {
+    const price = 100.0;
+    const promisedPayouts = await computePromisedPayoutsForSeed(price, 0, completionSplits);
+    const occ = await prisma.jobOccurrence.create({
+      data: {
+        jobId,
+        kind: "SINGLE_ADDRESS",
+        startAt: daysFromNow(0, 8),
+        endAt: daysFromNow(0, 9),
+        status: "PENDING_PAYMENT",
+        workflow: "STANDARD",
+        jobTags: '["MOW"]',
+        price,
+        estimatedMinutes: 45,
+        startedAt: daysFromNow(0, 8),
+        completedAt: daysFromNow(0, 9),
+        isClientConfirmed: true,
+        paymentRequestToken: extras.paymentRequestToken,
+        paymentRequestTokenCreatedAt: daysFromNow(0, 9),
+        completionSplits: completionSplits as any,
+        promisedPayouts: promisedPayouts as any,
+      },
+    });
+    const claimerId = completionSplits[0].userId;
+    for (let i = 0; i < completionSplits.length; i++) {
+      await prisma.jobOccurrenceAssignee.create({
+        data: {
+          occurrenceId: occ.id,
+          userId: completionSplits[i].userId,
+          role: i === 0 ? "primary" : "helper",
+          assignedById: i === 0 ? completionSplits[i].userId : claimerId,
+        },
+      });
+    }
+    await prisma.payment.create({
+      data: {
+        occurrenceId: occ.id,
+        amountPaid: extras.selfReportedAmount,
+        method: "ZELLE",
+        note: extras.note ?? null,
+        confirmed: false,
+        selfReported: true,
+        collectedById: null,
+        createdAt: daysAgo(0, 10),
+      },
+    });
+    return occ;
+  }
+
+  console.log("    Pending-approval scenarios...");
+
+  // 1. NORMAL — client paid exactly the invoice. → Approve
+  await makeOcc(
+    adamsJob.id,
+    [{ userId: CONTRACTOR_ID, percent: 40 }, { userId: EMPLOYEE_ID, percent: 60 }],
+    { paymentRequestToken: "seed-pay-normal", selfReportedAmount: 100.0, note: "Paid in full via Zelle" },
+  );
+
+  // 2. OVERPAY — client paid more than invoice. → Approve
+  await makeOcc(
+    banksJob.id,
+    [{ userId: CONTRACTOR_ID, percent: 40 }, { userId: EMPLOYEE_ID, percent: 60 }],
+    { paymentRequestToken: "seed-pay-overpay", selfReportedAmount: 120.0, note: "Client added a tip" },
+  );
+
+  // 3. UNDERPAY (mixed crew) — client paid less. → Approve (or Adjust)
+  await makeOcc(
+    cohenJob.id,
+    [{ userId: CONTRACTOR_ID, percent: 40 }, { userId: EMPLOYEE_ID, percent: 60 }],
+    { paymentRequestToken: "seed-pay-underpay-mixed", selfReportedAmount: 80.0, note: "Client says check was short" },
+  );
+
+  // 4. UNDERPAY (all employees) — partial payment.
+  await makeOcc(
+    davisJob.id,
+    [{ userId: EMPLOYEE_ID, percent: 50 }, { userId: TRAINEE_ID, percent: 50 }],
+    { paymentRequestToken: "seed-pay-underpay-employees", selfReportedAmount: 40.0, note: "Partial payment only" },
+  );
+
+  // 5. WRITE-OFF — client never paid. → Write off
+  await makeOcc(
+    evansJob.id,
+    [{ userId: CONTRACTOR_ID, percent: 40 }, { userId: EMPLOYEE_ID, percent: 60 }],
+    { paymentRequestToken: "seed-pay-writeoff", selfReportedAmount: 0.0, note: "Client refused to pay — write off" },
+  );
+
+  console.log("  Active payments seed complete!");
+  console.log("");
+  console.log("  5 scenarios are PENDING admin approval. Walk them through");
+  console.log("  the Payments tab → Pending Approvals queue:");
+  console.log("");
+  console.log("    1. Adams  ($100/$100, contractor+employee 40/60)  → Approve");
+  console.log("       Expected: contractor=$36, employee=$48, fee=$4, margin=$12, no shortfall");
+  console.log("");
+  console.log("    2. Banks  ($120/$100, contractor+employee 40/60)  → Approve");
+  console.log("       Expected: contractor=$36, employee=$48, overage=$20");
+  console.log("");
+  console.log("    3. Cohen  ($80/$100, contractor+employee 40/60)   → Approve");
+  console.log("       Expected: contractor=$28.80, employee=$48 (top-up $9.60), shortfall=$12.80");
+  console.log("");
+  console.log("    4. Davis  ($40/$100, employee+trainee 50/50)      → Approve");
+  console.log("       Expected: both workers $40 (made whole), shortfall=$60");
+  console.log("");
+  console.log("    5. Evans  ($0/$100, contractor+employee 40/60)    → Write off");
+  console.log("       Expected: contractor=$0, employee=$48, shortfall=$64, writtenOff=true");
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const resetOnly = process.argv.includes("--reset-only");
+  const templateArg = process.argv.find((a) => a.startsWith("--template="));
+  const template = templateArg ? templateArg.slice("--template=".length) : "default";
 
   console.log("Clearing database (preserving User, UserRole, Setting)...");
   await clearDatabase();
 
   if (resetOnly) {
     console.log("--reset-only flag set. Skipping seed.");
-  } else {
-    console.log("Seeding database...");
-    await seedDatabase();
+    return;
+  }
+
+  switch (template) {
+    case "default":
+      console.log("Seeding (default template — full sample data)...");
+      await seedDatabase();
+      break;
+    case "payments-clean":
+      console.log("Seeding (payments-clean — fresh start, no pending payments)...");
+      await seedPaymentsClean();
+      break;
+    case "payments-active":
+    case "payments": // backward-compat alias for muscle memory
+      console.log("Seeding (payments-active — 5 pending approvals queued)...");
+      await seedPaymentsActive();
+      break;
+    default:
+      console.error(
+        `Unknown template: ${template}. Available: default, payments-clean, payments-active`,
+      );
+      process.exit(1);
   }
 }
 

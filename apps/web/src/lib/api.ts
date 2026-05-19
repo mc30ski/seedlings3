@@ -131,3 +131,39 @@ export const apiPut = <T>(p: string, b?: unknown) => request<T>("PUT", p, b);
 export const apiPatch = <T>(p: string, b?: unknown) =>
   request<T>("PATCH", p, b);
 export const apiDelete = <T>(p: string) => request<T>("DELETE", p);
+
+/**
+ * Authenticated download helper for non-JSON responses (CSV, files).
+ * Fetches the URL with the same auth/credentials as request(), then triggers
+ * a browser download via an anchor click. Throws on HTTP error.
+ */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const headers = new Headers();
+  await authHeaders(headers);
+  const url = makeAbsolute(`${API_BASE}${path}`);
+  const cross = isCrossOrigin(url);
+  if (IS_BROWSER && IS_PREVIEW && BYPASS) {
+    headers.set("x-vercel-protection-bypass", BYPASS);
+    headers.set("x-vercel-set-bypass-cookie", cross ? "samesitenone" : "true");
+  }
+  const res = await fetch(url, {
+    method: "GET",
+    headers,
+    credentials: cross ? "include" : "same-origin",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try { message = (await res.json())?.message || message; } catch {}
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+}

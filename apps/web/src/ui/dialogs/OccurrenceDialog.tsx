@@ -27,6 +27,7 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import JobTagPicker, { jobTagLabel as _jobTagLabel, JOB_TAGS, type JobTagConfig } from "@/src/ui/components/JobTagPicker";
 import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 import { JOB_KIND, JOB_OCCURRENCE_STATUS } from "@/src/lib/types";
+import { validNextStatuses } from "@/src/lib/jobTransitions";
 
 const workflowItems = [
   { label: "Repeating Job", value: "STANDARD" },
@@ -596,21 +597,30 @@ export default function OccurrenceDialog({
                     </Box>
                   </div>
                 )}
-                {mode === "UPDATE" && (
-                  <div>
-                    <Text mb="1">Status</Text>
-                    <NativeSelect.Root>
-                      <NativeSelect.Field
-                        value={status}
-                        onChange={(e) => setStatus(e.target.value)}
-                      >
-                        {JOB_OCCURRENCE_STATUS.map((s) => (
-                          <option key={s} value={s}>{s === "CLOSED" ? "Closed" : prettyStatus(s)}</option>
-                        ))}
-                      </NativeSelect.Field>
-                    </NativeSelect.Root>
-                  </div>
-                )}
+                {mode === "UPDATE" && (() => {
+                  // Filter the status dropdown to only valid transitions
+                  // for the occurrence's CURRENT status (defaultStatus,
+                  // not the in-flight `status` state — otherwise the list
+                  // would shift every time the user picks a new option).
+                  // The server enforces the same table; this just avoids
+                  // letting the user pick a value it will reject.
+                  const allowedStatuses = validNextStatuses(workflow, defaultStatus ?? null, !!isAdmin);
+                  return (
+                    <div>
+                      <Text mb="1">Status</Text>
+                      <NativeSelect.Root>
+                        <NativeSelect.Field
+                          value={status}
+                          onChange={(e) => setStatus(e.target.value)}
+                        >
+                          {allowedStatuses.map((s) => (
+                            <option key={s} value={s}>{s === "CLOSED" ? "Closed" : prettyStatus(s)}</option>
+                          ))}
+                        </NativeSelect.Field>
+                      </NativeSelect.Root>
+                    </div>
+                  );
+                })()}
                 {mode === "UPDATE" && (
                   <div>
                     <Text mb="1">Kind</Text>

@@ -20,7 +20,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { type Me } from "@/src/lib/types";
+import { type Me, type Role } from "@/src/lib/types";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -31,7 +31,7 @@ type Worker = { id: string; displayName?: string | null; email?: string | null; 
 type Props = {
   me: Me | null;
   /**
-   * When true, this is the Admin Profile tab (shows user selector, no self-only sections).
+   * When true, this is the Admin or Super Profile tab (shows user selector, no self-only sections).
    * When false/omitted, this is the Worker Profile tab (always shows own profile).
    *
    * NOTE: This prop controls which TAB context we're in, NOT the user's role.
@@ -42,10 +42,17 @@ type Props = {
    *   sense when viewing your own profile.
    */
   isAdmin?: boolean;
+  /**
+   * Which tab the user navigated into to land here. Distinguishes the Admin
+   * Profile tab from the Super Profile tab so we can gate Super-only edits
+   * (e.g., payment-comms override) to the Super tab — even if the current
+   * user happens to be a Super viewing the Admin tab.
+   */
+  purpose?: Role;
   onProfileUpdated?: () => void;
 };
 
-export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
+export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: Props) {
   // Admin: user selector
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedUserId, setSelectedUserId] = usePersistedState<string>("profile_userId", "");
@@ -68,6 +75,17 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
   const [savedAvailableHours, setSavedAvailableHours] = useState(4);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Payment comms mode — the target user's per-profile override (null = use org default)
+  // plus the org-wide default fetched from /api/settings.
+  const [commsMode, setCommsMode] = useState<"SERVER" | "CLAIMER" | null>(null);
+  const [orgCommsMode, setOrgCommsMode] = useState<"SERVER" | "CLAIMER">("CLAIMER");
+  const [commsBusy, setCommsBusy] = useState(false);
+
+  // Super-only edits (payment-comms override, etc.) require BOTH the SUPER
+  // role AND being on the Super Profile tab. A Super viewing the Admin Profile
+  // tab sees the same read-only summary that an Admin would.
+  const isSuper = !!me?.roles?.includes("SUPER") && purpose === "SUPER";
 
   const hasChanges = firstName !== savedFirstName ||
     lastName !== savedLastName ||
@@ -134,6 +152,7 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
       setHomeBase(me.homeBaseAddress ?? ""); setSavedHomeBase(me.homeBaseAddress ?? "");
       setAvailableDays(me.availableDays ?? []); setSavedAvailableDays(me.availableDays ?? []);
       setAvailableHours(me.availableHoursPerDay ?? 4); setSavedAvailableHours(me.availableHoursPerDay ?? 4);
+      setCommsMode(me.paymentCommsMode ?? null);
       return;
     }
     // Admin viewing another user — fetch their data
@@ -149,10 +168,36 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
         const hours = u?.availableHoursPerDay ?? 4;
         setAvailableHours(hours);
         setSavedAvailableHours(hours);
+        setCommsMode(u?.paymentCommsMode ?? null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [targetUserId, isSelf, me]);
+
+  // Load org-wide DEFAULT_PAYMENT_COMMUNICATIONS_MODE so we can show "(org default)" labels.
+  useEffect(() => {
+    apiGet<Array<{ key: string; value: string }>>("/api/settings")
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        const row = list.find((s) => s.key === "DEFAULT_PAYMENT_COMMUNICATIONS_MODE");
+        if (row?.value === "SERVER" || row?.value === "CLAIMER") setOrgCommsMode(row.value);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function setCommsModeFor(target: "SERVER" | "CLAIMER" | null) {
+    if (!targetUserId) return;
+    setCommsBusy(true);
+    try {
+      await apiPatch(`/api/admin/users/${targetUserId}/payment-comms-mode`, { mode: target });
+      setCommsMode(target);
+      publishInlineMessage({ type: "SUCCESS", text: "Payment communications mode updated." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
+    } finally {
+      setCommsBusy(false);
+    }
+  }
 
   async function saveProfile() {
     setSaving(true);
@@ -430,6 +475,74 @@ export default function ProfileTab({ me, isAdmin, onProfileUpdated }: Props) {
               </Card.Body>
             </Card.Root>
           )}
+
+          {/* Payment comms — how this user's payment-request messages get sent.
+              All users can see the effective value; only Super can change the
+              per-user override. */}
+          {targetUserId && (() => {
+            const effective: "SERVER" | "CLAIMER" = commsMode ?? orgCommsMode;
+            const source = commsMode ? "your override" : "org default";
+            return (
+              <Card.Root variant="outline">
+                <Card.Header py="2" px="3" pb="0">
+                  <Text fontWeight="semibold">Payment Communications Mode</Text>
+                </Card.Header>
+                <Card.Body py="2" px="3">
+                  <VStack align="stretch" gap={2}>
+                    <Text fontSize="xs" color="fg.muted">
+                      Controls how payment-request messages reach clients when {isSelf ? "you" : "this user"} complete{isSelf ? "" : "s"} a job.
+                      <Text as="span" display="block" mt={1}>
+                        <Text as="span" fontWeight="medium">Server</Text> = backend sends via Twilio/Resend.{" "}
+                        <Text as="span" fontWeight="medium">Claimer</Text> = {isSelf ? "you" : "the claimer"} text{isSelf ? "" : "s"} or email{isSelf ? "" : "s"} the client from their own device, using a prepared message.
+                      </Text>
+                    </Text>
+                    <HStack fontSize="sm" align="center">
+                      <Box flex="1">
+                        <Text fontWeight="medium">Mode</Text>
+                        <Text fontSize="xs" color="fg.muted">
+                          {effective === "SERVER" ? "Server-managed" : "Claimer-managed"} ({source})
+                        </Text>
+                      </Box>
+                      <Badge colorPalette={effective === "SERVER" ? "blue" : "purple"} variant="subtle">
+                        {effective}
+                      </Badge>
+                    </HStack>
+                    {isSuper && (
+                      <HStack gap={2} wrap="wrap">
+                        <Button
+                          size="xs"
+                          variant={commsMode === null ? "solid" : "outline"}
+                          colorPalette="gray"
+                          loading={commsBusy}
+                          onClick={() => void setCommsModeFor(null)}
+                        >
+                          Use org default ({orgCommsMode})
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant={commsMode === "SERVER" ? "solid" : "outline"}
+                          colorPalette="blue"
+                          loading={commsBusy}
+                          onClick={() => void setCommsModeFor("SERVER")}
+                        >
+                          Force Server
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant={commsMode === "CLAIMER" ? "solid" : "outline"}
+                          colorPalette="purple"
+                          loading={commsBusy}
+                          onClick={() => void setCommsModeFor("CLAIMER")}
+                        >
+                          Force Claimer
+                        </Button>
+                      </HStack>
+                    )}
+                  </VStack>
+                </Card.Body>
+              </Card.Root>
+            );
+          })()}
 
           {/* Home base card */}
           <Card.Root variant="outline">

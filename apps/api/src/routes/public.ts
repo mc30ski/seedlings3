@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
 import { getDownloadUrl } from "../lib/r2";
+import { services } from "../services";
 
 export default async function publicRoutes(app: FastifyInstance) {
   // Public activity feed — no auth required
@@ -456,5 +457,143 @@ export default async function publicRoutes(app: FastifyInstance) {
       .header("Content-Disposition", "inline; filename=seedlings.ics")
       .header("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
       .send(cal);
+  });
+
+  // ── Public payment page endpoints (no auth) ──────────────────────────────
+  // `/pay/[token]` Next.js page calls these. The token is the only auth.
+
+  // Resolve a payment-request token → job summary + payment options. Returns
+  // null shape (404) when the token doesn't match or has expired.
+  app.get("/public/pay/:token", async (req: any, reply: any) => {
+    const token = String(req.params.token || "");
+    const resolved = await services.paymentRequests.resolveToken(token);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+
+    // Sign URLs for the photos so the public page can render them. R2 GETs
+    // are presigned and expire after ~6h — fine for a single-load page view.
+    const photos: { url: string; contentType: string | null }[] = [];
+    for (const p of resolved.photos) {
+      try {
+        const url = await getDownloadUrl(p.r2Key, 6 * 3600);
+        photos.push({ url, contentType: p.contentType });
+      } catch {
+        /* skip photos we can't sign */
+      }
+    }
+
+    // Fetch the settings the page needs to render payment options.
+    const settings = await prisma.setting.findMany({
+      where: { key: { in: ["VENMO_BUSINESS_HANDLE", "ZELLE_ADDRESS"] } },
+      select: { key: true, value: true },
+    });
+    const venmoHandle = settings.find((s) => s.key === "VENMO_BUSINESS_HANDLE")?.value ?? null;
+    const zelleAddress = settings.find((s) => s.key === "ZELLE_ADDRESS")?.value ?? null;
+
+    // Best-effort audit row (don't fail the response if it errors).
+    services.paymentRequests
+      .recordTokenAccess(resolved.occurrenceId, req.headers["x-forwarded-for"] ?? req.ip ?? null)
+      .catch(() => {});
+
+    // Pull the property's preferred-method from any active contact (they
+    // share — we set it on all of them on approval). The page highlights it.
+    const preferredFromContact = await prisma.clientContact.findFirst({
+      where: {
+        status: "ACTIVE",
+        client: {
+          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
+        },
+        preferredPaymentMethod: { not: null },
+      },
+      select: { preferredPaymentMethod: true },
+    });
+
+    return {
+      occurrenceId: resolved.occurrenceId,
+      amountDue: resolved.amountDue,
+      propertyLabel: resolved.propertyLabel,
+      propertyAddress: resolved.propertyAddress,
+      serviceDate: resolved.serviceDate,
+      jobTags: resolved.jobTags,
+      photos,
+      payment: resolved.payment,
+      preferredMethod: preferredFromContact?.preferredPaymentMethod ?? null,
+      paymentOptions: {
+        venmoHandle,
+        zelleAddress,
+      },
+      expiresAt: resolved.expiresAt,
+    };
+  });
+
+  // Public self-report — client tapping "I sent my Zelle payment" etc.
+  // Creates an unconfirmed Payment that admin must approve before the
+  // occurrence closes. Token is the only auth.
+  app.post("/public/pay/:token/self-report", async (req: any, reply: any) => {
+    const token = String(req.params.token || "");
+    const body = req.body || {};
+    const method = String(body.method || "").toUpperCase();
+    const resolved = await services.paymentRequests.resolveToken(token);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+    if (!method) return reply.code(400).send({ error: "method_required" });
+
+    const payment = await services.payments.selfReportPayment(null, {
+      occurrenceId: resolved.occurrenceId,
+      method,
+      amountPaid: resolved.amountDue,
+      note: body.note ? String(body.note) : null,
+    });
+
+    // Notify admins + super. We dispatch to every approved user with an
+    // admin/super role; the Pending Approval surface in the app handles
+    // the actual queue. Failures are non-fatal — the payment is recorded
+    // regardless.
+    //
+    // Web-push (free) always fires. SMS/email (Twilio/Resend, paid) only
+    // fire when NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL is "true". Default
+    // is push-only to keep dev/test cost at zero.
+    const adminUsers = await prisma.user.findMany({
+      where: {
+        isApproved: true,
+        roles: { some: { role: { in: ["ADMIN", "SUPER"] as any } } },
+      },
+      select: { id: true },
+    });
+    const smsEmailSetting = await prisma.setting.findUnique({
+      where: { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL" },
+    });
+    const allowSmsEmail = smsEmailSetting?.value === "true";
+    const { notifyWorker } = await import("../lib/notifications");
+    for (const u of adminUsers) {
+      notifyWorker(
+        u.id,
+        `New payment to approve: $${resolved.amountDue.toFixed(2)} (${method}) at ${resolved.propertyLabel}.`,
+        { subject: "Payment to approve", pushOnly: !allowSmsEmail },
+      ).catch(() => {});
+    }
+
+    return { ok: true, paymentId: payment.id };
+  });
+
+  // Optional: client tapped "Create account" on the post-payment confirmation
+  // screen. The Clerk signup happens in the browser; this endpoint just
+  // records the source so future discount/credit logic can apply.
+  app.post("/public/pay/:token/signup-from-page", async (req: any, reply: any) => {
+    const token = String(req.params.token || "");
+    const resolved = await services.paymentRequests.resolveToken(token);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+    // Tag every active contact on the client — the actual Clerk → contact
+    // linking happens later via /client/link. This is just a hint that the
+    // signup originated from the payment page.
+    await prisma.clientContact.updateMany({
+      where: {
+        status: "ACTIVE",
+        client: {
+          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
+        },
+        clientAccountCreatedFromPaymentPageAt: null,
+      },
+      data: { clientAccountCreatedFromPaymentPageAt: new Date() },
+    });
+    return { ok: true };
   });
 }

@@ -66,7 +66,7 @@ function getTheme(icon: string, rainChance: number) {
   return { bg: "blue.200", border: "blue.400", text: "blue.800", sub: "blue.600" };
 }
 
-export default function WeatherBar() {
+export default function WeatherBar({ allowGeolocation = false }: { allowGeolocation?: boolean }) {
   const [data, setData] = useState<WeatherResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +86,13 @@ export default function WeatherBar() {
         let latitude: number;
         let longitude: number;
         try {
-          // Try browser geolocation first
+          // Browser geolocation is only attempted when the caller opts in
+          // (allowGeolocation = true). Workers/admins benefit from accurate
+          // weather for the job's actual location; logged-out visitors and
+          // signed-in clients should NOT see the location permission prompt
+          // just for visiting the dashboard — they fall straight through to
+          // the IP-based fallback below.
+          if (!allowGeolocation) throw new Error("geolocation_skipped");
           const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, maximumAge: 600000, enableHighAccuracy: false });
           });
@@ -122,7 +128,10 @@ export default function WeatherBar() {
     }
     void load();
     return () => { cancelled = true; };
-  }, []);
+    // Re-run when geolocation availability flips (e.g. anonymous visitor
+    // signs in as a worker mid-session) so we upgrade IP-based weather to
+    // GPS-precise without a page reload.
+  }, [allowGeolocation]);
 
   // Ticker: when activeDay changes, slide up then reset
   useEffect(() => {

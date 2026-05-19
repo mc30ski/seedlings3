@@ -1663,43 +1663,47 @@ export default function ServicesTab({
                               );
                             })()}
                             {occ.price != null && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (() => {
-                              // Keep per-worker payout breakdown (only shows if workers assigned)
+                              // Per-worker payout breakdown: each worker's share × (1 − their own rate)
                               const addonsAmt = ((occ as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
                               const grossPrice = occ.price! + addonsAmt;
                               const expTotal = (occ.expenses ?? []).reduce((s: number, e: any) => s + e.cost, 0);
                               const assignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer");
                               if (assignees.length === 0) return null;
                               const net = grossPrice - expTotal;
-                              const hasContractors = assignees.some((a: any) => a.user?.workerType !== "EMPLOYEE" && a.user?.workerType !== "TRAINEE");
-                              const hasEmployees = assignees.some((a: any) => a.user?.workerType === "EMPLOYEE" || a.user?.workerType === "TRAINEE");
-                              const commission = hasContractors && commissionPercent > 0 ? Math.round(net * commissionPercent) / 100 : 0;
-                              const margin = hasEmployees && marginPercent > 0 ? Math.round(net * marginPercent) / 100 : 0;
-                              const totalPayout = Math.max(0, grossPrice - expTotal - commission - margin);
+                              const sharePerWorker = net / assignees.length;
 
                               return (
                                 <Box fontSize="xs" color="fg.muted" mt={0.5}>
-                                  {assignees.length > 0 && (
-                                    <VStack align="start" gap={0.5}>
-                                      {assignees.map((a: any) => {
-                                        const perPerson = Math.round(totalPayout / assignees.length * 100) / 100;
-                                        return (
-                                          <HStack key={a.userId} gap={1} wrap="wrap">
-                                            <Text color="fg.muted">
-                                              <span
-                                                style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
-                                                onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
-                                              >
-                                                {a.user?.displayName ?? a.user?.email ?? a.userId}
-                                              </span>:
+                                  <VStack align="start" gap={0.5}>
+                                    {assignees.map((a: any) => {
+                                      const t = a.user?.workerType;
+                                      const isEmp = t === "EMPLOYEE" || t === "TRAINEE";
+                                      const rate = isEmp ? marginPercent : commissionPercent;
+                                      const fee = Math.round(sharePerWorker * rate) / 100;
+                                      const payout = Math.max(0, Math.round((sharePerWorker - fee) * 100) / 100);
+                                      const label = isEmp ? "margin" : "commission";
+                                      return (
+                                        <HStack key={a.userId} gap={1} wrap="wrap">
+                                          <Text color="fg.muted">
+                                            <span
+                                              style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                                              onClick={(e) => { e.stopPropagation(); navigateToProfile(a.userId, !!forAdmin); }}
+                                            >
+                                              {a.user?.displayName ?? a.user?.email ?? a.userId}
+                                            </span>:
+                                          </Text>
+                                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                                            ${payout.toFixed(2)}
+                                          </Badge>
+                                          {rate > 0 && (
+                                            <Text fontSize="2xs" color="fg.muted">
+                                              (${sharePerWorker.toFixed(2)} − ${fee.toFixed(2)} {label} {rate}%)
                                             </Text>
-                                            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                                              ${perPerson.toFixed(2)}
-                                            </Badge>
-                                          </HStack>
-                                        );
-                                      })}
-                                    </VStack>
-                                  )}
+                                          )}
+                                        </HStack>
+                                      );
+                                    })}
+                                  </VStack>
                                 </Box>
                               );
                             })()}
@@ -2135,9 +2139,15 @@ export default function ServicesTab({
                                     message: "This will delete the payment record and revert the occurrence to Pending Payment. You can then edit and re-accept payment.",
                                     confirmLabel: "Revert",
                                     colorPalette: "red",
-                                    onConfirm: async () => {
+                                    inputLabel: "Reason",
+                                    inputPlaceholder: "e.g. Check bounced, refunded the client, recorded the wrong amount…",
+                                    inputOptional: true,
+                                    onConfirm: async (reason?: string) => {
                                       try {
-                                        await apiPatch(`/api/admin/occurrences/${occ.id}`, { status: "PENDING_PAYMENT" });
+                                        await apiPatch(`/api/admin/occurrences/${occ.id}`, {
+                                          status: "PENDING_PAYMENT",
+                                          paymentRevertReason: reason?.trim() || null,
+                                        });
                                         publishInlineMessage({ type: "SUCCESS", text: "Payment reverted. Occurrence is now Pending Payment." });
                                         void loadDetail(job.id, true);
                                         void load(false);
@@ -2424,7 +2434,7 @@ export default function ServicesTab({
                               <StatusButton
                                 id="occ-accept-payment"
                                 itemId={occ.id}
-                                label="Accept Payment"
+                                label="Initiate Payment"
                                 onClick={async () => {
                                   setAcceptPaymentOcc(occ);
                                   setAcceptPaymentJobId(job.id);
@@ -2680,6 +2690,7 @@ export default function ServicesTab({
             if (!o) setAcceptPaymentOcc(null);
           }}
           endpoint={`/api/admin/occurrences/${acceptPaymentOcc.id}/accept-payment`}
+          occurrenceId={acceptPaymentOcc.id}
           defaultAmount={(() => { const base = acceptPaymentOcc.price ?? 0; const addons = ((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0); return base + addons || null; })()}
           basePrice={acceptPaymentOcc.price ?? null}
           addonsTotal={((acceptPaymentOcc as any).addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0)}

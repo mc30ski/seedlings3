@@ -46,8 +46,6 @@ export default function ChangeRequestsPanel() {
 
   useEffect(() => {
     void load();
-    const t = setInterval(() => void load(), 60000); // refresh every minute
-    return () => clearInterval(t);
   }, []);
 
   async function approve(id: string) {

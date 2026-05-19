@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
 import { apiGet } from "@/src/lib/api";
+import { setCompressionDefaults } from "@/src/lib/imageRedact";
 import { bizDateKey } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
@@ -50,6 +51,7 @@ import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
+import ExportsTab from "@/src/ui/tabs/ExportsTab";
 
 import AppSplash from "@/src/ui/helpers/AppSplash";
 import AwaitingApprovalNotice from "@/src/ui/notices/AwaitingApprovalNotice";
@@ -405,6 +407,28 @@ export default function HomePage() {
     }
   }, [authLoaded, isSignedIn, loadMe]);
 
+  // Load app-wide compression defaults once a signed-in session resolves.
+  // PHOTO_MAX_EDGE_PX / PHOTO_JPEG_QUALITY drive every photo upload path
+  // (occurrences, equipment, properties, receipts). New photos use whatever
+  // is configured at upload time — already-stored photos are untouched.
+  useEffect(() => {
+    if (!authLoaded || !isSignedIn) return;
+    void (async () => {
+      try {
+        const list = await apiGet<Array<{ key: string; value: string }>>("/api/settings");
+        if (!Array.isArray(list)) return;
+        const edge = Number(list.find((s) => s.key === "PHOTO_MAX_EDGE_PX")?.value);
+        const quality = Number(list.find((s) => s.key === "PHOTO_JPEG_QUALITY")?.value);
+        setCompressionDefaults({
+          maxEdge: Number.isFinite(edge) ? edge : undefined,
+          quality: Number.isFinite(quality) ? quality : undefined,
+        });
+      } catch {
+        // Silent — defaults stay in effect.
+      }
+    })();
+  }, [authLoaded, isSignedIn]);
+
   useEffect(() => {
     // Don't reset tabs until we know the user's roles
     if (!me) return;
@@ -575,7 +599,7 @@ export default function HomePage() {
       label: "Profile",
       icon: FiUser,
 
-      content: wrapWithInlineMessage(<ProfileTab me={me} onProfileUpdated={refreshMe} />),
+      content: wrapWithInlineMessage(<ProfileTab me={me} purpose="WORKER" onProfileUpdated={refreshMe} />),
     },
   ];
 
@@ -694,7 +718,7 @@ export default function HomePage() {
       label: "Profile",
       icon: FiUser,
 
-      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin onProfileUpdated={refreshMe} />),
+      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
     },
     {
       value: "activity",
@@ -933,6 +957,14 @@ export default function HomePage() {
           categoryIcon: FiUsers,
         },
         {
+          value: "exports",
+          label: "Exports",
+          icon: FiDownload,
+          content: wrapWithInlineMessage(<ExportsTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
           value: "documents",
           label: "Documents",
           icon: FiFolder,
@@ -961,6 +993,14 @@ export default function HomePage() {
           label: "Audit",
           icon: FiSearch,
           content: <AuditTab />,
+          category: "System",
+          categoryIcon: FiSettings,
+        },
+        {
+          value: "profile",
+          label: "Profile",
+          icon: FiUser,
+          content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="SUPER" onProfileUpdated={refreshMe} />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -1143,15 +1183,54 @@ export default function HomePage() {
   // To revert: restore the prior `currentTemp` + `weatherBarVisible` state from git
   // and the Cloud icon button below.
   type EarningsPeriod = "today" | "thisWeek" | "thisMonth" | "allTime";
-  const EARNINGS_PERIODS: EarningsPeriod[] = ["today", "thisWeek", "thisMonth", "allTime"];
+  // Cycle only walks Today → Week → Month. "allTime" is intentionally
+  // omitted — admin/super views show this number; an unbounded "All"
+  // running total stops being useful past a month.
+  const EARNINGS_PERIODS: EarningsPeriod[] = ["today", "thisWeek", "thisMonth"];
   const EARNINGS_LABELS: Record<EarningsPeriod, string> = { today: "Today", thisWeek: "Wk", thisMonth: "Mo", allTime: "All" };
   const [earnings, setEarnings] = useState<{ today: number; thisWeek: number; thisMonth: number; allTime: number } | null>(null);
   const [earningsPeriod, setEarningsPeriod] = usePersistedState<EarningsPeriod>("titleEarningsPeriod", "thisWeek");
+  // Legacy migration: anyone with "allTime" persisted in localStorage from
+  // when the cycle included it gets bumped back to "thisWeek" on next load.
+  useEffect(() => {
+    if (!EARNINGS_PERIODS.includes(earningsPeriod)) {
+      setEarningsPeriod("thisWeek");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (!isSignedIn || !me?.id) return;
-    apiGet<{ today: number; thisWeek: number; thisMonth: number; allTime: number }>("/api/payments/earnings-summary")
-      .then((d) => setEarnings({ today: d?.today ?? 0, thisWeek: d?.thisWeek ?? 0, thisMonth: d?.thisMonth ?? 0, allTime: d?.allTime ?? 0 }))
-      .catch(() => {});
+    // Dedicated endpoint for the title-bar money chip — NOT the same one
+    // ProfileTab uses (/api/payments/earnings-summary). Keeping them
+    // separate so changes to ProfileTab's stats or admin Payments-tab
+    // aggregations can't bleed into the title bar logic.
+    let cancelled = false;
+    const fetchEarnings = () => {
+      apiGet<{ today: number; thisWeek: number; thisMonth: number; allTime: number }>("/api/payments/title-bar-earnings")
+        .then((d) => {
+          if (cancelled) return;
+          setEarnings({ today: d?.today ?? 0, thisWeek: d?.thisWeek ?? 0, thisMonth: d?.thisMonth ?? 0, allTime: d?.allTime ?? 0 });
+        })
+        .catch(() => {});
+    };
+    fetchEarnings();
+    // Worker self-actions that mutate their own earnings dispatch a
+    // "seedlings:earnings-changed" event; we re-fetch on every emit.
+    // Admin actions on other users don't dispatch — those users see
+    // fresh numbers next page load, which is acceptable.
+    const onEarningsChanged = () => fetchEarnings();
+    window.addEventListener("seedlings:earnings-changed", onEarningsChanged);
+    // Re-fetch when the tab regains focus, so a worker who switches
+    // away and comes back sees current numbers without a hard refresh.
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") fetchEarnings();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("seedlings:earnings-changed", onEarningsChanged);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [isSignedIn, me?.id]);
   function fmtEarnings(n: number): string {
     if (n >= 100000) return `${Math.round(n / 1000)}k`;
@@ -1190,6 +1269,28 @@ export default function HomePage() {
   useEffect(() => {
     void loadPending();
   }, [loadPending]);
+
+  // ---- Pending payment approvals badge (admin + super) ----
+  const [pendingPayments, setPendingPayments] = useState<number>(0);
+
+  const loadPendingPayments = useCallback(async () => {
+    if (!isAdmin && !isSuper) {
+      setPendingPayments(0);
+      if (me) markAlertLoaded("pendingPayments");
+      return;
+    }
+    try {
+      const list = await apiGet<unknown[]>("/api/admin/payments/pending");
+      setPendingPayments(Array.isArray(list) ? list.length : 0);
+    } catch {
+      setPendingPayments(0);
+    }
+    markAlertLoaded("pendingPayments");
+  }, [isAdmin, isSuper]);
+
+  useEffect(() => {
+    void loadPendingPayments();
+  }, [loadPendingPayments]);
 
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
@@ -1266,7 +1367,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2079,6 +2180,11 @@ export default function HomePage() {
     }, 100);
   }, []);
 
+  const goToPaymentApprovals = useCallback(() => {
+    setTopTab("admin");
+    setAdminInnerTab("payments");
+  }, []);
+
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
@@ -2257,7 +2363,8 @@ export default function HomePage() {
             {alertsReady && (() => {
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
-              if (isAdmin && pending > 0) alerts.push({ label: "Pending Approvals", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if ((isAdmin || isSuper) && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
@@ -2396,7 +2503,10 @@ export default function HomePage() {
           </div>
         </Box>
       </Box>
-      <WeatherBar />
+      {/* Only ask for geolocation when the signed-in user is an approved
+          worker/admin/super. Logged-out visitors and signed-in clients still
+          see weather (via IP-based fallback) without a permission prompt. */}
+      <WeatherBar allowGeolocation={!!(me?.isApproved && hasAnyRole)} />
       {!meLoading && me && !me.isApproved && <AwaitingApprovalNotice />}
       {!meLoading && me?.isApproved && !hasAnyRole && topTab !== "client" && <NoRoleNotice />}
       {authLoaded && (!isSignedIn || me) && (

@@ -41,11 +41,12 @@ import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ManageExpensesDialog from "@/src/ui/dialogs/ManageExpensesDialog";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 import { MapLink, TextLink } from "@/src/ui/helpers/Link";
-import { openEventSearch, navigateToProfile } from "@/src/lib/bus";
+import { openEventSearch, navigateToProfile, bumpTitleBarEarnings } from "@/src/lib/bus";
 import { suggestedEquipment, parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
+import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
 import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
@@ -341,12 +342,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => clearInterval(id);
   }, []);
   const [statusButtonBusyId, setStatusButtonBusyId] = useState<string>("");
-  const [showInfoDialog, setShowInfoDialog] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return !localStorage.getItem("seedlings_jobs_infoDismissed");
-    } catch { return false; }
-  });
+  // Info dialog is opt-in only — opens when the user taps the (i) button.
+  // Used to auto-open on first visit (gated by a localStorage dismiss flag);
+  // that behavior was removed because surprise modals were getting in the
+  // way for returning users on every fresh device / browser session.
+  const [showInfoDialog, setShowInfoDialog] = useState(false);
   const [calFeedStep, setCalFeedStep] = useState<"closed" | "confirm" | "result">("closed");
   const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null);
   const [calFeedLoading, setCalFeedLoading] = useState(false);
@@ -354,6 +354,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [highValueThreshold, setHighValueThreshold] = useState(200);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
+  const [requestPaymentEnabled, setRequestPaymentEnabled] = useState(false);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
   // Equipment collections — for surfacing the job's "recommended kits" on
@@ -918,6 +919,39 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [contactMenuOcc]);
 
+  // Pre-fetched payment-request message for the currently-open contact
+  // dropdown. The Request Payment shortcut in the dropdown uses this
+  // (instead of the local fallback in getQuickMessage) so the SMS/email
+  // contains the same body + invoice link as the inline Request Payment
+  // button on the expanded card. Cleared when the dropdown closes.
+  const [dropdownPayMsg, setDropdownPayMsg] = useState<{
+    occurrenceId: string;
+    smsBody: string;
+    emailSubject: string;
+    emailBody: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!contactMenuOcc) { setDropdownPayMsg(null); return; }
+    const occ = items.find((o) => o.id === contactMenuOcc);
+    if (!occ || occ.status !== "PENDING_PAYMENT") { setDropdownPayMsg(null); return; }
+    if (dropdownPayMsg?.occurrenceId === contactMenuOcc) return; // already loaded
+    let cancelled = false;
+    apiGet<{ smsBody: string; emailSubject: string; emailBody: string }>(
+      `/api/occurrences/${contactMenuOcc}/comms-handoff`,
+    )
+      .then((d) => {
+        if (cancelled) return;
+        setDropdownPayMsg({
+          occurrenceId: contactMenuOcc,
+          smsBody: d.smsBody,
+          emailSubject: d.emailSubject,
+          emailBody: d.emailBody,
+        });
+      })
+      .catch(() => { /* leave null — the local fallback in getQuickMessage covers us */ });
+    return () => { cancelled = true; };
+  }, [contactMenuOcc, items, dropdownPayMsg]);
+
   useEffect(() => {
     if (!actionMenuOcc) return;
     const close = () => setActionMenuOcc(null);
@@ -949,6 +983,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     pricingReferenceTags?: string[];
     cancelLabel?: string;
     onCancelAction?: () => void;
+    warning?: string;
+    secondaryActionFirst?: boolean;
   } | null>(null);
 
   const [acceptPaymentOpen, setAcceptPaymentOpen] = useState(false);
@@ -1211,6 +1247,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
+        const rp = list.find((r: any) => r.key === "REQUEST_PAYMENT_FROM_CLIENT_ENABLED");
+        setRequestPaymentEnabled(rp?.value === "true");
         const st = list.find((r: any) => r.key === "SERVICE_TYPES");
         if (st?.value) { const parsed = parseServiceTypesConfig(st.value); if (parsed) setServiceTypes(parsed); }
         const ek = list.find((r: any) => r.key === "EQUIPMENT_KINDS");
@@ -1445,6 +1483,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/claim`, groupId ? { groupId } : {});
       publishInlineMessage({ type: "SUCCESS", text: groupId ? "Job claimed for group." : "Job claimed." });
+      bumpTitleBarEarnings();
       await load(false);
     } catch (err: any) {
       const code = err?.code ?? "";
@@ -1478,6 +1517,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     try {
       await apiPost(`/api/occurrences/${occurrenceId}/unclaim`, {});
       publishInlineMessage({ type: "SUCCESS", text: "Job unclaimed." });
+      bumpTitleBarEarnings();
       await load(false);
     } catch (err) {
       publishInlineMessage({
@@ -1543,6 +1583,79 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       });
     }
     setBusyOccId(null);
+  }
+
+  // Single source of truth for the "Confirm Client?" dialog. Rendered as a
+  // tri-action prompt: confirm the client, request confirmation (deep-link
+  // SMS/email), or cancel. Used by every Confirm-Client entry point (ultra,
+  // semi, expanded card) so the experience stays identical across densities.
+  function openConfirmClientDialog(occ: WorkerOccurrence) {
+    const poc = (occ.job?.property as any)?.pointOfContact;
+    const pocPhone: string | null = poc?.phone ?? null;
+    const pocEmail: string | null = poc?.email ?? null;
+    const pocName: string | null = poc?.firstName
+      ? `${poc.firstName}${poc.lastName ? ` ${poc.lastName}` : ""}`
+      : null;
+    const quick = getQuickMessage(occ, pocName);
+    const canRequest = !!(quick && (pocPhone || pocEmail));
+    setConfirmAction({
+      title: "Confirm Client?",
+      message: "",
+      confirmLabel: "Yes, Confirmed",
+      colorPalette: "orange",
+      onConfirm: async () => {
+        setBusyOccId(occ.id);
+        try {
+          await apiPost(`/api/occurrences/${occ.id}/confirm`);
+          setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
+          publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
+        } catch (err) {
+          publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
+        }
+        setBusyOccId(null);
+      },
+      ...(canRequest
+        ? {
+            cancelLabel: "Request Confirmation",
+            onCancelAction: () => {
+              const encoded = encodeURIComponent(quick!.body);
+              if (pocPhone) {
+                window.open(`sms:${pocPhone}?body=${encoded}`, "_self");
+              } else if (pocEmail) {
+                window.open(`mailto:${pocEmail}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+              }
+            },
+            secondaryActionFirst: true,
+            warning:
+              "Only confirm if client has approved the appointment. Otherwise tap \"Request Confirmation\" to send them a message — a job that starts without the client's go-ahead can cause issues.",
+          }
+        : {}),
+    });
+  }
+
+  // Single entry point for starting a job. Online: opens the Start Job dialog
+  // with the time pre-filled to "now". Offline: enqueues a START_JOB action,
+  // optimistically flips the card to IN_PROGRESS, surfaces a queued-for-sync
+  // toast. Used by every density (ultra, semi, expanded) so the behavior is
+  // identical everywhere — including the busy-indicator handling.
+  function openStartJobDialog(occ: WorkerOccurrence) {
+    if (isOffline) {
+      void (async () => {
+        setBusyOccId(occ.id);
+        try {
+          await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
+          setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
+          publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
+        } finally {
+          setBusyOccId(null);
+        }
+      })();
+      return;
+    }
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+    setStartJobOcc(occ);
   }
 
   async function pauseJob(occ: WorkerOccurrence) {
@@ -3211,21 +3324,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
                     e.stopPropagation();
-                    setConfirmAction({
-                      title: "Confirm Client?",
-                      message: "Have you confirmed with the client that this job is good to go?",
-                      confirmLabel: "Yes, Confirmed",
-                      colorPalette: "orange",
-                      onConfirm: async () => {
-                        setBusyOccId(occ.id);
-                        try {
-                          await apiPost(`/api/occurrences/${occ.id}/confirm`);
-                          setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
-                          publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
-                        } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) }); }
-                        setBusyOccId(null);
-                      },
-                    });
+                    openConfirmClientDialog(occ);
                   }}><CheckCircle2 size={12} /></Box>
                 );
               }
@@ -3233,18 +3332,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
                     e.stopPropagation();
-                    if (isOffline) {
-                      void (async () => {
-                        await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
-                        setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
-                        publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
-                      })();
-                      return;
-                    }
-                    const now = new Date();
-                    const pad = (n: number) => String(n).padStart(2, "0");
-                    setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
-                    setStartJobOcc(occ);
+                    openStartJobDialog(occ);
                   }}><Play size={12} /></Box>
                 );
               }
@@ -3402,13 +3490,24 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 );
               }
               if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
-                return (
-                  <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept Payment" onClick={(e: any) => {
-                    e.stopPropagation();
-                    setAcceptPaymentOcc(occ);
-                    setAcceptPaymentOpen(true);
-                  }}><CircleDollarSign size={12} /></Box>
-                );
+                // Mirror the three-state logic of the full-width button block
+                // below (open / requestInFlight / pendingPayment). Only show
+                // the shortcut icon in the "open" state — once a Payment row
+                // exists (pendingPayment) or a Request was sent
+                // (requestInFlight), the shortcut isn't actionable anymore.
+                const pendingPayment = occ.payment && occ.payment.confirmed === false;
+                const requestInFlight = !pendingPayment && !!occ.paymentRequestSentAt;
+                const open = !pendingPayment && !requestInFlight;
+                if (open) {
+                  return (
+                    <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Initiate Payment" onClick={(e: any) => {
+                      e.stopPropagation();
+                      setAcceptPaymentOcc(occ);
+                      setAcceptPaymentOpen(true);
+                    }}><CircleDollarSign size={12} /></Box>
+                  );
+                }
+                return null;
               }
               if (isUnassigned && !isAdminOnlyOcc && !isTaskOrReminder) {
                 const isContractor = me?.workerType === "CONTRACTOR";
@@ -3703,14 +3802,22 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                     {(() => {
                                       const msg = getQuickMessage(occ, name);
                                       if (!msg) return null;
-                                      const encoded = encodeURIComponent(msg.body);
+                                      // For PENDING_PAYMENT, prefer the server-prepared message
+                                      // (includes the invoice link). Falls back to the local
+                                      // message if the fetch hasn't completed yet.
+                                      const useHandoff = occ.status === "PENDING_PAYMENT" && dropdownPayMsg?.occurrenceId === occ.id;
+                                      const smsBody = useHandoff ? dropdownPayMsg.smsBody : msg.body;
+                                      const emailSubject = useHandoff ? dropdownPayMsg.emailSubject : "Seedlings Lawn Care";
+                                      const emailBody = useHandoff ? dropdownPayMsg.emailBody : msg.body;
                                       return (
                                         <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
                                             setContactMenuOcc(null);
                                             if (phone) {
-                                              window.open(`sms:${phone}?body=${encoded}`, "_self");
+                                              window.open(`sms:${phone}?body=${encodeURIComponent(smsBody)}`, "_self");
+                                              if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "sms" }).catch(() => {});
                                             } else if (email) {
-                                              window.open(`mailto:${email}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                                              window.open(`mailto:${email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`, "_self");
+                                              if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "email" }).catch(() => {});
                                             }
                                           }}>
                                             <MessageCircle size={12} /> {msg.label}
@@ -3931,14 +4038,22 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                       {(() => {
                                         const msg = getQuickMessage(occ, name);
                                         if (!msg) return null;
-                                        const encoded = encodeURIComponent(msg.body);
+                                        // For PENDING_PAYMENT, prefer the server-prepared
+                                        // message (includes the invoice link). Falls back to
+                                        // the local message if the fetch hasn't completed.
+                                        const useHandoff = occ.status === "PENDING_PAYMENT" && dropdownPayMsg?.occurrenceId === occ.id;
+                                        const smsBody = useHandoff ? dropdownPayMsg.smsBody : msg.body;
+                                        const emailSubject = useHandoff ? dropdownPayMsg.emailSubject : "Seedlings Lawn Care";
+                                        const emailBody = useHandoff ? dropdownPayMsg.emailBody : msg.body;
                                         return (
                                             <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
                                               setContactMenuOcc(null);
                                               if (phone) {
-                                                window.open(`sms:${phone}?body=${encoded}`, "_self");
+                                                window.open(`sms:${phone}?body=${encodeURIComponent(smsBody)}`, "_self");
+                                                if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "sms" }).catch(() => {});
                                               } else if (email) {
-                                                window.open(`mailto:${email}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                                                window.open(`mailto:${email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`, "_self");
+                                                if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "email" }).catch(() => {});
                                               }
                                             }}>
                                               <MessageCircle size={12} /> {msg.label}
@@ -4508,29 +4623,49 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                             const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
                             const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
                             const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                            const deduction = Math.round(net * pct) / 100;
-                            const payout = net - deduction;
                             const label = isEmp ? "margin" : "commission";
                             const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
-                            const perPerson = activeAssignees.length > 1 ? Math.round(payout / activeAssignees.length * 100) / 100 : null;
+                            const workerCount = Math.max(1, activeAssignees.length);
+                            const myShare = net / workerCount;
+                            const myDeduction = Math.round(myShare * pct) / 100;
+                            const myPayout = myShare - myDeduction;
+                            const sameClassCrew = activeAssignees.every((a) => {
+                              const t = a.user?.workerType;
+                              if (isEmp) return t === "EMPLOYEE" || t === "TRAINEE";
+                              if (isCon) return t === "CONTRACTOR" || !t;
+                              return true;
+                            });
                             return (
                               <Box fontSize="xs" color="fg.muted">
                                 {pct > 0 && (
                                   <>
                                     <HStack gap={2}>
-                                      <Text>Est. payout:</Text>
+                                      <Text>Est. your payout:</Text>
                                       <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                                        ${payout.toFixed(2)}
+                                        ${myPayout.toFixed(2)}
                                       </Badge>
                                     </HStack>
-                                    <Text fontSize="xs" color="fg.muted">
-                                      ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${deduction.toFixed(2)} {label} ({pct}%)
-                                    </Text>
+                                    {workerCount > 1 ? (
+                                      <>
+                                        {expTotal > 0 && (
+                                          <Text fontSize="xs" color="fg.muted">
+                                            ${displayPrice.toFixed(2)} − ${expTotal.toFixed(2)} exp = ${net.toFixed(2)} net
+                                          </Text>
+                                        )}
+                                        <Text fontSize="xs" color="fg.muted">
+                                          Your {Math.round(100 / workerCount)}% share: ${myShare.toFixed(2)} − ${myDeduction.toFixed(2)} {label} ({pct}%)
+                                        </Text>
+                                      </>
+                                    ) : (
+                                      <Text fontSize="xs" color="fg.muted">
+                                        ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${myDeduction.toFixed(2)} {label} ({pct}%)
+                                      </Text>
+                                    )}
                                   </>
                                 )}
-                                {perPerson != null && (
-                                  <Text fontSize="xs" color="fg.muted" mt={pct > 0 ? 0.5 : 0}>
-                                    ~${perPerson.toFixed(2)}/person if split evenly ({activeAssignees.length} workers)
+                                {workerCount > 1 && sameClassCrew && pct > 0 && (
+                                  <Text fontSize="xs" color="fg.muted" mt={0.5}>
+                                    ~${myPayout.toFixed(2)}/person if split evenly ({workerCount} workers)
                                   </Text>
                                 )}
                               </Box>
@@ -5136,57 +5271,26 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         variant="solid"
                         colorPalette="orange"
                         disabled={isOffline}
-                        onClick={() => {
-                          setConfirmAction({
-                            title: "Confirm Client?",
-                            message: "Have you confirmed with the client that this job is good to go?",
-                            confirmLabel: "Yes, Confirmed",
-                            colorPalette: "orange",
-                            onConfirm: async () => {
-                              setBusyOccId(occ.id);
-                              try {
-                                await apiPost(`/api/occurrences/${occ.id}/confirm`);
-                                setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, isClientConfirmed: true } as any : o));
-                                publishInlineMessage({ type: "SUCCESS", text: "Client confirmed." });
-                              } catch (err) {
-                                publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to confirm.", err) });
-                              }
-                              setBusyOccId(null);
-                            },
-                          });
-                        }}
+                        onClick={() => openConfirmClientDialog(occ)}
                       >
                         Confirm Client
                       </Button>
                     )}
-                    {/* Primary action — Start / Complete / Accept Payment */}
-                    {(isClaimer || isActiveAssignee || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
+                    {/* Primary action — Start / Complete / Accept Payment.
+                        Server enforces claimer-only (jobs.ts updateOccurrenceStatus),
+                        so we mirror that here instead of showing buttons that 403. */}
+                    {(isClaimer || forAdmin) && !isTaskOrReminder && occ.status === "SCHEDULED" && !isTentative && !needsConfirmation && (
                       <Button
                         size="sm"
                         variant="solid"
                         colorPalette="blue"
                         loading={busyOccId === occ.id}
-                        onClick={() => {
-                          if (isOffline) {
-                            void (async () => {
-                              setBusyOccId(occ.id);
-                              await enqueueAction("START_JOB", occ.id, queueLabel(occ, "Start job"), { notes: undefined, lat: null, lng: null });
-                              setItems((prev) => prev.map((o) => o.id === occ.id ? { ...o, status: "IN_PROGRESS" as any, startedAt: new Date().toISOString() } : o));
-                              publishInlineMessage({ type: "INFO", text: "Job started (queued for sync)." });
-                              setBusyOccId(null);
-                            })();
-                            return;
-                          }
-                          const now = new Date();
-                          const pad = (n: number) => String(n).padStart(2, "0");
-                          setStartJobTime(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
-                          setStartJobOcc(occ);
-                        }}
+                        onClick={() => openStartJobDialog(occ)}
                       >
                         {isEstimateOcc ? "Start Estimate" : "Start Job"}
                       </Button>
                     )}
-                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2}>
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
@@ -5196,7 +5300,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || isActiveAssignee || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
+                    {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2}>
                         <Button size="sm" variant="solid" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void resumeJob(occ)}>
                           Resume
@@ -5206,7 +5310,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         </Button>
                       </HStack>
                     )}
-                    {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
+                    {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <Button
                         size="sm"
                         variant="solid"
@@ -5239,15 +5343,90 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           </Text>
                         </Box>
                       )}
-                      <Button
-                        size="sm"
-                        variant="solid"
-                        colorPalette="green"
-                        disabled={isOffline}
-                        onClick={() => { setAcceptPaymentOcc(occ); setAcceptPaymentOpen(true); }}
-                      >
-                        Accept Payment
-                      </Button>
+                      {(() => {
+                        // Show the most-recent of: rejection (admin rejected a
+                        // self-reported payment) or revert (admin undid an
+                        // already-approved payment). Either way the card user
+                        // wants to know: previous attempt didn't stick.
+                        const rejAt = occ.lastPaymentRejectedAt ? new Date(occ.lastPaymentRejectedAt).getTime() : 0;
+                        const revAt = occ.lastPaymentRevertedAt ? new Date(occ.lastPaymentRevertedAt).getTime() : 0;
+                        if (!rejAt && !revAt) return null;
+                        const isRevert = revAt >= rejAt;
+                        const label = isRevert ? "Last payment reverted" : "Last payment rejected";
+                        const when = isRevert ? occ.lastPaymentRevertedAt : occ.lastPaymentRejectedAt;
+                        const reason = isRevert ? occ.lastPaymentRevertReason : occ.lastPaymentRejectionReason;
+                        return (
+                          <Box p={2} bg="red.50" borderWidth="1px" borderColor="red.200" borderLeftWidth="4px" borderLeftColor="red.500" borderRadius="md">
+                            <Text fontSize="xs" fontWeight="semibold" color="red.800">
+                              {label}{when ? ` on ${fmtDate(when)}` : ""}
+                            </Text>
+                            {reason && (
+                              <Text fontSize="xs" color="red.700">
+                                Reason: {reason}
+                              </Text>
+                            )}
+                          </Box>
+                        );
+                      })()}
+                      {(() => {
+                        // Three states for the PENDING_PAYMENT actions:
+                        //   1. Awaiting approval — Payment row exists and
+                        //      is unconfirmed. Both action buttons hidden;
+                        //      a chip says "Awaiting admin approval".
+                        //   2. Request in flight — no Payment row, but the
+                        //      Request Payment path was committed (worker
+                        //      tap or server auto-send). Show only the
+                        //      PaymentCommsButtons component (Re-send +
+                        //      Cancel) — Accept Payment hidden.
+                        //   3. Open — no Payment row, no request sent yet.
+                        //      Show both Request Payment and Accept Payment.
+                        const pendingPayment = occ.payment && occ.payment.confirmed === false;
+                        const requestInFlight = !pendingPayment && !!occ.paymentRequestSentAt;
+                        const open = !pendingPayment && !requestInFlight;
+                        if (pendingPayment) {
+                          return (
+                            <Box p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderLeftWidth="4px" borderLeftColor="blue.500" borderRadius="md">
+                              <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                                Awaiting admin approval
+                              </Text>
+                              <Text fontSize="xs" color="blue.700">
+                                ${(occ.payment!.amountPaid ?? 0).toFixed(2)} via {occ.payment!.method}
+                                {occ.payment!.collectedBy?.displayName ? ` — reported by ${occ.payment!.collectedBy.displayName}` : " — reported by client"}
+                              </Text>
+                            </Box>
+                          );
+                        }
+                        // Open: single "Take Payment" button → unified
+                        //   dialog with Request Payment and Accept
+                        //   Payment Now actions in the footer.
+                        // In flight: PaymentCommsButtons renders Re-send
+                        //   + Cancel Request. Accept Payment Now is not
+                        //   available until the request is canceled.
+                        if (open) {
+                          return (
+                            <HStack gap={2} wrap="wrap">
+                              <Button
+                                size="sm"
+                                variant="solid"
+                                colorPalette="green"
+                                disabled={isOffline}
+                                onClick={() => { setAcceptPaymentOcc(occ); setAcceptPaymentOpen(true); }}
+                              >
+                                Initiate Payment
+                              </Button>
+                            </HStack>
+                          );
+                        }
+                        return (
+                          <HStack gap={2} wrap="wrap">
+                            <PaymentCommsButtons
+                              occurrenceId={occ.id}
+                              requestSentAt={occ.paymentRequestSentAt}
+                              onRequestCanceled={() => void load(false)}
+                            />
+                          </HStack>
+                        );
+                      })()}
                     </>)}
                     {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <HStack gap={2}>
@@ -5814,7 +5993,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           </Button>
                         );
                       })()}
-                      {isClaimer && !isTaskOrReminder && occ.status !== "PENDING_PAYMENT" && (
+                      {isClaimer && !isTaskOrReminder && occ.status === "SCHEDULED" && (
                         <StatusButton
                           id="occ-unclaim"
                           itemId={occ.id}
@@ -6187,6 +6366,8 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         pricingEndpoint={forAdmin ? "/api/admin/pricing" : "/api/pricing"}
         cancelLabel={confirmAction?.cancelLabel}
         onCancelAction={confirmAction?.onCancelAction}
+        warning={confirmAction?.warning}
+        secondaryActionFirst={confirmAction?.secondaryActionFirst}
         onConfirm={(inputValue: string, amountValue?: string) => {
           if (confirmAction?.inputPlaceholder || confirmAction?.amountLabel) {
             (confirmAction!.onConfirm as (v: string, a?: string) => void)(inputValue, amountValue);
@@ -6313,7 +6494,13 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         const startedAt = new Date(startJobTime).toISOString();
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
                         const todayDate = bizDateKey(new Date());
-                        const isEarly = occDate && occDate !== todayDate;
+                        // Strictly future-dated only. Past-dated (catch-up
+                        // starts where the work was actually done before
+                        // today) must NOT rewrite startAt — that would
+                        // erase the scheduled date and break per-day
+                        // filtering, earnings bucketing, and next-occurrence
+                        // cadence anchoring.
+                        const isEarly = occDate && occDate > todayDate;
                         const body: Record<string, unknown> = { startedAt };
                         if (isEarly) body.updateStartAt = true;
                         try {
@@ -6322,6 +6509,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         } catch {}
                         await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
                         publishInlineMessage({ type: "SUCCESS", text: "Job started with location recorded." });
+                        bumpTitleBarEarnings();
                         await load(false);
                       } catch (err) {
                         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
@@ -6343,11 +6531,18 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         const startedAt = new Date(startJobTime).toISOString();
                         const occDate = startJobOcc.startAt ? bizDateKey(startJobOcc.startAt) : "";
                         const todayDate = bizDateKey(new Date());
-                        const isEarly = occDate && occDate !== todayDate;
+                        // Strictly future-dated only. Past-dated (catch-up
+                        // starts where the work was actually done before
+                        // today) must NOT rewrite startAt — that would
+                        // erase the scheduled date and break per-day
+                        // filtering, earnings bucketing, and next-occurrence
+                        // cadence anchoring.
+                        const isEarly = occDate && occDate > todayDate;
                         const body: Record<string, unknown> = { startedAt };
                         if (isEarly) body.updateStartAt = true;
                         await apiPost(`/api/occurrences/${startJobOcc.id}/start`, body);
                         publishInlineMessage({ type: "SUCCESS", text: "Job started." });
+                        bumpTitleBarEarnings();
                         await load(false);
                       } catch (err) {
                         publishInlineMessage({ type: "ERROR", text: getErrorMessage("Start failed.", err) });
@@ -6597,44 +6792,31 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
             if (!o) setAcceptPaymentOcc(null);
           }}
           endpoint={`/api/occurrences/${acceptPaymentOcc.id}/accept-payment`}
+          occurrenceId={acceptPaymentOcc.id}
           defaultAmount={totalPrice(acceptPaymentOcc)}
           basePrice={acceptPaymentOcc.price ?? null}
           addonsTotal={addonTotal(acceptPaymentOcc)}
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
+          requestPaymentEnabled={requestPaymentEnabled}
+          isSuper={isSuper}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,
             workerType: a.user?.workerType,
             isClaimer: a.assignedById === a.userId,
           }))}
+          completionSplits={(acceptPaymentOcc as any).completionSplits ?? null}
           onAccepted={async (result: any) => {
             if (acceptPaymentOcc) setBusyOccId(acceptPaymentOcc.id);
             await load(false);
             setBusyOccId(null);
-            if (result?.nextOccurrence) {
-              const nextDate = result.nextOccurrence.startAt
-                ? fmtDate(result.nextOccurrence.startAt)
-                : "upcoming";
-              const freq = result.nextOccurrence.frequencyDays ?? acceptPaymentOcc?.frequencyDays ?? (acceptPaymentOcc?.job as any)?.frequencyDays;
-              publishInlineMessage({
-                type: "SUCCESS",
-                text: `Payment accepted. Next occurrence scheduled for ${nextDate}${freq ? ` (every ${freq} days)` : ""}.`,
-              });
-            } else if (
-              acceptPaymentOcc?.workflow === "STANDARD" &&
-              !acceptPaymentOcc?.isOneOff
-            ) {
-              const jobStatus = (acceptPaymentOcc?.job as any)?.status;
-              const isPaused = jobStatus === "PAUSED";
-              publishInlineMessage({
-                type: "WARNING",
-                text: isPaused
-                  ? "Payment accepted. No next occurrence created because the Job Service is paused. Unpause the service to resume scheduling."
-                  : "Payment accepted, but no next occurrence was created. This repeating job has no frequency set on the job or occurrence.",
-              });
-            }
+            // Both Accept Now (creates a Payment row) and Request Payment
+            // (persists completionSplits + promisedPayouts) can change the
+            // signed-in worker's earnings — refresh the title bar.
+            bumpTitleBarEarnings();
+            void result;
             setAcceptPaymentOcc(null);
           }}
         />
@@ -6702,22 +6884,23 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
           pausedAt={completeDialogOcc.pausedAt}
           existingCompletedAt={completeDialogOcc.completedAt}
           workerCount={(completeDialogOcc.assignees ?? []).filter((a) => a.role !== "observer").length}
-          onCompleted={(completedAt, startedAt, totalPausedMs) => {
+          assignees={completeDialogOcc.assignees}
+          workflow={completeDialogOcc.workflow}
+          pointOfContact={completeDialogOcc.job?.property?.pointOfContact ?? null}
+          onCompleted={(completedAt, startedAt, totalPausedMs, completionSplits) => {
             setCompleteDialogOcc(null);
             const occToComplete = completeDialogOcc;
-            const completeWithLocation = async (recordLoc: boolean) => {
+            void (async () => {
               setBusyOccId(occToComplete.id);
               try {
                 const body: Record<string, unknown> = {};
                 if (completedAt) body.completedAt = completedAt;
                 if (startedAt) body.startedAt = startedAt;
                 if (totalPausedMs != null) body.totalPausedMs = totalPausedMs;
-                if (recordLoc) {
-                  const loc = await getLocation();
-                  if (loc) { body.lat = loc.lat; body.lng = loc.lng; }
-                }
+                if (completionSplits && completionSplits.length > 0) body.completionSplits = completionSplits;
                 await apiPost(`/api/occurrences/${occToComplete.id}/complete`, body);
                 publishInlineMessage({ type: "SUCCESS", text: "Job completed." });
+                bumpTitleBarEarnings();
                 await load(false);
                 // Prompt for photos after completion
                 setPhotoPromptOccId(occToComplete.id);
@@ -6725,16 +6908,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                 publishInlineMessage({ type: "ERROR", text: getErrorMessage("Complete failed.", err) });
               }
               setBusyOccId(null);
-            };
-            setConfirmAction({
-              title: "Record Location?",
-              message: "Are you currently on-site at the job location?",
-              confirmLabel: "Yes — record location & complete",
-              colorPalette: "blue",
-              onConfirm: () => void completeWithLocation(true),
-              cancelLabel: "No — complete without location",
-              onCancelAction: () => void completeWithLocation(false),
-            });
+            })();
           }}
         />
       )}
@@ -7208,23 +7382,10 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
               <Dialog.Footer>
                 <HStack justify="flex-end" w="full">
                   <Button
-                    variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      try { localStorage.removeItem("seedlings_jobs_infoDismissed"); } catch {}
-                      setShowInfoDialog(false);
-                    }}
+                    onClick={() => setShowInfoDialog(false)}
                   >
-                    Dismiss
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      try { localStorage.setItem("seedlings_jobs_infoDismissed", "1"); } catch {}
-                      setShowInfoDialog(false);
-                    }}
-                  >
-                    Don't show again
+                    Close
                   </Button>
                 </HStack>
               </Dialog.Footer>

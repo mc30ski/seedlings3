@@ -13,6 +13,7 @@ export const AUDIT = {
     // Reusing UPDATED for privilege flips — the metadata payload carries
     // which privilege changed and to what. Keeps schema enums small.
     PRIVILEGES_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
+    PAYMENT_COMMS_MODE_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,
   },
   EQUIPMENT: {
     CREATED: [AuditScope.EQUIPMENT, AuditVerb.CREATED] as const,
@@ -105,6 +106,21 @@ export const AUDIT = {
     POSTED: [AuditScope.BANNER, AuditVerb.CREATED] as const,
     DISMISSED: [AuditScope.BANNER, AuditVerb.UPDATED] as const,
     DELETED: [AuditScope.BANNER, AuditVerb.DELETED] as const,
+  },
+  PAYMENT: {
+    // Reusing AuditVerb.CREATED for the admin-direct record path keeps the
+    // "admin recorded a payment" semantics consistent with how other scopes
+    // log mutations. The new verbs cover the approval-flow specifics.
+    CREATED: [AuditScope.PAYMENT, AuditVerb.CREATED] as const,
+    UPDATED: [AuditScope.PAYMENT, AuditVerb.UPDATED] as const,
+    DELETED: [AuditScope.PAYMENT, AuditVerb.DELETED] as const,
+    SELF_REPORTED: [AuditScope.PAYMENT, AuditVerb.SELF_REPORTED] as const,
+    APPROVED: [AuditScope.PAYMENT, AuditVerb.APPROVED] as const,
+    REJECTED: [AuditScope.PAYMENT, AuditVerb.REJECTED] as const,
+    REQUEST_SENT: [AuditScope.PAYMENT, AuditVerb.REQUEST_SENT] as const,
+    TOKEN_ACCESSED: [AuditScope.PAYMENT, AuditVerb.TOKEN_ACCESSED] as const,
+    WRITTEN_OFF: [AuditScope.PAYMENT, AuditVerb.WRITTEN_OFF] as const,
+    ADJUSTED: [AuditScope.PAYMENT, AuditVerb.ADJUSTED] as const,
   },
 } as const;
 

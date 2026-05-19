@@ -167,9 +167,16 @@ export default function InlineMessage({
             style={style}
           >
             <HStack justify="space-between" align="center" gap="3" minH="44px">
-              <HStack align="center" gap="3" minW={0}>
+              <HStack align="center" gap="3" minW={0} flex="1">
                 <Icon as={msg?.icon ?? palette.icon} boxSize={5} flexShrink={0} />
-                <Text fontSize="md" fontWeight="semibold">
+                <Text
+                  fontSize="md"
+                  fontWeight="semibold"
+                  minW={0}
+                  flex="1"
+                  wordBreak="break-word"
+                  whiteSpace="normal"
+                >
                   {msg?.text ?? ""}
                 </Text>
               </HStack>
@@ -178,6 +185,7 @@ export default function InlineMessage({
                   size="sm"
                   aria-label="Dismiss"
                   color="white"
+                  flexShrink={0}
                   onClick={() => beginHide(fadeOutMs)}
                 />
               )}

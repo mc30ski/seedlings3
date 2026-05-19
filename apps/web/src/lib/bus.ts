@@ -17,6 +17,24 @@ export function navigateToProfile(userId: string, forAdmin: boolean) {
   );
 }
 
+// Signals the title-bar money chip to re-fetch its earnings number.
+// Fire from any worker self-action that affects their own earnings
+// (claim, unclaim, start, pause/resume, complete, take payment, etc.).
+// Admin actions on other users intentionally do NOT fire this — those
+// users will see fresh numbers on next page load.
+export function bumpTitleBarEarnings() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("seedlings:earnings-changed"));
+}
+
+// Signals the Admin Money tab to re-fetch its full payments list +
+// pending approvals queue. Fire from any admin action that mutates a
+// Payment row (approve, adjust, reject, write-off, edit/delete).
+export function bumpAdminPayments() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("seedlings:admin-payments-changed"));
+}
+
 export function onEventSearchRun(
   eventName: EventTypes,
   setQ: (q: string) => void,

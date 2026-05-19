@@ -5,6 +5,7 @@ import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
+import { persistCompletionSplits } from "../services/payments";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -1155,6 +1156,7 @@ export default async function workerRoutes(app: FastifyInstance) {
 
   app.post("/occurrences/:id/complete", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
     const body = req.body || {};
     const notes = body.notes != null ? String(body.notes) : undefined;
     const location = (body.lat != null && body.lng != null)
@@ -1164,14 +1166,220 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.completedAt) timestamps.completedAt = String(body.completedAt);
     if (body.startedAt) timestamps.startedAt = String(body.startedAt);
     if (body.totalPausedMs != null) timestamps.totalPausedMs = Math.max(0, Math.round(Number(body.totalPausedMs)));
-    return services.jobs.updateOccurrenceStatus(
+    // Per-worker percentage allocation. Validation is permissive — the caller
+    // owns the math; we just persist what comes in. The downstream
+    // approvePayment normalizes to 100% before applying.
+    const completionSplits: Array<{ userId: string; percent: number }> | undefined =
+      Array.isArray(body.completionSplits)
+        ? body.completionSplits
+            .map((s: any) => ({ userId: String(s.userId), percent: Number(s.percent) }))
+            .filter((s: any) => s.userId && Number.isFinite(s.percent))
+        : undefined;
+
+    // Gate: real jobs (not tasks/announcements/etc.) cannot transition into
+    // PENDING_PAYMENT unless the property has at least one contact with
+    // phone or email — otherwise the payment request can't be sent. The
+    // gate is silent for non-job workflows since those don't accept payment.
+    const occForGate = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        workflow: true,
+        job: {
+          select: {
+            property: {
+              select: {
+                client: {
+                  select: {
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      select: { phone: true, normalizedPhone: true, email: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const isJobWorkflow = !occForGate?.workflow
+      || occForGate.workflow === "STANDARD"
+      || occForGate.workflow === "ONE_OFF"
+      || occForGate.workflow === "ESTIMATE";
+    if (isJobWorkflow) {
+      const contacts = occForGate?.job?.property?.client?.contacts ?? [];
+      const reachable = contacts.some((c) => c.phone || c.normalizedPhone || c.email);
+      if (!reachable) {
+        throw app.httpErrors.badRequest(
+          "Can't complete — the client has no phone or email on file. Add contact info first.",
+        );
+      }
+    }
+
+    const updated = await services.jobs.updateOccurrenceStatus(
       uid,
-      String(req.params.id),
+      occurrenceId,
       JobOccurrenceStatus.PENDING_PAYMENT,
       notes,
       location,
-      Object.keys(timestamps).length ? timestamps : undefined
+      Object.keys(timestamps).length ? timestamps : undefined,
+      completionSplits ? { completionSplits } : undefined,
     );
+
+    // Resolve effective comms mode for this occurrence.
+    //   - Look up the claimer (first non-observer assignee, or null).
+    //   - Their per-profile override wins; otherwise the org-wide setting.
+    //   - When SERVER: best-effort Twilio/Resend send in the background.
+    //   - When CLAIMER: mint the token synchronously so the JobsTab card can
+    //     immediately render the Text/Email icons. No outbound send — the
+    //     claimer dispatches from their own device.
+    //
+    // Gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED: when off, skip both paths
+    // unless the actor is super admin (controlled rollout — see Settings).
+    if (isJobWorkflow) {
+      const featureSetting = await prisma.setting.findUnique({
+        where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+      });
+      const featureOn = featureSetting?.value === "true";
+      const actorUser = await prisma.user.findUnique({
+        where: { id: uid },
+        include: { roles: true },
+      });
+      const actorIsSuper = !!actorUser?.roles?.some((r: any) => r.role === "SUPER");
+      if (featureOn || actorIsSuper) {
+        const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
+          where: { occurrenceId, NOT: { role: "observer" } },
+          orderBy: { assignedAt: "asc" },
+          select: { userId: true },
+        });
+        const claimerUserId = claimerAssignee?.userId ?? null;
+        const mode = await services.paymentRequests.resolveCommsMode(claimerUserId);
+
+        if (mode === "SERVER") {
+          services.paymentRequests
+            .sendForOccurrence(uid, occurrenceId)
+            .catch((err) => {
+              console.warn(`Payment request send failed for ${occurrenceId}:`, err?.message);
+            });
+        } else {
+          try {
+            await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
+          } catch (err: any) {
+            console.warn(`Payment token generation failed for ${occurrenceId}:`, err?.message);
+          }
+        }
+      }
+    }
+
+    return updated;
+  });
+
+  // Comms-handoff: returns the prepared payment-request payload the JobsTab
+  // uses to render Text/Email shortcut icons in CLAIMER mode. Mints the token
+  // on-demand if it doesn't exist yet (defensive — should already be there
+  // from /complete). Auth: any worker — the JobsTab decides visibility based
+  // on assignment / role.
+  app.get("/occurrences/:id/comms-handoff", workerGuard, async (req: any) => {
+    const occurrenceId = String(req.params.id);
+    const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
+      where: { occurrenceId, NOT: { role: "observer" } },
+      orderBy: { assignedAt: "asc" },
+      select: { userId: true },
+    });
+    const mode = await services.paymentRequests.resolveCommsMode(claimerAssignee?.userId ?? null);
+    const prepared = await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
+    // Strip down the contacts to what the icons actually need.
+    const handoffContacts = prepared.contacts.map((c) => ({
+      id: c.id,
+      firstName: c.firstName,
+      phone: c.normalizedPhone ?? c.phone ?? null,
+      email: c.email ?? null,
+    }));
+    return {
+      mode,
+      token: prepared.token,
+      url: prepared.url,
+      amountDue: prepared.amountDue,
+      propertyLabel: prepared.propertyLabel,
+      smsBody: prepared.smsBody,
+      emailSubject: prepared.emailSubject,
+      emailBody: prepared.emailBody,
+      contacts: handoffContacts,
+    };
+  });
+
+  // Record that the claimer tapped the SMS or Email shortcut. We can't
+  // observe whether the device actually sent the message — this captures
+  // intent for the audit log.
+  app.post("/occurrences/:id/comms-handoff", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = (req.body || {}) as { channel?: string; completionSplits?: Array<{ userId: string; percent: number }> };
+    const channel = body.channel;
+    if (channel !== "sms" && channel !== "email") {
+      throw app.httpErrors.badRequest('channel must be "sms" or "email"');
+    }
+    // Gate by REQUEST_PAYMENT_FROM_CLIENT_ENABLED (super bypasses).
+    const featureSetting = await prisma.setting.findUnique({
+      where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+    });
+    const featureOn = featureSetting?.value === "true";
+    if (!featureOn) {
+      const actor = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
+      const isSuper = !!actor?.roles?.some((r: any) => r.role === "SUPER");
+      if (!isSuper) {
+        throw app.httpErrors.forbidden("Request Payment is currently disabled by an admin.");
+      }
+    }
+    const splits = Array.isArray(body.completionSplits) ? body.completionSplits : undefined;
+    await services.paymentRequests.recordClaimerHandoff(uid, occurrenceId, channel, splits);
+    return { ok: true };
+  });
+
+  // Persist per-worker percent splits onto the occurrence + re-snapshot
+  // promisedPayouts. Used by Take Payment in SERVER mode (where the comms
+  // already fired automatically at completion, so we just need to save the
+  // splits the claimer set in the dialog). Guarded server-side: rejects
+  // when the occurrence isn't PENDING_PAYMENT or a confirmed Payment
+  // already exists.
+  app.post("/occurrences/:id/completion-splits", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    const body = (req.body || {}) as { completionSplits?: Array<{ userId: string; percent: number }> };
+    const splits = Array.isArray(body.completionSplits) ? body.completionSplits : [];
+    // Auth: claimer or admin only
+    const actUser = await prisma.user.findUniqueOrThrow({ where: { id: uid }, include: { roles: true } });
+    const isAdmin = actUser.roles.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
+    if (!isAdmin) {
+      const assignee = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, userId: uid },
+      });
+      if (!assignee) throw app.httpErrors.forbidden("You are not assigned to this job.");
+      const isClaimer = assignee.assignedById === uid && assignee.role !== "observer";
+      if (!isClaimer) throw app.httpErrors.forbidden("Only the claimer can set splits.");
+    }
+    await prisma.$transaction(async (tx: any) => {
+      await persistCompletionSplits(tx, occurrenceId, splits);
+    });
+    return { ok: true };
+  });
+
+  // Cancel an in-flight payment request. Regenerates the token (so the
+  // client's old SMS/email link starts returning "Payment link not
+  // valid") and clears paymentRequestSentAt so the worker can pick a
+  // different path. Refuses if a Payment row already exists.
+  app.post("/occurrences/:id/cancel-payment-request", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const occurrenceId = String(req.params.id);
+    try {
+      await services.paymentRequests.cancelPaymentRequest(uid, occurrenceId);
+    } catch (err: any) {
+      if (err?.code === "PAYMENT_EXISTS") {
+        throw app.httpErrors.conflict(err.message);
+      }
+      throw err;
+    }
+    return { ok: true };
   });
 
   // Pause job
@@ -1388,7 +1596,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       amountPaid: Number(body.amountPaid),
       method: String(body.method || "CASH"),
       note: body.note ? String(body.note) : null,
-      splits: Array.isArray(body.splits) ? body.splits : [],
+      completionSplits: Array.isArray(body.completionSplits) ? body.completionSplits : [],
     });
   });
 
@@ -1401,117 +1609,427 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.get("/payments/earnings-summary", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
 
-    // All bucket boundaries are anchored to Eastern Time (the business
-    // timezone). Using server-local midnight on a UTC Vercel host would
-    // shift "today" 4–5 hours late, so payments collected yesterday
-    // evening would show up as today's. ET keeps the buckets aligned
-    // with what workers experience on the ground.
+    // Bucketing model branches by worker type:
+    //
+    //   EMPLOYEE / TRAINEE  — paid via payroll regardless of whether the
+    //     client ever pays the invoice. Every assigned job (paid or not)
+    //     contributes its promised net to the bucket of its WORK DATE
+    //     (completedAt ?? startAt). Paid jobs use the stored
+    //     PaymentSplit.amount; unpaid jobs use the computed promised net.
+    //
+    //   CONTRACTOR (or unclassified) — only get paid when the client's
+    //     money actually clears. Confirmed PaymentSplits land in the
+    //     bucket of their PAYMENT DATE. PLUS — today only — we
+    //     optimistically project the contractor's share of today's
+    //     pipeline (scheduled / in-progress / pending) so the title bar
+    //     shows "what I expect to earn today" the same way it does for
+    //     employees. Past-day unpaid jobs do NOT project (cash hasn't
+    //     cleared, and might never).
+    //
+    // For both: buckets are
+    //   today      = your data with effective date today
+    //   thisWeek   = today + past 6 days (rolling 7-day window, today inclusive)
+    //   thisMonth  = today + past 29 days (rolling 30-day window)
+    //   thisYear   = calendar year-to-date through today
+    //   allTime    = all of it through today
+    //
+    // Future-dated jobs / payments never appear in any bucket.
+    // Day boundaries are anchored to Eastern Time.
+
     const todayStr = etToday();
     const [y, m, d] = todayStr.split("-").map(Number);
-    // YYYY-MM-DD for an arbitrary offset from today (handles month/year
-    // rollover via Date arithmetic, then formats in ET).
     const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
     const dayStr = (offsetDays: number) =>
       fmt.format(new Date(Date.UTC(y, m - 1, d + offsetDays, 12)));
-    // Week starts on Sunday in ET — getUTCDay() on a calendar-date instant
-    // is the weekday for that date (no timezone bleed).
-    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
     const startOfToday = etMidnight(todayStr);
     const startOfTomorrow = etMidnight(dayStr(1));
-    const startOfWeek = etMidnight(dayStr(-dow));
-    const startOfNextWeek = etMidnight(dayStr(-dow + 7));
-    const startOfMonth = etMidnight(`${y}-${String(m).padStart(2, "0")}-01`);
-    const startOfNextMonth = etMidnight(
-      m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`,
-    );
+    const startOfWeekWindow = etMidnight(dayStr(-6));   // 7-day rolling, today inclusive
+    const startOfMonthWindow = etMidnight(dayStr(-29)); // 30-day rolling
     const startOfYear = etMidnight(`${y}-01-01`);
     const startOfNextYear = etMidnight(`${y + 1}-01-01`);
 
-    // 1) Actual payments (already received) — use the user's payment split.
-    const splits = await prisma.paymentSplit.findMany({
-      where: { userId: uid },
-      include: {
-        payment: {
-          select: { occurrenceId: true, createdAt: true, method: true, amountPaid: true },
-        },
-      },
-    });
-
-    let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, allTime = 0;
-    const byMethod: Record<string, number> = {};
-    let jobCount = 0;
-    const paidOccIds = new Set<string>();
-
-    for (const sp of splits) {
-      allTime += sp.amount;
-      const d = sp.payment.createdAt;
-      if (d >= startOfToday && d < startOfTomorrow) today += sp.amount;
-      if (d >= startOfWeek && d < startOfNextWeek) thisWeek += sp.amount;
-      if (d >= startOfMonth && d < startOfNextMonth) thisMonth += sp.amount;
-      if (d >= startOfYear && d < startOfNextYear) thisYear += sp.amount;
-      byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
-      jobCount++;
-      paidOccIds.add(sp.payment.occurrenceId);
-    }
-
-    // Helper for the "estimated payout" formula — same as JobsTab's "Est. payout" badge.
     const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
     const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
     const settingKey = isEmployee ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
     const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
-    const pct = Number(setting?.value ?? 0);
+    const myRate = Number(setting?.value ?? 0);
 
-    function myShareOf(occ: { price: number | null; proposalAmount: number | null; addons: { price: number | null }[]; expenses: { cost: number }[]; assignees: { role: string | null }[] }): number {
+    // Per-worker promised net using the canonical math (mirrors
+    // services/payments.ts → computeBreakdown). Prefers saved
+    // completionSplits; falls back to even-split across active assignees.
+    function computeMyPromisedNet(
+      occ: {
+        price: number | null;
+        proposalAmount: number | null;
+        completionSplits: any;
+        addons: { price: number | null }[];
+        expenses: { cost: number }[];
+        assignees: { userId: string; role: string | null }[];
+      },
+      userId: string,
+      rate: number,
+    ): number {
       const basePrice = occ.price ?? occ.proposalAmount ?? 0;
       const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
       const displayPrice = basePrice + addonsTotal;
       if (displayPrice <= 0) return 0;
       const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
-      const net = Math.max(0, displayPrice - expTotal);
-      const deduction = Math.round(net * pct) / 100;
-      const payout = Math.max(0, net - deduction);
-      const activeCount = Math.max(1, (occ.assignees ?? []).filter((a) => a.role !== "observer").length);
-      return payout / activeCount;
+      const N = Math.max(0, displayPrice - expTotal);
+      if (N <= 0) return 0;
+
+      let myPercent = 0;
+      const cs = occ.completionSplits as Array<{ userId: string; percent: number }> | null;
+      if (Array.isArray(cs) && cs.length > 0) {
+        const mine = cs.find((s) => s.userId === userId);
+        myPercent = Number(mine?.percent ?? 0);
+      } else {
+        const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+        if (active.some((a) => a.userId === userId) && active.length > 0) {
+          myPercent = 100 / active.length;
+        }
+      }
+      if (myPercent <= 0) return 0;
+
+      const myGross = N * (myPercent / 100);
+      const myFee = myGross * (rate / 100);
+      return Math.max(0, myGross - myFee);
     }
 
-    // 2) Projected — assigned, unpaid, real jobs (STANDARD or ONE_OFF). Bucket by completedAt
-    // if completed, else startAt (so scheduled jobs project into the bucket they'll be done in).
-    // allTime gets projection too: a worker's pipeline counts toward their total.
-    const myProjectableOccs = await prisma.jobOccurrence.findMany({
-      where: {
-        status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
-        workflow: { in: ["STANDARD", "ONE_OFF"] },
-        ...(paidOccIds.size > 0 ? { id: { notIn: [...paidOccIds] } } : {}),
-        // Same null-handling caveat as the In-Progress panel above:
-        // role IS NULL for normal workers, so a bare `not: "observer"` filter
-        // would silently exclude every worker assignment (NULL != 'observer'
-        // is NULL, which is falsy in SQL).
-        assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
-      },
-      select: {
-        id: true,
-        startAt: true,
-        completedAt: true,
-        price: true,
-        proposalAmount: true,
-        addons: { select: { price: true } },
-        expenses: { select: { cost: true } },
-        assignees: { select: { role: true } },
-      },
-    });
+    let today = 0;
+    let thisWeek = 0;   // = today + past 6 actual days
+    let thisMonth = 0;  // = today + past 29 actual days
+    let thisYear = 0;
+    let allTime = 0;
+    let jobCount = 0;
+    const byMethod: Record<string, number> = {};
 
-    for (const occ of myProjectableOccs) {
-      const myShare = myShareOf(occ);
-      if (myShare <= 0) continue;
-      // Use completion date when available (work already done), else scheduled start (work expected).
-      const d = occ.completedAt ?? occ.startAt;
-      if (!d) continue;
-      allTime += myShare;
-      if (d >= startOfToday && d < startOfTomorrow) today += myShare;
-      if (d >= startOfWeek && d < startOfNextWeek) thisWeek += myShare;
-      if (d >= startOfMonth && d < startOfNextMonth) thisMonth += myShare;
-      if (d >= startOfYear && d < startOfNextYear) thisYear += myShare;
-      jobCount++;
+    // Adds an amount to whichever buckets the date falls in. Past dates
+    // get included in week/month windows; today gets included everywhere.
+    // Future dates (d >= startOfTomorrow) are skipped entirely.
+    function addToBuckets(value: number, when: Date) {
+      if (value <= 0) return;
+      if (when >= startOfTomorrow) return;
+      allTime += value;
+      if (when >= startOfYear && when < startOfNextYear) thisYear += value;
+      if (when >= startOfMonthWindow) thisMonth += value;
+      if (when >= startOfWeekWindow) thisWeek += value;
+      if (when >= startOfToday) today += value;
+    }
+
+    if (isEmployee) {
+      // ── Employee/trainee: bucket every assigned job by work date ─────────
+      // Each job contributes the promised net (paid or unpaid).
+      const occs = await prisma.jobOccurrence.findMany({
+        where: {
+          assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+          workflow: { in: ["STANDARD", "ONE_OFF"] },
+          // CANCELED / ARCHIVED don't pay out.
+          status: { notIn: ["CANCELED", "ARCHIVED"] },
+        },
+        select: {
+          startAt: true,
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          completionSplits: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              method: true,
+              confirmed: true,
+              splits: { where: { userId: uid }, select: { amount: true } },
+            },
+          },
+        },
+      });
+
+      for (const occ of occs) {
+        const when = occ.completedAt ?? occ.startAt;
+        if (!when) continue;
+
+        // Prefer the actual split amount when the payment is approved
+        // (already reflects promised + topUp via reconciliation).
+        // Otherwise compute the promised net for me using new per-worker math.
+        let value = 0;
+        const paidAmount = occ.payment?.confirmed ? occ.payment.splits[0]?.amount : null;
+        if (paidAmount != null) {
+          value = paidAmount;
+          if (occ.payment?.method) {
+            byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
+          }
+        } else {
+          value = computeMyPromisedNet(occ, uid, myRate);
+        }
+
+        addToBuckets(value, when);
+        if (value > 0) jobCount++;
+      }
+    } else {
+      // ── Contractor / unclassified ────────────────────────────────────────
+      // Two passes:
+      //   (a) confirmed PaymentSplits bucketed by Payment.createdAt — the
+      //       money that actually cleared.
+      //   (b) optimistic projection for TODAY ONLY of unpaid pipeline
+      //       jobs whose work-date is today. Past unpaid jobs don't
+      //       project (cash may never clear).
+      const splits = await prisma.paymentSplit.findMany({
+        where: { userId: uid, payment: { confirmed: true } },
+        include: {
+          payment: {
+            select: { createdAt: true, method: true },
+          },
+        },
+      });
+
+      for (const sp of splits) {
+        addToBuckets(sp.amount, sp.payment.createdAt);
+        if (sp.amount > 0) {
+          byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+          jobCount++;
+        }
+      }
+
+      const todayPipelineOccs = await prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
+          workflow: { in: ["STANDARD", "ONE_OFF"] },
+          OR: [
+            { payment: { is: null } },
+            { payment: { confirmed: false } },
+          ],
+          assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+        },
+        select: {
+          startAt: true,
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          completionSplits: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { userId: true, role: true } },
+        },
+      });
+
+      for (const occ of todayPipelineOccs) {
+        const when = occ.completedAt ?? occ.startAt;
+        if (!when) continue;
+        // Today-only projection — past unpaid pipeline doesn't count.
+        if (when < startOfToday || when >= startOfTomorrow) continue;
+        const myShare = computeMyPromisedNet(occ, uid, myRate);
+        if (myShare <= 0) continue;
+        addToBuckets(myShare, when);
+        jobCount++;
+      }
+    }
+
+    return {
+      today: Math.round(today * 100) / 100,
+      thisWeek: Math.round(thisWeek * 100) / 100,
+      thisMonth: Math.round(thisMonth * 100) / 100,
+      thisYear: Math.round(thisYear * 100) / 100,
+      allTime: Math.round(allTime * 100) / 100,
+      jobCount,
+      byMethod,
+    };
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Title-bar earnings — dedicated endpoint for the rotating money chip in
+  // the page header. Intentionally NOT shared with /payments/earnings-summary
+  // (used by ProfileTab) or any admin Payments-tab surface — those have
+  // their own aggregation rules and a change in one place must not bleed
+  // into another. Per-worker math is canonical, but bucket/projection
+  // logic is owned by this endpoint.
+  //
+  // Bucketing rules (per user spec):
+  //   today      = your data with effective date today (incl. today's projection)
+  //   thisWeek   = today + past 6 days actual (rolling 7-day window)
+  //   thisMonth  = today + past 29 days actual (rolling 30-day window)
+  //   thisYear   = calendar year-to-date through today
+  //   allTime    = all of it through today
+  //
+  // EMPLOYEE / TRAINEE — promised payouts for every assigned job (paid or
+  //   unpaid), bucketed by work date. They're made whole via payroll
+  //   regardless of whether the client paid.
+  //
+  // CONTRACTOR / unclassified — confirmed PaymentSplits bucketed by
+  //   payment date PLUS today-only optimistic projection of unpaid pipeline.
+  //   Past unpaid jobs don't project; cash may never clear.
+  //
+  // Future-dated jobs and payments never appear in any bucket.
+  app.get("/payments/title-bar-earnings", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+
+    const todayStr = etToday();
+    const [y, m, d] = todayStr.split("-").map(Number);
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+    const dayStr = (offsetDays: number) =>
+      fmt.format(new Date(Date.UTC(y, m - 1, d + offsetDays, 12)));
+    const startOfToday = etMidnight(todayStr);
+    const startOfTomorrow = etMidnight(dayStr(1));
+    const startOfWeekWindow = etMidnight(dayStr(-6));
+    const startOfMonthWindow = etMidnight(dayStr(-29));
+    const startOfYear = etMidnight(`${y}-01-01`);
+    const startOfNextYear = etMidnight(`${y + 1}-01-01`);
+
+    const me = await prisma.user.findUnique({ where: { id: uid }, select: { workerType: true } });
+    const isEmployee = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+    const settingKey = isEmployee ? "EMPLOYEE_BUSINESS_MARGIN_PERCENT" : "CONTRACTOR_PLATFORM_FEE_PERCENT";
+    const setting = await prisma.setting.findUnique({ where: { key: settingKey } });
+    const myRate = Number(setting?.value ?? 0);
+
+    function computeMyPromisedNet(
+      occ: {
+        price: number | null;
+        proposalAmount: number | null;
+        completionSplits: any;
+        addons: { price: number | null }[];
+        expenses: { cost: number }[];
+        assignees: { userId: string; role: string | null }[];
+      },
+      userId: string,
+      rate: number,
+    ): number {
+      const basePrice = occ.price ?? occ.proposalAmount ?? 0;
+      const addonsTotal = (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+      const displayPrice = basePrice + addonsTotal;
+      if (displayPrice <= 0) return 0;
+      const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+      const N = Math.max(0, displayPrice - expTotal);
+      if (N <= 0) return 0;
+      let myPercent = 0;
+      const cs = occ.completionSplits as Array<{ userId: string; percent: number }> | null;
+      if (Array.isArray(cs) && cs.length > 0) {
+        const mine = cs.find((s) => s.userId === userId);
+        myPercent = Number(mine?.percent ?? 0);
+      } else {
+        const active = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+        if (active.some((a) => a.userId === userId) && active.length > 0) {
+          myPercent = 100 / active.length;
+        }
+      }
+      if (myPercent <= 0) return 0;
+      const myGross = N * (myPercent / 100);
+      const myFee = myGross * (rate / 100);
+      return Math.max(0, myGross - myFee);
+    }
+
+    let today = 0;
+    let thisWeek = 0;
+    let thisMonth = 0;
+    let thisYear = 0;
+    let allTime = 0;
+    let jobCount = 0;
+    const byMethod: Record<string, number> = {};
+
+    function addToBuckets(value: number, when: Date) {
+      if (value <= 0) return;
+      if (when >= startOfTomorrow) return;
+      allTime += value;
+      if (when >= startOfYear && when < startOfNextYear) thisYear += value;
+      if (when >= startOfMonthWindow) thisMonth += value;
+      if (when >= startOfWeekWindow) thisWeek += value;
+      if (when >= startOfToday) today += value;
+    }
+
+    if (isEmployee) {
+      const occs = await prisma.jobOccurrence.findMany({
+        where: {
+          assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+          workflow: { in: ["STANDARD", "ONE_OFF"] },
+          status: { notIn: ["CANCELED", "ARCHIVED"] },
+        },
+        select: {
+          startAt: true,
+          startedAt: true,
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          completionSplits: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { userId: true, role: true } },
+          payment: {
+            select: {
+              method: true,
+              confirmed: true,
+              splits: { where: { userId: uid }, select: { amount: true } },
+            },
+          },
+        },
+      });
+      for (const occ of occs) {
+        // Bucket date: when the job was actually worked on, not when it
+        // was scheduled. Order matters: completedAt > startedAt > startAt.
+        //   - Completed job → use completedAt (done date).
+        //   - In-progress / paused → use startedAt (active today even if
+        //     scheduled earlier; lets a worker who pressed Start today
+        //     see today's earnings in the Today bucket).
+        //   - Scheduled (not started) → use startAt (planned date).
+        const when = occ.completedAt ?? occ.startedAt ?? occ.startAt;
+        if (!when) continue;
+        let value = 0;
+        const paidAmount = occ.payment?.confirmed ? occ.payment.splits[0]?.amount : null;
+        if (paidAmount != null) {
+          value = paidAmount;
+          if (occ.payment?.method) {
+            byMethod[occ.payment.method] = (byMethod[occ.payment.method] ?? 0) + value;
+          }
+        } else {
+          value = computeMyPromisedNet(occ, uid, myRate);
+        }
+        addToBuckets(value, when);
+        if (value > 0) jobCount++;
+      }
+    } else {
+      const splits = await prisma.paymentSplit.findMany({
+        where: { userId: uid, payment: { confirmed: true } },
+        include: { payment: { select: { createdAt: true, method: true } } },
+      });
+      for (const sp of splits) {
+        addToBuckets(sp.amount, sp.payment.createdAt);
+        if (sp.amount > 0) {
+          byMethod[sp.payment.method] = (byMethod[sp.payment.method] ?? 0) + sp.amount;
+          jobCount++;
+        }
+      }
+      const todayPipelineOccs = await prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
+          workflow: { in: ["STANDARD", "ONE_OFF"] },
+          OR: [
+            { payment: { is: null } },
+            { payment: { confirmed: false } },
+          ],
+          assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+        },
+        select: {
+          startAt: true,
+          startedAt: true,
+          completedAt: true,
+          price: true,
+          proposalAmount: true,
+          completionSplits: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { userId: true, role: true } },
+        },
+      });
+      for (const occ of todayPipelineOccs) {
+        // Same bucket-date rule as the employee branch above — in-progress
+        // work counts on the day it was started, not the day it was
+        // originally scheduled.
+        const when = occ.completedAt ?? occ.startedAt ?? occ.startAt;
+        if (!when) continue;
+        if (when < startOfToday || when >= startOfTomorrow) continue;
+        const myShare = computeMyPromisedNet(occ, uid, myRate);
+        if (myShare <= 0) continue;
+        addToBuckets(myShare, when);
+        jobCount++;
+      }
     }
 
     return {
@@ -2046,8 +2564,15 @@ export default async function workerRoutes(app: FastifyInstance) {
     const uid = await currentUserId(req);
     const occurrenceId = String(req.params.id);
 
+    // Per-job cap is configurable via the MAX_PHOTOS_PER_JOB setting. Falls
+    // back to 10 (the historical default) when the setting is missing or
+    // unparseable. Existing photos above a lowered cap are preserved — the
+    // check is only on new uploads.
+    const setting = await prisma.setting.findUnique({ where: { key: "MAX_PHOTOS_PER_JOB" } });
+    const parsed = Number(setting?.value);
+    const max = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 10;
     const count = await prisma.jobOccurrencePhoto.count({ where: { occurrenceId } });
-    if (count >= 10) throw app.httpErrors.badRequest("Maximum 10 photos per occurrence");
+    if (count >= max) throw app.httpErrors.badRequest(`Maximum ${max} photos per occurrence`);
 
     const body = req.body || {};
     const fileName = String(body.fileName ?? "photo.jpg");
