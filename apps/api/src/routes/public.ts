@@ -481,13 +481,47 @@ export default async function publicRoutes(app: FastifyInstance) {
       }
     }
 
-    // Fetch the settings the page needs to render payment options.
+    // Fetch every setting referenced by the PAYMENT_METHODS taxonomy plus
+    // the legacy keys still exposed in paymentOptions (for older clients).
+    // We pull all settings — the resolver scans the template for placeholders
+    // so it only consumes what's actually referenced.
     const settings = await prisma.setting.findMany({
-      where: { key: { in: ["VENMO_BUSINESS_HANDLE", "ZELLE_ADDRESS"] } },
       select: { key: true, value: true },
     });
     const venmoHandle = settings.find((s) => s.key === "VENMO_BUSINESS_HANDLE")?.value ?? null;
     const zelleAddress = settings.find((s) => s.key === "ZELLE_ADDRESS")?.value ?? null;
+
+    // Resolve the taxonomy into ready-to-render methods for the public page.
+    // Server-side resolution prevents leaking the full Settings table to an
+    // unauthenticated client — only the resolved `instructions` and
+    // `deepLink` strings (and basic fee config for display) come down.
+    const { loadPaymentMethods, listActivePaymentMethods, resolvePlaceholders } =
+      await import("../services/paymentMethods");
+    const methodsList = await loadPaymentMethods(prisma);
+    const clientMethods = listActivePaymentMethods(methodsList, "CLIENT_REQUEST");
+    // Memo line used for {{note}} in deep links + suggested-memo display.
+    const dateLabel = resolved.serviceDate
+      ? new Date(resolved.serviceDate).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        })
+      : "";
+    const noteText = `${resolved.propertyLabel}${dateLabel ? " " + dateLabel : ""}`;
+    const runtime = {
+      amount: resolved.amountDue.toFixed(2),
+      note: noteText,
+    };
+    const resolvedMethods = clientMethods.map((m) => ({
+      key: m.key,
+      label: m.label,
+      feePercent: m.feePercent,
+      feeFixed: m.feeFixed,
+      instructions: m.instructions ? resolvePlaceholders(m.instructions, settings, runtime) : null,
+      deepLink: m.deepLinkTemplate
+        ? resolvePlaceholders(m.deepLinkTemplate, settings, runtime)
+        : null,
+    }));
 
     // Best-effort audit row (don't fail the response if it errors).
     services.paymentRequests
@@ -521,6 +555,10 @@ export default async function publicRoutes(app: FastifyInstance) {
         venmoHandle,
         zelleAddress,
       },
+      // Taxonomy-driven list — single source of truth going forward. Older
+      // clients can still consume paymentOptions; new clients should prefer
+      // `paymentMethods` (resolved instructions + deep links).
+      paymentMethods: resolvedMethods,
       expiresAt: resolved.expiresAt,
     };
   });

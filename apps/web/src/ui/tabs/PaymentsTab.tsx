@@ -23,13 +23,12 @@ import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
 import { determineRoles, prettyStatus, clientLabel, fmtDate } from "@/src/lib/lib";
+import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
   type TabPropsType,
   type WorkerPaymentItem,
   type PaymentListItem,
   type EquipmentCharge,
-  PAYMENT_METHOD,
-  PAYMENT_METHOD_OFFERED,
 } from "@/src/lib/types";
 import {
   publishInlineMessage,
@@ -42,12 +41,6 @@ import StatusButton from "@/src/ui/components/StatusButton";
 import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
-
-const methodFilterItems = [
-  { label: "All Methods", value: "ALL" },
-  ...PAYMENT_METHOD.map((m) => ({ label: prettyStatus(m), value: m })),
-];
-const methodFilterCollection = createListCollection({ items: methodFilterItems });
 
 function defaultDateFrom() {
   const d = new Date();
@@ -73,6 +66,9 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
   const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [equipCharges, setEquipCharges] = useState<EquipmentCharge[]>([]);
+  // Method labels come from the PAYMENT_METHODS taxonomy so editing a label
+  // in Settings flows through everywhere — no hardcoded fallback strings.
+  const { labelFor: methodLabel } = usePaymentMethodLabels();
 
   const [q, setQ] = useState("");
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>("pay_w_datePreset", "lastMonth");
@@ -403,7 +399,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                           <Badge size="sm" colorPalette="orange" variant="solid">Pending — may change</Badge>
                         )
                       )}
-                      <Badge size="sm" colorPalette="gray">{prettyStatus(item.payment.method)}</Badge>
+                      <Badge size="sm" colorPalette="gray">{methodLabel(item.payment.method)}</Badge>
                       <Text fontWeight="bold" color="green.700" fontSize="lg">
                         ${item.myAmount.toFixed(2)}
                       </Text>
@@ -444,7 +440,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
                       </Text>
                     )}
                     <Text fontSize="xs" color="fg.muted">
-                      {prettyStatus(item.payment.method)}
+                      {methodLabel(item.payment.method)}
                       {item.payment.note ? ` — ${item.payment.note}` : ""}
                     </Text>
                     {item.payment.createdAt && (
@@ -647,17 +643,38 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
 
 // ─── Admin Payments ──────────────────────────────────────────────────
 
-// Editing an existing payment offers only the currently-supported methods.
-// Historical rows with APPLE_PAY/CASH_APP/OTHER still render correctly
-// (display side uses PAYMENT_METHOD); they just can't be re-selected.
-const editMethodItems = PAYMENT_METHOD_OFFERED.map((m) => ({ label: prettyStatus(m), value: m }));
-const editMethodCollection = createListCollection({ items: editMethodItems });
-
 function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
   const [totalBusinessMargin, setTotalBusinessMargin] = useState(0);
+  // Method labels + configs from the PAYMENT_METHODS taxonomy (Super →
+  // Settings). Both the type-filter dropdown and the edit-payment method
+  // picker derive from this — no hardcoded method lists.
+  const { labelFor: methodLabel, methods: paymentMethods } = usePaymentMethodLabels();
+  // Type-filter dropdown: "All Methods" + every taxonomy entry (active or
+  // not, so history recorded under a now-inactive method stays filterable).
+  const methodFilterItems = useMemo(
+    () => [
+      { label: "All Methods", value: "ALL" },
+      ...paymentMethods.map((m) => ({ label: m.label, value: m.key })),
+    ],
+    [paymentMethods],
+  );
+  const methodFilterCollection = useMemo(
+    () => createListCollection({ items: methodFilterItems }),
+    [methodFilterItems],
+  );
+  // Edit-payment method picker: admin manual recording shows ALL active
+  // methods regardless of context flags (per spec Part 6).
+  const editMethodItems = useMemo(
+    () => paymentMethods.filter((m) => m.active).map((m) => ({ label: m.label, value: m.key })),
+    [paymentMethods],
+  );
+  const editMethodCollection = useMemo(
+    () => createListCollection({ items: editMethodItems }),
+    [editMethodItems],
+  );
   const [totalOverage, setTotalOverage] = useState(0);
   const [totalShortfall, setTotalShortfall] = useState(0);
   // Money-flow total revenue = sum of (amountPaid − worker payouts − expenses)
@@ -987,7 +1004,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 const wType = (sp.user as any)?.workerType ?? "UNCLASSIFIED";
                 const jobName = `${prop?.displayName ?? ""} - ${prop?.client?.displayName ?? ""}`.replace(/,/g, "");
                 const date = p.createdAt ? fmtDate(p.createdAt) : "";
-                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${prettyStatus(p.method)}`);
+                rows.push(`${name},${wType},${jobName},${date},${sp.amount.toFixed(2)},${methodLabel(p.method)}`);
               }
             }
             const blob = new Blob([rows.join("\n")], { type: "text/csv" });
@@ -1401,7 +1418,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       {(p as any).writtenOff && (
                         <Badge size="sm" colorPalette="red" variant="solid">Written off</Badge>
                       )}
-                      <Badge size="sm" colorPalette="gray">{prettyStatus(p.method)}</Badge>
+                      <Badge size="sm" colorPalette="gray">{methodLabel(p.method)}</Badge>
                       <Text fontWeight="bold" color={(p as any).writtenOff ? "red.700" : "green.700"} fontSize="lg">
                         ${p.amountPaid.toFixed(2)}
                       </Text>
@@ -1442,7 +1459,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                       </Text>
                     )}
                     <Text fontSize="xs" color="fg.muted">
-                      {prettyStatus(p.method)}
+                      {methodLabel(p.method)}
                       {p.note ? ` — ${p.note}` : ""}
                     </Text>
                     {p.collectedBy && (

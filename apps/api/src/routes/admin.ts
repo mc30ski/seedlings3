@@ -2397,6 +2397,30 @@ Respond ONLY with valid JSON in this exact format:
     if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
       throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
     }
+    if (key === "PROCESSOR_FEE_ABSORPTION" && value !== "BUSINESS" && value !== "SPLIT") {
+      throw app.httpErrors.badRequest("PROCESSOR_FEE_ABSORPTION must be BUSINESS or SPLIT.");
+    }
+    if (key === "PAYMENT_METHODS") {
+      const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
+      try {
+        validatePaymentMethodsJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid PAYMENT_METHODS JSON.");
+      }
+      // Audit the taxonomy edit separately from the generic SETTING.UPDATED
+      // verb — payment-method changes are sensitive enough to flag in their
+      // own bucket for review.
+      const previous = await prisma.setting.findUnique({ where: { key } });
+      await prisma.auditEvent.create({
+        data: {
+          scope: AUDIT.SETTING.PAYMENT_METHOD_UPDATED[0],
+          verb: AUDIT.SETTING.PAYMENT_METHOD_UPDATED[1],
+          action: `${AUDIT.SETTING.PAYMENT_METHOD_UPDATED[0]}_${AUDIT.SETTING.PAYMENT_METHOD_UPDATED[1]}`,
+          actorUserId: uid,
+          metadata: { previousValue: previous?.value ?? null, newValue: value } as any,
+        },
+      });
+    }
     return services.settings.set(uid, key, value);
   });
 
@@ -3441,7 +3465,7 @@ Respond ONLY with valid JSON in this exact format:
 
     const [payments, expenses, rentals] = await Promise.all([
       prisma.payment.findMany({
-        select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true },
+        select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       prisma.businessExpense.findMany({
         select: { date: true, cost: true },
@@ -3452,19 +3476,21 @@ Respond ONLY with valid JSON in this exact format:
       }),
     ]);
 
-    type Bucket = { platformFees: number; businessMargin: number; equipmentRentals: number; expenses: number };
-    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, equipmentRentals: 0, expenses: 0 });
+    type Bucket = { platformFees: number; businessMargin: number; equipmentRentals: number; expenses: number; processingFees: number };
+    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, equipmentRentals: 0, expenses: 0, processingFees: 0 });
     const today = empty(), thisWeek = empty(), thisMonth = empty(), thisYear = empty(), allTime = empty();
 
     for (const p of payments) {
       const fee = p.platformFeeAmount ?? 0;
       const margin = p.businessMarginAmount ?? 0;
+      const procFee = p.processorFeeAmount ?? 0;
       allTime.platformFees += fee;
       allTime.businessMargin += margin;
-      if (p.createdAt >= startOfToday) { today.platformFees += fee; today.businessMargin += margin; }
-      if (p.createdAt >= startOfWeek)  { thisWeek.platformFees += fee; thisWeek.businessMargin += margin; }
-      if (p.createdAt >= startOfMonth) { thisMonth.platformFees += fee; thisMonth.businessMargin += margin; }
-      if (p.createdAt >= startOfYear)  { thisYear.platformFees += fee; thisYear.businessMargin += margin; }
+      allTime.processingFees += procFee;
+      if (p.createdAt >= startOfToday) { today.platformFees += fee; today.businessMargin += margin; today.processingFees += procFee; }
+      if (p.createdAt >= startOfWeek)  { thisWeek.platformFees += fee; thisWeek.businessMargin += margin; thisWeek.processingFees += procFee; }
+      if (p.createdAt >= startOfMonth) { thisMonth.platformFees += fee; thisMonth.businessMargin += margin; thisMonth.processingFees += procFee; }
+      if (p.createdAt >= startOfYear)  { thisYear.platformFees += fee; thisYear.businessMargin += margin; thisYear.processingFees += procFee; }
     }
     for (const r of rentals) {
       const cost = r.rentalCost ?? 0;
@@ -3486,13 +3512,18 @@ Respond ONLY with valid JSON in this exact format:
     const round = (n: number) => Math.round(n * 100) / 100;
     const finalize = (b: Bucket) => {
       const earnings = b.platformFees + b.businessMargin + b.equipmentRentals;
+      // Processing fees deducted from Net alongside business expenses. They're
+      // NOT subtracted from Earnings because the earnings line is "what the
+      // business retained from the worker payout split" — processor fees come
+      // off the cash side, not the labor-cost side.
       return {
         platformFees: round(b.platformFees),
         businessMargin: round(b.businessMargin),
         equipmentRentals: round(b.equipmentRentals),
         earnings: round(earnings),
         expenses: round(b.expenses),
-        net: round(earnings - b.expenses),
+        processingFees: round(b.processingFees),
+        net: round(earnings - b.expenses - b.processingFees),
       };
     };
 
@@ -4357,6 +4388,20 @@ Respond ONLY with valid JSON in this exact format:
     },
   );
 
+  // Raw text content of a version — for in-app markdown/plain-text rendering.
+  app.get(
+    "/admin/documents/:id/versions/:versionId/text",
+    adminGuard,
+    async (req: any) => {
+      return services.companyDocuments.getVersionText(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
+        { adminHiddenVisible: false },
+      );
+    },
+  );
+
   // ----- Super namespace (read + write, includes adminHidden) ------------
 
   app.get("/super/documents", superGuard, async (req: any) => {
@@ -4391,6 +4436,19 @@ Respond ONLY with valid JSON in this exact format:
         String(req.params.id),
         String(req.params.versionId),
         mode,
+        { adminHiddenVisible: true },
+      );
+    },
+  );
+
+  app.get(
+    "/super/documents/:id/versions/:versionId/text",
+    superGuard,
+    async (req: any) => {
+      return services.companyDocuments.getVersionText(
+        await currentUserId(req),
+        String(req.params.id),
+        String(req.params.versionId),
         { adminHiddenVisible: true },
       );
     },

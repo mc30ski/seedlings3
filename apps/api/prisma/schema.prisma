@@ -75,6 +75,8 @@ enum AuditVerb {
   WRITTEN_OFF
   ADJUSTED
   OWNER_EARNINGS_RECORDED
+  FEE_APPLIED
+  PAYMENT_METHOD_UPDATED
   // add new verbs as needed
 }
 
@@ -345,11 +347,13 @@ enum ClientStatus {
   ARCHIVED
 }
 
+// TODO: Next time this needs a new value, convert to JSON-settings taxonomy (same pattern as PAYMENT_METHODS) instead of adding the value. See services/paymentMethods.ts for the pattern.
 enum PropertyKind {
   SINGLE
   AGGREGATE_SITE
 }
 
+// TODO: Next time this needs a new value, convert to JSON-settings taxonomy (same pattern as PAYMENT_METHODS) instead of adding the value. See services/paymentMethods.ts for the pattern.
 enum ContactRole {
   OWNER
   SPOUSE
@@ -426,7 +430,8 @@ model ClientContact {
   // Auto-learned from each approved payment — used to pre-select the method
   // in the worker's Record Payment dialog and to highlight the same method
   // first on the public /pay/[token] page.
-  preferredPaymentMethod PaymentMethod?
+  // Stored as a free string keyed to the PAYMENT_METHODS taxonomy (Settings).
+  preferredPaymentMethod String?
 
   // Set when this contact signs up for an account via the post-payment
   // nudge on /pay/[token]. Drives future discount/credit logic — kept now
@@ -850,15 +855,10 @@ model JobOccurrenceAssignee {
   @@index([assignedById])
 }
 
-enum PaymentMethod {
-  CASH
-  CHECK
-  VENMO
-  ZELLE
-  APPLE_PAY
-  CASH_APP
-  OTHER
-}
+// PaymentMethod is no longer a DB enum — payment methods are fully
+// configuration-driven via the PAYMENT_METHODS setting (a JSON taxonomy).
+// Payment.method and ClientContact.preferredPaymentMethod are plain strings
+// keyed to that taxonomy; writes are validated against it in payments.ts.
 
 enum PaymentCommsMode {
   SERVER
@@ -872,7 +872,10 @@ model Payment {
   occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   amountPaid Float
-  method     PaymentMethod
+  // Free string keyed to the PAYMENT_METHODS taxonomy (Settings). Validated
+  // at write time against the active taxonomy — see services/payments.ts
+  // loadPaymentMethodKeys(). Not a DB enum so new methods are pure config.
+  method     String
   note       String?
 
   platformFeePercent    Float? // % charged to contractor/unclassified
@@ -913,6 +916,19 @@ model Payment {
   shortfallAmount Float @default(0)
   overageAmount   Float @default(0)
 
+  // Processor fees: snapshotted from the PAYMENT_METHODS taxonomy at payment
+  // time so changes to the fee schedule don't rewrite history. All nullable
+  // — historical rows are treated as zero-fee at read time.
+  //   processorFeePercent / processorFeeFixed = rate config used
+  //   processorFeeAmount  = computed dollar fee for this transaction
+  //   grossCharged        = what the client paid (matches amountPaid)
+  //   netReceived         = grossCharged − processorFeeAmount
+  processorFeePercent Float?
+  processorFeeFixed   Float?
+  processorFeeAmount  Float?
+  grossCharged        Float?
+  netReceived         Float?
+
   // Admin-adjusted amount at approval time (e.g. client wrote $100 but
   // actually paid $80). adjustedFromAmount preserves the originally-reported
   // value for audit.
@@ -938,6 +954,7 @@ model Payment {
   @@index([method, createdAt])
   @@index([confirmed, createdAt])
   @@index([writtenOff, createdAt])
+  @@index([processorFeeAmount, createdAt])
 }
 
 model PaymentSplit {
@@ -1077,6 +1094,10 @@ model Setting {
   key         String   @unique
   value       String
   description String?
+  // Presentational grouping for the Settings tab. A free string key; section
+  // titles/descriptions/order live in a web-side code constant. Null or an
+  // unknown value falls into the "Other" group in the UI.
+  section     String?
   updatedAt   DateTime @updatedAt
   updatedById String?
   updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)

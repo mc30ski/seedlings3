@@ -77,3 +77,26 @@ export async function deleteObject(key: string, bucket: BucketType = "photos"): 
   });
   await s3.send(command);
 }
+
+/**
+ * Fetch an object's body as a UTF-8 string. For text content only (markdown,
+ * plain text) — the caller is responsible for not invoking this on binaries.
+ * `maxBytes` guards against streaming an unexpectedly huge object.
+ */
+export async function getObjectText(
+  key: string,
+  bucket: BucketType = "photos",
+  maxBytes = 2_000_000,
+): Promise<string> {
+  const command = new GetObjectCommand({ Bucket: bucketName(bucket), Key: key });
+  const res = await s3.send(command);
+  if (res.ContentLength != null && res.ContentLength > maxBytes) {
+    throw new Error(`Object too large to read as text (${res.ContentLength} bytes).`);
+  }
+  // `transformToString` is provided by the AWS SDK v3 streaming body.
+  const body = res.Body as { transformToString?: (enc?: string) => Promise<string> } | undefined;
+  if (!body?.transformToString) {
+    throw new Error("Object body is not readable as text.");
+  }
+  return body.transformToString("utf-8");
+}

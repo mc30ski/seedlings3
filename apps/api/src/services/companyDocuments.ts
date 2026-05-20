@@ -6,6 +6,7 @@ import { ServiceError } from "../lib/errors";
 import {
   deleteObject,
   getDownloadUrl,
+  getObjectText,
   getUploadUrl,
 } from "../lib/r2";
 
@@ -453,6 +454,60 @@ export const companyDocuments = {
     }
 
     return { url };
+  },
+
+  /**
+   * Return a version's raw text content — for in-app rendering of text
+   * documents (markdown, plain text). Server-side R2 fetch, so no browser
+   * CORS dependency. Rejects non-text content types so a binary is never
+   * streamed as a string.
+   */
+  async getVersionText(
+    currentUserId: string,
+    documentId: string,
+    versionId: string,
+    opts: { adminHiddenVisible: boolean },
+  ): Promise<{ text: string; contentType: string; originalFilename: string }> {
+    const version = await prisma.companyDocumentVersion.findUnique({
+      where: { id: versionId },
+      include: { document: true },
+    });
+    if (!version || version.documentId !== documentId) {
+      throw new ServiceError("NOT_FOUND", "Version not found.", 404);
+    }
+    if (!opts.adminHiddenVisible && version.document.adminHidden) {
+      throw new ServiceError("NOT_FOUND", "Version not found.", 404);
+    }
+
+    // Only text-ish documents may be read as text. Markdown uploads can land
+    // with a variety of content types, so accept by extension too.
+    const ct = (version.contentType || "").toLowerCase();
+    const name = (version.originalFilename || "").toLowerCase();
+    const isText =
+      ct.startsWith("text/") ||
+      ct === "application/octet-stream" || // common for .md uploads
+      name.endsWith(".md") ||
+      name.endsWith(".markdown") ||
+      name.endsWith(".txt");
+    if (!isText) {
+      throw new ServiceError("NOT_TEXT", "This document isn't a text file.", 400);
+    }
+
+    const text = await getObjectText(version.r2Key, "docs");
+
+    if (version.document.adminHidden) {
+      await writeAudit(prisma, AUDIT.DOCUMENT.VIEWED, currentUserId, {
+        documentId,
+        versionId,
+        mode: "view-text",
+      });
+    }
+
+    return {
+      text,
+      contentType: version.contentType,
+      originalFilename: version.originalFilename,
+    };
   },
 
   /** Counts for the title-bar pill. */

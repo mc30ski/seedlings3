@@ -32,6 +32,7 @@ import {
   bizDateKey,
   jobTypeLabel,
 } from "@/src/lib/lib";
+import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
   type TabPropsType,
   JOB_KIND,
@@ -102,6 +103,7 @@ export default function ServicesTab({
   purpose = "ADMIN",
 }: TabPropsType) {
   const { isAvail, forAdmin, isSuper } = determineRoles(me, purpose);
+  const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
@@ -1651,7 +1653,7 @@ export default function ServicesTab({
                                   )}
                                   {occ.payment && (
                                     <Text color="green.700" fontWeight="medium">
-                                      Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {prettyStatus((occ.payment as any).method)}
+                                      Paid: ${(occ.payment as any).amountPaid.toFixed(2)} via {methodLabel((occ.payment as any).method)}
                                     </Text>
                                   )}
                                   {assignees.length > 1 && net != null && (
@@ -1798,7 +1800,7 @@ export default function ServicesTab({
                               return (
                                 <Box mt={1} p={2} bg="green.50" rounded="sm">
                                   <Text fontSize="xs" fontWeight="medium" color="green.700">
-                                    Paid: ${pay.amountPaid.toFixed(2)} via {prettyStatus(pay.method)}
+                                    Paid: ${pay.amountPaid.toFixed(2)} via {methodLabel(pay.method)}
                                   </Text>
                                   {pay.note && (
                                     <TruncatedText color="green.600">{pay.note}</TruncatedText>

@@ -454,20 +454,11 @@ export type ExpenseItem = {
 
 // ---- Payments ----
 
-export const PAYMENT_METHOD = ["CASH", "CHECK", "VENMO", "ZELLE", "APPLE_PAY", "CASH_APP", "OTHER"] as const;
-export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
-
-// Subset of PAYMENT_METHOD currently offered when recording a NEW payment
-// or editing an existing one's method. The full set above is kept so the
-// admin filter dropdown can still match historical payments recorded with
-// APPLE_PAY / CASH_APP / OTHER before those were removed.
-export const PAYMENT_METHOD_OFFERED = ["CASH", "CHECK", "ZELLE", "VENMO"] as const;
-
-// Methods a worker can record when accepting payment in person (no app/
-// link involved). Digital methods (Zelle, Venmo, etc.) only arrive via the
-// /pay/[token] flow where the client picks the method themselves at
-// payment time, so they're intentionally excluded here.
-export const PAYMENT_METHOD_IN_PERSON = ["CASH", "CHECK", "OTHER"] as const;
+// Payment methods are fully configuration-driven via the PAYMENT_METHODS
+// setting (a JSON taxonomy editable in Super → Settings). There is no fixed
+// enum — `PaymentMethod` is just a string keyed to that taxonomy. Use the
+// usePaymentMethodLabels hook to render a method's display label.
+export type PaymentMethod = string;
 
 export type PaymentSplitItem = {
   id: string;

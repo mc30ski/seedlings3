@@ -18,6 +18,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import { Button, Dialog, Portal } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
 import { bizDateKey, fmtDate, fmtDateTime, prettyStatus, clientLabel } from "@/src/lib/lib";
+import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { openEventSearch } from "@/src/lib/bus";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -91,6 +92,7 @@ export default function OperationsTab() {
   const [loading, setLoading] = useState(true);
   const [showAllWorkers, setShowAllWorkers] = useState(false);
   const [showAllUnclaimed, setShowAllUnclaimed] = useState(false);
+  const { labelFor: methodLabel } = usePaymentMethodLabels();
   const [confirmAllTime, setConfirmAllTime] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
 
@@ -318,7 +320,7 @@ export default function OperationsTab() {
             <HStack mt={2} gap={2} wrap="wrap" px={1}>
               {Object.entries(data.financial.paymentsByMethod).map(([method, amount]) => (
                 <Badge key={method} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                  {prettyStatus(method)}: {fmt(amount)}
+                  {methodLabel(method)}: {fmt(amount)}
                 </Badge>
               ))}
             </HStack>

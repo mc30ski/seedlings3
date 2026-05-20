@@ -15,8 +15,20 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { PAYMENT_METHOD_IN_PERSON } from "@/src/lib/types";
 import { prettyStatus } from "@/src/lib/lib";
+
+// PAYMENT_METHODS taxonomy row shape. Mirrors the server-side type.
+type PaymentMethodConfig = {
+  key: string;
+  label: string;
+  feePercent: number;
+  feeFixed: number;
+  supportsClientRequest: boolean;
+  supportsOnSite: boolean;
+  deepLinkTemplate: string | null;
+  instructions: string | null;
+  active: boolean;
+};
 import {
   getErrorMessage,
   publishInlineMessage,
@@ -73,11 +85,6 @@ type Props = {
   onAccepted: (result?: any) => void;
 };
 
-// In-person methods only — Zelle/Venmo/etc. are set by the client at /pay
-// time, not by the worker here.
-const methodItems = PAYMENT_METHOD_IN_PERSON.map((m) => ({ label: prettyStatus(m), value: m }));
-const methodCollection = createListCollection({ items: methodItems });
-
 function isEmployeeClass(wt: string | null | undefined): boolean {
   return wt === "EMPLOYEE" || wt === "TRAINEE";
 }
@@ -107,6 +114,11 @@ export default function AcceptPaymentDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
+
+  // PAYMENT_METHODS taxonomy — loaded once on open. Filtered by
+  // supportsOnSite for the on-site collection surface. Method dropdown +
+  // live fee preview both derive from this.
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
 
   // Amount Paid is intentionally locked to the invoice total inside the
   // main view. The override path lives in the "confirm" step (same dialog,
@@ -174,6 +186,21 @@ export default function AcceptPaymentDialog({
           .then((d) => setHandoff(d))
           .catch(() => setHandoff(null));
       }
+      // Load PAYMENT_METHODS taxonomy for the dropdown + live fee preview.
+      // Filter by supportsOnSite + active at render time below.
+      apiGet<Array<{ key: string; value: string }>>("/api/settings")
+        .then((rows) => {
+          if (!Array.isArray(rows)) return setPaymentMethods([]);
+          const row = rows.find((r) => r.key === "PAYMENT_METHODS");
+          if (!row?.value) return setPaymentMethods([]);
+          try {
+            const parsed = JSON.parse(row.value);
+            if (Array.isArray(parsed)) setPaymentMethods(parsed as PaymentMethodConfig[]);
+          } catch {
+            setPaymentMethods([]);
+          }
+        })
+        .catch(() => setPaymentMethods([]));
       // Initialize percent splits: prefer the occurrence's previously-saved
       // completionSplits (so re-opening after a reject shows last values);
       // fall back to even-split when null/empty or assignees differ.
@@ -200,6 +227,40 @@ export default function AcceptPaymentDialog({
     wasOpenRef.current = open;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Derive dropdown items from the loaded taxonomy. Only active + supportsOnSite
+  // methods appear in the worker on-site dialog. Falls back to an empty list
+  // (with a visible "no methods configured" message) if the taxonomy hasn't
+  // loaded — better than silently using stale hardcoded values.
+  const onSiteMethods = useMemo(
+    () => paymentMethods.filter((m) => m.active && m.supportsOnSite),
+    [paymentMethods],
+  );
+  const methodItems = useMemo(
+    () => onSiteMethods.map((m) => ({ label: m.label, value: m.key })),
+    [onSiteMethods],
+  );
+  const methodCollection = useMemo(
+    () => createListCollection({ items: methodItems }),
+    [methodItems],
+  );
+  // Look up the currently-selected method's fee config so we can render a
+  // live "Venmo fee: $3.90" line in the confirm view.
+  const selectedMethodConfig = useMemo(
+    () => onSiteMethods.find((m) => m.key === method[0]) ?? null,
+    [onSiteMethods, method],
+  );
+  const liveFee = useMemo(() => {
+    const amt = parseFloat(confirmAmount || amountPaid);
+    if (!Number.isFinite(amt) || amt <= 0 || !selectedMethodConfig) {
+      return { gross: 0, fee: 0, net: 0 };
+    }
+    const pct = Math.max(0, selectedMethodConfig.feePercent);
+    const fixed = Math.max(0, selectedMethodConfig.feeFixed);
+    const rawFee = amt * (pct / 100) + fixed;
+    const fee = Math.round(rawFee * 100) / 100;
+    return { gross: amt, fee, net: Math.round((amt - fee) * 100) / 100 };
+  }, [confirmAmount, amountPaid, selectedMethodConfig]);
 
   // Per-worker breakdown for the entered amount, using the canonical
   // per-worker math (mirrors server's computeBreakdown).
@@ -446,6 +507,35 @@ export default function AcceptPaymentDialog({
                         </Select.Positioner>
                       </Select.Root>
                     </div>
+                    {/* Live processor-fee preview. Hidden entirely for zero-
+                        fee methods (Cash, Check, Zelle as configured). For
+                        fee-bearing methods, shows gross / fee / net so the
+                        worker can see exactly what hits the bank account. */}
+                    {selectedMethodConfig && liveFee.fee > 0 && (
+                      <Box p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.200">
+                        <VStack align="stretch" gap={0.5} fontSize="xs">
+                          <HStack justify="space-between">
+                            <Text color="fg.muted">Gross charged:</Text>
+                            <Text fontWeight="medium">${liveFee.gross.toFixed(2)}</Text>
+                          </HStack>
+                          <HStack justify="space-between">
+                            <Text color="orange.700">
+                              {selectedMethodConfig.label} fee
+                              {selectedMethodConfig.feePercent > 0
+                                ? ` (${selectedMethodConfig.feePercent}%${selectedMethodConfig.feeFixed > 0 ? ` + $${selectedMethodConfig.feeFixed.toFixed(2)}` : ""})`
+                                : selectedMethodConfig.feeFixed > 0
+                                  ? ` ($${selectedMethodConfig.feeFixed.toFixed(2)})`
+                                  : ""}:
+                            </Text>
+                            <Text color="orange.700" fontWeight="medium">−${liveFee.fee.toFixed(2)}</Text>
+                          </HStack>
+                          <HStack justify="space-between" borderTopWidth="1px" borderColor="orange.200" pt={0.5} mt={0.5}>
+                            <Text fontWeight="semibold">Net received:</Text>
+                            <Text fontWeight="semibold">${liveFee.net.toFixed(2)}</Text>
+                          </HStack>
+                        </VStack>
+                      </Box>
+                    )}
                     <div>
                       <Text mb="1">Note</Text>
                       <Input

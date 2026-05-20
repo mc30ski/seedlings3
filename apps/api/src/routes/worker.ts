@@ -95,6 +95,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         minutesThisWeek: 0,
         actualWeekEarnings: 0,
         weekJobCount: 0,
+        weekEarningsFrom: "",
+        weekEarningsTo: "",
         weeklyCompleted: [] as { weekStart: string; count: number; earnings: number }[],
       };
     }
@@ -393,11 +395,62 @@ export default async function workerRoutes(app: FastifyInstance) {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([weekStart, v]) => ({ weekStart, count: v.count, earnings: Math.round(v.earnings * 100) / 100 }));
 
-    // Earnings = the user's payout share for the same jobs the Hours tile counts
-    // (i.e. jobs completed in the last 7 days). Uses the same payoutShareForOcc formula
-    // as the today/trend earnings, so the per-job math is consistent everywhere.
-    const actualWeekEarnings = (thisWeekJobs as any[]).reduce((sum: number, occ: any) => sum + payoutShareForOcc(occ), 0);
-    const weekJobCount = (thisWeekJobs as any[]).length;
+    // ── "Earnings last 7 days" tile ──────────────────────────────────────
+    // Window = the 7 full days BEFORE today (today is excluded — it belongs
+    // to the title-bar optimistic projection). Worker-type-split, mirroring
+    // each type's payroll anchor (see docs/FINANCIAL_SYSTEM.md §"Worker
+    // earnings views"):
+    //   • Employee / trainee — WORK-anchored. Promised net for jobs they
+    //     completed in the window, regardless of whether a payment exists.
+    //     Their wages accrue with the work; the drill-down is the Jobs tab.
+    //   • Contractor — PAYMENT-anchored. Their actual reconciled
+    //     PaymentSplit.amount for payments RECORDED in the window
+    //     (Payment.createdAt). Their pay tracks client payments; the
+    //     drill-down is the Payments tab.
+    // Decoupled from the Hours tile — that still counts jobs completed this
+    // week (thisWeekJobs); earnings now has its own window + anchor.
+    const earnWindowStart = new Date(todayMidnight);
+    earnWindowStart.setDate(earnWindowStart.getDate() - 7);
+    // ET date strings (YYYY-MM-DD) for the window, returned so the tile's
+    // click-through filters the Payments/Jobs tab to exactly this range.
+    const fmtEtDate = (daysBack: number) => {
+      const d = new Date(Date.UTC(todayEtParts[0], todayEtParts[1] - 1, todayEtParts[2]));
+      d.setUTCDate(d.getUTCDate() - daysBack);
+      return d.toISOString().slice(0, 10);
+    };
+    const weekEarningsFrom = fmtEtDate(7); // 7 days before today
+    const weekEarningsTo = fmtEtDate(1);   // yesterday
+    let actualWeekEarnings = 0;
+    let weekJobCount = 0;
+    if (isEmp) {
+      const empJobs = await prisma.jobOccurrence.findMany({
+        where: {
+          id: { in: myWorkingOccIds },
+          status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+          completedAt: { gte: earnWindowStart, lt: todayMidnight, not: null },
+        },
+        select: {
+          price: true,
+          proposalAmount: true,
+          addons: { select: { price: true } },
+          expenses: { select: { cost: true } },
+          assignees: { select: { role: true } },
+        },
+      });
+      actualWeekEarnings = empJobs.reduce((sum, occ) => sum + payoutShareForOcc(occ), 0);
+      weekJobCount = empJobs.length;
+    } else {
+      const mySplits = await prisma.paymentSplit.findMany({
+        where: {
+          userId: uid,
+          payment: { createdAt: { gte: earnWindowStart, lt: todayMidnight } },
+        },
+        select: { amount: true },
+      });
+      actualWeekEarnings = mySplits.reduce((sum, sp) => sum + sp.amount, 0);
+      weekJobCount = mySplits.length;
+    }
     void weekSplits;
 
     return {
@@ -420,6 +473,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       minutesThisWeek: Math.round(minutesThisWeek),
       actualWeekEarnings: Math.round(actualWeekEarnings * 100) / 100,
       weekJobCount,
+      weekEarningsFrom,
+      weekEarningsTo,
       weeklyCompleted,
     };
   });
@@ -1597,7 +1652,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       method: String(body.method || "CASH"),
       note: body.note ? String(body.note) : null,
       completionSplits: Array.isArray(body.completionSplits) ? body.completionSplits : [],
-    });
+      context: isAdmin ? "ADMIN" : "ON_SITE",
+    } as any);
   });
 
   app.get("/payments/mine", workerGuard, async (req: any) => {

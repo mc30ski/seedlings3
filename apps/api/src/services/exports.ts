@@ -113,57 +113,145 @@ async function loadConfirmedPayments(start: Date, end: Date) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Gusto W-2 CSV — one row per employee/trainee with totals in the period.
+// W-2 earnings — WORK-anchored, not payment-anchored.
+//
+// An employee/trainee is a W-2 worker: their wages accrue when they DO the
+// work and must be paid on the regular payroll schedule for the period the
+// work fell in — regardless of whether (or when) the client pays. So the W-2
+// export is driven by JOBS COMPLETED in the window, bucketed by completedAt,
+// and the amount is each worker's PROMISED NET (the made-whole figure):
+//   • If the occurrence has a promisedPayouts snapshot, read the net from it.
+//   • Otherwise compute it from price/expenses/split — a job completed but
+//     not yet payment-initiated still owes the employee their wage.
+// A later client underpayment never claws back an employee's W-2 wage; the
+// business absorbs it. Owner-earnings assignees are excluded (draw, not pay).
+// (Contrast: the contractor export below stays payment-anchored.)
 // ─────────────────────────────────────────────────────────────────────────────
-export async function gustoW2Csv(start: Date, end: Date): Promise<string> {
-  const payments = await loadConfirmedPayments(start, end);
 
-  type Agg = {
-    userId: string;
-    first: string;
-    last: string;
-    email: string;
-    workerType: string;
-    hours: number;
-    gross: number;
-    jobs: number;
-  };
-  const byWorker = new Map<string, Agg>();
+type W2Agg = {
+  userId: string;
+  first: string;
+  last: string;
+  email: string;
+  workerType: string;
+  hours: number;
+  gross: number;
+  jobs: number;
+};
 
-  for (const p of payments) {
-    const occ = p.occurrence;
-    const activeAssignees = occ.assignees.filter((a) => a.role !== "observer");
+async function loadEmployeeMarginPercent(): Promise<number> {
+  const row = await prisma.setting.findUnique({
+    where: { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT" },
+  });
+  return Number(row?.value ?? 0) || 0;
+}
+
+// Completed STANDARD/ONE_OFF occurrences in the window — the W-2 wage events.
+async function loadCompletedOccurrences(start: Date, end: Date) {
+  return prisma.jobOccurrence.findMany({
+    where: {
+      completedAt: { gte: start, lte: end },
+      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+    },
+    select: {
+      id: true,
+      startedAt: true,
+      completedAt: true,
+      totalPausedMs: true,
+      price: true,
+      proposalAmount: true,
+      promisedPayouts: true,
+      completionSplits: true,
+      addons: { select: { price: true } },
+      expenses: { select: { cost: true } },
+      assignees: {
+        select: {
+          userId: true,
+          role: true,
+          user: {
+            select: { id: true, displayName: true, email: true, workerType: true, isOwner: true },
+          },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Aggregate W-2 (employee + trainee) earnings for the window, work-anchored.
+ * Shared by the CSV export and the preview.
+ */
+async function computeW2Earnings(start: Date, end: Date): Promise<W2Agg[]> {
+  const [occs, marginPct] = await Promise.all([
+    loadCompletedOccurrences(start, end),
+    loadEmployeeMarginPercent(),
+  ]);
+  const byWorker = new Map<string, W2Agg>();
+
+  for (const occ of occs) {
+    const active = occ.assignees.filter((a) => a.role !== "observer");
+    if (active.length === 0) continue;
     const occHours = hoursPerWorker({
       startedAt: occ.startedAt,
       completedAt: occ.completedAt,
       totalPausedMs: occ.totalPausedMs,
-      assigneeCount: activeAssignees.length,
+      assigneeCount: active.length,
     });
-    for (const sp of p.splits) {
-      if (!isEmployeeClass(sp.user.workerType)) continue;
-      const k = sp.user.id;
+    const priceTotal =
+      (occ.price ?? occ.proposalAmount ?? 0) +
+      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+    const expTotal = (occ.expenses ?? []).reduce((s, e) => s + (e.cost ?? 0), 0);
+    const N = Math.max(0, priceTotal - expTotal);
+    const promised = (occ.promisedPayouts as Array<{ userId: string; net: number }> | null) ?? null;
+    const splitPctById = new Map<string, number>(
+      (Array.isArray(occ.completionSplits) ? occ.completionSplits : []).map((s: any) => [s.userId, Number(s.percent) || 0]),
+    );
+
+    for (const a of active) {
+      if (!isEmployeeClass(a.user.workerType)) continue;
+      if (a.user.isOwner) continue; // owner takes a draw — never on payroll
+      // Promised net: snapshot if present, else computed.
+      let net: number;
+      const snap = promised?.find((r) => r.userId === a.userId);
+      if (snap) {
+        net = snap.net;
+      } else {
+        const fraction = splitPctById.has(a.userId)
+          ? (splitPctById.get(a.userId) ?? 0) / 100
+          : 1 / active.length;
+        const grossShare = N * fraction;
+        net = grossShare * (1 - marginPct / 100);
+      }
+      const k = a.userId;
       const cur = byWorker.get(k);
-      const { first, last } = splitName(sp.user.displayName);
+      const { first, last } = splitName(a.user.displayName);
       if (cur) {
         cur.hours += occHours;
-        cur.gross += sp.amount;
+        cur.gross += net;
         cur.jobs += 1;
       } else {
         byWorker.set(k, {
           userId: k,
           first,
           last,
-          email: sp.user.email ?? "",
-          workerType: sp.user.workerType ?? "",
+          email: a.user.email ?? "",
+          workerType: a.user.workerType ?? "",
           hours: occHours,
-          gross: sp.amount,
+          gross: net,
           jobs: 1,
         });
       }
     }
   }
+  return Array.from(byWorker.values());
+}
 
-  const rows = Array.from(byWorker.values()).sort((a, b) =>
+// ─────────────────────────────────────────────────────────────────────────────
+// Gusto W-2 CSV — one row per employee/trainee with totals in the period.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function gustoW2Csv(start: Date, end: Date): Promise<string> {
+  const rows = (await computeW2Earnings(start, end)).sort((a, b) =>
     (a.last || a.first).localeCompare(b.last || b.first),
   );
 
@@ -381,10 +469,39 @@ const SCHEDULE_C_LINES: Record<string, string> = {
 };
 
 export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
-  const rows = await prisma.businessExpense.findMany({
-    where: { date: { gte: start, lte: end } },
-    orderBy: { date: "asc" },
-  });
+  const [rows, feePayments] = await Promise.all([
+    prisma.businessExpense.findMany({
+      where: { date: { gte: start, lte: end } },
+      orderBy: { date: "asc" },
+    }),
+    // Processor fees ride alongside business expenses in the QB export. We
+    // tag them with category "Payment Processing Fees" so QB sorts them into
+    // their own line on import — and so this app never has to maintain a
+    // synthetic BusinessExpense row for fees the bank statement already
+    // shows. Filtered to confirmed, non-zero-fee, non-written-off rows.
+    prisma.payment.findMany({
+      where: {
+        confirmed: true,
+        confirmedAt: { gte: start, lte: end },
+        writtenOff: false,
+        processorFeeAmount: { gt: 0 },
+      },
+      select: {
+        id: true,
+        method: true,
+        confirmedAt: true,
+        processorFeeAmount: true,
+        grossCharged: true,
+        occurrence: {
+          select: {
+            id: true,
+            job: { select: { property: { select: { displayName: true, client: { select: { displayName: true } } } } } },
+          },
+        },
+      },
+      orderBy: { confirmedAt: "asc" },
+    }),
+  ]);
 
   const header = [
     "Date",
@@ -412,6 +529,28 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
     );
     total += r.cost;
   }
+  // Append processor-fee rows. Vendor is the payment method (e.g. "Venmo") so
+  // the CPA can see which processor charged what. Description includes the
+  // Payment ID for traceability back to the source transaction. These rows
+  // use the "Payment Processing Fees" category (Schedule C line 17).
+  for (const p of feePayments) {
+    const prop = p.occurrence?.job?.property;
+    const clientName = prop?.client?.displayName ?? "";
+    const propName = prop?.displayName ?? "";
+    const desc = `${p.method} fee on ${clientName}${propName ? ` — ${propName}` : ""} (gross $${round2(p.grossCharged ?? 0).toFixed(2)}, payment ${p.id})`;
+    lines.push(
+      csvRow([
+        p.confirmedAt ? toIsoDate(p.confirmedAt) : "",
+        p.method ?? "",
+        "Payment Processing Fees",
+        "17",
+        round2(p.processorFeeAmount ?? 0).toFixed(2),
+        desc,
+        "",
+      ]),
+    );
+    total += p.processorFeeAmount ?? 0;
+  }
   lines.push(
     csvRow([
       "TOTALS",
@@ -434,33 +573,29 @@ export type ExportPreview = {
   gustoW2: { workers: number; hours: number; gross: number };
   gustoContractors: { workers: number; gross: number };
   qbIncome: { rows: number; total: number };
-  qbExpenses: { rows: number; total: number };
+  qbExpenses: {
+    rows: number;
+    total: number;
+    businessExpenseTotal: number;
+    processorFeeTotal: number;
+  };
 };
 
 export async function exportPreview(start: Date, end: Date): Promise<ExportPreview> {
   const payments = await loadConfirmedPayments(start, end);
 
-  const w2Workers = new Set<string>();
-  let w2Hours = 0;
-  let w2Gross = 0;
+  // W-2 preview — work-anchored, same source as the W-2 CSV (completed jobs +
+  // promised net). NOT payment-anchored, so it ties out to the export.
+  const w2Rows = await computeW2Earnings(start, end);
+  const w2Hours = w2Rows.reduce((s, r) => s + r.hours, 0);
+  const w2Gross = w2Rows.reduce((s, r) => s + r.gross, 0);
+
+  // Contractors stay payment-anchored — sum their splits on confirmed payments.
   const contractorWorkers = new Set<string>();
   let contractorGross = 0;
-
   for (const p of payments) {
-    const occ = p.occurrence;
-    const activeAssignees = occ.assignees.filter((a) => a.role !== "observer");
-    const occHours = hoursPerWorker({
-      startedAt: occ.startedAt,
-      completedAt: occ.completedAt,
-      totalPausedMs: occ.totalPausedMs,
-      assigneeCount: activeAssignees.length,
-    });
     for (const sp of p.splits) {
-      if (isEmployeeClass(sp.user.workerType)) {
-        w2Workers.add(sp.user.id);
-        w2Hours += occHours;
-        w2Gross += sp.amount;
-      } else {
+      if (!isEmployeeClass(sp.user.workerType)) {
         contractorWorkers.add(sp.user.id);
         contractorGross += sp.amount;
       }
@@ -473,11 +608,13 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
     where: { date: { gte: start, lte: end } },
     select: { cost: true },
   });
-  const qbExpensesTotal = expenses.reduce((s, e) => s + e.cost, 0);
+  const businessExpenseTotal = expenses.reduce((s, e) => s + e.cost, 0);
+  const processorFeeTotal = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
+  const processorFeeRows = payments.filter((p) => (p.processorFeeAmount ?? 0) > 0).length;
 
   return {
     gustoW2: {
-      workers: w2Workers.size,
+      workers: w2Rows.length,
       hours: round2(w2Hours),
       gross: round2(w2Gross),
     },
@@ -490,8 +627,11 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
       total: round2(qbIncomeTotal),
     },
     qbExpenses: {
-      rows: expenses.length,
-      total: round2(qbExpensesTotal),
+      rows: expenses.length + processorFeeRows,
+      total: round2(businessExpenseTotal + processorFeeTotal),
+      // Sub-totals exposed for the Exports tab preview ("$X expenses + $Y fees").
+      businessExpenseTotal: round2(businessExpenseTotal),
+      processorFeeTotal: round2(processorFeeTotal),
     },
   };
 }

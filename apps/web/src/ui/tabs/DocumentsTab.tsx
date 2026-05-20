@@ -52,6 +52,7 @@ import UploadDocumentDialog from "@/src/ui/dialogs/UploadDocumentDialog";
 import UploadDocumentVersionDialog from "@/src/ui/dialogs/UploadDocumentVersionDialog";
 import EditDocumentMetadataDialog from "@/src/ui/dialogs/EditDocumentMetadataDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import MarkdownViewerDialog from "@/src/ui/dialogs/MarkdownViewerDialog";
 
 type CompanyDocumentVersion = {
   id: string;
@@ -145,6 +146,17 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     | { kind: "deleteVersion"; doc: CompanyDocument; versionId: string; filename: string }
     | null
   >(null);
+
+  // In-app markdown viewer state. Text documents (.md / text/*) render here
+  // instead of opening the raw file in a new browser tab.
+  const [mdViewer, setMdViewer] = useState<{
+    open: boolean;
+    title: string;
+    text: string | null;
+    loading: boolean;
+    error: string | null;
+    downloadUrl: string | null;
+  }>({ open: false, title: "", text: null, loading: false, error: null, downloadUrl: null });
 
   // Endpoint base reflects the audience, not the caller's role: the Admin
   // tab always uses `/api/admin/documents` so Super-only docs are filtered
@@ -285,10 +297,60 @@ export default function DocumentsTab({ isSuper = false }: Props) {
     });
   }
 
-  async function openVersion(docId: string, versionId: string, mode: "view" | "download") {
+  // True for text documents we render in-app (markdown / plain text). Detected
+  // by content type OR extension — markdown uploads land with varied types.
+  function isTextDoc(v: CompanyDocumentVersion | null | undefined): boolean {
+    if (!v) return false;
+    const ct = (v.contentType || "").toLowerCase();
+    const name = (v.originalFilename || "").toLowerCase();
+    return (
+      ct === "text/markdown" ||
+      ct === "text/plain" ||
+      name.endsWith(".md") ||
+      name.endsWith(".markdown") ||
+      name.endsWith(".txt")
+    );
+  }
+
+  async function openVersion(
+    docId: string,
+    version: CompanyDocumentVersion,
+    mode: "view" | "download",
+    docTitle: string,
+  ) {
+    // Text docs in "view" mode render in the in-app markdown viewer. Download
+    // mode (and all non-text docs) keep the open-in-new-tab behavior.
+    if (mode === "view" && isTextDoc(version)) {
+      setMdViewer({ open: true, title: docTitle, text: null, loading: true, error: null, downloadUrl: null });
+      try {
+        const [{ text }, urlRes] = await Promise.all([
+          apiGet<{ text: string }>(`${apiBase}/${docId}/versions/${version.id}/text`),
+          apiGet<{ url: string }>(`${apiBase}/${docId}/versions/${version.id}/url?mode=download`)
+            .catch(() => ({ url: "" })),
+        ]);
+        setMdViewer({
+          open: true,
+          title: docTitle,
+          text,
+          loading: false,
+          error: null,
+          downloadUrl: urlRes.url || null,
+        });
+      } catch (err) {
+        setMdViewer({
+          open: true,
+          title: docTitle,
+          text: null,
+          loading: false,
+          error: getErrorMessage("Failed to load document.", err),
+          downloadUrl: null,
+        });
+      }
+      return;
+    }
     try {
       const { url } = await apiGet<{ url: string }>(
-        `${apiBase}/${docId}/versions/${versionId}/url?mode=${mode}`,
+        `${apiBase}/${docId}/versions/${version.id}/url?mode=${mode}`,
       );
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) {
@@ -664,8 +726,8 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                             variant="ghost"
                             px="1.5"
                             minW="0"
-                            onClick={() => openVersion(d.id, d.currentVersion!.id, "view")}
-                            title="Open in browser"
+                            onClick={() => openVersion(d.id, d.currentVersion!, "view", d.title)}
+                            title={isTextDoc(d.currentVersion) ? "View document" : "Open in browser"}
                           >
                             <Eye size={13} />
                           </Button>
@@ -674,7 +736,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                             variant="ghost"
                             px="1.5"
                             minW="0"
-                            onClick={() => openVersion(d.id, d.currentVersion!.id, "download")}
+                            onClick={() => openVersion(d.id, d.currentVersion!, "download", d.title)}
                             title="Download"
                           >
                             <Download size={13} />
@@ -756,10 +818,10 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                                       {v.originalFilename} · {fmtSize(v.sizeBytes)} · {fmtDateShort(v.uploadedAt)}
                                       {v.uploadedBy?.displayName ? ` · ${v.uploadedBy.displayName}` : ""}
                                     </Text>
-                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "view")}>
+                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v, "view", d.title)}>
                                       <Eye size={11} />
                                     </Button>
-                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v.id, "download")}>
+                                    <Button size="xs" variant="ghost" onClick={() => openVersion(d.id, v, "download", d.title)}>
                                       <Download size={11} />
                                     </Button>
                                     {isSuper && !isCurrent && (
@@ -1013,6 +1075,17 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           />
         </>
       )}
+
+      {/* In-app markdown/text viewer — available to admin and super. */}
+      <MarkdownViewerDialog
+        open={mdViewer.open}
+        onClose={() => setMdViewer((s) => ({ ...s, open: false }))}
+        title={mdViewer.title}
+        text={mdViewer.text}
+        loading={mdViewer.loading}
+        error={mdViewer.error}
+        downloadUrl={mdViewer.downloadUrl}
+      />
     </Box>
   );
 }

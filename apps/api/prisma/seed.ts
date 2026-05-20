@@ -119,6 +119,51 @@ async function clearDatabase() {
   console.log("  Done. (User, UserRole, Setting preserved)");
 }
 
+// Presentational grouping for the Settings tab. Maps each general setting
+// key to a section key; the section titles/descriptions/order live in a
+// web-side code constant (apps/web/src/lib/settingSections.ts). pricing_*
+// settings are intentionally absent — they render in a separate Pricing UI.
+// A setting missing from this map keeps section=null and lands in the UI's
+// "Other" group. Run applySettingSections() after settings are seeded.
+const SETTING_SECTIONS: Record<string, string> = {
+  // Payments & Payouts
+  CONTRACTOR_PLATFORM_FEE_PERCENT: "payments",
+  EMPLOYEE_BUSINESS_MARGIN_PERCENT: "payments",
+  PROCESSOR_FEE_ABSORPTION: "payments",
+  PAYMENT_METHODS: "payments",
+  PAYROLL_PERIOD_CADENCE: "payments",
+  HIGH_VALUE_JOB_THRESHOLD: "payments",
+  // Client Payment Requests
+  DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
+  REQUEST_PAYMENT_FROM_CLIENT_ENABLED: "client_requests",
+  PAYMENT_REQUEST_BASE_URL: "client_requests",
+  PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS: "client_requests",
+  NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL: "client_requests",
+  VENMO_BUSINESS_HANDLE: "client_requests",
+  ZELLE_ADDRESS: "client_requests",
+  // Catalogs & Taxonomies
+  SERVICE_TYPES: "catalogs",
+  EQUIPMENT_KINDS: "catalogs",
+  DOCUMENT_TYPES: "catalogs",
+  TIMELINE_CATEGORIES: "catalogs",
+  // Photos & Documents
+  MAX_PHOTOS_PER_JOB: "media",
+  PHOTO_JPEG_QUALITY: "media",
+  PHOTO_MAX_EDGE_PX: "media",
+  DOCUMENT_MAX_SIZE_MB: "media",
+  // Integrations
+  WEATHER_API_KEY: "integrations",
+};
+
+// Stamp each setting's section column. Idempotent — updateMany on a key that
+// doesn't exist is a no-op, so it's safe to call with the full map from any
+// seed template even when only a subset of settings exist.
+async function applySettingSections() {
+  for (const [key, section] of Object.entries(SETTING_SECTIONS)) {
+    await prisma.setting.updateMany({ where: { key }, data: { section } });
+  }
+}
+
 // ── Seed database ───────────────────────────────────────────────────────────
 async function seedDatabase() {
   // ── Pending client user (upsert so re-seed resets approval state) ────────
@@ -867,7 +912,7 @@ async function seedDatabase() {
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cHarrington7 = await occ(
-    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 50) },
+    { jobId: harringtonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(6, 8), endAt: addMinutes(daysAgo(6, 8), 45), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 85.0, estimatedMinutes: 45, startedAt: daysAgo(6, 8), completedAt: addMinutes(daysAgo(6, 8), 50) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }],
   );
   const cLake14 = await occ(
@@ -875,7 +920,7 @@ async function seedDatabase() {
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cLake7 = await occ(
-    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 13), endAt: addMinutes(daysAgo(7, 13), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(7, 13), completedAt: addMinutes(daysAgo(7, 13), 32) },
+    { jobId: harringtonLakeMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(6, 13), endAt: addMinutes(daysAgo(6, 13), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 65.0, estimatedMinutes: 35, startedAt: daysAgo(6, 13), completedAt: addMinutes(daysAgo(6, 13), 32) },
     [{ userId: CONTRACTOR_ID, role: "primary" }],
   );
   const cMartinez14 = await occ(
@@ -887,7 +932,7 @@ async function seedDatabase() {
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cWillowbrook7 = await occ(
-    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 115) },
+    { jobId: willowbrookWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(5, 7), endAt: addMinutes(daysAgo(5, 7), 120), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 250.0, estimatedMinutes: 120, startedAt: daysAgo(5, 7), completedAt: addMinutes(daysAgo(5, 7), 115) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cThompson14 = await occ(
@@ -895,27 +940,27 @@ async function seedDatabase() {
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cThompson7 = await occ(
-    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 60), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(7, 9), completedAt: addMinutes(daysAgo(7, 9), 58) },
+    { jobId: thompsonMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(5, 9), endAt: addMinutes(daysAgo(5, 9), 60), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 125.0, estimatedMinutes: 60, startedAt: daysAgo(5, 9), completedAt: addMinutes(daysAgo(5, 9), 58) },
     [{ userId: CONTRACTOR_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cObrien7 = await occ(
-    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 8), endAt: addMinutes(daysAgo(7, 8), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(7, 8), completedAt: addMinutes(daysAgo(7, 8), 33) },
+    { jobId: obrienMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(4, 8), endAt: addMinutes(daysAgo(4, 8), 35), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 60.0, estimatedMinutes: 35, startedAt: daysAgo(4, 8), completedAt: addMinutes(daysAgo(4, 8), 33) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cSunrise7 = await occ(
-    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 7), endAt: addMinutes(daysAgo(7, 7), 180), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(7, 7), completedAt: addMinutes(daysAgo(7, 7), 170) },
+    { jobId: sunriseWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(6, 7), endAt: addMinutes(daysAgo(6, 7), 180), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","EDGE","BLOW"]', price: 350.0, estimatedMinutes: 180, startedAt: daysAgo(6, 7), completedAt: addMinutes(daysAgo(6, 7), 170) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: EMPLOYEE_ID, role: "helper" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cPatel7 = await occ(
-    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(7, 15), endAt: addMinutes(daysAgo(7, 15), 25), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(7, 15), completedAt: addMinutes(daysAgo(7, 15), 22) },
+    { jobId: patelMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(3, 15), endAt: addMinutes(daysAgo(3, 15), 25), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 45.0, estimatedMinutes: 25, startedAt: daysAgo(3, 15), completedAt: addMinutes(daysAgo(3, 15), 22) },
     [{ userId: EMPLOYEE_ID, role: "primary" }, { userId: TRAINEE_ID, role: "helper" }],
   );
   const cRiverBend7 = await occ(
-    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 6), endAt: addMinutes(daysAgo(7, 6), 150), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(7, 6), completedAt: addMinutes(daysAgo(7, 6), 145) },
+    { jobId: riverBendWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(6, 6), endAt: addMinutes(daysAgo(6, 6), 150), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 400.0, estimatedMinutes: 150, startedAt: daysAgo(6, 6), completedAt: addMinutes(daysAgo(6, 6), 145) },
     [{ userId: ADMIN_WORKER_ID, role: "primary" }, { userId: CONTRACTOR_ID, role: "helper" }],
   );
   const cChurch7 = await occ(
-    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(7, 14), endAt: addMinutes(daysAgo(7, 14), 90), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(7, 14), completedAt: addMinutes(daysAgo(7, 14), 85) },
+    { jobId: churchWeekly.id, kind: "ENTIRE_SITE", startAt: daysAgo(5, 14), endAt: addMinutes(daysAgo(5, 14), 90), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW","TRIM","BLOW"]', price: 200.0, estimatedMinutes: 90, startedAt: daysAgo(5, 14), completedAt: addMinutes(daysAgo(5, 14), 85) },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
   const cKim14 = await occ(
@@ -1099,6 +1144,17 @@ async function seedDatabase() {
   const PLATFORM_FEE_PCT = 10;
   const BUSINESS_MARGIN_PCT = 20;
 
+  // Processor-fee config per method — mirrors the seeded PAYMENT_METHODS
+  // taxonomy defaults (§5/§6 of docs/FINANCIAL_SYSTEM.md). Only Venmo charges
+  // a fee; Cash/Check/Zelle are zero-fee. Kept in sync manually here so the
+  // seed produces realistic processor-fee data for tax-export testing.
+  const METHOD_FEES: Record<string, { feePercent: number; feeFixed: number }> = {
+    CASH: { feePercent: 0, feeFixed: 0 },
+    CHECK: { feePercent: 0, feeFixed: 0 },
+    ZELLE: { feePercent: 0, feeFixed: 0 },
+    VENMO: { feePercent: 1.9, feeFixed: 0.10 },
+  };
+
   // Random-hours date helper for payment.createdAt only — gives payments realistic
   // collection times scattered through the day. Renamed to avoid shadowing the
   // module-level `daysAgo()` (which would silently break all the occurrence creations
@@ -1110,7 +1166,11 @@ async function seedDatabase() {
     return d;
   }
 
-  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE" | "APPLE_PAY"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date }[] = [
+  // Only the four methods the business actually accepts (Cash, Check, Venmo,
+  // Zelle) — the PAYMENT_METHODS taxonomy. Venmo entries carry a processor
+  // fee; the loop below computes and stores it so tax-export testing has
+  // realistic fee data. Mix: 4 Cash, 5 Check, 4 Venmo, 3 Zelle.
+  const paymentData: { occId: string; amount: number; method: "CASH" | "CHECK" | "VENMO" | "ZELLE"; collector: string; splits: { userId: string; amount: number }[]; createdAt: Date }[] = [
     { occId: cHarrington21.id, amount: 85, method: "CASH", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(20) },
     { occId: cHarrington14.id, amount: 85, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(13) },
     { occId: cHarrington7.id, amount: 85, method: "VENMO", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 50 }, { userId: EMPLOYEE_ID, amount: 35 }], createdAt: daysAgoRandom(6) },
@@ -1118,8 +1178,8 @@ async function seedDatabase() {
     { occId: cLake7.id, amount: 65, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 65 }], createdAt: daysAgoRandom(6) },
     { occId: cMartinez14.id, amount: 55, method: "ZELLE", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 55 }], createdAt: daysAgoRandom(12) },
     { occId: cWillowbrook14.id, amount: 250, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(13) },
-    { occId: cWillowbrook7.id, amount: 250, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(5) },
-    { occId: cThompson14.id, amount: 125, method: "APPLE_PAY", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: daysAgoRandom(11) },
+    { occId: cWillowbrook7.id, amount: 250, method: "ZELLE", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(5) },
+    { occId: cThompson14.id, amount: 125, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: daysAgoRandom(11) },
     { occId: cThompson7.id, amount: 125, method: "VENMO", collector: CONTRACTOR_ID, splits: [{ userId: CONTRACTOR_ID, amount: 85 }, { userId: TRAINEE_ID, amount: 40 }], createdAt: daysAgoRandom(5) },
     { occId: cObrien7.id, amount: 60, method: "CASH", collector: EMPLOYEE_ID, splits: [{ userId: EMPLOYEE_ID, amount: 60 }], createdAt: daysAgoRandom(4) },
     { occId: cSunrise7.id, amount: 350, method: "CHECK", collector: ADMIN_WORKER_ID, splits: [{ userId: ADMIN_WORKER_ID, amount: 150 }, { userId: EMPLOYEE_ID, amount: 100 }, { userId: CONTRACTOR_ID, amount: 100 }], createdAt: daysAgoRandom(6) },
@@ -1136,6 +1196,12 @@ async function seedDatabase() {
     const platformFeeAmount = contractorSplitTotal > 0 ? Math.round(contractorSplitTotal * PLATFORM_FEE_PCT) / 100 : null;
     const businessMarginAmount = employeeSplitTotal > 0 ? Math.round(employeeSplitTotal * BUSINESS_MARGIN_PCT) / 100 : null;
 
+    // Processor fee: snapshot from METHOD_FEES (mirrors the taxonomy). Stored
+    // on every payment — zero for Cash/Check/Zelle, ~1.9%+$0.10 for Venmo.
+    const feeCfg = METHOD_FEES[p.method] ?? { feePercent: 0, feeFixed: 0 };
+    const processorFeeAmount = Math.round((p.amount * feeCfg.feePercent / 100 + feeCfg.feeFixed) * 100) / 100;
+    const netReceived = Math.round((p.amount - processorFeeAmount) * 100) / 100;
+
     await prisma.payment.create({
       data: {
         occurrenceId: p.occId,
@@ -1147,6 +1213,19 @@ async function seedDatabase() {
         platformFeeAmount,
         businessMarginPercent: businessMarginAmount != null ? BUSINESS_MARGIN_PCT : null,
         businessMarginAmount,
+        // Processor-fee fields — what tax exports read for the "Payment
+        // Processing Fees" line and the netReceived column.
+        processorFeePercent: feeCfg.feePercent,
+        processorFeeFixed: feeCfg.feeFixed,
+        processorFeeAmount,
+        grossCharged: p.amount,
+        netReceived,
+        // These are CLOSED occurrences — historical, fully-settled payments.
+        // Confirmed so they appear in the cash-basis tax exports (which
+        // filter on confirmed=true + confirmedAt).
+        confirmed: true,
+        confirmedAt: p.createdAt,
+        confirmedById: MICHAEL_ID,
         splits: { create: p.splits },
       },
     });
@@ -1570,6 +1649,57 @@ async function seedDatabase() {
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
+    {
+      key: "PAYMENT_METHODS",
+      value: JSON.stringify([
+        {
+          key: "VENMO",
+          label: "Venmo",
+          feePercent: 1.9,
+          feeFixed: 0.10,
+          supportsClientRequest: true,
+          supportsOnSite: true,
+          deepLinkTemplate: "venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}",
+          instructions: "Send {{amount}} to @{VENMO_BUSINESS_HANDLE} on Venmo",
+          active: true,
+        },
+        {
+          key: "ZELLE",
+          label: "Zelle",
+          feePercent: 0,
+          feeFixed: 0,
+          supportsClientRequest: true,
+          supportsOnSite: true,
+          deepLinkTemplate: null,
+          instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app",
+          active: true,
+        },
+        {
+          key: "CASH",
+          label: "Cash",
+          feePercent: 0,
+          feeFixed: 0,
+          supportsClientRequest: false,
+          supportsOnSite: true,
+          deepLinkTemplate: null,
+          instructions: null,
+          active: true,
+        },
+        {
+          key: "CHECK",
+          label: "Check",
+          feePercent: 0,
+          feeFixed: 0,
+          supportsClientRequest: true,
+          supportsOnSite: true,
+          deepLinkTemplate: null,
+          instructions: "Make check payable to Seedlings Lawn Care LLC",
+          active: true,
+        },
+      ]),
+      description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.",
+    },
+    { key: "PROCESSOR_FEE_ABSORPTION", value: "BUSINESS", description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost)." },
   ];
   for (const s of feeSettings) {
     await prisma.setting.upsert({
@@ -2332,6 +2462,8 @@ async function seedDatabase() {
   });
   await prisma.jobOccurrenceAssignee.create({ data: { occurrenceId: ann8.id, userId: MICHAEL_ID, assignedById: MICHAEL_ID } });
 
+  await applySettingSections();
+
   console.log("  Seed complete!");
 }
 
@@ -2408,6 +2540,22 @@ async function seedPaymentsBase() {
     where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
     create: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting.", updatedById: MICHAEL_ID },
     update: { description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
+  });
+  const paymentMethodsDefault = JSON.stringify([
+    { key: "VENMO", label: "Venmo", feePercent: 1.9, feeFixed: 0.10, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: "venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}", instructions: "Send {{amount}} to @{VENMO_BUSINESS_HANDLE} on Venmo", active: true },
+    { key: "ZELLE", label: "Zelle", feePercent: 0, feeFixed: 0, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: null, instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app", active: true },
+    { key: "CASH", label: "Cash", feePercent: 0, feeFixed: 0, supportsClientRequest: false, supportsOnSite: true, deepLinkTemplate: null, instructions: null, active: true },
+    { key: "CHECK", label: "Check", feePercent: 0, feeFixed: 0, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: null, instructions: "Make check payable to Seedlings Lawn Care LLC", active: true },
+  ]);
+  await prisma.setting.upsert({
+    where: { key: "PAYMENT_METHODS" },
+    create: { key: "PAYMENT_METHODS", value: paymentMethodsDefault, description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.", updatedById: MICHAEL_ID },
+    update: { description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes." },
+  });
+  await prisma.setting.upsert({
+    where: { key: "PROCESSOR_FEE_ABSORPTION" },
+    create: { key: "PROCESSOR_FEE_ABSORPTION", value: "BUSINESS", description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost).", updatedById: MICHAEL_ID },
+    update: { description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost)." },
   });
   console.log("    Clients + contacts...");
   const adams = await prisma.client.create({ data: { type: "PERSON", displayName: "Adams (normal)" } });
@@ -2641,6 +2789,8 @@ async function seedPaymentsBase() {
       data: { onHand: { increment: s.quantity } },
     });
   }
+
+  await applySettingSections();
 
   return { adamsJob, banksJob, cohenJob, davisJob, evansJob };
 }
