@@ -210,7 +210,7 @@ export default function ServicesTab({
 
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
-  const [guidanceOcc, setGuidanceOcc] = useState<{ occId: string; propertyId: string; count: number; jobId: string } | null>(null);
+  const [guidanceOcc, setGuidanceOcc] = useState<{ occId: string; propertyId: string; count: number; jobId: string; guidanceNote: string | null } | null>(null);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
   const [instructionsOcc, setInstructionsOcc] = useState<any>(null);
   const [instructionsJobId, setInstructionsJobId] = useState<string>("");
@@ -1947,11 +1947,12 @@ export default function ServicesTab({
                               );
                             })()}
                             {/* Guidance (read-only on card) */}
-                            {((occ as any).propertyPhotos ?? []).length > 0 && (
+                            {(((occ as any).propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
                               <Box mt={1}>
                                 <OccurrenceInstructions
                                   occurrenceId={occ.id}
                                   count={((occ as any).propertyPhotos ?? []).length}
+                                  guidanceNote={(occ as any).guidanceNote ?? null}
                                   defaultExpanded={false}
                                 />
                               </Box>
@@ -2271,7 +2272,7 @@ export default function ServicesTab({
                                   id="occ-manage-guidance"
                                   itemId={occ.id}
                                   label="Manage Guidance"
-                                  onClick={async () => setGuidanceOcc({ occId: occ.id, propertyId: job.propertyId, count: ((occ as any).propertyPhotos ?? []).length, jobId: job.id })}
+                                  onClick={async () => setGuidanceOcc({ occId: occ.id, propertyId: job.propertyId, count: ((occ as any).propertyPhotos ?? []).length, jobId: job.id, guidanceNote: (occ as any).guidanceNote ?? null })}
                                   variant="outline"
                                   busyId={statusButtonBusyId}
                                   setBusyId={setStatusButtonBusyId}
@@ -2862,6 +2863,7 @@ export default function ServicesTab({
                     occurrenceId={guidanceOcc.occId}
                     count={guidanceOcc.count}
                     propertyId={guidanceOcc.propertyId}
+                    guidanceNote={guidanceOcc.guidanceNote}
                     canEdit
                     defaultExpanded
                     startInEditMode

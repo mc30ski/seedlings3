@@ -705,6 +705,11 @@ model JobOccurrence {
   pinnedNote        String?
   pinnedNoteRepeats Boolean @default(true)
 
+  // Optional free-text description for the occurrence's guidance, shown
+  // alongside the guidance photos. Carried forward to the next occurrence
+  // on close, same as the photos (see payments.ts close→next block).
+  guidanceNote String?
+
   // Payment-request flow (set when occurrence transitions to PENDING_PAYMENT).
   // The token is the URL slug for the public /pay/[token] page; createdAt
   // anchors the expiry (controlled by PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS).
