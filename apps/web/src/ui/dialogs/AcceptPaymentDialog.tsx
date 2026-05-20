@@ -82,6 +82,12 @@ type Props = {
   /** Whether the viewer has SUPER role. Lets super admins use Request Payment
    *  even when the org-wide setting is off (controlled rollout). */
   isSuper?: boolean;
+  /** True only when opened from the Admin Jobs tab. Adds a "Client paid
+   *  another way?" link that expands the method picker from on-site methods
+   *  to ALL active methods — for recording a payment a client made remotely
+   *  (e.g. an unprompted Venmo) on their behalf. Off on the Worker Jobs tab,
+   *  so a field worker's on-site flow stays uncluttered. */
+  allowAllMethods?: boolean;
   onAccepted: (result?: any) => void;
 };
 
@@ -108,6 +114,7 @@ export default function AcceptPaymentDialog({
   occurrenceId,
   requestPaymentEnabled = false,
   isSuper = false,
+  allowAllMethods = false,
   onAccepted,
 }: Props) {
   const requestPaymentAllowed = requestPaymentEnabled || isSuper;
@@ -119,6 +126,10 @@ export default function AcceptPaymentDialog({
   // supportsOnSite for the on-site collection surface. Method dropdown +
   // live fee preview both derive from this.
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
+  // When true, the method picker shows ALL active methods, not just on-site
+  // ones. Only togglable when `allowAllMethods` is set (Admin Jobs tab) —
+  // used to record a payment the client made through a remote channel.
+  const [showAllMethods, setShowAllMethods] = useState(false);
 
   // Amount Paid is intentionally locked to the invoice total inside the
   // main view. The override path lives in the "confirm" step (same dialog,
@@ -177,6 +188,7 @@ export default function AcceptPaymentDialog({
       // Intentionally unset — forces the worker to pick CASH/CHECK/etc.
       // explicitly so they don't auto-record the wrong method.
       setMethod([]);
+      setShowAllMethods(false);
       setNote("");
       setView("form");
       setConfirmAmount(amt);
@@ -228,27 +240,31 @@ export default function AcceptPaymentDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Derive dropdown items from the loaded taxonomy. Only active + supportsOnSite
-  // methods appear in the worker on-site dialog. Falls back to an empty list
-  // (with a visible "no methods configured" message) if the taxonomy hasn't
-  // loaded — better than silently using stale hardcoded values.
-  const onSiteMethods = useMemo(
-    () => paymentMethods.filter((m) => m.active && m.supportsOnSite),
-    [paymentMethods],
-  );
+  // Derive dropdown items from the loaded taxonomy. Default: active +
+  // supportsOnSite (the field-collection set). When the Admin Jobs tab opened
+  // the dialog AND the operator tapped "Client paid another way?", widen to
+  // ALL active methods so a remotely-made payment can be recorded.
+  const availableMethods = useMemo(() => {
+    const active = paymentMethods.filter((m) => m.active);
+    return allowAllMethods && showAllMethods
+      ? active
+      : active.filter((m) => m.supportsOnSite);
+  }, [paymentMethods, allowAllMethods, showAllMethods]);
   const methodItems = useMemo(
-    () => onSiteMethods.map((m) => ({ label: m.label, value: m.key })),
-    [onSiteMethods],
+    () => availableMethods.map((m) => ({ label: m.label, value: m.key })),
+    [availableMethods],
   );
   const methodCollection = useMemo(
     () => createListCollection({ items: methodItems }),
     [methodItems],
   );
   // Look up the currently-selected method's fee config so we can render a
-  // live "Venmo fee: $3.90" line in the confirm view.
+  // live "Venmo fee: $3.90" line in the confirm view. Resolve against ALL
+  // active methods (not just the visible subset) so the fee still renders if
+  // the list was just narrowed back down.
   const selectedMethodConfig = useMemo(
-    () => onSiteMethods.find((m) => m.key === method[0]) ?? null,
-    [onSiteMethods, method],
+    () => paymentMethods.find((m) => m.active && m.key === method[0]) ?? null,
+    [paymentMethods, method],
   );
   const liveFee = useMemo(() => {
     const amt = parseFloat(confirmAmount || amountPaid);
@@ -506,6 +522,41 @@ export default function AcceptPaymentDialog({
                           </Select.Content>
                         </Select.Positioner>
                       </Select.Root>
+                      {/* Admin Jobs tab only: widen the picker to every active
+                          method so a payment the client made remotely (e.g. an
+                          unprompted Venmo) can be recorded on their behalf. */}
+                      {allowAllMethods && !showAllMethods && (
+                        <Text
+                          mt={1}
+                          fontSize="xs"
+                          color="blue.600"
+                          cursor="pointer"
+                          textDecoration="underline"
+                          textDecorationStyle="dotted"
+                          onClick={() => setShowAllMethods(true)}
+                        >
+                          Client paid another way? Show all payment methods
+                        </Text>
+                      )}
+                      {allowAllMethods && showAllMethods && (
+                        <Text
+                          mt={1}
+                          fontSize="xs"
+                          color="fg.muted"
+                          cursor="pointer"
+                          textDecoration="underline"
+                          textDecorationStyle="dotted"
+                          onClick={() => {
+                            setShowAllMethods(false);
+                            // Drop a selection that's no longer in the narrowed list.
+                            if (method[0] && !paymentMethods.some((m) => m.active && m.supportsOnSite && m.key === method[0])) {
+                              setMethod([]);
+                            }
+                          }}
+                        >
+                          Showing all methods — back to on-site only
+                        </Text>
+                      )}
                     </div>
                     {/* Live processor-fee preview. Hidden entirely for zero-
                         fee methods (Cash, Check, Zelle as configured). For
