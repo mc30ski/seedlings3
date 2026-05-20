@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Box, Button, Checkbox, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Checkbox, HStack, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Camera, ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { apiGet, apiPut } from "@/src/lib/api";
 import { type PropertyPhotoItem } from "@/src/lib/types";
@@ -19,13 +19,15 @@ type Props = {
   defaultExpanded?: boolean;
   /** Start in edit mode immediately */
   startInEditMode?: boolean;
+  /** Current overall guidance description (separate from per-photo captions) */
+  guidanceNote?: string | null;
   /** Called after edit saves, so parent can update count */
   onUpdated?: (newCount: number) => void;
 };
 
 type AllPhoto = PropertyPhotoItem & { selected: boolean };
 
-export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, startInEditMode, onUpdated }: Props) {
+export default function OccurrenceInstructions({ occurrenceId, count, propertyId, canEdit, defaultExpanded = true, startInEditMode, guidanceNote, onUpdated }: Props) {
   const [photos, setPhotos] = useState<PropertyPhotoItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -36,8 +38,10 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
   const [editLoading, setEditLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [displayCount, setDisplayCount] = useState(count);
+  const [noteText, setNoteText] = useState(guidanceNote ?? "");
 
   useEffect(() => { setDisplayCount(count); }, [count]);
+  useEffect(() => { setNoteText(guidanceNote ?? ""); }, [guidanceNote]);
 
   // Load occurrence's current instructions
   useEffect(() => {
@@ -71,7 +75,10 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
     setSaving(true);
     try {
       const ids = allPhotos.filter((p) => p.selected).map((p) => p.id);
-      await apiPut(`/api/admin/occurrences/${occurrenceId}/property-photos`, { propertyPhotoIds: ids });
+      await apiPut(`/api/admin/occurrences/${occurrenceId}/property-photos`, {
+        propertyPhotoIds: ids,
+        guidanceNote: noteText.trim() || null,
+      });
       // Refresh display
       setPhotos(allPhotos.filter((p) => p.selected));
       setDisplayCount(ids.length);
@@ -85,7 +92,7 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
     setSaving(false);
   }
 
-  if (displayCount === 0 && !editing) {
+  if (displayCount === 0 && !noteText && !editing) {
     if (!canEdit || !propertyId) return null;
     return (
       <Button
@@ -126,6 +133,11 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 
       {expanded && !editing && (
         <VStack align="stretch" gap={0} px={3} pb={3}>
+          {noteText && (
+            <Text fontSize="sm" color="fg.default" pb={2} whiteSpace="pre-wrap">
+              {noteText}
+            </Text>
+          )}
           {loading && <Text fontSize="xs" color="fg.muted">Loading...</Text>}
           {photos.map((photo, idx) => (
             <HStack key={photo.id} gap={3} py={2} borderTopWidth="1px" borderColor="blue.100" align="start" onClick={(e) => e.stopPropagation()}>
@@ -154,7 +166,24 @@ export default function OccurrenceInstructions({ occurrenceId, count, propertyId
 
       {expanded && editing && (
         <VStack align="stretch" gap={1} px={3} pb={3}>
+          <Box>
+            <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>Overall description</Text>
+            <Textarea
+              size="sm"
+              bg="white"
+              rows={3}
+              placeholder="Optional — describe the work overall (separate from the photos)."
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+            />
+          </Box>
+          <Text fontSize="xs" fontWeight="semibold" color="blue.700" mt={1}>Photos</Text>
           {editLoading && <HStack gap={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading...</Text></HStack>}
+          {!editLoading && allPhotos.length === 0 && (
+            <Text fontSize="xs" color="fg.muted" fontStyle="italic">
+              There are no photos to share. Add photos to the property first.
+            </Text>
+          )}
           {allPhotos.map((photo) => (
             <HStack
               key={photo.id}

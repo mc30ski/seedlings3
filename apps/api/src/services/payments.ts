@@ -1478,6 +1478,8 @@ export const payments: ServicesPayments = {
               price: fullOcc.price ?? fullOcc.job.defaultPrice ?? null,
               estimatedMinutes: fullOcc.estimatedMinutes ?? fullOcc.job.estimatedMinutes ?? null,
               frequencyDays: fullOcc.frequencyDays ?? null,
+              // Guidance description carries forward with the guidance photos.
+              guidanceNote: (fullOcc as any).guidanceNote ?? null,
             } as any,
           });
 

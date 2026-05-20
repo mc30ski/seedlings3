@@ -4267,11 +4267,12 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                 </Card.Header>
 
                 {/* Property photo guidance — read-only on Jobs tab */}
-                {!isCardCompact && (occ.propertyPhotos ?? []).length > 0 && (
+                {!isCardCompact && ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
                   <Box mx="4" mt="2" mb="0">
                     <OccurrenceInstructions
                       occurrenceId={occ.id}
                       count={(occ.propertyPhotos ?? []).length}
+                      guidanceNote={(occ as any).guidanceNote ?? null}
                     />
                   </Box>
                 )}

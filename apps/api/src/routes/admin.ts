@@ -629,13 +629,24 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.put("/admin/occurrences/:id/property-photos", adminGuard, async (req: any) => {
     const occurrenceId = String(req.params.id);
-    const { propertyPhotoIds } = (req.body || {}) as { propertyPhotoIds: string[] };
+    const { propertyPhotoIds, guidanceNote } = (req.body || {}) as {
+      propertyPhotoIds: string[];
+      guidanceNote?: string | null;
+    };
     if (!Array.isArray(propertyPhotoIds)) throw app.httpErrors.badRequest("propertyPhotoIds must be an array");
     await prisma.occurrencePropertyPhoto.deleteMany({ where: { occurrenceId } });
     if (propertyPhotoIds.length > 0) {
       await prisma.occurrencePropertyPhoto.createMany({
         data: propertyPhotoIds.map((propertyPhotoId) => ({ occurrenceId, propertyPhotoId })),
         skipDuplicates: true,
+      });
+    }
+    // Optional overall guidance description — only touched when the caller
+    // sends the field, so a photos-only save leaves it untouched.
+    if (guidanceNote !== undefined) {
+      await prisma.jobOccurrence.update({
+        where: { id: occurrenceId },
+        data: { guidanceNote: guidanceNote ? String(guidanceNote).trim() || null : null },
       });
     }
     return { ok: true, count: propertyPhotoIds.length };
