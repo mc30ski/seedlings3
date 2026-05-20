@@ -12,7 +12,12 @@ type Preview = {
   gustoW2: { workers: number; hours: number; gross: number };
   gustoContractors: { workers: number; gross: number };
   qbIncome: { rows: number; total: number };
-  qbExpenses: { rows: number; total: number };
+  qbExpenses: {
+    rows: number;
+    total: number;
+    businessExpenseTotal: number;
+    processorFeeTotal: number;
+  };
 };
 
 function pad(n: number): string {
@@ -158,6 +163,28 @@ export default function ExportsTab() {
 
   return (
     <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
+      {/* TEMPORARY — remove once the CPA has confirmed the export design.
+          The W-2 export is work-anchored (completion date + promised net),
+          which is a deliberate departure from cash-basis. See
+          docs/FINANCIAL_SYSTEM.md §12. */}
+      <Box
+        bg="red.50"
+        borderWidth="2px"
+        borderColor="red.400"
+        borderRadius="md"
+        p={3}
+      >
+        <Text fontSize="sm" fontWeight="bold" color="red.700">
+          ⚠ NOT YET CPA-VERIFIED — confirm before using for real payroll/tax filing
+        </Text>
+        <Text fontSize="xs" color="red.700" mt={1}>
+          The W-2 export is anchored on job-completion date with each worker's
+          promised net (work-anchored), not on payment confirmation. The 1099
+          and QuickBooks exports stay on payment date. Have your CPA confirm
+          this matches how payroll and taxes should be filed, then remove this
+          banner. Details: docs/FINANCIAL_SYSTEM.md §12.
+        </Text>
+      </Box>
       <Box>
         <Heading size="md" mb={1}>
           Exports
@@ -261,12 +288,20 @@ export default function ExportsTab() {
                 </Text>
               </HStack>
               <HStack justify="space-between">
-                <Text color="fg.muted">QB Expenses (BusinessExpense):</Text>
+                <Text color="fg.muted">QB Expenses (BusinessExpense + fees):</Text>
                 <Text>
                   {preview.qbExpenses.rows} row{preview.qbExpenses.rows === 1 ? "" : "s"}{" · "}
                   <b>${preview.qbExpenses.total.toFixed(2)}</b>
                 </Text>
               </HStack>
+              {preview.qbExpenses.processorFeeTotal > 0 && (
+                <HStack justify="space-between" pl={4} fontSize="xs">
+                  <Text color="fg.muted">↳ Payment Processing Fees:</Text>
+                  <Text color="fg.muted">
+                    <b>${preview.qbExpenses.processorFeeTotal.toFixed(2)}</b>
+                  </Text>
+                </HStack>
+              )}
             </VStack>
           ) : (
             <Text fontSize="sm" color="fg.muted">

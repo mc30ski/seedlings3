@@ -1,12 +1,25 @@
 import { prisma } from "../db/prisma";
-import { JobOccurrenceStatus, PaymentMethod, type WorkerType } from "@prisma/client";
+import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import type { ServicesPayments } from "../types/services";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
+import {
+  loadPaymentMethods,
+  getProcessorFee,
+  computeProcessorFee,
+  type PaymentContext,
+} from "./paymentMethods";
 
-const VALID_METHODS = Object.values(PaymentMethod);
+// Valid payment-method keys are the keys of the active PAYMENT_METHODS
+// taxonomy — not a DB enum. A typo in the Settings JSON, or a method that
+// isn't configured, is rejected at every write site. `client` may be a
+// transaction handle or the base prisma client.
+async function loadPaymentMethodKeys(client: typeof prisma | any): Promise<Set<string>> {
+  const methods = await loadPaymentMethods(client);
+  return new Set(methods.map((m) => m.key));
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Payment breakdown math (see memory/project_payment_math.md)
@@ -208,6 +221,14 @@ async function loadRates(client: typeof prisma | any): Promise<Rates> {
   };
 }
 
+// Read the PROCESSOR_FEE_ABSORPTION setting. BUSINESS (default) = the
+// business eats the processor fee; worker payouts calculated on full gross.
+// SPLIT = fee comes off the gross before payouts so workers share it.
+async function loadFeeAbsorption(client: typeof prisma | any): Promise<"BUSINESS" | "SPLIT"> {
+  const row = await client.setting.findUnique({ where: { key: "PROCESSOR_FEE_ABSORPTION" } });
+  return row?.value === "SPLIT" ? "SPLIT" : "BUSINESS";
+}
+
 // Resolve which of the given user IDs is flagged as the LLC owner. Returns a
 // Set so split-write loops can do a single O(1) lookup per row. The schema
 // enforces at most one owner via a partial unique index, but the Set works
@@ -366,8 +387,12 @@ export async function persistCompletionSplits(
 export const payments: ServicesPayments = {
   async createPayment(currentUserId, input) {
     const { occurrenceId, amountPaid, method, note, completionSplits } = input;
+    // Context controls audit metadata only — fee logic is uniform. Default
+    // ON_SITE preserves behavior for callers that don't pass context.
+    const context: PaymentContext = (input as any).context ?? "ON_SITE";
 
-    if (!VALID_METHODS.includes(method as PaymentMethod)) {
+    const validMethods = await loadPaymentMethodKeys(prisma);
+    if (!validMethods.has(method)) {
       throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${method}`, 400);
     }
     if (amountPaid < 0) {
@@ -447,7 +472,20 @@ export const payments: ServicesPayments = {
         splitPercent: s.percent,
         workerType: (typeById.get(s.userId) ?? null) as WorkerType | null,
       }));
-      const recon = reconcileApproval(amountPaid, totalExpenses, workersList, promised, rates);
+
+      // Processor fee: snapshot the rate from the PAYMENT_METHODS taxonomy at
+      // record time so historical math doesn't shift if the rate changes later.
+      // `amountPaid` IS what the client paid (gross). Absorption model decides
+      // whether worker payouts are calculated on gross or net.
+      const methodsList = await loadPaymentMethods(tx);
+      const feeCfg = getProcessorFee(method, methodsList);
+      const { processorFeeAmount, netReceived } = computeProcessorFee(amountPaid, feeCfg);
+      const absorption = await loadFeeAbsorption(tx);
+      // SPLIT: workers see the net-of-fee amount as the base. BUSINESS: workers
+      // see gross (the business eats the fee).
+      const baseForPayout = absorption === "SPLIT" ? netReceived : amountPaid;
+
+      const recon = reconcileApproval(baseForPayout, totalExpenses, workersList, promised, rates);
       const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
       const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
       const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
@@ -466,7 +504,7 @@ export const payments: ServicesPayments = {
         data: {
           occurrenceId,
           amountPaid,
-          method: method as PaymentMethod,
+          method,
           note: note || null,
           collectedById: currentUserId,
           platformFeePercent: hasContractors ? rates.contractorFeePercent : null,
@@ -475,10 +513,17 @@ export const payments: ServicesPayments = {
           businessMarginAmount: hasEmployees ? recon.businessMarginAmount : null,
           shortfallAmount: recon.shortfallAmount,
           overageAmount: recon.overageAmount,
+          // Processor-fee snapshot. Null fields = legacy/zero-fee. Stored on
+          // every Payment for reporting + tax export integrity.
+          processorFeePercent: feeCfg.feePercent,
+          processorFeeFixed: feeCfg.feeFixed,
+          processorFeeAmount: processorFeeAmount,
+          grossCharged: amountPaid,
+          netReceived: netReceived,
           confirmed: false,
           confirmedAt: null,
           confirmedById: null,
-          selfReported: false,
+          selfReported: context === "CLIENT_REQUEST",
           splits: {
             create: recon.splits.map((s) => ({
               userId: s.userId,
@@ -508,6 +553,22 @@ export const payments: ServicesPayments = {
           totalOwnerAmount: round2(
             recon.splits.filter((s) => ownerSet.has(s.userId)).reduce((sum, s) => sum + s.amount, 0),
           ),
+        });
+      }
+      // Audit: flag when a non-zero processor fee was applied. Used by the
+      // audit log + QB Expenses CSV ("Payment Processing Fees" line).
+      if (processorFeeAmount > 0) {
+        await writeAudit(tx, AUDIT.PAYMENT.FEE_APPLIED, currentUserId, {
+          paymentId: payment.id,
+          occurrenceId,
+          methodKey: method,
+          feePercent: feeCfg.feePercent,
+          feeFixed: feeCfg.feeFixed,
+          feeAmount: processorFeeAmount,
+          grossCharged: amountPaid,
+          netReceived,
+          absorption,
+          context,
         });
       }
 
@@ -614,15 +675,22 @@ export const payments: ServicesPayments = {
 
   async listMyPayments(userId, params) {
     const where: any = { userId };
+    // Anchor the date window on Payment.createdAt — the stable "when the
+    // payment was recorded" date. PaymentSplit rows are delete+recreated at
+    // approval, so PaymentSplit.createdAt jumps to the approval date; the
+    // Payment row is created once and only updated, so its createdAt never
+    // moves. Filtering/ordering on the parent keeps a payment in its
+    // record-week regardless of when admin approves it.
     if (params?.from || params?.to) {
-      where.createdAt = {};
-      if (params.from) where.createdAt.gte = etMidnight(params.from);
-      if (params.to) where.createdAt.lte = etEndOfDay(params.to);
+      const range: any = {};
+      if (params.from) range.gte = etMidnight(params.from);
+      if (params.to) range.lte = etEndOfDay(params.to);
+      where.payment = { createdAt: range };
     }
 
     const splits = await prisma.paymentSplit.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: { payment: { createdAt: "desc" } },
       include: {
         payment: {
           include: {
@@ -859,10 +927,11 @@ export const payments: ServicesPayments = {
         data.amountPaid = input.amountPaid;
       }
       if (input.method !== undefined) {
-        if (!VALID_METHODS.includes(input.method as PaymentMethod)) {
+        const validMethods = await loadPaymentMethodKeys(tx);
+        if (!validMethods.has(input.method)) {
           throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${input.method}`, 400);
         }
-        data.method = input.method as PaymentMethod;
+        data.method = input.method;
       }
       if ("note" in input) data.note = input.note || null;
 
@@ -1003,7 +1072,8 @@ export const payments: ServicesPayments = {
 
   async selfReportPayment(actorUserId, input) {
     const { occurrenceId, method, amountPaid, note } = input;
-    if (!VALID_METHODS.includes(method as PaymentMethod)) {
+    const validMethods = await loadPaymentMethodKeys(prisma);
+    if (!validMethods.has(method)) {
       throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${method}`, 400);
     }
     if (amountPaid <= 0) {
@@ -1037,17 +1107,58 @@ export const payments: ServicesPayments = {
           409,
         );
       }
+      // Processor-fee snapshot at self-report time. Same logic as
+      // createPayment — keeps the Payment row complete from the moment it
+      // lands so the admin queue + admin Money tab show the fee correctly
+      // even before approval.
+      const methodsList = await loadPaymentMethods(tx);
+      const feeCfg = getProcessorFee(method, methodsList);
+      const { processorFeeAmount, netReceived } = computeProcessorFee(amountPaid, feeCfg);
+
       const payment = await tx.payment.create({
         data: {
           occurrenceId,
           amountPaid,
-          method: method as PaymentMethod,
+          method,
           note: note ?? null,
           collectedById: actorUserId,
           selfReported: true,
           confirmed: false,
+          processorFeePercent: feeCfg.feePercent,
+          processorFeeFixed: feeCfg.feeFixed,
+          processorFeeAmount: processorFeeAmount,
+          grossCharged: amountPaid,
+          netReceived: netReceived,
         },
       });
+      // Audit fee when non-zero. Both authenticated and anonymous paths
+      // emit it (the latter via direct auditEvent insert below).
+      if (processorFeeAmount > 0) {
+        const feeMeta: any = {
+          paymentId: payment.id,
+          occurrenceId,
+          methodKey: method,
+          feePercent: feeCfg.feePercent,
+          feeFixed: feeCfg.feeFixed,
+          feeAmount: processorFeeAmount,
+          grossCharged: amountPaid,
+          netReceived,
+          context: "CLIENT_REQUEST",
+        };
+        if (actorUserId) {
+          await writeAudit(tx, AUDIT.PAYMENT.FEE_APPLIED, actorUserId, feeMeta);
+        } else {
+          await tx.auditEvent.create({
+            data: {
+              scope: AUDIT.PAYMENT.FEE_APPLIED[0],
+              verb: AUDIT.PAYMENT.FEE_APPLIED[1],
+              action: `${AUDIT.PAYMENT.FEE_APPLIED[0]}_${AUDIT.PAYMENT.FEE_APPLIED[1]}`,
+              actorUserId: null,
+              metadata: feeMeta,
+            },
+          });
+        }
+      }
       // Audit write is best-effort — if actor is null (truly anonymous
       // client tap on /pay/[token]) the FK will reject, so we fall back
       // to a direct insert with null actor.
@@ -1085,11 +1196,17 @@ export const payments: ServicesPayments = {
     }
 
     const finalAmount = overrides?.amountPaid ?? existing.amountPaid;
-    const finalMethod = (overrides?.method ?? existing.method) as PaymentMethod;
+    const finalMethod = overrides?.method ?? existing.method;
     const finalNote = overrides?.note !== undefined ? overrides.note : existing.note;
     const wasAdjusted = overrides?.amountPaid !== undefined && overrides.amountPaid !== existing.amountPaid;
-    if (!VALID_METHODS.includes(finalMethod)) {
-      throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${finalMethod}`, 400);
+    // Only validate the method when the admin is *changing* it. An unchanged
+    // method was already validated at record time — re-validating would block
+    // approval if that method had since been removed from the taxonomy.
+    if (overrides?.method !== undefined) {
+      const validMethods = await loadPaymentMethodKeys(prisma);
+      if (!validMethods.has(finalMethod)) {
+        throw new ServiceError("INVALID_METHOD", `Invalid payment method: ${finalMethod}`, 400);
+      }
     }
     if (finalAmount < 0) {
       throw new ServiceError("INVALID_AMOUNT", "Amount cannot be negative.", 400);
@@ -1111,12 +1228,22 @@ export const payments: ServicesPayments = {
       throw new ServiceError("NO_ASSIGNEES", "Cannot approve — no active assignees on the occurrence.", 400);
     }
 
+    // Recompute the processor-fee snapshot at approval time so an admin
+    // amount adjustment (or method change) recalculates the fee against the
+    // final values. If the method/amount didn't change, the result matches
+    // what's already on the row.
+    const methodsList = await loadPaymentMethods(prisma);
+    const feeCfg = getProcessorFee(finalMethod, methodsList);
+    const { processorFeeAmount, netReceived } = computeProcessorFee(finalAmount, feeCfg);
+    const absorption = await loadFeeAbsorption(prisma);
+    const baseForPayout = absorption === "SPLIT" ? netReceived : finalAmount;
+
     const promised = (existing.occurrence as any).promisedPayouts as PromisedRow[] | null;
     const recon = Array.isArray(promised) && promised.length > 0
-      ? reconcileApproval(finalAmount, totalExpenses, workersList, promised, rates)
+      ? reconcileApproval(baseForPayout, totalExpenses, workersList, promised, rates)
       : (() => {
           // Legacy path: compute against final amount only; no top-ups.
-          const rows = computeBreakdown(finalAmount, totalExpenses, workersList, rates);
+          const rows = computeBreakdown(baseForPayout, totalExpenses, workersList, rates);
           const splits: FinalSplitRow[] = rows.map((r) => ({
             userId: r.userId,
             workerType: r.workerType,
@@ -1176,6 +1303,11 @@ export const payments: ServicesPayments = {
           businessMarginAmount: hasEmployees ? recon.businessMarginAmount : null,
           shortfallAmount: recon.shortfallAmount,
           overageAmount: recon.overageAmount,
+          processorFeePercent: feeCfg.feePercent,
+          processorFeeFixed: feeCfg.feeFixed,
+          processorFeeAmount: processorFeeAmount,
+          grossCharged: finalAmount,
+          netReceived: netReceived,
           ...(wasAdjusted
             ? {
                 adjustedAt: new Date(),
@@ -1236,6 +1368,27 @@ export const payments: ServicesPayments = {
           totalOwnerAmount: round2(
             recon.splits.filter((s) => ownerSet.has(s.userId)).reduce((sum, s) => sum + s.amount, 0),
           ),
+        });
+      }
+      // Re-log FEE_APPLIED at approval time if the fee recomputed (e.g. admin
+      // adjusted the amount → fee changed) or if the original record was
+      // pre-fee-tracking and this is the first time we're stamping fee fields.
+      const feeChangedAtApproval =
+        processorFeeAmount > 0 &&
+        (existing.processorFeeAmount == null || Math.abs((existing.processorFeeAmount ?? 0) - processorFeeAmount) >= 0.01);
+      if (feeChangedAtApproval) {
+        await writeAudit(tx, AUDIT.PAYMENT.FEE_APPLIED, currentUserId, {
+          paymentId,
+          occurrenceId: existing.occurrence.id,
+          methodKey: finalMethod,
+          feePercent: feeCfg.feePercent,
+          feeFixed: feeCfg.feeFixed,
+          feeAmount: processorFeeAmount,
+          grossCharged: finalAmount,
+          netReceived,
+          absorption,
+          context: "ADMIN",
+          source: wasAdjusted ? "adjusted-at-approval" : "approval-recompute",
         });
       }
 

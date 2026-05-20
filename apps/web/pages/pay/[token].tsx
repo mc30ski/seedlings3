@@ -24,9 +24,20 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Check, CheckCircle, Copy, ExternalLink, Loader } from "lucide-react";
+import { Check, CheckCircle, ExternalLink, Loader } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+
+// A resolved payment method from the server — instructions + deep link
+// already have all {SETTING_KEY} and {{runtimeValue}} placeholders filled in.
+type ResolvedPaymentMethod = {
+  key: string;
+  label: string;
+  feePercent: number;
+  feeFixed: number;
+  instructions: string | null;
+  deepLink: string | null;
+};
 
 type ResolveResponse = {
   occurrenceId: string;
@@ -46,21 +57,13 @@ type ResolveResponse = {
   } | null;
   preferredMethod: string | null;
   paymentOptions: { venmoHandle: string | null; zelleAddress: string | null };
+  paymentMethods?: ResolvedPaymentMethod[];
   expiresAt: string | null;
 };
 
-// Display order on the public invoice page. The preferred method (if the
-// client has used one before) still floats to the top via prior logic;
-// otherwise this baseline order applies.
-const METHOD_ORDER = ["CASH", "CHECK", "ZELLE", "VENMO"] as const;
-type MethodKey = (typeof METHOD_ORDER)[number];
-
-const METHOD_LABELS: Record<MethodKey, string> = {
-  ZELLE: "Zelle",
-  CASH: "Cash",
-  CHECK: "Check",
-  VENMO: "Venmo",
-};
+// MethodKey is now any string — the taxonomy decides the universe. We keep
+// the type for clarity but no longer constrain it to a fixed set.
+type MethodKey = string;
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
@@ -117,25 +120,33 @@ export default function PaymentPage() {
     };
   }, [token]);
 
-  // Highlight the client's preferred method first if known; otherwise keep
-  // the business priority order. Returns ordered methods.
-  const orderedMethods: MethodKey[] = useMemo(() => {
-    const preferred = data?.preferredMethod as MethodKey | null;
-    if (preferred && METHOD_ORDER.includes(preferred as MethodKey)) {
-      return [preferred as MethodKey, ...METHOD_ORDER.filter((m) => m !== preferred)];
-    }
-    return [...METHOD_ORDER];
-  }, [data?.preferredMethod]);
+  // Order the taxonomy-driven methods: preferred first, then the order the
+  // server returned them in. The taxonomy is the single source of truth —
+  // adding/removing methods is a Settings edit, no code change here.
+  const orderedMethods: ResolvedPaymentMethod[] = useMemo(() => {
+    const list = data?.paymentMethods ?? [];
+    if (list.length === 0) return [];
+    const preferred = data?.preferredMethod;
+    if (!preferred) return list;
+    const found = list.find((m) => m.key === preferred);
+    if (!found) return list;
+    return [found, ...list.filter((m) => m.key !== preferred)];
+  }, [data?.paymentMethods, data?.preferredMethod]);
 
   // Seed the selection with the client's preferred method once data loads,
   // so they don't have to re-pick if they're a returning customer.
   useEffect(() => {
     if (selectedMethod) return;
-    const preferred = data?.preferredMethod as MethodKey | null;
-    if (preferred && METHOD_ORDER.includes(preferred)) {
+    const preferred = data?.preferredMethod;
+    if (preferred && (data?.paymentMethods ?? []).some((m) => m.key === preferred)) {
       setSelectedMethod(preferred);
     }
-  }, [data?.preferredMethod, selectedMethod]);
+  }, [data?.preferredMethod, data?.paymentMethods, selectedMethod]);
+
+  const selectedLabel = useMemo(
+    () => orderedMethods.find((m) => m.key === selectedMethod)?.label ?? null,
+    [orderedMethods, selectedMethod],
+  );
 
   async function selfReport(method: MethodKey) {
     if (!token || submitting) return;
@@ -202,9 +213,12 @@ export default function PaymentPage() {
   // Just-self-reported in this session — show the confirmation screen with
   // signup nudge. (Server returns payment.confirmed=false but selfReported.)
   if (reportedJustNow || (data.payment?.selfReported && !data.payment?.confirmed)) {
+    const reportedKey = (selectedMethod ?? data.payment?.method) as MethodKey | null;
+    const reportedLabel =
+      (data.paymentMethods ?? []).find((m) => m.key === reportedKey)?.label ?? reportedKey ?? null;
     return (
       <PageShell>
-        <SelfReportedView data={data} method={(selectedMethod ?? data.payment?.method) as MethodKey | null} />
+        <SelfReportedView data={data} method={reportedKey} methodLabel={reportedLabel} />
       </PageShell>
     );
   }
@@ -260,19 +274,21 @@ export default function PaymentPage() {
             Pick a method, send your payment, then tap the button below to let us know. We&apos;ll confirm and email a receipt.
           </Text>
           <VStack gap={2} align="stretch">
-            {orderedMethods.map((m) => (
-              <PaymentMethodCard
-                key={m}
-                method={m}
-                amount={data.amountDue}
-                propertyLabel={data.propertyLabel}
-                serviceDate={data.serviceDate}
-                preferred={data.preferredMethod === m}
-                selected={selectedMethod === m}
-                paymentOptions={data.paymentOptions}
-                onSelect={() => setSelectedMethod(m)}
-              />
-            ))}
+            {orderedMethods.length === 0 ? (
+              <Text fontSize="xs" color="fg.muted">
+                No payment methods are configured. Please call or text us.
+              </Text>
+            ) : (
+              orderedMethods.map((m) => (
+                <PaymentMethodCard
+                  key={m.key}
+                  config={m}
+                  preferred={data.preferredMethod === m.key}
+                  selected={selectedMethod === m.key}
+                  onSelect={() => setSelectedMethod(m.key)}
+                />
+              ))
+            )}
           </VStack>
           <Button
             mt={3}
@@ -283,8 +299,8 @@ export default function PaymentPage() {
             onClick={() => selectedMethod && selfReport(selectedMethod)}
           >
             <Check size={14} />
-            {selectedMethod
-              ? `I've sent the ${METHOD_LABELS[selectedMethod].toLowerCase()} payment`
+            {selectedLabel
+              ? `I've sent the ${selectedLabel.toLowerCase()} payment`
               : "Pick a method above first"}
           </Button>
         </Box>
@@ -317,48 +333,27 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Generic, taxonomy-driven card. Reads pre-resolved `instructions` and
+// `deepLink` from the server (placeholders already filled in). Adding a new
+// payment method = adding a JSON entry in PAYMENT_METHODS, no card edits.
 function PaymentMethodCard({
-  method,
-  amount,
-  propertyLabel,
-  serviceDate,
+  config,
   preferred,
   selected,
-  paymentOptions,
   onSelect,
 }: {
-  method: MethodKey;
-  amount: number;
-  propertyLabel: string;
-  serviceDate: string | null;
+  config: ResolvedPaymentMethod;
   preferred: boolean;
   selected: boolean;
-  paymentOptions: { venmoHandle: string | null; zelleAddress: string | null };
   onSelect: () => void;
 }) {
-  // Memo used in deep-link / suggested-memo for each method.
-  const memo = `${propertyLabel}${serviceDate ? " " + fmtDate(serviceDate) : ""}`;
-  // `venmo://` is a mobile-only URL scheme — opening it on desktop does
-  // nothing. Detect once on mount so we can show the deep-link button only
-  // on phones / tablets and fall back to plain instructions on desktop.
+  // Deep-link buttons typically use mobile-only schemes (e.g. venmo://). On
+  // desktop those open nothing, so we fall back to a hint to use the phone.
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     setIsMobile(/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
   }, []);
-  // Tracks which value (if any) was just copied so we can flash a "Copied"
-  // indicator next to it. Keyed by an arbitrary string per copy target.
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  async function copyValue(key: string, value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey((cur) => (cur === key ? null : cur)), 1500);
-    } catch {
-      // Clipboard API can fail in non-secure contexts or older browsers —
-      // fall back silently. The value is still visible to copy manually.
-    }
-  }
 
   return (
     <Card.Root
@@ -374,7 +369,6 @@ function PaymentMethodCard({
         <VStack align="stretch" gap={1.5}>
           <HStack justify="space-between" align="center">
             <HStack gap={2}>
-              {/* Radio-style selection dot */}
               <Box
                 w="14px"
                 h="14px"
@@ -384,7 +378,7 @@ function PaymentMethodCard({
                 bg={selected ? "teal.500" : "transparent"}
                 flexShrink={0}
               />
-              <Text fontSize="sm" fontWeight="semibold">{METHOD_LABELS[method]}</Text>
+              <Text fontSize="sm" fontWeight="semibold">{config.label}</Text>
             </HStack>
             {preferred && (
               <Badge size="xs" colorPalette="teal" variant="subtle" px="2" borderRadius="full">
@@ -393,69 +387,27 @@ function PaymentMethodCard({
             )}
           </HStack>
 
-          {method === "ZELLE" && (
-            paymentOptions.zelleAddress ? (
-              <CopyRow
-                label="Send to"
-                value={paymentOptions.zelleAddress}
-                copied={copiedKey === "zelle-addr"}
-                onCopy={(e) => {
+          {config.instructions && (
+            <Text fontSize="xs" color="fg.muted">{config.instructions}</Text>
+          )}
+
+          {config.deepLink && (
+            isMobile ? (
+              <Button
+                size="xs"
+                variant="outline"
+                colorPalette="teal"
+                onClick={(e) => {
                   e.stopPropagation();
-                  void copyValue("zelle-addr", paymentOptions.zelleAddress!);
+                  window.location.href = config.deepLink!;
                 }}
-              />
+              >
+                <ExternalLink size={12} /> Open {config.label}
+              </Button>
             ) : (
-              <Text fontSize="xs" color="fg.muted">Zelle isn&apos;t configured yet — call or text us.</Text>
-            )
-          )}
-
-          {method === "CASH" && (
-            <Text fontSize="xs" color="fg.muted">
-              Pay your worker next visit, or leave a sealed envelope at the property.
-            </Text>
-          )}
-
-          {method === "CHECK" && (
-            <Text fontSize="xs" color="fg.muted">
-              Payable to <strong>Seedlings Lawn Care LLC</strong>. Leave at the property or mail.
-            </Text>
-          )}
-
-          {method === "VENMO" && (
-            paymentOptions.venmoHandle ? (
-              <>
-                <CopyRow
-                  label="Send to"
-                  value={`@${paymentOptions.venmoHandle}`}
-                  copied={copiedKey === "venmo-addr"}
-                  onCopy={(e) => {
-                    e.stopPropagation();
-                    void copyValue("venmo-addr", `@${paymentOptions.venmoHandle}`);
-                  }}
-                />
-                {isMobile ? (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    colorPalette="teal"
-                    onClick={(e) => {
-                      // Don't toggle the card's selection when launching the
-                      // deep link — Venmo opens but selection state stays.
-                      e.stopPropagation();
-                      const url = `venmo://paycharge?txn=pay&recipients=${encodeURIComponent(paymentOptions.venmoHandle!)}&amount=${amount.toFixed(2)}&note=${encodeURIComponent(memo)}`;
-                      window.location.href = url;
-                    }}
-                  >
-                    <ExternalLink size={12} /> Open Venmo
-                  </Button>
-                ) : (
-                  <Text fontSize="2xs" color="fg.muted">
-                    Open Venmo on your phone and send to the handle above.
-                  </Text>
-                )}
-              </>
-            ) : (
-              <Text fontSize="xs" color="fg.muted">Venmo isn&apos;t configured yet — call or text us.</Text>
+              <Text fontSize="2xs" color="fg.muted">
+                Open {config.label} on your phone to send.
+              </Text>
             )
           )}
         </VStack>
@@ -464,48 +416,8 @@ function PaymentMethodCard({
   );
 }
 
-// Compact label + copyable value row used inside Zelle / Venmo cards.
-// Renders the value in mono and a copy button that flips to a green check
-// for 1.5s after a successful clipboard write.
-function CopyRow({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string;
-  value: string;
-  copied: boolean;
-  onCopy: (e: React.MouseEvent) => void;
-}) {
-  return (
-    <Box
-      px={2}
-      py={1.5}
-      borderRadius="md"
-      bg="gray.100"
-      fontSize="xs"
-    >
-      <HStack justify="space-between" align="center" gap={2}>
-        <Box minW={0} flex="1">
-          <Text fontFamily="body" fontSize="2xs" color="fg.muted">{label}</Text>
-          <Text fontFamily="mono" fontSize="xs" wordBreak="break-all">{value}</Text>
-        </Box>
-        <Button
-          size="xs"
-          variant={copied ? "solid" : "outline"}
-          colorPalette={copied ? "green" : "gray"}
-          onClick={onCopy}
-          flexShrink={0}
-        >
-          {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
-        </Button>
-      </HStack>
-    </Box>
-  );
-}
 
-function SelfReportedView({ data, method }: { data: ResolveResponse; method: MethodKey | null }) {
+function SelfReportedView({ data, method, methodLabel }: { data: ResolveResponse; method: MethodKey | null; methodLabel: string | null }) {
   return (
     <Card.Root variant="outline">
       <Card.Body p={4}>
@@ -515,7 +427,9 @@ function SelfReportedView({ data, method }: { data: ResolveResponse; method: Met
             <Text fontSize="md" fontWeight="semibold">Thanks — we got it.</Text>
           </HStack>
           <Text fontSize="xs" color="fg.muted">
-            Your{method ? ` ${METHOD_LABELS[method].toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed. We&apos;ll email a receipt once it lands.
+            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed. We&apos;ll email a receipt once it lands.
+            {/* method key reserved for future per-method receipt copy */}
+            {method ? "" : ""}
           </Text>
           {data.photos.length > 0 && (
             <HStack gap={1.5} overflowX="auto" pb={1}>

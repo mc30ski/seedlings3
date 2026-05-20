@@ -22,6 +22,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
+import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -194,6 +195,9 @@ type JobsTabProps = TabPropsType & {
 export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsWorkerType, headerSlot, headerBelowSlot, onClearAll }: JobsTabProps) {
   const { isAvail, forAdmin, isAdmin, isSuper } = determineRoles(me, purpose);
   const { isOffline } = useOffline();
+  // Method labels resolved from PAYMENT_METHODS taxonomy (single source of
+  // truth — edit in Super → Settings, no code change here).
+  const { labelFor: methodLabel } = usePaymentMethodLabels();
 
   function shareOccurrenceLink(occId: string, startAt?: string | null) {
     // Embed the occurrence's startAt so the recipient's JobsTab can anchor its
@@ -4886,7 +4890,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       return (
                         <Box mt={1} p={2} bg="green.50" rounded="sm">
                           <Text fontSize="xs" fontWeight="medium" color="green.700">
-                            Paid: ${pay.amountPaid.toFixed(2)} via {prettyStatus(pay.method)}
+                            Paid: ${pay.amountPaid.toFixed(2)} via {methodLabel(pay.method)}
                           </Text>
                           {pay.note && (
                             <Text fontSize="xs" color="green.600">{pay.note}</Text>

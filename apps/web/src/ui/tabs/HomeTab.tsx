@@ -61,6 +61,11 @@ type Summary = {
   minutesThisWeek: number;
   actualWeekEarnings: number;
   weekJobCount: number;
+  // ET date strings (YYYY-MM-DD) for the earnings window — the 7 days before
+  // today, excluding today. Used so the tile's drill-down filters to exactly
+  // the range the number was computed from.
+  weekEarningsFrom?: string;
+  weekEarningsTo?: string;
   weeklyCompleted: { weekStart: string; count: number; earnings: number }[];
   // Aggregate-only: per-row breakdown of currently active work for the
   // Team Overview banner. Empty/undefined in per-worker mode.
@@ -243,6 +248,7 @@ function Tile({
   disabled = false,
   badge,
   onClick,
+  hintOnClick,
 }: {
   icon: any;
   label: string;
@@ -254,6 +260,9 @@ function Tile({
   disabled?: boolean;
   badge?: React.ReactNode;
   onClick: () => void;
+  /** When set, the hint text becomes its own click target (separate from the
+   *  tile body) — e.g. "Earned for X jobs" linking somewhere distinct. */
+  hintOnClick?: () => void;
 }) {
   return (
     <Card.Root
@@ -275,9 +284,24 @@ function Tile({
               {label}
             </Text>
             {hint && (
-              <Text fontSize="xs" color="fg.muted" truncate w="full">
-                {hint}
-              </Text>
+              hintOnClick ? (
+                <Text
+                  fontSize="xs"
+                  color={color}
+                  truncate
+                  w="full"
+                  textDecoration="underline"
+                  textDecorationStyle="dotted"
+                  cursor="pointer"
+                  onClick={(e) => { e.stopPropagation(); hintOnClick(); }}
+                >
+                  {hint}
+                </Text>
+              ) : (
+                <Text fontSize="xs" color="fg.muted" truncate w="full">
+                  {hint}
+                </Text>
+              )
             )}
             {badge && <Box mt={1}>{badge}</Box>}
           </VStack>
@@ -1061,18 +1085,35 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
             onClick={() => navTo("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
           />
 
-          {/* Earnings for the last 7 days — payout share for jobs completed in the
-              last 7 days. Same set as the Hours tile so the two pair naturally. */}
-          <Tile
-            icon={TfiMoney}
-            label="Earnings (last 7 days)"
-            value={fmtMoney(s.actualWeekEarnings ?? 0)}
-            hint={`Earned for ${s.weekJobCount ?? 0} job${(s.weekJobCount ?? 0) === 1 ? "" : "s"}`}
-            color="green.700"
-            bg="green.50"
-            dimmed={(s.actualWeekEarnings ?? 0) === 0}
-            onClick={() => navTo("jobs", { status: "FINISHED", dateFrom: sevenDaysAgoKey(), dateTo: bizDateKey(new Date()) })}
-          />
+          {/* Earnings for the last 7 days (EXCLUDING today). Worker-type-split:
+              - Employee/trainee: work-anchored (promised net for jobs completed
+                in the window). Whole tile drills into the Jobs tab.
+              - Contractor: payment-anchored (actual payout from payments
+                recorded in the window). Tile body drills into the Payments
+                tab; the "X jobs" hint drills into the Jobs tab.
+              Window dates come from the API so the number and the drill-down
+              always cover the same range. */}
+          {(() => {
+            const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
+            const from = s.weekEarningsFrom || sevenDaysAgoKey();
+            const to = s.weekEarningsTo || bizDateKey(new Date());
+            const jobCount = s.weekJobCount ?? 0;
+            const goJobs = () => navTo("jobs", { status: "FINISHED", dateFrom: from, dateTo: to });
+            const goPayments = () => navTo("payments", { dateFrom: from, dateTo: to });
+            return (
+              <Tile
+                icon={TfiMoney}
+                label="Earnings (last 7 days)"
+                value={fmtMoney(s.actualWeekEarnings ?? 0)}
+                hint={`Earned for ${jobCount} job${jobCount === 1 ? "" : "s"}`}
+                color="green.700"
+                bg="green.50"
+                dimmed={(s.actualWeekEarnings ?? 0) === 0}
+                onClick={isEmp ? goJobs : goPayments}
+                hintOnClick={isEmp ? undefined : goJobs}
+              />
+            );
+          })()}
         </SimpleGrid>
 
         {/* Manual reload */}

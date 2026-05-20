@@ -79,6 +79,7 @@ export const AUDIT = {
   },
   SETTING: {
     UPDATED: [AuditScope.SETTING, AuditVerb.SETTING_UPDATED] as const,
+    PAYMENT_METHOD_UPDATED: [AuditScope.SETTING, AuditVerb.PAYMENT_METHOD_UPDATED] as const,
   },
   NOTIFICATION: {
     SENT: [AuditScope.NOTIFICATION, AuditVerb.SENT] as const,
@@ -123,6 +124,7 @@ export const AUDIT = {
     WRITTEN_OFF: [AuditScope.PAYMENT, AuditVerb.WRITTEN_OFF] as const,
     ADJUSTED: [AuditScope.PAYMENT, AuditVerb.ADJUSTED] as const,
     OWNER_EARNINGS_RECORDED: [AuditScope.PAYMENT, AuditVerb.OWNER_EARNINGS_RECORDED] as const,
+    FEE_APPLIED: [AuditScope.PAYMENT, AuditVerb.FEE_APPLIED] as const,
   },
 } as const;
 

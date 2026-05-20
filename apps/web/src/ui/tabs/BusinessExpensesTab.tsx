@@ -116,7 +116,7 @@ type Summary = {
   count: number;
 };
 
-type CompareBucket = { platformFees: number; businessMargin: number; equipmentRentals: number; earnings: number; expenses: number; net: number };
+type CompareBucket = { platformFees: number; businessMargin: number; equipmentRentals: number; earnings: number; expenses: number; processingFees: number; net: number };
 type Comparison = {
   today: CompareBucket;
   thisWeek: CompareBucket;
@@ -737,6 +737,17 @@ export default function BusinessExpensesTab() {
                         <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="orange.700">−{fmtUSD(comparison[p.key].expenses)}</Box>
                       ))}
                     </Box>
+                    {/* Processing fees: hide row entirely when every period is
+                        zero (zero-fee org). Otherwise render alongside business
+                        expenses with the same negative styling. */}
+                    {periods.some((p) => (comparison[p.key].processingFees ?? 0) > 0) && (
+                      <Box as="tr">
+                        <Box as="td" p={2} fontWeight="semibold" color="orange.700">Processing fees</Box>
+                        {periods.map((p) => (
+                          <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="orange.700">−{fmtUSD(comparison[p.key].processingFees ?? 0)}</Box>
+                        ))}
+                      </Box>
+                    )}
                     <Box as="tr" borderTopWidth="2px" borderColor="gray.300">
                       <Box as="td" p={2} fontWeight="bold">Net</Box>
                       {periods.map((p) => {
@@ -750,6 +761,9 @@ export default function BusinessExpensesTab() {
                     </Box>
                   </Box>
                 </Box>
+                <Text fontSize="xs" color="fg.muted" mt={2}>
+                  Management view only. For tax reporting use QuickBooks exports + Gusto.
+                </Text>
               </Box>
             </Card.Body>
           </Card.Root>

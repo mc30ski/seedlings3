@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Box,
@@ -14,10 +14,17 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
 import { type TabPropsType } from "@/src/lib/types";
 import { determineRoles, fmtDateTime } from "@/src/lib/lib";
+import { usePersistedState } from "@/src/lib/usePersistedState";
+import {
+  SETTING_SECTIONS,
+  OTHER_SECTION,
+  SETTING_SECTION_ORDER,
+  resolveSettingSection,
+} from "@/src/lib/settingSections";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -31,6 +38,8 @@ type Setting = {
   key: string;
   value: string;
   description?: string | null;
+  /** Presentational grouping key — resolved to a section via settingSections. */
+  section?: string | null;
   updatedAt: string;
   updatedBy?: { id: string; displayName?: string | null } | null;
 };
@@ -167,6 +176,191 @@ function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValu
           <Plus size={12} />
         </Button>
       </HStack>
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
+/** Dedicated editor for the PAYMENT_METHODS taxonomy. Surfaces every field
+ *  the spec calls out (key, label, fees, context flags, active) as direct
+ *  inputs and tucks the long-string fields (deepLinkTemplate, instructions)
+ *  into a per-row expanded panel. The generic JsonArrayEditor below is too
+ *  narrow for this shape — it only knows about {key, label}. */
+type PaymentMethodRow = {
+  key: string;
+  label: string;
+  feePercent: number;
+  feeFixed: number;
+  supportsClientRequest: boolean;
+  supportsOnSite: boolean;
+  deepLinkTemplate: string | null;
+  instructions: string | null;
+  active: boolean;
+};
+
+function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let items: PaymentMethodRow[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((r: any) => ({
+      key: String(r.key ?? ""),
+      label: String(r.label ?? ""),
+      feePercent: Number(r.feePercent ?? 0) || 0,
+      feeFixed: Number(r.feeFixed ?? 0) || 0,
+      supportsClientRequest: !!r.supportsClientRequest,
+      supportsOnSite: !!r.supportsOnSite,
+      deepLinkTemplate: r.deepLinkTemplate == null ? null : String(r.deepLinkTemplate),
+      instructions: r.instructions == null ? null : String(r.instructions),
+      active: r.active !== false,
+    }));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  function update(idx: number, patch: Partial<PaymentMethodRow>) {
+    const updated = items.map((row, i) => (i === idx ? { ...row, ...patch } : row));
+    onChange(JSON.stringify(updated));
+  }
+  function remove(idx: number) {
+    onChange(JSON.stringify(items.filter((_, i) => i !== idx)));
+    if (expandedIdx === idx) setExpandedIdx(null);
+  }
+  function add() {
+    const next: PaymentMethodRow = {
+      key: "",
+      label: "",
+      feePercent: 0,
+      feeFixed: 0,
+      supportsClientRequest: false,
+      supportsOnSite: true,
+      deepLinkTemplate: null,
+      instructions: null,
+      active: true,
+    };
+    onChange(JSON.stringify([...items, next]));
+    setExpandedIdx(items.length);
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">PAYMENT_METHODS JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Placeholders: <Text as="span" fontFamily="mono">{"{SETTING_KEY}"}</Text> looks up a Setting value (must match an existing key — e.g. VENMO_BUSINESS_HANDLE).{" "}
+        <Text as="span" fontFamily="mono">{"{{amount}}"}</Text> and{" "}
+        <Text as="span" fontFamily="mono">{"{{note}}"}</Text> are filled in at payment time.
+      </Text>
+      {/* Compact column headers. The expanded panel below each row reveals
+          the long-string fields (deepLinkTemplate, instructions). */}
+      <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium" px={1}>
+        <Text w="80px">Key</Text>
+        <Text w="120px">Label</Text>
+        <Text w="70px" textAlign="right">Fee %</Text>
+        <Text w="70px" textAlign="right">Fee $</Text>
+        <Text w="60px" textAlign="center">Client</Text>
+        <Text w="60px" textAlign="center">On-site</Text>
+        <Text w="50px" textAlign="center">Active</Text>
+        <Box flex="1" />
+        <Box w="60px" />
+      </HStack>
+      {items.map((row, idx) => (
+        <Box key={idx} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={2}>
+          <HStack gap={2}>
+            <Input size="sm" w="80px" value={row.key} onChange={(e) => update(idx, { key: e.target.value.toUpperCase() })} placeholder="VENMO" />
+            <Input size="sm" w="120px" value={row.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Venmo" />
+            <Input
+              size="sm"
+              w="70px"
+              type="number"
+              step="0.01"
+              min={0}
+              max={100}
+              value={String(row.feePercent)}
+              onChange={(e) => update(idx, { feePercent: Number(e.target.value) || 0 })}
+              textAlign="right"
+            />
+            <Input
+              size="sm"
+              w="70px"
+              type="number"
+              step="0.01"
+              min={0}
+              value={String(row.feeFixed)}
+              onChange={(e) => update(idx, { feeFixed: Number(e.target.value) || 0 })}
+              textAlign="right"
+            />
+            <Box w="60px" textAlign="center">
+              <input type="checkbox" checked={row.supportsClientRequest} onChange={(e) => update(idx, { supportsClientRequest: e.target.checked })} />
+            </Box>
+            <Box w="60px" textAlign="center">
+              <input type="checkbox" checked={row.supportsOnSite} onChange={(e) => update(idx, { supportsOnSite: e.target.checked })} />
+            </Box>
+            <Box w="50px" textAlign="center">
+              <input type="checkbox" checked={row.active} onChange={(e) => update(idx, { active: e.target.checked })} />
+            </Box>
+            <Box flex="1" />
+            <Button size="xs" variant="outline" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>
+              {expandedIdx === idx ? "Hide" : "Edit text"}
+            </Button>
+            <Button size="xs" variant="ghost" colorPalette="red" onClick={() => remove(idx)}>
+              <Trash2 size={12} />
+            </Button>
+          </HStack>
+          {expandedIdx === idx && (
+            <VStack align="stretch" gap={2} mt={2} pl={1}>
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  Instructions — shown to the client on the payment page. Supports{" "}
+                  <Text as="span" fontFamily="mono">{"{SETTING_KEY}"}</Text> and{" "}
+                  <Text as="span" fontFamily="mono">{"{{amount}}"}</Text>/<Text as="span" fontFamily="mono">{"{{note}}"}</Text>.
+                </Text>
+                <Input
+                  size="sm"
+                  value={row.instructions ?? ""}
+                  onChange={(e) => update(idx, { instructions: e.target.value || null })}
+                  placeholder="Send {{amount}} to @{VENMO_BUSINESS_HANDLE} on Venmo"
+                />
+              </Box>
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  Deep-link template — mobile URL scheme, opens the payment app. Leave blank for none.
+                </Text>
+                <Input
+                  size="sm"
+                  value={row.deepLinkTemplate ?? ""}
+                  onChange={(e) => update(idx, { deepLinkTemplate: e.target.value || null })}
+                  placeholder="venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}"
+                  fontFamily="mono"
+                />
+              </Box>
+            </VStack>
+          )}
+        </Box>
+      ))}
+      <Button size="sm" variant="outline" onClick={add}>
+        <Plus size={12} /> Add payment method
+      </Button>
       <HStack gap={2}>
         <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
@@ -314,6 +508,37 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  // Collapsed Settings-tab sections, persisted per admin. Stores section keys
+  // that are collapsed; the first-visit default is all sections collapsed so
+  // the tab opens as a compact overview. (Key is v2 — bumped when the default
+  // flipped from expanded to collapsed, so the new default actually applies.)
+  const [collapsedSections, setCollapsedSections] = usePersistedState<string[]>(
+    "settings_collapsed_sections_v2",
+    SETTING_SECTION_ORDER,
+  );
+  function toggleSection(key: string) {
+    setCollapsedSections((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  }
+  // Group the loaded settings into ordered sections. `settings` is already
+  // sorted by SETTINGS_ORDER, so each section preserves that intra-order.
+  // Only sections with at least one setting are rendered.
+  const groupedSections = useMemo(() => {
+    const orderedKeys = [...SETTING_SECTIONS.map((s) => s.key), OTHER_SECTION.key];
+    const byKey = new Map<string, Setting[]>();
+    for (const s of settings) {
+      const sectionKey = resolveSettingSection(s.section).key;
+      if (!byKey.has(sectionKey)) byKey.set(sectionKey, []);
+      byKey.get(sectionKey)!.push(s);
+    }
+    return orderedKeys
+      .map((k) => ({
+        section: k === OTHER_SECTION.key ? OTHER_SECTION : SETTING_SECTIONS.find((s) => s.key === k)!,
+        items: byKey.get(k) ?? [],
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [settings]);
 
   // Pricing
   const [pricingEntries, setPricingEntries] = useState<PricingEntry[]>([]);
@@ -335,6 +560,8 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       const SETTINGS_ORDER = [
         "CONTRACTOR_PLATFORM_FEE_PERCENT",
         "EMPLOYEE_BUSINESS_MARGIN_PERCENT",
+        "PROCESSOR_FEE_ABSORPTION",
+        "PAYMENT_METHODS",
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",
         "SERVICE_TYPES",
@@ -381,6 +608,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     try {
       await apiPatch(`/api/admin/settings/${key}`, { value: editValue });
       publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
+      // Invalidate the in-memory PAYMENT_METHODS label cache so subsequent
+      // page navigations pick up the new labels without a hard refresh.
+      if (key === "PAYMENT_METHODS") {
+        const { invalidatePaymentMethodLabels } = await import("@/src/lib/usePaymentMethodLabels");
+        invalidatePaymentMethodLabels();
+      }
       setEditingKey(null);
       void load();
     } catch (err) {
@@ -396,6 +629,10 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
     try {
       await apiPatch(`/api/admin/settings/${key}`, { value });
       publishInlineMessage({ type: "SUCCESS", text: `${prettySettingName(key)} updated.` });
+      if (key === "PAYMENT_METHODS") {
+        const { invalidatePaymentMethodLabels } = await import("@/src/lib/usePaymentMethodLabels");
+        invalidatePaymentMethodLabels();
+      }
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Update failed.", err) });
@@ -471,12 +708,41 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       {/* Pricing Guide moved to its own tab under Directory. Settings now
           only carries the general key/value settings rows. */}
 
-      {/* ── General Settings Section ── */}
-      {settings.length > 0 && (
+      {/* ── General Settings Sections ── */}
+      {groupedSections.length > 0 && (
         <Box>
           <Text fontSize="md" fontWeight="semibold" mb={2} px={1}>General Settings</Text>
-          <VStack align="stretch" gap={3}>
-            {settings.map((s) => (
+          <VStack align="stretch" gap={4}>
+            {groupedSections.map(({ section, items }) => {
+              const collapsed = collapsedSections.includes(section.key);
+              return (
+                <Box key={section.key}>
+                  {/* Collapsible section header */}
+                  <HStack
+                    gap={2}
+                    px={1}
+                    py={1.5}
+                    cursor="pointer"
+                    onClick={() => toggleSection(section.key)}
+                    _hover={{ bg: "gray.50" }}
+                    borderRadius="md"
+                  >
+                    <Box color="fg.muted" flexShrink={0}>
+                      {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </Box>
+                    <VStack align="start" gap={0} flex="1" minW={0}>
+                      <HStack gap={2}>
+                        <Text fontSize="sm" fontWeight="semibold">{section.title}</Text>
+                        <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full">
+                          {items.length}
+                        </Badge>
+                      </HStack>
+                      <Text fontSize="xs" color="fg.muted">{section.description}</Text>
+                    </VStack>
+                  </HStack>
+                  {!collapsed && (
+                    <VStack align="stretch" gap={3} mt={2}>
+                      {items.map((s) => (
               <Card.Root key={s.id} variant="outline">
                 <Card.Body py="2" px="3">
                   <VStack align="start" gap={1}>
@@ -489,7 +755,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           <Text fontSize="xs" color="fg.muted">{s.description}</Text>
                         )}
                       </VStack>
-                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && (
+                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && s.key !== "PROCESSOR_FEE_ABSORPTION" && !BOOLEAN_SETTINGS.has(s.key) && (
                         <Button size="xs" variant="outline" onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
@@ -512,6 +778,26 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                             onClick={() => void saveSettingValue(s.key, v)}
                           >
                             {v.charAt(0) + v.slice(1).toLowerCase()}
+                          </Button>
+                        ))}
+                      </HStack>
+                    ) : s.key === "PROCESSOR_FEE_ABSORPTION" ? (
+                      // Two-state selector: BUSINESS (default — biz eats the
+                      // processor fee, worker paid on full gross) or SPLIT
+                      // (fee deducted before payouts, worker shares the cost).
+                      // Free text would break the createPayment fee math.
+                      <HStack gap={2}>
+                        {(["BUSINESS", "SPLIT"] as const).map((v) => (
+                          <Button
+                            key={v}
+                            size="xs"
+                            variant={s.value === v ? "solid" : "outline"}
+                            colorPalette={v === "BUSINESS" ? "blue" : "purple"}
+                            loading={saving && s.value !== v}
+                            disabled={!isSuper || s.value === v}
+                            onClick={() => void saveSettingValue(s.key, v)}
+                          >
+                            {v === "BUSINESS" ? "Business absorbs" : "Split with worker"}
                           </Button>
                         ))}
                       </HStack>
@@ -598,6 +884,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                               <Button size="sm" variant="ghost" onClick={() => setEditingKey(null)} disabled={saving}>Cancel</Button>
                             </HStack>
                           );
+                        }
+                        // Dedicated editor for PAYMENT_METHODS — exposes every
+                        // field the taxonomy needs (fees, contexts, deep link,
+                        // instructions) instead of the generic key/label form.
+                        if (s.key === "PAYMENT_METHODS") {
+                          return <PaymentMethodsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
                         }
                         // Detect JSON format and use appropriate editor
                         try {
@@ -692,7 +984,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                   </VStack>
                 </Card.Body>
               </Card.Root>
-            ))}
+                      ))}
+                    </VStack>
+                  )}
+                </Box>
+              );
+            })}
           </VStack>
         </Box>
       )}
