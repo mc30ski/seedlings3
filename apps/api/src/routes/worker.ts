@@ -5,6 +5,7 @@ import { getUploadUrl, getDownloadUrl, deleteObject } from "../lib/r2";
 import { etMidnight, etEndOfDay, etToday, etTomorrow } from "../lib/dates";
 import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
+import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
 
 async function currentUserId(req: any) {
@@ -2950,7 +2951,15 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
-    if (body.phone !== undefined) data.phone = body.phone ? String(body.phone).trim() : null;
+    if (body.phone !== undefined) {
+      if (!body.phone || !String(body.phone).trim()) {
+        data.phone = null;
+      } else {
+        const normalized = normalizePhone(String(body.phone));
+        if (!normalized) throw app.httpErrors.badRequest("Enter a valid 10-digit US phone number.");
+        data.phone = normalized;
+      }
+    }
     if (body.firstName !== undefined) data.firstName = body.firstName ? String(body.firstName).trim() : null;
     if (body.lastName !== undefined) data.lastName = body.lastName ? String(body.lastName).trim() : null;
     if (body.displayName !== undefined) data.displayName = body.displayName ? String(body.displayName).trim() : null;

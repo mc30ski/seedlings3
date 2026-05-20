@@ -12,6 +12,7 @@ import {
   Cadence,
   JobOccurrenceStatus,
 } from "@prisma/client";
+import { normalizePhone } from "../lib/phone";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -1802,7 +1803,15 @@ Respond ONLY with valid JSON in this exact format:
     if (body.homeBaseAddress !== undefined) data.homeBaseAddress = body.homeBaseAddress ? String(body.homeBaseAddress).trim() : null;
     if (body.availableDays !== undefined) data.availableDays = Array.isArray(body.availableDays) ? JSON.stringify(body.availableDays) : null;
     if (body.availableHoursPerDay !== undefined) data.availableHoursPerDay = body.availableHoursPerDay != null ? Number(body.availableHoursPerDay) : null;
-    if (body.phone !== undefined) data.phone = body.phone ? String(body.phone).trim() : null;
+    if (body.phone !== undefined) {
+      if (!body.phone || !String(body.phone).trim()) {
+        data.phone = null;
+      } else {
+        const normalized = normalizePhone(String(body.phone));
+        if (!normalized) throw app.httpErrors.badRequest("Enter a valid 10-digit US phone number.");
+        data.phone = normalized;
+      }
+    }
     if (body.firstName !== undefined) data.firstName = body.firstName ? String(body.firstName).trim() : null;
     if (body.lastName !== undefined) data.lastName = body.lastName ? String(body.lastName).trim() : null;
     if (body.displayName !== undefined) data.displayName = body.displayName ? String(body.displayName).trim() : null;

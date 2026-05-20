@@ -257,18 +257,53 @@ export const users: ServicesUsers = {
         },
         include: { roles: true },
       });
-    } else if (
-      (!user.email || !user.displayName) &&
-      (fetchedEmail || fetchedDisplayName)
-    ) {
-      user = await prisma.user.update({
-        where: { clerkUserId },
-        data: {
-          email: user.email ?? fetchedEmail,
-          displayName: user.displayName ?? fetchedDisplayName,
-        },
-        include: { roles: true },
-      });
+    } else {
+      // Keep the local mirror in sync with Clerk (the identity source of
+      // truth) on EVERY /me — not just when the field was missing. So when
+      // any user changes their email or name in Clerk, the next /me picks
+      // it up. fetchedX is undefined if the Clerk fetch above failed — in
+      // that case fall back to the stored value rather than clobbering it.
+      // Diff-checked, so this is a DB write only when something changed.
+      const nextEmail = fetchedEmail ?? user.email;
+      const nextDisplayName = fetchedDisplayName ?? user.displayName;
+      if (nextEmail !== user.email || nextDisplayName !== user.displayName) {
+        user = await prisma.user.update({
+          where: { clerkUserId },
+          data: { email: nextEmail, displayName: nextDisplayName },
+          include: { roles: true },
+        });
+      }
+    }
+
+    // Propagate the refreshed email to a linked client contact, if any.
+    // A ClientContact linked to this account (by clerkUserId) is the same
+    // person, so its email should track the account — otherwise a client
+    // who updates their email leaves the CRM record (and payment-request
+    // delivery) stale. Best-effort: a failure here must not break /me.
+    // Only clients have a ClientContact — for workers/admins this is a
+    // no-op, and the User row above IS their record. Phone is not synced:
+    // the email-magic-link Clerk setup doesn't carry a phone number.
+    if (user.email) {
+      try {
+        const linkedContact = await prisma.clientContact.findUnique({
+          where: { clerkUserId },
+          select: { id: true, email: true },
+        });
+        if (
+          linkedContact &&
+          (linkedContact.email ?? "").toLowerCase() !== user.email.toLowerCase()
+        ) {
+          await prisma.clientContact.update({
+            where: { id: linkedContact.id },
+            data: { email: user.email },
+          });
+        }
+      } catch (e) {
+        console.warn(
+          { clerkUserId, error: (e as Error).message },
+          "[/me] Linked ClientContact email sync failed (continuing)",
+        );
+      }
     }
 
     // Bootstrap admins via ADMIN_BOOTSTRAP_EMAILS (idempotent)

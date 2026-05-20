@@ -28,6 +28,22 @@ import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOver
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
+/** Normalize a typed US phone number to E.164 (+1XXXXXXXXXX). Null if not a valid 10-digit US number. */
+function normalizePhone(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null;
+}
+
+/** Render a stored phone (any format) as (XXX) XXX-XXXX for display. */
+function formatPhoneDisplay(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (ten.length === 10) return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+  return raw;
+}
+
 type Props = {
   me: Me | null;
   /**
@@ -67,6 +83,8 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   const [savedLastName, setSavedLastName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [savedDisplayName, setSavedDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [savedPhone, setSavedPhone] = useState("");
   const [homeBase, setHomeBase] = useState("");
   const [savedHomeBase, setSavedHomeBase] = useState("");
   const [availableDays, setAvailableDays] = useState<number[]>([]);
@@ -87,9 +105,12 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   // tab sees the same read-only summary that an Admin would.
   const isSuper = !!me?.roles?.includes("SUPER") && purpose === "SUPER";
 
+  const phoneError = phone.trim() !== "" && normalizePhone(phone) === null;
+
   const hasChanges = firstName !== savedFirstName ||
     lastName !== savedLastName ||
     displayName !== savedDisplayName ||
+    phone !== savedPhone ||
     homeBase !== savedHomeBase ||
     JSON.stringify(availableDays) !== JSON.stringify(savedAvailableDays) ||
     availableHours !== savedAvailableHours;
@@ -149,6 +170,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
       setFirstName(me.firstName ?? ""); setSavedFirstName(me.firstName ?? "");
       setLastName(me.lastName ?? ""); setSavedLastName(me.lastName ?? "");
       setDisplayName(me.displayName ?? ""); setSavedDisplayName(me.displayName ?? "");
+      setPhone(formatPhoneDisplay(me.phone ?? "")); setSavedPhone(formatPhoneDisplay(me.phone ?? ""));
       setHomeBase(me.homeBaseAddress ?? ""); setSavedHomeBase(me.homeBaseAddress ?? "");
       setAvailableDays(me.availableDays ?? []); setSavedAvailableDays(me.availableDays ?? []);
       setAvailableHours(me.availableHoursPerDay ?? 4); setSavedAvailableHours(me.availableHoursPerDay ?? 4);
@@ -162,6 +184,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
         setFirstName(u?.firstName ?? ""); setSavedFirstName(u?.firstName ?? "");
         setLastName(u?.lastName ?? ""); setSavedLastName(u?.lastName ?? "");
         setDisplayName(u?.displayName ?? ""); setSavedDisplayName(u?.displayName ?? "");
+        setPhone(formatPhoneDisplay(u?.phone ?? "")); setSavedPhone(formatPhoneDisplay(u?.phone ?? ""));
         setHomeBase(u?.homeBaseAddress ?? ""); setSavedHomeBase(u?.homeBaseAddress ?? "");
         const days = u?.availableDays ? (Array.isArray(u.availableDays) ? u.availableDays : JSON.parse(u.availableDays)) : [];
         setAvailableDays(days); setSavedAvailableDays(days);
@@ -205,14 +228,19 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
       const endpoint = isAdmin && !isSelf
         ? `/api/admin/users/${targetUserId}/profile`
         : "/api/me/profile";
+      const normPhone = phone.trim() ? normalizePhone(phone) : null;
       await apiPatch(endpoint, {
         firstName,
         lastName,
         displayName,
+        phone: normPhone,
         homeBaseAddress: homeBase,
         availableDays,
         availableHoursPerDay: availableHours,
       });
+      const phoneDisplay = formatPhoneDisplay(normPhone ?? "");
+      setPhone(phoneDisplay);
+      setSavedPhone(phoneDisplay);
       setSavedFirstName(firstName);
       setSavedLastName(lastName);
       setSavedDisplayName(displayName);
@@ -241,7 +269,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
   const hasMore = filtered.length > 10;
 
   const targetUser = isSelf
-    ? { displayName: me?.displayName, email: me?.email, phone: me?.phone, workerType: me?.workerType }
+    ? { displayName: me?.displayName, email: me?.email, workerType: me?.workerType }
     : workers.find((w) => w.id === targetUserId);
 
   const workerTypeLabel = (wt: string | null | undefined) =>
@@ -341,7 +369,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     >
                       Sync Authentication
                     </Button>
-                    <Text fontSize="2xs" color="fg.muted">Pull latest email and phone from your Clerk account</Text>
+                    <Text fontSize="2xs" color="fg.muted">Pull latest email and name from your Clerk account</Text>
                   </VStack>
                 )}
               </HStack>
@@ -398,18 +426,21 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                       <Text flex="1" minW={0} wordBreak="break-all">{targetUser.email}</Text>
                     </HStack>
                   )}
-                  {(targetUser as any)?.phone && (
-                    <HStack fontSize="sm" alignItems="flex-start" w="full">
-                      <Text color="fg.muted" w="80px" flexShrink={0}>Phone:</Text>
-                      <Text flex="1" minW={0} wordBreak="break-all">{(targetUser as any).phone}</Text>
-                    </HStack>
-                  )}
-                  {!(targetUser as any)?.phone && (
-                    <HStack fontSize="sm" alignItems="flex-start" w="full">
-                      <Text color="fg.muted" w="80px" flexShrink={0}>Phone:</Text>
-                      <Text flex="1" minW={0} fontSize="xs" color="orange.500">Not set — add in Clerk to receive SMS</Text>
-                    </HStack>
-                  )}
+                  <Box pt={1}>
+                    <Text fontSize="xs" fontWeight="medium" mb="1">Phone</Text>
+                    <Input
+                      size="sm"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="(919) 555-0123"
+                      borderColor={phoneError ? "red.400" : undefined}
+                    />
+                    {phoneError ? (
+                      <Text fontSize="xs" color="red.500" mt="0.5">Enter a valid 10-digit US phone number.</Text>
+                    ) : (
+                      <Text fontSize="xs" color="fg.muted" mt="0.5">Used for SMS job and payment notifications.</Text>
+                    )}
+                  </Box>
                 </VStack>
                 <HStack fontSize="sm">
                   <Text color="fg.muted" w="80px">Type:</Text>
@@ -648,7 +679,7 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
               size="sm"
               colorPalette="green"
               onClick={saveProfile}
-              disabled={saving || !hasChanges}
+              disabled={saving || !hasChanges || phoneError}
             >
               {saving ? "Saving..." : "Save Profile"}
             </Button>

@@ -104,6 +104,7 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
+  try {
   const base = process.env.API_BASE_URL;
   const bypass = (process.env.API_BYPASS_SECRET || "").trim();
 
@@ -123,12 +124,25 @@ export default async function handler(
   const fwd = new Headers();
   const drop = new Set([
     "host",
-    "connection",
-    "content-length",
     "accept-encoding", // avoid compressed body issues
     "x-forwarded-host", // can trigger canonical host redirects
     "x-forwarded-proto",
     "x-real-ip",
+    // Hop-by-hop headers (RFC 7230 §6.1): they describe a single transport
+    // hop and must NOT be forwarded to the next one. undici's fetch() throws
+    // `invalid transfer-encoding header` (UND_ERR_INVALID_ARG) if any of
+    // these — `transfer-encoding` especially — are passed through. Vercel's
+    // edge attaches `transfer-encoding: chunked` to some requests, so this
+    // strip is required, not optional.
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "keep-alive",
+    "te",
+    "trailer",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization",
   ]);
   for (const [k, v] of Object.entries(req.headers) as [
     string,
@@ -154,7 +168,10 @@ export default async function handler(
     const chunks: Uint8Array[] = [];
     for await (const chunk of req as any)
       chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    (init as any).body = Buffer.concat(chunks);
+    const buf = Buffer.concat(chunks);
+    // Only attach a body when there is one — forwarding an empty Buffer as a
+    // `fetch` body is a known source of upstream-request failures.
+    if (buf.length > 0) (init as any).body = buf;
   }
 
   const upstream = await fetchFollowWithCookie(target.toString(), {
@@ -178,7 +195,18 @@ export default async function handler(
 
   const body = Buffer.from(await upstream.arrayBuffer());
 
-  const utf16Decoder = new TextDecoder("UTF-16");
-
   res.end(body);
+  } catch (err: any) {
+    // Never crash into Next's static /500 HTML page — return a legible JSON
+    // error so the failure shows up readably in the client and in logs.
+    console.error("[_proxy] unhandled error:", err?.stack || err, "| cause:", err?.cause);
+    if (!res.headersSent) {
+      const cause = err?.cause ? ` (${String(err.cause?.message ?? err.cause)})` : "";
+      res
+        .status(502)
+        .json({ ok: false, error: "proxy_failed", message: String(err?.message ?? err) + cause });
+    } else {
+      res.end();
+    }
+  }
 }

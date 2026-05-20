@@ -424,10 +424,10 @@ function SelfReportedView({ data, method, methodLabel }: { data: ResolveResponse
         <VStack gap={3} align="stretch">
           <HStack gap={2}>
             <Box color="teal.500"><CheckCircle size={20} /></Box>
-            <Text fontSize="md" fontWeight="semibold">Thanks — we got it.</Text>
+            <Text fontSize="md" fontWeight="semibold">Thank you.</Text>
           </HStack>
           <Text fontSize="xs" color="fg.muted">
-            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed. We&apos;ll email a receipt once it lands.
+            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed. We&apos;ll send a receipt once it lands.
             {/* method key reserved for future per-method receipt copy */}
             {method ? "" : ""}
           </Text>
@@ -492,19 +492,22 @@ function AccountNudge({ token }: { token: string }) {
         See your full service history
       </Text>
       <Text fontSize="xs" color="fg.muted" mb={2}>
-        Create a free account to see:
+        Your free account lets you see:
       </Text>
       <VStack align="start" gap={0.5} fontSize="xs" mb={3}>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from every visit</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from visits</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming services</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule from your phone</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Receipts (coming soon)</Text></HStack>
       </VStack>
+      {/* Single CTA — passwordless auth means new and returning clients do
+          the identical step (enter email → verification code), so a separate
+          "Sign in" link would just present two doors to the same room. */}
       <Button size="sm" colorPalette="teal" w="full" onClick={onSignup}>
-        Create a free account →
+        Access your account →
       </Button>
       <Text fontSize="2xs" color="fg.muted" textAlign="center" mt={1.5}>
-        Already have one? <a href="/sign-in" style={{ color: "var(--chakra-colors-teal-600)", textDecoration: "underline" }}>Sign in</a>
+        Just enter your email — new or returning, it's the same step.
       </Text>
     </Box>
   );

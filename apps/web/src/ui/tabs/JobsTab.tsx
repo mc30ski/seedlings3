@@ -6806,6 +6806,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
           marginPercent={marginPercent}
           requestPaymentEnabled={requestPaymentEnabled}
           isSuper={isSuper}
+          allowAllMethods={forAdmin}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({
             userId: a.userId,
             displayName: a.user?.displayName ?? a.user?.email,

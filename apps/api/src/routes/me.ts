@@ -52,9 +52,6 @@ export default async function meRoutes(app: FastifyInstance) {
     const u = await clerk.users.getUser(clerkUserId);
 
     const email = u?.primaryEmailAddress?.emailAddress ?? u?.emailAddresses?.[0]?.emailAddress ?? null;
-    const phone = u?.primaryPhoneNumber?.phoneNumber
-      ?? u?.phoneNumbers?.find((p: any) => p.verification?.status === "verified")?.phoneNumber
-      ?? null;
     const firstName = u?.firstName ?? null;
     const lastName = u?.lastName ?? null;
     const name = [firstName, lastName].filter(Boolean).join(" ").trim();
@@ -62,7 +59,6 @@ export default async function meRoutes(app: FastifyInstance) {
 
     const updates: any = { updatedAt: new Date() };
     if (email && user.email !== email) updates.email = email;
-    if (user.phone !== phone) updates.phone = phone;
     if (firstName && user.firstName !== firstName) updates.firstName = firstName;
     if (lastName && user.lastName !== lastName) updates.lastName = lastName;
     if (displayName && user.displayName !== displayName) updates.displayName = displayName;
