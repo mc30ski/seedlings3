@@ -1912,11 +1912,17 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
 // ─── Main Export ──────────────────────────────────────────────────────
 
 export default function PaymentsTab({ me, purpose = "WORKER" }: TabPropsType) {
-  const { isAvail, forAdmin } = determineRoles(me, purpose);
+  const { isAvail, forAdmin, isSuper: hasSuperRole } = determineRoles(me, purpose);
 
-  if (!isAvail) return <UnavailableNotice />;
+  // The Super → Money → Payments tab passes purpose="SUPER"; determineRoles()
+  // only sets forAdmin for purpose="ADMIN", so treat the Super tab as an
+  // admin-level view here. Payment approval + edit/revert are Super-only.
+  const isSuper = purpose === "SUPER" && hasSuperRole;
+  const showAdmin = forAdmin || isSuper;
 
-  // Payment approval + editing/deleting payment records are Super-only.
-  const isSuper = purpose === "SUPER";
-  return forAdmin ? <AdminPayments forAdmin={forAdmin} isSuper={isSuper} /> : <WorkerPayments me={me} forAdmin={forAdmin} />;
+  if (!isAvail && !isSuper) return <UnavailableNotice />;
+
+  return showAdmin
+    ? <AdminPayments forAdmin isSuper={isSuper} />
+    : <WorkerPayments me={me} forAdmin={forAdmin} />;
 }

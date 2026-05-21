@@ -25,6 +25,9 @@ export type PaymentMethodConfig = {
   instructions: string | null;
   /** When false, hidden everywhere; historical records preserved. */
   active: boolean;
+  /** Flagged as a preferred method — badged and floated to the top on the
+   *  client invoice page. More than one method may be preferred. */
+  preferred: boolean;
 };
 
 export type PaymentContext = "CLIENT_REQUEST" | "ON_SITE" | "ADMIN";
@@ -39,6 +42,7 @@ const ALLOWED_KEYS = new Set([
   "deepLinkTemplate",
   "instructions",
   "active",
+  "preferred",
 ]);
 
 /**
@@ -82,6 +86,7 @@ export function parsePaymentMethodsSetting(raw: string | null | undefined): Paym
       deepLinkTemplate: row.deepLinkTemplate == null ? null : String(row.deepLinkTemplate),
       instructions: row.instructions == null ? null : String(row.instructions),
       active: row.active !== false, // default true if omitted
+      preferred: row.preferred === true, // default false if omitted
     };
   });
 }

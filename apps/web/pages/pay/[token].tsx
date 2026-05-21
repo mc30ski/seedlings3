@@ -35,6 +35,8 @@ type ResolvedPaymentMethod = {
   label: string;
   feePercent: number;
   feeFixed: number;
+  /** Business-flagged preferred method (PAYMENT_METHODS taxonomy). */
+  preferred: boolean;
   instructions: string | null;
   deepLink: string | null;
 };
@@ -120,18 +122,14 @@ export default function PaymentPage() {
     };
   }, [token]);
 
-  // Order the taxonomy-driven methods: preferred first, then the order the
-  // server returned them in. The taxonomy is the single source of truth —
-  // adding/removing methods is a Settings edit, no code change here.
+  // Order the taxonomy-driven methods: business-preferred methods first, then
+  // the order the server returned them in. Array.sort is stable, so config
+  // order is preserved within each group. The taxonomy is the single source
+  // of truth — adding/removing/flagging methods is a Settings edit.
   const orderedMethods: ResolvedPaymentMethod[] = useMemo(() => {
     const list = data?.paymentMethods ?? [];
-    if (list.length === 0) return [];
-    const preferred = data?.preferredMethod;
-    if (!preferred) return list;
-    const found = list.find((m) => m.key === preferred);
-    if (!found) return list;
-    return [found, ...list.filter((m) => m.key !== preferred)];
-  }, [data?.paymentMethods, data?.preferredMethod]);
+    return [...list].sort((a, b) => (b.preferred ? 1 : 0) - (a.preferred ? 1 : 0));
+  }, [data?.paymentMethods]);
 
   // Seed the selection with the client's preferred method once data loads,
   // so they don't have to re-pick if they're a returning customer.
@@ -283,7 +281,8 @@ export default function PaymentPage() {
                 <PaymentMethodCard
                   key={m.key}
                   config={m}
-                  preferred={data.preferredMethod === m.key}
+                  preferred={m.preferred}
+                  usedLastTime={data.preferredMethod === m.key}
                   selected={selectedMethod === m.key}
                   onSelect={() => setSelectedMethod(m.key)}
                 />
@@ -339,11 +338,15 @@ function PageShell({ children }: { children: React.ReactNode }) {
 function PaymentMethodCard({
   config,
   preferred,
+  usedLastTime,
   selected,
   onSelect,
 }: {
   config: ResolvedPaymentMethod;
+  /** Business-flagged preferred method — shows the "Preferred" badge. */
   preferred: boolean;
+  /** This client paid with this method last time — shows the "Used last time" badge. */
+  usedLastTime: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -360,7 +363,7 @@ function PaymentMethodCard({
       variant="outline"
       onClick={onSelect}
       cursor="pointer"
-      borderColor={selected ? "teal.500" : preferred ? "teal.300" : undefined}
+      borderColor={selected ? "teal.500" : usedLastTime ? "teal.300" : undefined}
       borderWidth={selected ? "2px" : "1px"}
       bg={selected ? "teal.50" : undefined}
       _hover={{ borderColor: "teal.400" }}
@@ -380,11 +383,18 @@ function PaymentMethodCard({
               />
               <Text fontSize="sm" fontWeight="semibold">{config.label}</Text>
             </HStack>
-            {preferred && (
-              <Badge size="xs" colorPalette="teal" variant="subtle" px="2" borderRadius="full">
-                Used last time
-              </Badge>
-            )}
+            <HStack gap={1}>
+              {preferred && (
+                <Badge size="xs" colorPalette="green" variant="solid" px="2" borderRadius="full">
+                  Preferred
+                </Badge>
+              )}
+              {usedLastTime && (
+                <Badge size="xs" colorPalette="teal" variant="subtle" px="2" borderRadius="full">
+                  Used last time
+                </Badge>
+              )}
+            </HStack>
           </HStack>
 
           {config.instructions && (

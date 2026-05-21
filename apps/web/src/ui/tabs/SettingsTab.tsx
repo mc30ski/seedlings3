@@ -199,6 +199,7 @@ type PaymentMethodRow = {
   deepLinkTemplate: string | null;
   instructions: string | null;
   active: boolean;
+  preferred: boolean;
 };
 
 function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
@@ -224,6 +225,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       deepLinkTemplate: r.deepLinkTemplate == null ? null : String(r.deepLinkTemplate),
       instructions: r.instructions == null ? null : String(r.instructions),
       active: r.active !== false,
+      preferred: r.preferred === true,
     }));
   } catch (e: any) {
     parseError = e?.message ?? "invalid JSON";
@@ -250,6 +252,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       deepLinkTemplate: null,
       instructions: null,
       active: true,
+      preferred: false,
     };
     onChange(JSON.stringify([...items, next]));
     setExpandedIdx(items.length);
@@ -281,6 +284,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
         <Text w="60px" textAlign="center">Client</Text>
         <Text w="60px" textAlign="center">On-site</Text>
         <Text w="50px" textAlign="center">Active</Text>
+        <Text w="60px" textAlign="center">Preferred</Text>
         <Box flex="1" />
         <Box w="60px" />
       </HStack>
@@ -318,6 +322,9 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
             </Box>
             <Box w="50px" textAlign="center">
               <input type="checkbox" checked={row.active} onChange={(e) => update(idx, { active: e.target.checked })} />
+            </Box>
+            <Box w="60px" textAlign="center">
+              <input type="checkbox" checked={row.preferred} onChange={(e) => update(idx, { preferred: e.target.checked })} />
             </Box>
             <Box flex="1" />
             <Button size="xs" variant="outline" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>

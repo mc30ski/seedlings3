@@ -1672,6 +1672,7 @@ async function seedDatabase() {
           deepLinkTemplate: null,
           instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app",
           active: true,
+          preferred: true,
         },
         {
           key: "CASH",
@@ -2541,7 +2542,7 @@ async function seedPaymentsBase() {
   });
   const paymentMethodsDefault = JSON.stringify([
     { key: "VENMO", label: "Venmo", feePercent: 1.9, feeFixed: 0.10, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: "venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}", instructions: "Send {{amount}} to @{VENMO_BUSINESS_HANDLE} on Venmo", active: true },
-    { key: "ZELLE", label: "Zelle", feePercent: 0, feeFixed: 0, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: null, instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app", active: true },
+    { key: "ZELLE", label: "Zelle", feePercent: 0, feeFixed: 0, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: null, instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app", active: true, preferred: true },
     { key: "CASH", label: "Cash", feePercent: 0, feeFixed: 0, supportsClientRequest: false, supportsOnSite: true, deepLinkTemplate: null, instructions: null, active: true },
     { key: "CHECK", label: "Check", feePercent: 0, feeFixed: 0, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: null, instructions: "Make check payable to Seedlings Lawn Care LLC", active: true },
   ]);
