@@ -489,6 +489,12 @@ export type PaymentInfo = {
   platformFeeAmount?: number | null;
   businessMarginPercent?: number | null;
   businessMarginAmount?: number | null;
+  // Processor-fee snapshot — what the payment service (e.g. Venmo) charged.
+  processorFeePercent?: number | null;
+  processorFeeFixed?: number | null;
+  processorFeeAmount?: number | null;
+  grossCharged?: number | null;
+  netReceived?: number | null;
   collectedBy?: { id: string; displayName?: string | null };
   nextOccurrenceSkipReason?: string | null;
   splits: PaymentSplitItem[];
