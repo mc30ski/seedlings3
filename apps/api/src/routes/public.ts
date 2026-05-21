@@ -517,6 +517,7 @@ export default async function publicRoutes(app: FastifyInstance) {
       label: m.label,
       feePercent: m.feePercent,
       feeFixed: m.feeFixed,
+      preferred: m.preferred,
       instructions: m.instructions ? resolvePlaceholders(m.instructions, settings, runtime) : null,
       deepLink: m.deepLinkTemplate
         ? resolvePlaceholders(m.deepLinkTemplate, settings, runtime)
