@@ -3,27 +3,11 @@ import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
 import type { ServicesExpenses, ExpenseInput, ExpensePatchInput } from "../types/services";
+import { loadCategoryLabels } from "./expenseCategories";
 
-// Schedule C-aligned categories. Mirror of the set in routes/admin.ts. Centralized
-// here too because adding a per-job expense ALSO writes a BusinessExpense row.
-const SCHEDULE_C_CATEGORIES = new Set([
-  "Advertising",
-  "Car and truck expenses",
-  "Contract labor",
-  "Depreciation",
-  "Insurance",
-  "Legal and professional services",
-  "Office expense",
-  "Rent or lease — vehicles/equipment",
-  "Rent or lease — other business property",
-  "Repairs and maintenance",
-  "Supplies",
-  "Taxes and licenses",
-  "Travel",
-  "Meals",
-  "Utilities",
-  "Other",
-]);
+// Categories are validated against the EXPENSE_CATEGORIES taxonomy (the single
+// source of truth, editable in Settings). Default "Supplies" matches the bias
+// in the rest of the app: most lawn-care consumables land on line 22.
 const DEFAULT_CATEGORY = "Supplies";
 
 async function isAdminUser(userId: string): Promise<boolean> {
@@ -31,10 +15,11 @@ async function isAdminUser(userId: string): Promise<boolean> {
   return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
 }
 
-function normalizeCategory(raw: string | null | undefined): string {
+async function normalizeCategory(raw: string | null | undefined): Promise<string> {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return DEFAULT_CATEGORY;
-  if (!SCHEDULE_C_CATEGORIES.has(trimmed)) {
+  const labels = await loadCategoryLabels();
+  if (!labels.has(trimmed)) {
     throw new ServiceError("INVALID_CATEGORY", `Invalid category: "${trimmed}". Must be a Schedule C line.`, 400);
   }
   return trimmed;
@@ -92,7 +77,7 @@ export const expenses: ServicesExpenses = {
       }
     }
 
-    const category = normalizeCategory(input.category);
+    const category = await normalizeCategory(input.category);
     const date = resolveDate(input.date);
     const vendor = input.vendor ? input.vendor.trim() || null : null;
     const trimmedDescription = description.trim();
@@ -160,7 +145,7 @@ export const expenses: ServicesExpenses = {
         businessExpenseData.description = trimmed;
       }
       if ("category" in input) {
-        businessExpenseData.category = normalizeCategory(input.category);
+        businessExpenseData.category = await normalizeCategory(input.category);
       }
       if ("vendor" in input) {
         businessExpenseData.vendor = input.vendor ? String(input.vendor).trim() || null : null;
@@ -243,7 +228,7 @@ export const expenses: ServicesExpenses = {
     if (cost <= 0) throw new ServiceError("INVALID_AMOUNT", "Expense cost must be greater than zero.", 400);
     if (!description || !description.trim()) throw new ServiceError("INVALID_INPUT", "Expense description is required.", 400);
 
-    const category = normalizeCategory(input.category);
+    const category = await normalizeCategory(input.category);
     const date = resolveDate(input.date);
     const vendor = input.vendor ? input.vendor.trim() || null : null;
     const trimmedDescription = description.trim();

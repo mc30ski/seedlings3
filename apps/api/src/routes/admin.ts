@@ -13,6 +13,7 @@ import {
   JobOccurrenceStatus,
 } from "@prisma/client";
 import { normalizePhone } from "../lib/phone";
+import { loadCategoryLabels } from "../services/expenseCategories";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -2422,6 +2423,14 @@ Respond ONLY with valid JSON in this exact format:
     if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
       throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
     }
+    if (key === "EXPENSE_CATEGORIES") {
+      const { validateExpenseCategoriesJson } = await import("../services/expenseCategories");
+      try {
+        validateExpenseCategoriesJson(value);
+      } catch (err: any) {
+        throw app.httpErrors.badRequest(err?.message || "Invalid EXPENSE_CATEGORIES JSON.");
+      }
+    }
     if (key === "PAYMENT_METHODS") {
       const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
       try {
@@ -3306,28 +3315,6 @@ Respond ONLY with valid JSON in this exact format:
     return { rows, total };
   });
 
-  // Schedule C-aligned categories. Anything outside this list is rejected so
-  // the column stays clean for tax-software import. Existing rows with legacy
-  // free-text values are not touched — admin can recategorize via the UI.
-  const SCHEDULE_C_CATEGORIES = new Set([
-    "Advertising",
-    "Car and truck expenses",
-    "Contract labor",
-    "Depreciation",
-    "Insurance",
-    "Legal and professional services",
-    "Office expense",
-    "Rent or lease — vehicles/equipment",
-    "Rent or lease — other business property",
-    "Repairs and maintenance",
-    "Supplies",
-    "Taxes and licenses",
-    "Travel",
-    "Meals",
-    "Utilities",
-    "Other",
-  ]);
-
   app.post("/admin/business-expenses", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const b = req.body || {};
@@ -3335,7 +3322,7 @@ Respond ONLY with valid JSON in this exact format:
     if (b.cost == null || isNaN(Number(b.cost))) throw app.httpErrors.badRequest("cost is required");
     if (!b.date) throw app.httpErrors.badRequest("date is required");
     const trimmedCategory = b.category ? String(b.category).trim() : null;
-    if (trimmedCategory && !SCHEDULE_C_CATEGORIES.has(trimmedCategory)) {
+    if (trimmedCategory && !(await loadCategoryLabels()).has(trimmedCategory)) {
       throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
     }
     const equipmentId = b.equipmentId ? String(b.equipmentId) : null;
@@ -3372,7 +3359,7 @@ Respond ONLY with valid JSON in this exact format:
     if ("date" in b) data.date = b.date ? parseUserDate(String(b.date)) : null;
     if ("category" in b) {
       const trimmedCategory = b.category ? String(b.category).trim() : null;
-      if (trimmedCategory && !SCHEDULE_C_CATEGORIES.has(trimmedCategory)) {
+      if (trimmedCategory && !(await loadCategoryLabels()).has(trimmedCategory)) {
         throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
       }
       data.category = trimmedCategory;
@@ -3478,12 +3465,13 @@ Respond ONLY with valid JSON in this exact format:
    * captured on payments) vs what the business spends (BusinessExpense rows),
    * across the standard buckets. Net = earnings - expenses.
    */
-  app.get("/admin/business-expenses/vs-revenue", superGuard, async (_req: any) => {
-    const now = new Date();
-    const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
-    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
+  app.get("/admin/business-expenses/vs-revenue", superGuard, async (req: any) => {
+    // Scoped to the from/to range selected on the Expenses tab — same range
+    // that drives the summary, list, and export. No range = all time.
+    const q = (req.query || {}) as { from?: string; to?: string };
+    const from = q.from ? new Date(q.from) : null;
+    const to = q.to ? (() => { const t = new Date(q.to as string); t.setHours(23, 59, 59, 999); return t; })() : null;
+    const inRange = (d: Date) => (!from || d >= from) && (!to || d <= to);
 
     const [payments, expenses, rentals] = await Promise.all([
       prisma.payment.findMany({
@@ -3498,63 +3486,36 @@ Respond ONLY with valid JSON in this exact format:
       }),
     ]);
 
-    type Bucket = { platformFees: number; businessMargin: number; equipmentRentals: number; expenses: number; processingFees: number };
-    const empty = (): Bucket => ({ platformFees: 0, businessMargin: 0, equipmentRentals: 0, expenses: 0, processingFees: 0 });
-    const today = empty(), thisWeek = empty(), thisMonth = empty(), thisYear = empty(), allTime = empty();
-
+    let platformFees = 0, businessMargin = 0, equipmentRentals = 0, expenseTotal = 0, processingFees = 0;
     for (const p of payments) {
-      const fee = p.platformFeeAmount ?? 0;
-      const margin = p.businessMarginAmount ?? 0;
-      const procFee = p.processorFeeAmount ?? 0;
-      allTime.platformFees += fee;
-      allTime.businessMargin += margin;
-      allTime.processingFees += procFee;
-      if (p.createdAt >= startOfToday) { today.platformFees += fee; today.businessMargin += margin; today.processingFees += procFee; }
-      if (p.createdAt >= startOfWeek)  { thisWeek.platformFees += fee; thisWeek.businessMargin += margin; thisWeek.processingFees += procFee; }
-      if (p.createdAt >= startOfMonth) { thisMonth.platformFees += fee; thisMonth.businessMargin += margin; thisMonth.processingFees += procFee; }
-      if (p.createdAt >= startOfYear)  { thisYear.platformFees += fee; thisYear.businessMargin += margin; thisYear.processingFees += procFee; }
+      if (!inRange(p.createdAt)) continue;
+      platformFees += p.platformFeeAmount ?? 0;
+      businessMargin += p.businessMarginAmount ?? 0;
+      processingFees += p.processorFeeAmount ?? 0;
     }
     for (const r of rentals) {
-      const cost = r.rentalCost ?? 0;
-      const at = r.releasedAt!;
-      allTime.equipmentRentals += cost;
-      if (at >= startOfToday) today.equipmentRentals += cost;
-      if (at >= startOfWeek)  thisWeek.equipmentRentals += cost;
-      if (at >= startOfMonth) thisMonth.equipmentRentals += cost;
-      if (at >= startOfYear)  thisYear.equipmentRentals += cost;
+      if (!inRange(r.releasedAt!)) continue;
+      equipmentRentals += r.rentalCost ?? 0;
     }
     for (const e of expenses) {
-      allTime.expenses += e.cost;
-      if (e.date >= startOfToday) today.expenses += e.cost;
-      if (e.date >= startOfWeek)  thisWeek.expenses += e.cost;
-      if (e.date >= startOfMonth) thisMonth.expenses += e.cost;
-      if (e.date >= startOfYear)  thisYear.expenses += e.cost;
+      if (!inRange(e.date)) continue;
+      expenseTotal += e.cost;
     }
 
     const round = (n: number) => Math.round(n * 100) / 100;
-    const finalize = (b: Bucket) => {
-      const earnings = b.platformFees + b.businessMargin + b.equipmentRentals;
-      // Processing fees deducted from Net alongside business expenses. They're
-      // NOT subtracted from Earnings because the earnings line is "what the
-      // business retained from the worker payout split" — processor fees come
-      // off the cash side, not the labor-cost side.
-      return {
-        platformFees: round(b.platformFees),
-        businessMargin: round(b.businessMargin),
-        equipmentRentals: round(b.equipmentRentals),
-        earnings: round(earnings),
-        expenses: round(b.expenses),
-        processingFees: round(b.processingFees),
-        net: round(earnings - b.expenses - b.processingFees),
-      };
-    };
-
+    const earnings = platformFees + businessMargin + equipmentRentals;
+    // Processing fees deducted from Net alongside business expenses. They're
+    // NOT subtracted from Earnings because the earnings line is "what the
+    // business retained from the worker payout split" — processor fees come
+    // off the cash side, not the labor-cost side.
     return {
-      today: finalize(today),
-      thisWeek: finalize(thisWeek),
-      thisMonth: finalize(thisMonth),
-      thisYear: finalize(thisYear),
-      allTime: finalize(allTime),
+      platformFees: round(platformFees),
+      businessMargin: round(businessMargin),
+      equipmentRentals: round(equipmentRentals),
+      earnings: round(earnings),
+      expenses: round(expenseTotal),
+      processingFees: round(processingFees),
+      net: round(earnings - expenseTotal - processingFees),
     };
   });
 

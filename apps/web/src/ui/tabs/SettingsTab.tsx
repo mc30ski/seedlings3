@@ -387,6 +387,85 @@ type JsonArrayItem = {
   singleton?: boolean;
   description?: string;
 };
+/** Dedicated editor for the EXPENSE_CATEGORIES taxonomy — label, Schedule C
+ *  line, and the selectable flag (off = export-only synthetic category). */
+type ExpenseCategoryRow = { label: string; scheduleCLine: string; selectable: boolean };
+
+function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  let items: ExpenseCategoryRow[] = [];
+  let parseError: string | null = null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error("must be an array");
+    items = parsed.map((r: any) => ({
+      label: String(r.label ?? ""),
+      scheduleCLine: String(r.scheduleCLine ?? ""),
+      selectable: r.selectable !== false,
+    }));
+  } catch (e: any) {
+    parseError = e?.message ?? "invalid JSON";
+  }
+
+  function update(idx: number, patch: Partial<ExpenseCategoryRow>) {
+    onChange(JSON.stringify(items.map((row, i) => (i === idx ? { ...row, ...patch } : row))));
+  }
+  function remove(idx: number) {
+    onChange(JSON.stringify(items.filter((_, i) => i !== idx)));
+  }
+  function add() {
+    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", selectable: true }]));
+  }
+
+  if (parseError) {
+    return (
+      <VStack align="stretch" gap={2} w="full">
+        <Text fontSize="xs" color="red.600">EXPENSE_CATEGORIES JSON is malformed: {parseError}</Text>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </VStack>
+    );
+  }
+
+  return (
+    <VStack align="stretch" gap={2} w="full">
+      <Text fontSize="2xs" color="fg.muted">
+        Maps each expense category to its Schedule C line. Uncheck "Selectable" for export-only
+        categories (e.g. Payment Processing Fees) — they stay in the export but are hidden from
+        the expense-logging pickers.
+      </Text>
+      <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium" px={1}>
+        <Text flex="1">Category label</Text>
+        <Text w="90px" textAlign="center">Sch. C line</Text>
+        <Text w="70px" textAlign="center">Selectable</Text>
+        <Box w="32px" />
+      </HStack>
+      {items.map((row, idx) => (
+        <HStack key={idx} gap={2}>
+          <Input size="sm" flex="1" value={row.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Advertising" />
+          <Input size="sm" w="90px" textAlign="center" value={row.scheduleCLine} onChange={(e) => update(idx, { scheduleCLine: e.target.value })} placeholder="8" />
+          <Box w="70px" textAlign="center">
+            <input type="checkbox" checked={row.selectable} onChange={(e) => update(idx, { selectable: e.target.checked })} />
+          </Box>
+          <Button size="xs" variant="ghost" colorPalette="red" w="32px" onClick={() => remove(idx)}>
+            <Trash2 size={12} />
+          </Button>
+        </HStack>
+      ))}
+      <HStack gap={2}>
+        <Button size="xs" variant="outline" onClick={add}>+ Add category</Button>
+        <Box flex="1" />
+        <Button size="xs" variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button size="xs" colorPalette="blue" loading={saving} onClick={onSave}>Save</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalValue, forceDescription }: {
   value: string;
   onChange: (v: string) => void;
@@ -571,6 +650,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",
         "SERVICE_TYPES",
+        "EXPENSE_CATEGORIES",
         "DOCUMENT_TYPES",
         "DOCUMENT_MAX_SIZE_MB",
         "TIMELINE_CATEGORIES",
@@ -620,6 +700,10 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         const { invalidatePaymentMethodLabels } = await import("@/src/lib/usePaymentMethodLabels");
         invalidatePaymentMethodLabels();
       }
+      if (key === "EXPENSE_CATEGORIES") {
+        const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
+        invalidateExpenseCategories();
+      }
       setEditingKey(null);
       void load();
     } catch (err) {
@@ -638,6 +722,10 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       if (key === "PAYMENT_METHODS") {
         const { invalidatePaymentMethodLabels } = await import("@/src/lib/usePaymentMethodLabels");
         invalidatePaymentMethodLabels();
+      }
+      if (key === "EXPENSE_CATEGORIES") {
+        const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
+        invalidateExpenseCategories();
       }
       void load();
     } catch (err) {
@@ -877,6 +965,11 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "PAYMENT_METHODS") {
                           return <PaymentMethodsEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
                         }
+                        // Dedicated editor for EXPENSE_CATEGORIES — label,
+                        // Schedule C line, and the selectable flag.
+                        if (s.key === "EXPENSE_CATEGORIES") {
+                          return <ExpenseCategoriesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
+                        }
                         // Detect JSON format and use appropriate editor
                         try {
                           const parsed = JSON.parse(s.value);
@@ -901,6 +994,34 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       })()
                     ) : (
                       (() => {
+                        // EXPENSE_CATEGORIES items are keyed on `label`, not
+                        // `key`, so render them explicitly as badges instead
+                        // of falling through to the raw-JSON display.
+                        if (s.key === "EXPENSE_CATEGORIES") {
+                          try {
+                            const cats = JSON.parse(s.value);
+                            if (Array.isArray(cats) && cats.length > 0) {
+                              return (
+                                <Box display="flex" gap="4px" flexWrap="wrap">
+                                  {cats.map((c: any) => (
+                                    <Badge
+                                      key={c.label}
+                                      size="sm"
+                                      variant="solid"
+                                      colorPalette={c.selectable === false ? "gray" : "blue"}
+                                      px="2"
+                                      borderRadius="full"
+                                      fontSize="xs"
+                                    >
+                                      {c.label} · line {c.scheduleCLine}
+                                      {c.selectable === false ? " · export-only" : ""}
+                                    </Badge>
+                                  ))}
+                                </Box>
+                              );
+                            }
+                          } catch {}
+                        }
                         try {
                           const parsed = JSON.parse(s.value);
                           // Array of {key, label, equipmentKind?} objects

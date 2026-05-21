@@ -38,6 +38,7 @@ import {
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import QRScannerDialog from "@/src/ui/dialogs/QRScannerDialog";
 import { compressOnly } from "@/src/lib/imageRedact";
+import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
 // Barcode formats to scan when looking up supplies. Stable reference so
 // QRScannerDialog's effect doesn't re-run on every parent render.
@@ -83,25 +84,6 @@ type Supply = {
   activeHolds?: ActiveHold[];
 };
 
-type ScheduleCCategory = { label: string; line: string };
-const SCHEDULE_C_CATEGORIES: ScheduleCCategory[] = [
-  { label: "Advertising", line: "8" },
-  { label: "Car and truck expenses", line: "9" },
-  { label: "Contract labor", line: "11" },
-  { label: "Depreciation", line: "13" },
-  { label: "Insurance", line: "15" },
-  { label: "Legal and professional services", line: "17" },
-  { label: "Office expense", line: "18" },
-  { label: "Rent or lease — vehicles/equipment", line: "20a" },
-  { label: "Rent or lease — other business property", line: "20b" },
-  { label: "Repairs and maintenance", line: "21" },
-  { label: "Supplies", line: "22" },
-  { label: "Taxes and licenses", line: "23" },
-  { label: "Travel", line: "24a" },
-  { label: "Meals", line: "24b" },
-  { label: "Utilities", line: "25" },
-  { label: "Other", line: "27a" },
-];
 
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -133,6 +115,7 @@ export default function SuppliesTab({
   readOnly = false,
   purpose = "SUPER",
 }: Props = {}) {
+  const { selectableCategories } = useExpenseCategories();
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -192,11 +175,11 @@ export default function SuppliesTab({
 
   const categoryItems = useMemo(
     () =>
-      SCHEDULE_C_CATEGORIES.map((c) => ({
-        label: `${c.label} (line ${c.line})`,
+      selectableCategories.map((c) => ({
+        label: `${c.label} (line ${c.scheduleCLine})`,
         value: c.label,
       })),
-    [],
+    [selectableCategories],
   );
   const categoryCollection = useMemo(
     () => createListCollection({ items: categoryItems }),

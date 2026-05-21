@@ -27,6 +27,7 @@ import {
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 import { compressOnly } from "@/src/lib/imageRedact";
+import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
 type BusinessExpense = {
   id: string;
@@ -116,13 +117,15 @@ type Summary = {
   count: number;
 };
 
-type CompareBucket = { platformFees: number; businessMargin: number; equipmentRentals: number; earnings: number; expenses: number; processingFees: number; net: number };
+// Earnings vs Expenses for the selected timeframe (single range, not buckets).
 type Comparison = {
-  today: CompareBucket;
-  thisWeek: CompareBucket;
-  thisMonth: CompareBucket;
-  thisYear: CompareBucket;
-  allTime: CompareBucket;
+  platformFees: number;
+  businessMargin: number;
+  equipmentRentals: number;
+  earnings: number;
+  expenses: number;
+  processingFees: number;
+  net: number;
 };
 
 // Categories aligned to Schedule C (Form 1040). The label is what gets stored
@@ -130,31 +133,8 @@ type Comparison = {
 // in the picker for clarity. COGS / Part III is intentionally omitted —
 // materials consumed in the course of providing services land on line 22 for
 // a small service business under cash-method accounting.
-type ScheduleCCategory = { label: string; line: string };
-const SCHEDULE_C_CATEGORIES: ScheduleCCategory[] = [
-  { label: "Advertising", line: "8" },
-  { label: "Car and truck expenses", line: "9" },
-  { label: "Contract labor", line: "11" },
-  { label: "Insurance", line: "15" },
-  { label: "Legal and professional services", line: "17" },
-  { label: "Office expense", line: "18" },
-  { label: "Depreciation", line: "13" },
-  { label: "Rent or lease — vehicles/equipment", line: "20a" },
-  { label: "Rent or lease — other business property", line: "20b" },
-  { label: "Repairs and maintenance", line: "21" },
-  { label: "Supplies", line: "22" },
-  { label: "Taxes and licenses", line: "23" },
-  { label: "Travel", line: "24a" },
-  { label: "Meals", line: "24b" },
-  { label: "Utilities", line: "25" },
-  { label: "Other", line: "27a" },
-];
-const CATEGORY_LABELS = SCHEDULE_C_CATEGORIES.map((c) => c.label);
-// Quick lookup so the row chip can show "Supplies (line 22)" without a join.
-const LINE_BY_CATEGORY: Record<string, string> = SCHEDULE_C_CATEGORIES.reduce(
-  (acc, c) => ((acc[c.label] = c.line), acc),
-  {} as Record<string, string>,
-);
+// Expense categories + Schedule C lines come from the EXPENSE_CATEGORIES
+// taxonomy via useExpenseCategories() — the single source of truth.
 
 function fmtUSD(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -165,22 +145,73 @@ function fmtDate(d: string): string {
 }
 
 function todayStr(): string {
-  const d = new Date();
+  return ymd(new Date());
+}
+
+function ymd(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Backward-looking, calendar-accurate ranges for the summary timeframe — the
+// shared datePresets lib is forward-looking (built for job scheduling), wrong
+// for expenses. Tax-oriented: month/quarter/year to date, plus last year.
+type ExpensePreset = "all" | "month" | "quarter" | "year" | "lastYear" | "custom";
+
+const EXPENSE_PRESETS: { key: ExpensePreset; label: string }[] = [
+  { key: "all", label: "All time" },
+  { key: "month", label: "This month" },
+  { key: "quarter", label: "This quarter" },
+  { key: "year", label: "This year" },
+  { key: "lastYear", label: "Last year" },
+];
+
+function rangeForExpensePreset(p: ExpensePreset): { from: string; to: string } {
+  const now = new Date();
+  const today = ymd(now);
+  switch (p) {
+    case "month":
+      return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+    case "quarter": {
+      const q = Math.floor(now.getMonth() / 3);
+      return { from: ymd(new Date(now.getFullYear(), q * 3, 1)), to: today };
+    }
+    case "year":
+      return { from: ymd(new Date(now.getFullYear(), 0, 1)), to: today };
+    case "lastYear":
+      return {
+        from: ymd(new Date(now.getFullYear() - 1, 0, 1)),
+        to: ymd(new Date(now.getFullYear() - 1, 11, 31)),
+      };
+    case "all":
+    default:
+      return { from: "", to: "" };
+  }
+}
+
 export default function BusinessExpensesTab() {
+  const { categories, selectableCategories, lineFor } = useExpenseCategories();
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Filters
+  // Filters. filterFrom/filterTo are the shared date range — set by the
+  // summary timeframe control and scoped across the summary, list, and export.
   const [q, setQ] = useState("");
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
+  const [expensePreset, setExpensePreset] = useState<ExpensePreset>("all");
+
+  function applyPreset(p: ExpensePreset) {
+    setExpensePreset(p);
+    if (p !== "custom") {
+      const r = rangeForExpensePreset(p);
+      setFilterFrom(r.from);
+      setFilterTo(r.to);
+    }
+  }
 
   // Pagination — most recent first, page back through history. pageSize is
   // user-controlled (persisted) so the choice survives reloads. page resets
@@ -233,9 +264,9 @@ export default function BusinessExpensesTab() {
       if (filterTo) sumQs.set("to", filterTo);
       const s = await apiGet<Summary>(`/api/admin/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
       setSummary(s);
-      // Comparison is global (not filtered) — gives a steady "earnings vs expenses" picture.
+      // Earnings vs Expenses — scoped to the same selected timeframe.
       try {
-        const cmp = await apiGet<Comparison>("/api/admin/business-expenses/vs-revenue");
+        const cmp = await apiGet<Comparison>(`/api/admin/business-expenses/vs-revenue${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
         setComparison(cmp);
       } catch { /* non-fatal */ }
       // Due-to-record suggestions (also global; recurrence is a property of
@@ -432,10 +463,10 @@ export default function BusinessExpensesTab() {
 
   const allCategories = useMemo(() => {
     const seen = new Set<string>();
-    for (const c of CATEGORY_LABELS) seen.add(c);
+    for (const c of selectableCategories) seen.add(c.label);
     for (const e of expenses) if (e.category) seen.add(e.category);
     return Array.from(seen).sort();
-  }, [expenses]);
+  }, [expenses, selectableCategories]);
 
   const usedCategories = useMemo(() => {
     const seen = new Set<string>();
@@ -448,6 +479,7 @@ export default function BusinessExpensesTab() {
     setFilterFrom("");
     setFilterTo("");
     setFilterCategory("");
+    setExpensePreset("all");
   }
 
   // Schedule C-aligned CSV export. Columns chosen for compatibility with tax
@@ -477,7 +509,7 @@ export default function BusinessExpensesTab() {
     if (allRows.length === 0) return;
 
     const lineByCategory: Record<string, string> = {};
-    for (const c of SCHEDULE_C_CATEGORIES) lineByCategory[c.label] = c.line;
+    for (const c of categories) lineByCategory[c.label] = c.scheduleCLine;
 
     const csvEscape = (v: unknown): string => {
       if (v == null) return "";
@@ -634,25 +666,43 @@ export default function BusinessExpensesTab() {
       {summary && (
         <Card.Root variant="outline" mb={3}>
           <Card.Body p={3}>
+            {/* Timeframe — shared range, scopes the summary, list, and export */}
+            <HStack gap={1.5} wrap="wrap" align="center" mb={3}>
+              {EXPENSE_PRESETS.map((p) => (
+                <Button
+                  key={p.key}
+                  size="xs"
+                  variant={expensePreset === p.key ? "solid" : "outline"}
+                  colorPalette={expensePreset === p.key ? "blue" : "gray"}
+                  onClick={() => applyPreset(p.key)}
+                >
+                  {p.label}
+                </Button>
+              ))}
+              <HStack gap={1}>
+                <Text fontSize="xs" color="fg.muted">From</Text>
+                <input
+                  type="date"
+                  value={filterFrom}
+                  onChange={(e) => { setFilterFrom(e.target.value); setExpensePreset("custom"); }}
+                  style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
+                />
+              </HStack>
+              <HStack gap={1}>
+                <Text fontSize="xs" color="fg.muted">To</Text>
+                <input
+                  type="date"
+                  value={filterTo}
+                  onChange={(e) => { setFilterTo(e.target.value); setExpensePreset("custom"); }}
+                  style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
+                />
+              </HStack>
+            </HStack>
             <HStack gap={6} wrap="wrap">
               <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">Today</Text>
-                <Text fontSize="md" fontWeight="bold">{fmtUSD(summary.today)}</Text>
-              </VStack>
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Week</Text>
-                <Text fontSize="md" fontWeight="bold">{fmtUSD(summary.thisWeek)}</Text>
-              </VStack>
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Month</Text>
-                <Text fontSize="md" fontWeight="bold">{fmtUSD(summary.thisMonth)}</Text>
-              </VStack>
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">This Year</Text>
-                <Text fontSize="md" fontWeight="bold">{fmtUSD(summary.thisYear)}</Text>
-              </VStack>
-              <VStack align="start" gap={0}>
-                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">Total {hasFilters ? "(filtered)" : ""}</Text>
+                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase">
+                  Total{expensePreset === "all" ? "" : ` · ${EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range"}`}
+                </Text>
                 <Text fontSize="md" fontWeight="bold" color="orange.600">{fmtUSD(summary.total)}</Text>
               </VStack>
               <VStack align="start" gap={0}>
@@ -678,93 +728,59 @@ export default function BusinessExpensesTab() {
         </Card.Root>
       )}
 
-      {/* Earnings vs Expenses comparison */}
+      {/* Earnings vs Expenses — for the selected timeframe */}
       {comparison && (() => {
-        const periods: { key: keyof Comparison; label: string }[] = [
-          { key: "today", label: "Today" },
-          { key: "thisWeek", label: "This Week" },
-          { key: "thisMonth", label: "This Month" },
-          { key: "thisYear", label: "This Year" },
-          { key: "allTime", label: "All Time" },
-        ];
+        const rangeLabel = expensePreset === "all"
+          ? "All time"
+          : EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range";
+        const net = comparison.net;
         return (
           <Card.Root variant="outline" mb={3}>
             <Card.Body p={3}>
-              <Text fontSize="sm" fontWeight="semibold" mb={2}>Earnings vs Expenses</Text>
-              <Text fontSize="xs" color="fg.muted" mb={3}>
-                Earnings = contractor platform fees + employee margin captured on payments + equipment rental charges (deducted from worker payouts). Net = earnings − business expenses.
+              <HStack justify="space-between" mb={1}>
+                <Text fontSize="sm" fontWeight="semibold">Earnings vs Expenses</Text>
+                <Badge size="sm" colorPalette="blue" variant="subtle" borderRadius="full">{rangeLabel}</Badge>
+              </HStack>
+              <Text fontSize="xs" color="fg.muted" mb={2}>
+                Earnings = contractor platform fees + employee margin captured on payments + equipment rental charges (deducted from worker payouts). Net = earnings − business expenses − processing fees.
               </Text>
-              <Box overflowX="auto">
-                <Box as="table" w="full" fontSize="xs" style={{ borderCollapse: "collapse" }}>
-                  <Box as="thead">
-                    <Box as="tr">
-                      <Box as="th" textAlign="left" p={2} borderBottomWidth="1px" borderColor="gray.200" color="fg.muted" fontWeight="semibold"></Box>
-                      {periods.map((p) => (
-                        <Box as="th" key={p.key} textAlign="right" p={2} borderBottomWidth="1px" borderColor="gray.200" color="fg.muted" fontWeight="semibold" textTransform="uppercase" fontSize="2xs">
-                          {p.label}
-                        </Box>
-                      ))}
-                    </Box>
-                  </Box>
-                  <Box as="tbody">
-                    <Box as="tr">
-                      <Box as="td" p={2} color="fg.muted">Platform fees (contractors)</Box>
-                      {periods.map((p) => (
-                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].platformFees)}</Box>
-                      ))}
-                    </Box>
-                    <Box as="tr">
-                      <Box as="td" p={2} color="fg.muted">Margin (employees/trainees)</Box>
-                      {periods.map((p) => (
-                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].businessMargin)}</Box>
-                      ))}
-                    </Box>
-                    <Box as="tr">
-                      <Box as="td" p={2} color="fg.muted">Equipment rentals</Box>
-                      {periods.map((p) => (
-                        <Box as="td" key={p.key} p={2} textAlign="right">{fmtUSD(comparison[p.key].equipmentRentals)}</Box>
-                      ))}
-                    </Box>
-                    <Box as="tr" borderTopWidth="1px" borderColor="gray.200">
-                      <Box as="td" p={2} fontWeight="semibold" color="green.700">Earnings (total)</Box>
-                      {periods.map((p) => (
-                        <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="green.700">{fmtUSD(comparison[p.key].earnings)}</Box>
-                      ))}
-                    </Box>
-                    <Box as="tr">
-                      <Box as="td" p={2} fontWeight="semibold" color="orange.700">Business expenses</Box>
-                      {periods.map((p) => (
-                        <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="orange.700">−{fmtUSD(comparison[p.key].expenses)}</Box>
-                      ))}
-                    </Box>
-                    {/* Processing fees: hide row entirely when every period is
-                        zero (zero-fee org). Otherwise render alongside business
-                        expenses with the same negative styling. */}
-                    {periods.some((p) => (comparison[p.key].processingFees ?? 0) > 0) && (
-                      <Box as="tr">
-                        <Box as="td" p={2} fontWeight="semibold" color="orange.700">Processing fees</Box>
-                        {periods.map((p) => (
-                          <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="semibold" color="orange.700">−{fmtUSD(comparison[p.key].processingFees ?? 0)}</Box>
-                        ))}
-                      </Box>
-                    )}
-                    <Box as="tr" borderTopWidth="2px" borderColor="gray.300">
-                      <Box as="td" p={2} fontWeight="bold">Net</Box>
-                      {periods.map((p) => {
-                        const v = comparison[p.key].net;
-                        return (
-                          <Box as="td" key={p.key} p={2} textAlign="right" fontWeight="bold" color={v >= 0 ? "green.700" : "red.600"}>
-                            {v < 0 ? "−" : ""}{fmtUSD(Math.abs(v))}
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  </Box>
-                </Box>
-                <Text fontSize="xs" color="fg.muted" mt={2}>
-                  Management view only. For tax reporting use QuickBooks exports + Gusto.
-                </Text>
-              </Box>
+              <VStack align="stretch" gap={0} fontSize="xs">
+                <HStack justify="space-between" py={1.5}>
+                  <Text color="fg.muted">Platform fees (contractors)</Text>
+                  <Text>{fmtUSD(comparison.platformFees)}</Text>
+                </HStack>
+                <HStack justify="space-between" py={1.5}>
+                  <Text color="fg.muted">Margin (employees/trainees)</Text>
+                  <Text>{fmtUSD(comparison.businessMargin)}</Text>
+                </HStack>
+                <HStack justify="space-between" py={1.5}>
+                  <Text color="fg.muted">Equipment rentals</Text>
+                  <Text>{fmtUSD(comparison.equipmentRentals)}</Text>
+                </HStack>
+                <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
+                  <Text fontWeight="semibold" color="green.700">Earnings (total)</Text>
+                  <Text fontWeight="semibold" color="green.700">{fmtUSD(comparison.earnings)}</Text>
+                </HStack>
+                <HStack justify="space-between" py={1.5}>
+                  <Text fontWeight="semibold" color="orange.700">Business expenses</Text>
+                  <Text fontWeight="semibold" color="orange.700">−{fmtUSD(comparison.expenses)}</Text>
+                </HStack>
+                {(comparison.processingFees ?? 0) > 0 && (
+                  <HStack justify="space-between" py={1.5}>
+                    <Text fontWeight="semibold" color="orange.700">Processing fees</Text>
+                    <Text fontWeight="semibold" color="orange.700">−{fmtUSD(comparison.processingFees)}</Text>
+                  </HStack>
+                )}
+                <HStack justify="space-between" py={1.5} borderTopWidth="2px" borderColor="gray.300">
+                  <Text fontWeight="bold">Net</Text>
+                  <Text fontWeight="bold" color={net >= 0 ? "green.700" : "red.600"}>
+                    {net < 0 ? "−" : ""}{fmtUSD(Math.abs(net))}
+                  </Text>
+                </HStack>
+              </VStack>
+              <Text fontSize="xs" color="fg.muted" mt={2}>
+                Management view only. For tax reporting use QuickBooks exports + Gusto.
+              </Text>
             </Card.Body>
           </Card.Root>
         );
@@ -781,24 +797,6 @@ export default function BusinessExpensesTab() {
                 placeholder="Search description, vendor, notes…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-              />
-            </HStack>
-            <HStack gap={1}>
-              <Text fontSize="xs" color="fg.muted">From</Text>
-              <input
-                type="date"
-                value={filterFrom}
-                onChange={(e) => setFilterFrom(e.target.value)}
-                style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
-              />
-            </HStack>
-            <HStack gap={1}>
-              <Text fontSize="xs" color="fg.muted">To</Text>
-              <input
-                type="date"
-                value={filterTo}
-                onChange={(e) => setFilterTo(e.target.value)}
-                style={{ padding: "4px 8px", fontSize: "13px", border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px" }}
               />
             </HStack>
             <CategoryFilterSelect
@@ -859,9 +857,9 @@ export default function BusinessExpensesTab() {
                           onClick={() => setFilterCategory(filterCategory === e.category ? "" : (e.category ?? ""))}
                         >
                           {e.category}
-                          {LINE_BY_CATEGORY[e.category] && (
+                          {e.category && lineFor(e.category) && (
                             <Text as="span" ml={1} opacity={0.75}>
-                              (line {LINE_BY_CATEGORY[e.category]})
+                              (line {lineFor(e.category)})
                             </Text>
                           )}
                         </Badge>
@@ -1067,7 +1065,7 @@ export default function BusinessExpensesTab() {
                   <Box>
                     <Text fontSize="sm" mb={1}>Category (Schedule C line)</Text>
                     <CategoryDropdown value={fCategory} onChange={setFCategory} />
-                    {fCategory && !CATEGORY_LABELS.includes(fCategory) && (
+                    {fCategory && !selectableCategories.some((c) => c.label === fCategory) && (
                       <Text fontSize="xs" color="orange.600" mt={1}>
                         Legacy category "{fCategory}" — pick a Schedule C category to update it.
                       </Text>
@@ -1283,17 +1281,18 @@ export default function BusinessExpensesTab() {
 
 function CategoryDropdown(props: { value: string; onChange: (v: string) => void }) {
   const { value, onChange } = props;
+  const { selectableCategories } = useExpenseCategories();
   const items = useMemo(
     () => [
       { label: "— Select category —", value: "__NONE__" },
-      ...SCHEDULE_C_CATEGORIES.map((c) => ({ label: `${c.label} (line ${c.line})`, value: c.label })),
+      ...selectableCategories.map((c) => ({ label: `${c.label} (line ${c.scheduleCLine})`, value: c.label })),
     ],
-    [],
+    [selectableCategories],
   );
   const collection = useMemo(() => createListCollection({ items }), [items]);
   // If the stored value is a legacy / unrecognized string, show __NONE__ in
   // the picker so the user is prompted to pick a real one.
-  const current = value && SCHEDULE_C_CATEGORIES.some((c) => c.label === value) ? value : "__NONE__";
+  const current = value && selectableCategories.some((c) => c.label === value) ? value : "__NONE__";
   return (
     <Select.Root
       collection={collection}

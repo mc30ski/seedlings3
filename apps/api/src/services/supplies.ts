@@ -2,6 +2,7 @@ import { prisma } from "../db/prisma";
 import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
+import { loadCategoryLabels } from "./expenseCategories";
 import type {
   ServicesSupplies,
   SupplyCreateInput,
@@ -11,10 +12,6 @@ import type {
   SupplyHoldInput,
 } from "../types/services";
 
-// Mirror of the Schedule C list — duplicated here so a Supply's category is
-// validated against the same canonical list used by BusinessExpense and
-// per-job Expense rows. Default "Supplies" matches the bias in the rest of
-// the app: most lawn-care consumables land on line 22.
 // Workflows whose occurrences don't carry physical supply consumption —
 // tasks, reminders, events, followups, and announcements are administrative
 // or communication flows, not service work. Inventory holds are blocked on
@@ -27,24 +24,9 @@ const NON_SUPPLY_WORKFLOWS = new Set([
   "ANNOUNCEMENT",
 ]);
 
-const SCHEDULE_C_CATEGORIES = new Set([
-  "Advertising",
-  "Car and truck expenses",
-  "Contract labor",
-  "Depreciation",
-  "Insurance",
-  "Legal and professional services",
-  "Office expense",
-  "Rent or lease — vehicles/equipment",
-  "Rent or lease — other business property",
-  "Repairs and maintenance",
-  "Supplies",
-  "Taxes and licenses",
-  "Travel",
-  "Meals",
-  "Utilities",
-  "Other",
-]);
+// A Supply's category is validated against the EXPENSE_CATEGORIES taxonomy —
+// the same single source of truth used by BusinessExpense and per-job Expense
+// rows. Default "Supplies": most lawn-care consumables land on line 22.
 const DEFAULT_CATEGORY = "Supplies";
 
 async function isAdminUser(userId: string): Promise<boolean> {
@@ -55,10 +37,11 @@ async function isAdminUser(userId: string): Promise<boolean> {
   return !!user?.roles?.some((r: any) => r.role === "ADMIN" || r.role === "SUPER");
 }
 
-function normalizeCategory(raw: string | null | undefined): string {
+async function normalizeCategory(raw: string | null | undefined): Promise<string> {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return DEFAULT_CATEGORY;
-  if (!SCHEDULE_C_CATEGORIES.has(trimmed)) {
+  const labels = await loadCategoryLabels();
+  if (!labels.has(trimmed)) {
     throw new ServiceError(
       "INVALID_CATEGORY",
       `Invalid category: "${trimmed}". Must be a Schedule C line.`,
@@ -237,7 +220,7 @@ export const supplies: ServicesSupplies = {
     const unit = (input.unit ?? "").trim();
     if (!unit) throw new ServiceError("INVALID_INPUT", "Unit is required.", 400);
 
-    const category = normalizeCategory(input.category);
+    const category = await normalizeCategory(input.category);
     const businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
     const jobPayoutCost = requireNonNegativeNum(input.jobPayoutCost, "Job payout cost");
     const upc = input.upc ? input.upc.trim() || null : null;
@@ -273,7 +256,7 @@ export const supplies: ServicesSupplies = {
       if (!v) throw new ServiceError("INVALID_INPUT", "Unit is required.", 400);
       data.unit = v;
     }
-    if (input.category !== undefined) data.category = normalizeCategory(input.category);
+    if (input.category !== undefined) data.category = await normalizeCategory(input.category);
     if (input.businessCost !== undefined) {
       data.businessCost = requireNonNegativeNum(input.businessCost ?? 0, "Business cost");
     }

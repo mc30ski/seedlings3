@@ -145,6 +145,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   EQUIPMENT_KINDS: "catalogs",
   DOCUMENT_TYPES: "catalogs",
   TIMELINE_CATEGORIES: "catalogs",
+  EXPENSE_CATEGORIES: "catalogs",
   // Photos & Documents
   MAX_PHOTOS_PER_JOB: "media",
   PHOTO_JPEG_QUALITY: "media",
@@ -1698,6 +1699,30 @@ async function seedDatabase() {
         },
       ]),
       description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.",
+    },
+    {
+      key: "EXPENSE_CATEGORIES",
+      value: JSON.stringify([
+        { label: "Advertising", scheduleCLine: "8", selectable: true },
+        { label: "Car and truck expenses", scheduleCLine: "9", selectable: true },
+        { label: "Contract labor", scheduleCLine: "11", selectable: true },
+        { label: "Depreciation", scheduleCLine: "13", selectable: true },
+        { label: "Insurance", scheduleCLine: "15", selectable: true },
+        { label: "Legal and professional services", scheduleCLine: "17", selectable: true },
+        { label: "Office expense", scheduleCLine: "18", selectable: true },
+        { label: "Rent or lease — vehicles/equipment", scheduleCLine: "20a", selectable: true },
+        { label: "Rent or lease — other business property", scheduleCLine: "20b", selectable: true },
+        { label: "Repairs and maintenance", scheduleCLine: "21", selectable: true },
+        { label: "Supplies", scheduleCLine: "22", selectable: true },
+        { label: "Taxes and licenses", scheduleCLine: "23", selectable: true },
+        { label: "Travel", scheduleCLine: "24a", selectable: true },
+        { label: "Meals", scheduleCLine: "24b", selectable: true },
+        { label: "Utilities", scheduleCLine: "25", selectable: true },
+        // Synthetic, export-only — sourced from Payment rows, never hand-logged.
+        { label: "Payment Processing Fees", scheduleCLine: "10", selectable: false },
+        { label: "Other", scheduleCLine: "27a", selectable: true },
+      ]),
+      description: "Expense-category taxonomy. Each entry maps a category to its Schedule C line; drives both the expense-category pickers and the QuickBooks export. Editing here needs no code change.",
     },
   ];
   for (const s of feeSettings) {

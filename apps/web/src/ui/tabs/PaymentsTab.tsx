@@ -1476,6 +1476,11 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       {methodLabel(p.method)}
                       {p.note ? ` — ${p.note}` : ""}
                     </Text>
+                    {(p.processorFeeAmount ?? 0) > 0 && (
+                      <Text fontSize="xs" color="fg.muted">
+                        Processor fee −${(p.processorFeeAmount ?? 0).toFixed(2)} · Net received ${(p.netReceived ?? 0).toFixed(2)}
+                      </Text>
+                    )}
                     {p.collectedBy && (
                       <Text fontSize="xs" color="fg.muted">
                         Collected by {p.collectedBy.displayName ?? (p.collectedBy as any).email ?? "unknown"}

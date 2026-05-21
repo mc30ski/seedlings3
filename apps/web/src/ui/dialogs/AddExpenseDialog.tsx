@@ -18,28 +18,11 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
-// Mirror of the Schedule C list owned by BusinessExpensesTab — duplicated here
-// to avoid an import cycle. The default is "Supplies" since fuel, materials,
-// and small-item purchases on jobs almost always land there.
-const SCHEDULE_C_CATEGORIES: { label: string; line: string }[] = [
-  { label: "Advertising", line: "8" },
-  { label: "Car and truck expenses", line: "9" },
-  { label: "Contract labor", line: "11" },
-  { label: "Insurance", line: "15" },
-  { label: "Legal and professional services", line: "17" },
-  { label: "Office expense", line: "18" },
-  { label: "Depreciation", line: "13" },
-  { label: "Rent or lease — vehicles/equipment", line: "20a" },
-  { label: "Rent or lease — other business property", line: "20b" },
-  { label: "Repairs and maintenance", line: "21" },
-  { label: "Supplies", line: "22" },
-  { label: "Taxes and licenses", line: "23" },
-  { label: "Travel", line: "24a" },
-  { label: "Meals", line: "24b" },
-  { label: "Utilities", line: "25" },
-  { label: "Other", line: "27a" },
-];
+// Expense categories come from the EXPENSE_CATEGORIES taxonomy via
+// useExpenseCategories(). Default "Supplies" — fuel, materials, and small-item
+// job purchases almost always land there.
 const DEFAULT_CATEGORY = "Supplies";
 
 function todayStr(): string {
@@ -83,6 +66,7 @@ export default function AddExpenseDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"custom" | "inventory">("custom");
+  const { selectableCategories } = useExpenseCategories();
   const [cost, setCost] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
@@ -94,8 +78,8 @@ export default function AddExpenseDialog({
   const [pickedQty, setPickedQty] = useState("");
 
   const items = useMemo(
-    () => SCHEDULE_C_CATEGORIES.map((c) => ({ label: `${c.label} (line ${c.line})`, value: c.label })),
-    [],
+    () => selectableCategories.map((c) => ({ label: `${c.label} (line ${c.scheduleCLine})`, value: c.label })),
+    [selectableCategories],
   );
   const collection = useMemo(() => createListCollection({ items }), [items]);
   const supplyCollection = useMemo(

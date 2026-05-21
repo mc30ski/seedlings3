@@ -1,4 +1,5 @@
 import { prisma } from "../db/prisma";
+import { loadScheduleCLineMap } from "./expenseCategories";
 
 // CSV-export service. All exports are super-admin-gated at the route layer.
 // Cash-basis: Payment.confirmedAt anchors all payment-derived rows so that
@@ -449,24 +450,10 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<string> {
 // Expense and SupplyPurchase has a paired BusinessExpense row already, so
 // pulling only BE gives the canonical, deduped set.
 // ─────────────────────────────────────────────────────────────────────────────
-const SCHEDULE_C_LINES: Record<string, string> = {
-  Advertising: "8",
-  "Car and truck expenses": "9",
-  "Contract labor": "11",
-  Depreciation: "13",
-  Insurance: "15",
-  "Legal and professional services": "17",
-  "Office expense": "18",
-  "Rent or lease — vehicles/equipment": "20a",
-  "Rent or lease — other business property": "20b",
-  "Repairs and maintenance": "21",
-  Supplies: "22",
-  "Taxes and licenses": "23",
-  Travel: "24a",
-  Meals: "24b",
-  Utilities: "25",
-  Other: "27a",
-};
+// Synthetic category for processor-fee rows — sourced from Payment records,
+// never a hand-logged BusinessExpense. Its Schedule C line comes from the
+// EXPENSE_CATEGORIES taxonomy like any other category.
+const PROCESSOR_FEE_CATEGORY = "Payment Processing Fees";
 
 export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   const [rows, feePayments] = await Promise.all([
@@ -503,6 +490,10 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
     }),
   ]);
 
+  // Schedule C line numbers come from the EXPENSE_CATEGORIES taxonomy — the
+  // single source of truth, editable in Settings with no code change.
+  const lineMap = await loadScheduleCLineMap();
+
   const header = [
     "Date",
     "Vendor",
@@ -521,7 +512,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
         toIsoDate(r.date),
         r.vendor ?? "",
         category,
-        SCHEDULE_C_LINES[category] ?? "",
+        lineMap[category] ?? "",
         round2(r.cost).toFixed(2),
         r.description ?? "",
         r.invoiceNumber ?? "",
@@ -532,7 +523,8 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   // Append processor-fee rows. Vendor is the payment method (e.g. "Venmo") so
   // the CPA can see which processor charged what. Description includes the
   // Payment ID for traceability back to the source transaction. These rows
-  // use the "Payment Processing Fees" category (Schedule C line 17).
+  // use the "Payment Processing Fees" category; its Schedule C line is whatever
+  // the EXPENSE_CATEGORIES taxonomy maps it to.
   for (const p of feePayments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
@@ -542,8 +534,8 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
       csvRow([
         p.confirmedAt ? toIsoDate(p.confirmedAt) : "",
         p.method ?? "",
-        "Payment Processing Fees",
-        "17",
+        PROCESSOR_FEE_CATEGORY,
+        lineMap[PROCESSOR_FEE_CATEGORY] ?? "10",
         round2(p.processorFeeAmount ?? 0).toFixed(2),
         desc,
         "",
