@@ -240,6 +240,7 @@ export type ServicesEquipment = {
   maintenanceEnd(currentUserId: string, id: string): Promise<Equipment>;
 
   listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }): Promise<any[]>;
+  listUsage(params?: { from?: string; to?: string; userId?: string }): Promise<any[]>;
 };
 
 export type ServicesUsers = {

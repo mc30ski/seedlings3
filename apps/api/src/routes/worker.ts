@@ -890,6 +890,12 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.equipment.listMine(req.user.id);
   });
 
+  // Equipment-usage dashboard — scoped to the requesting worker's own checkouts.
+  app.get("/equipment-usage", workerGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    return services.equipment.listUsage({ from, to, userId: req.user.id });
+  });
+
   app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {
     const id = req.params.id as string;
     const body = (req.body || {}) as { groupId?: string | null };

@@ -13,6 +13,7 @@ export type InnerTab = {
   category?: string; // group tabs into categories
   categoryIcon?: React.ElementType; // icon for the category
   categoryHighlight?: boolean; // highlight this category in the dropdown
+  chip?: boolean; // render this tab on a light chip in the inner dropdown
 };
 
 export type OuterTab = {
@@ -123,7 +124,7 @@ export default function BreadcrumbNav({
 
   function renderDropdown(
     ref: React.RefObject<HTMLDivElement | null>,
-    items: { value: string; label: string; icon?: React.ElementType; highlight?: boolean }[],
+    items: { value: string; label: string; icon?: React.ElementType; highlight?: boolean; chip?: boolean }[],
     activeValue: string,
     onSelect: (value: string) => void,
   ) {
@@ -178,6 +179,26 @@ export default function BreadcrumbNav({
               >
                 {t.icon && <Icon as={t.icon} boxSize={3.5} />}
                 <Text>{t.label}</Text>
+              </HStack>
+            ) : t.chip ? (
+              <HStack
+                px={2}
+                py={0.5}
+                bg={t.value === activeValue ? "blue.100" : "gray.100"}
+                borderWidth="1px"
+                borderColor={t.value === activeValue ? "blue.300" : "gray.200"}
+                borderRadius="full"
+                lineHeight="1.2"
+                gap={1.5}
+              >
+                {t.icon && <Icon as={t.icon} boxSize={3.5} color={t.value === activeValue ? "blue.600" : "fg.muted"} />}
+                <Text
+                  fontSize="sm"
+                  fontWeight={t.value === activeValue ? "semibold" : "medium"}
+                  color={t.value === activeValue ? "blue.700" : undefined}
+                >
+                  {t.label}
+                </Text>
               </HStack>
             ) : (
               <>
@@ -290,7 +311,7 @@ export default function BreadcrumbNav({
                   </HStack>
                   {innerOpen && renderDropdown(
                     innerRef,
-                    categoryTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
+                    categoryTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, chip: t.chip })),
                     innerValue,
                     (v) => { onInnerChange(v); setInnerOpen(false); },
                   )}
@@ -319,7 +340,7 @@ export default function BreadcrumbNav({
             </HStack>
             {innerOpen && renderDropdown(
               innerRef,
-              visibleInner.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
+              visibleInner.map((t) => ({ value: t.value, label: t.label, icon: t.icon, chip: t.chip })),
               innerValue,
               (v) => { onInnerChange(v); setInnerOpen(false); },
             )}
