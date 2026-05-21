@@ -589,10 +589,12 @@ export default async function publicRoutes(app: FastifyInstance) {
     // Web-push (free) always fires. SMS/email (Twilio/Resend, paid) only
     // fire when NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL is "true". Default
     // is push-only to keep dev/test cost at zero.
+    // Payment approval is a Super-only responsibility, so only supers are
+    // notified of a payment awaiting approval.
     const adminUsers = await prisma.user.findMany({
       where: {
         isApproved: true,
-        roles: { some: { role: { in: ["ADMIN", "SUPER"] as any } } },
+        roles: { some: { role: "SUPER" as any } },
       },
       select: { id: true },
     });

@@ -560,7 +560,6 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       const SETTINGS_ORDER = [
         "CONTRACTOR_PLATFORM_FEE_PERCENT",
         "EMPLOYEE_BUSINESS_MARGIN_PERCENT",
-        "PROCESSOR_FEE_ABSORPTION",
         "PAYMENT_METHODS",
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",
@@ -755,7 +754,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           <Text fontSize="xs" color="fg.muted">{s.description}</Text>
                         )}
                       </VStack>
-                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && s.key !== "PROCESSOR_FEE_ABSORPTION" && !BOOLEAN_SETTINGS.has(s.key) && (
+                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && (
                         <Button size="xs" variant="outline" onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
@@ -778,26 +777,6 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                             onClick={() => void saveSettingValue(s.key, v)}
                           >
                             {v.charAt(0) + v.slice(1).toLowerCase()}
-                          </Button>
-                        ))}
-                      </HStack>
-                    ) : s.key === "PROCESSOR_FEE_ABSORPTION" ? (
-                      // Two-state selector: BUSINESS (default — biz eats the
-                      // processor fee, worker paid on full gross) or SPLIT
-                      // (fee deducted before payouts, worker shares the cost).
-                      // Free text would break the createPayment fee math.
-                      <HStack gap={2}>
-                        {(["BUSINESS", "SPLIT"] as const).map((v) => (
-                          <Button
-                            key={v}
-                            size="xs"
-                            variant={s.value === v ? "solid" : "outline"}
-                            colorPalette={v === "BUSINESS" ? "blue" : "purple"}
-                            loading={saving && s.value !== v}
-                            disabled={!isSuper || s.value === v}
-                            onClick={() => void saveSettingValue(s.key, v)}
-                          >
-                            {v === "BUSINESS" ? "Business absorbs" : "Split with worker"}
                           </Button>
                         ))}
                       </HStack>

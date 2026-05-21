@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Box, Button, HStack, Input, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
-import { Camera, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
+import { Camera, ChevronDown, ChevronUp, Pencil, Trash2, Upload } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
@@ -44,26 +44,42 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
     void load();
   }, [propertyId]);
 
-  async function handleUpload(file: File) {
+  async function uploadOne(file: File) {
+    // Compress without redacting (property photos need visible text/numbers)
+    const compressed = await compressOnly(file);
+    const contentType = "image/jpeg";
+    const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
+      `/api/admin/properties/${propertyId}/photos/upload-url`,
+      { fileName: file.name, contentType },
+    );
+    const uploadRes = await fetch(uploadUrl, { method: "PUT", body: compressed, headers: { "Content-Type": contentType } });
+    if (!uploadRes.ok) throw new Error(`R2 upload failed: ${uploadRes.status}`);
+    await apiPost(`/api/admin/properties/${propertyId}/photos/confirm`, {
+      key, fileName: file.name, contentType,
+    });
+  }
+
+  async function handleUpload(files: File[]) {
+    if (files.length === 0) return;
     setUploading(true);
-    try {
-      // Compress without redacting (property photos need visible text/numbers)
-      const compressed = await compressOnly(file);
-      const contentType = "image/jpeg";
-      const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/admin/properties/${propertyId}/photos/upload-url`,
-        { fileName: file.name, contentType },
-      );
-      const uploadRes = await fetch(uploadUrl, { method: "PUT", body: compressed, headers: { "Content-Type": contentType } });
-      if (!uploadRes.ok) throw new Error(`R2 upload failed: ${uploadRes.status}`);
-      await apiPost(`/api/admin/properties/${propertyId}/photos/confirm`, {
-        key, fileName: file.name, contentType,
-      });
-      publishInlineMessage({ type: "SUCCESS", text: "Photo uploaded." });
-      await load();
-    } catch (err) {
-      console.error("[PropertyPhotos] Upload error:", err);
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Upload failed.", err) });
+    let ok = 0;
+    const failed: string[] = [];
+    for (const file of files) {
+      try {
+        await uploadOne(file);
+        ok++;
+      } catch (err) {
+        console.error("[PropertyPhotos] Upload error:", err);
+        failed.push(file.name);
+      }
+    }
+    if (ok > 0) await load();
+    if (failed.length === 0) {
+      publishInlineMessage({ type: "SUCCESS", text: ok === 1 ? "Photo uploaded." : `${ok} photos uploaded.` });
+    } else if (ok > 0) {
+      publishInlineMessage({ type: "ERROR", text: `${ok} uploaded, ${failed.length} failed: ${failed.join(", ")}` });
+    } else {
+      publishInlineMessage({ type: "ERROR", text: "Upload failed." });
     }
     setUploading(false);
   }
@@ -115,9 +131,10 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
                 const input = document.createElement("input");
                 input.type = "file";
                 input.accept = "image/*";
+                input.multiple = true;
                 input.onchange = () => {
-                  const file = input.files?.[0];
-                  if (file) void handleUpload(file);
+                  const files = input.files ? Array.from(input.files) : [];
+                  if (files.length) void handleUpload(files);
                 };
                 input.click();
               }}
@@ -181,14 +198,24 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
                     {photo.description || (readOnly ? "No description" : "Click to add description…")}
                   </Text>
                   {!readOnly && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      colorPalette="red"
-                      onClick={() => void handleDelete(photo.id)}
-                    >
-                      <Trash2 size={12} /> Delete
-                    </Button>
+                    <HStack gap={1}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        colorPalette="blue"
+                        onClick={() => { setEditingId(photo.id); setEditDesc(photo.description ?? ""); }}
+                      >
+                        <Pencil size={12} /> Edit
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        onClick={() => void handleDelete(photo.id)}
+                      >
+                        <Trash2 size={12} /> Delete
+                      </Button>
+                    </HStack>
                   )}
                 </>
               )}

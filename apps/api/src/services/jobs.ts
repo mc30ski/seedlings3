@@ -311,6 +311,7 @@ export const jobs: ServicesJobs = {
           frequencyDays: (payload as any).frequencyDays ?? null,
           description: (payload as any).description ?? null,
           notes: payload.notes ?? null,
+          guidanceNote: (payload as any).guidanceNote ?? null,
           defaultPrice: payload.defaultPrice ?? null,
           estimatedMinutes: (payload as any).estimatedMinutes ?? null,
         } as any,
@@ -335,6 +336,7 @@ export const jobs: ServicesJobs = {
           propertyId: payload.propertyId,
           frequencyDays: "frequencyDays" in (payload as any) ? ((payload as any).frequencyDays ?? null) : undefined,
           description: "description" in (payload as any) ? ((payload as any).description ?? null) : undefined,
+          guidanceNote: "guidanceNote" in (payload as any) ? ((payload as any).guidanceNote ?? null) : undefined,
           notes: payload.notes ?? undefined,
           defaultPrice: payload.defaultPrice ?? undefined,
           estimatedMinutes: "estimatedMinutes" in (payload as any) ? ((payload as any).estimatedMinutes ?? null) : undefined,
@@ -436,6 +438,11 @@ export const jobs: ServicesJobs = {
           pinnedNote: input.pinnedNote ?? null,
           pinnedNoteRepeats: input.pinnedNoteRepeats ?? true,
           notes: input.notes !== undefined ? input.notes : (job as any).notes ?? null,
+          // Seeded from the job default unless the caller explicitly sets it
+          // (the New Occurrence dialog passes null to opt this instance out).
+          guidanceNote: (input as any).guidanceNote !== undefined
+            ? (input as any).guidanceNote
+            : ((job as any).guidanceNote ?? null),
           price: input.price !== undefined ? input.price : (job as any).defaultPrice ?? null,
           estimatedMinutes: input.estimatedMinutes !== undefined ? input.estimatedMinutes : (job as any).estimatedMinutes ?? null,
           workflow: input.workflow ?? OccurrenceWorkflow.STANDARD,

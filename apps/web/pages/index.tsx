@@ -933,6 +933,14 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
+          value: "payments",
+          label: "Payments",
+          icon: TfiMoney,
+          content: wrapWithInlineMessage(<PaymentsTab me={me} purpose="SUPER" />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
           value: "business-expenses",
           label: "Expenses",
           icon: TfiMoney,
@@ -1274,7 +1282,7 @@ export default function HomePage() {
   const [pendingPayments, setPendingPayments] = useState<number>(0);
 
   const loadPendingPayments = useCallback(async () => {
-    if (!isAdmin && !isSuper) {
+    if (!isSuper) {
       setPendingPayments(0);
       if (me) markAlertLoaded("pendingPayments");
       return;
@@ -2181,8 +2189,8 @@ export default function HomePage() {
   }, []);
 
   const goToPaymentApprovals = useCallback(() => {
-    setTopTab("admin");
-    setAdminInnerTab("payments");
+    setTopTab("super");
+    setSuperInnerTab("payments");
   }, []);
 
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
@@ -2364,7 +2372,7 @@ export default function HomePage() {
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
-              if ((isAdmin || isSuper) && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
+              if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });

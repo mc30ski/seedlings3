@@ -221,14 +221,6 @@ async function loadRates(client: typeof prisma | any): Promise<Rates> {
   };
 }
 
-// Read the PROCESSOR_FEE_ABSORPTION setting. BUSINESS (default) = the
-// business eats the processor fee; worker payouts calculated on full gross.
-// SPLIT = fee comes off the gross before payouts so workers share it.
-async function loadFeeAbsorption(client: typeof prisma | any): Promise<"BUSINESS" | "SPLIT"> {
-  const row = await client.setting.findUnique({ where: { key: "PROCESSOR_FEE_ABSORPTION" } });
-  return row?.value === "SPLIT" ? "SPLIT" : "BUSINESS";
-}
-
 // Resolve which of the given user IDs is flagged as the LLC owner. Returns a
 // Set so split-write loops can do a single O(1) lookup per row. The schema
 // enforces at most one owner via a partial unique index, but the Set works
@@ -475,17 +467,14 @@ export const payments: ServicesPayments = {
 
       // Processor fee: snapshot the rate from the PAYMENT_METHODS taxonomy at
       // record time so historical math doesn't shift if the rate changes later.
-      // `amountPaid` IS what the client paid (gross). Absorption model decides
-      // whether worker payouts are calculated on gross or net.
+      // `amountPaid` IS what the client paid (gross). The business always
+      // absorbs the processor fee, so worker payouts are calculated on the
+      // full gross — the fee is purely a recorded business expense.
       const methodsList = await loadPaymentMethods(tx);
       const feeCfg = getProcessorFee(method, methodsList);
       const { processorFeeAmount, netReceived } = computeProcessorFee(amountPaid, feeCfg);
-      const absorption = await loadFeeAbsorption(tx);
-      // SPLIT: workers see the net-of-fee amount as the base. BUSINESS: workers
-      // see gross (the business eats the fee).
-      const baseForPayout = absorption === "SPLIT" ? netReceived : amountPaid;
 
-      const recon = reconcileApproval(baseForPayout, totalExpenses, workersList, promised, rates);
+      const recon = reconcileApproval(amountPaid, totalExpenses, workersList, promised, rates);
       const hasContractors = workersList.some((w) => !isEmployeeClass(w.workerType));
       const hasEmployees = workersList.some((w) => isEmployeeClass(w.workerType));
       const ownerSet = await loadOwnerSet(tx, recon.splits.map((s) => s.userId));
@@ -567,7 +556,6 @@ export const payments: ServicesPayments = {
           feeAmount: processorFeeAmount,
           grossCharged: amountPaid,
           netReceived,
-          absorption,
           context,
         });
       }
@@ -1232,18 +1220,36 @@ export const payments: ServicesPayments = {
     // amount adjustment (or method change) recalculates the fee against the
     // final values. If the method/amount didn't change, the result matches
     // what's already on the row.
+    //
+    // The admin can override the computed fee with the actual figure from the
+    // processor's statement (e.g. Venmo) — the formula is only an estimate and
+    // can land a penny off. The override changes ONLY processorFeeAmount and
+    // netReceived; the business always absorbs the fee, so worker payouts are
+    // calculated on the full gross and are unaffected by it.
     const methodsList = await loadPaymentMethods(prisma);
     const feeCfg = getProcessorFee(finalMethod, methodsList);
-    const { processorFeeAmount, netReceived } = computeProcessorFee(finalAmount, feeCfg);
-    const absorption = await loadFeeAbsorption(prisma);
-    const baseForPayout = absorption === "SPLIT" ? netReceived : finalAmount;
+    const computed = computeProcessorFee(finalAmount, feeCfg);
+    let processorFeeAmount = computed.processorFeeAmount;
+    let netReceived = computed.netReceived;
+    if (overrides?.processorFeeAmount !== undefined) {
+      const overrideFee = Number(overrides.processorFeeAmount);
+      if (!Number.isFinite(overrideFee) || overrideFee < 0 || overrideFee > finalAmount) {
+        throw new ServiceError(
+          "INVALID_FEE",
+          "Processor fee override must be between 0 and the payment amount.",
+          400,
+        );
+      }
+      processorFeeAmount = round2(overrideFee);
+      netReceived = round2(finalAmount - processorFeeAmount);
+    }
 
     const promised = (existing.occurrence as any).promisedPayouts as PromisedRow[] | null;
     const recon = Array.isArray(promised) && promised.length > 0
-      ? reconcileApproval(baseForPayout, totalExpenses, workersList, promised, rates)
+      ? reconcileApproval(finalAmount, totalExpenses, workersList, promised, rates)
       : (() => {
           // Legacy path: compute against final amount only; no top-ups.
-          const rows = computeBreakdown(baseForPayout, totalExpenses, workersList, rates);
+          const rows = computeBreakdown(finalAmount, totalExpenses, workersList, rates);
           const splits: FinalSplitRow[] = rows.map((r) => ({
             userId: r.userId,
             workerType: r.workerType,
@@ -1386,9 +1392,10 @@ export const payments: ServicesPayments = {
           feeAmount: processorFeeAmount,
           grossCharged: finalAmount,
           netReceived,
-          absorption,
           context: "ADMIN",
-          source: wasAdjusted ? "adjusted-at-approval" : "approval-recompute",
+          source: overrides?.processorFeeAmount !== undefined
+            ? "fee-overridden-at-approval"
+            : wasAdjusted ? "adjusted-at-approval" : "approval-recompute",
         });
       }
 

@@ -129,7 +129,6 @@ const SETTING_SECTIONS: Record<string, string> = {
   // Payments & Payouts
   CONTRACTOR_PLATFORM_FEE_PERCENT: "payments",
   EMPLOYEE_BUSINESS_MARGIN_PERCENT: "payments",
-  PROCESSOR_FEE_ABSORPTION: "payments",
   PAYMENT_METHODS: "payments",
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
@@ -1141,8 +1140,8 @@ async function seedDatabase() {
   // Worker type lookup for fee calculation
   const contractorIds = new Set([CONTRACTOR_ID]);
   const employeeIds = new Set([ADMIN_WORKER_ID, EMPLOYEE_ID, TRAINEE_ID]);
-  const PLATFORM_FEE_PCT = 10;
-  const BUSINESS_MARGIN_PCT = 20;
+  const PLATFORM_FEE_PCT = 20;
+  const BUSINESS_MARGIN_PCT = 30;
 
   // Processor-fee config per method — mirrors the seeded PAYMENT_METHODS
   // taxonomy defaults (§5/§6 of docs/FINANCIAL_SYSTEM.md). Only Venmo charges
@@ -1644,8 +1643,8 @@ async function seedDatabase() {
   console.log("  Creating fee/margin settings...");
 
   const feeSettings = [
-    { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "10", description: "Platform fee percentage charged on contractor (1099) payment splits" },
-    { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "20", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
+    { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "20", description: "Platform fee percentage charged on contractor (1099) payment splits" },
+    { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
@@ -1699,7 +1698,6 @@ async function seedDatabase() {
       ]),
       description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.",
     },
-    { key: "PROCESSOR_FEE_ABSORPTION", value: "BUSINESS", description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost)." },
   ];
   for (const s of feeSettings) {
     await prisma.setting.upsert({
@@ -2551,11 +2549,6 @@ async function seedPaymentsBase() {
     where: { key: "PAYMENT_METHODS" },
     create: { key: "PAYMENT_METHODS", value: paymentMethodsDefault, description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.", updatedById: MICHAEL_ID },
     update: { description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes." },
-  });
-  await prisma.setting.upsert({
-    where: { key: "PROCESSOR_FEE_ABSORPTION" },
-    create: { key: "PROCESSOR_FEE_ABSORPTION", value: "BUSINESS", description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost).", updatedById: MICHAEL_ID },
-    update: { description: "Who absorbs the payment-processor fee. BUSINESS = business eats it (worker paid on full gross). SPLIT = fee deducted from gross before payout (worker shares the cost)." },
   });
   console.log("    Clients + contacts...");
   const adams = await prisma.client.create({ data: { type: "PERSON", displayName: "Adams (normal)" } });

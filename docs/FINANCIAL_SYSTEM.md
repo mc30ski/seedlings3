@@ -17,7 +17,7 @@ Last updated: 2026-05-20.
 2. [The payment lifecycle](#2-the-payment-lifecycle) — completed → pending → approve/reject/adjust/write-off → closed
 3. [Payout math](#3-payout-math--how-a-workers-share-is-calculated) — per-worker fees; gross → fee → net
 4. [Reconciliation](#4-reconciliation--promised-vs-actual-underpay--overpay) — promised vs. actual, made-whole, pro-rata, shortfall/overage
-5. [Processor fees](#5-processor-fees) — snapshot math + BUSINESS / SPLIT absorption model
+5. [Processor fees](#5-processor-fees) — snapshot math, business always absorbs, fee override at approval
 6. [Configurable payment methods](#6-configurable-payment-methods-payment_methods-setting) — the `PAYMENT_METHODS` taxonomy + placeholders
 7. [The two payment contexts](#7-the-two-payment-contexts) — client request / on-site + the Request Payment toggle
 8. [Owner earnings](#8-owner-earnings) — tracked like a worker, taken as a draw
@@ -102,16 +102,16 @@ net_i        = gross_i − fee_i                    (worker i's take-home)
 
 The **rate** depends on worker type:
 
-- **CONTRACTOR** → "platform fee" / commission, from `CONTRACTOR_PLATFORM_FEE_PERCENT` (default 10%)
-- **EMPLOYEE / TRAINEE** → "business margin", from `EMPLOYEE_BUSINESS_MARGIN_PERCENT` (default 20%)
+- **CONTRACTOR** → "platform fee" / commission, from `CONTRACTOR_PLATFORM_FEE_PERCENT` (default 20%)
+- **EMPLOYEE / TRAINEE** → "business margin", from `EMPLOYEE_BUSINESS_MARGIN_PERCENT` (default 30%)
 
 The fee/margin is what the **business keeps**; the net is what the **worker
-gets**. On a $100 job with one contractor at a 100% split: $10 commission to
-the business, $90 to the contractor.
+gets**. On a $100 job with one contractor at a 100% split: $20 commission to
+the business, $80 to the contractor.
 
 Mixed crews work the same way — each worker's own rate applies to their own
-share. A 50/50 contractor+employee crew on $100 yields $45 to the contractor
-($50 − 10%) and $40 to the employee ($50 − 20%).
+share. A 50/50 contractor+employee crew on $100 yields $40 to the contractor
+($50 − 20%) and $35 to the employee ($50 − 30%).
 
 ---
 
@@ -181,16 +181,24 @@ netReceived        = grossCharged − processorFeeAmount
 The fee rate is **snapshotted on the Payment row** at record time, so changing
 the taxonomy later never rewrites historical payments.
 
-### Fee absorption model — `PROCESSOR_FEE_ABSORPTION` setting
+### The business absorbs the fee
 
-- **BUSINESS** (default) — the business absorbs the processor fee. Worker
-  payouts are calculated on the **full gross**; workers are unaffected by which
-  payment method the client used.
-- **SPLIT** — the fee comes off the gross *before* payouts are calculated, so
-  workers share the cost proportionally.
+The business **always** absorbs the processor fee. Worker payouts are always
+calculated on the **full gross** — the payment method the client chose never
+changes what a worker is paid. The fee is recorded purely as a business
+expense and flows to the QuickBooks expense export (§12) as a "Payment
+Processing Fees" line. `grossCharged`, `processorFeeAmount`, and `netReceived`
+are all stored on the Payment record.
 
-Either way, `grossCharged`, `processorFeeAmount`, and `netReceived` are all
-stored on the Payment record.
+### Correcting the fee at approval
+
+`processorFeeAmount` is computed from the configured rate, which is only an
+**estimate** — a processor's actual fee can land a cent off due to rounding.
+When an admin approves a payment, they can **override the fee** with the
+actual figure from the processor's statement (e.g. Venmo). The override
+updates `processorFeeAmount` and `netReceived` only; because the business
+absorbs the fee, it provably cannot affect any worker payout, split, top-up,
+or reconciliation figure.
 
 Historical payments recorded before processor-fee tracking existed are treated
 as zero-fee (the fields are null).
@@ -363,11 +371,10 @@ hardcoded.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `CONTRACTOR_PLATFORM_FEE_PERCENT` | `10` | Commission retained from contractor (1099) splits |
-| `EMPLOYEE_BUSINESS_MARGIN_PERCENT` | `20` | Margin retained from employee/trainee (W-2) splits |
+| `CONTRACTOR_PLATFORM_FEE_PERCENT` | `20` | Commission retained from contractor (1099) splits |
+| `EMPLOYEE_BUSINESS_MARGIN_PERCENT` | `30` | Margin retained from employee/trainee (W-2) splits |
 | `HIGH_VALUE_JOB_THRESHOLD` | `200` | Jobs ≥ this price require contractor insurance to claim |
 | `PAYMENT_METHODS` | (4 methods) | The payment-methods taxonomy — see §6 |
-| `PROCESSOR_FEE_ABSORPTION` | `BUSINESS` | Who absorbs the processor fee: `BUSINESS` or `SPLIT` — see §5 |
 | `REQUEST_PAYMENT_FROM_CLIENT_ENABLED` | `false` | Enables the Request Payment path — see §7a |
 | `PAYROLL_PERIOD_CADENCE` | `WEEKLY` | Pay-period cadence; sets default date range on the Exports tab. `WEEKLY` / `BIWEEKLY` / `MONTHLY` |
 | `VENMO_BUSINESS_HANDLE` | — | Business Venmo handle; referenced by the taxonomy |

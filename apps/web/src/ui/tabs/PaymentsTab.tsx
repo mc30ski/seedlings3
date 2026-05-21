@@ -21,7 +21,7 @@ import { CalendarRange, ChevronDown, ChevronUp, CreditCard, Download, Filter, Li
 import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/lib/datePresets";
 import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import { apiGet, apiPatch, apiDelete } from "@/src/lib/api";
+import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
 import { determineRoles, prettyStatus, clientLabel, fmtDate } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
@@ -38,6 +38,7 @@ import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import StatusButton from "@/src/ui/components/StatusButton";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import { TextLink } from "@/src/ui/helpers/Link";
 import { openEventSearch } from "@/src/lib/bus";
 import PendingApprovalsSection from "@/src/ui/components/PendingApprovalsSection";
@@ -643,7 +644,7 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
 
 // ─── Admin Payments ──────────────────────────────────────────────────
 
-function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
+function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: boolean }) {
   const [items, setItems] = useState<PaymentListItem[]>([]);
   const [personTotals, setPersonTotals] = useState<Array<{ userId: string; displayName: string | null; total: number }>>([]);
   const [totalPlatformFees, setTotalPlatformFees] = useState(0);
@@ -765,6 +766,9 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
   const [editSplits, setEditSplits] = useState<Record<string, string>>({});
   const [editBusy, setEditBusy] = useState(false);
   const [editConfirm, setEditConfirm] = useState(false);
+
+  // Revert state — Super-only undo of an already-approved payment.
+  const [revertingPayment, setRevertingPayment] = useState<PaymentListItem | null>(null);
 
   // Delete expense state
   const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
@@ -942,9 +946,19 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
     }
   }
 
+  async function doRevert(p: PaymentListItem, reason: string) {
+    try {
+      await apiPost(`/api/admin/payments/${p.id}/revert`, { reason: reason.trim() || null });
+      publishInlineMessage({ type: "SUCCESS", text: "Payment reverted. The job is back to Pending Payment." });
+      void load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Revert failed.", err) });
+    }
+  }
+
   return (
     <Box w="full">
-      <PendingApprovalsSection />
+      {isSuper && <PendingApprovalsSection />}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -1586,7 +1600,7 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                 </HStack>
                 )}
               </Card.Body>
-              {!isCardCompact && (
+              {!isCardCompact && isSuper && (
               <Card.Footer>
                 <HStack gap={2} wrap="wrap">
                   <StatusButton
@@ -1598,6 +1612,18 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
                     busyId={statusButtonBusyId}
                     setBusyId={setStatusButtonBusyId}
                   />
+                  {p.confirmed && (
+                    <StatusButton
+                      id="payment-revert"
+                      itemId={p.id}
+                      label="Revert"
+                      onClick={async () => setRevertingPayment(p)}
+                      variant="outline"
+                      colorPalette="red"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
+                  )}
                 </HStack>
               </Card.Footer>
               )}
@@ -1857,6 +1883,28 @@ function AdminPayments({ forAdmin }: { forAdmin: boolean }) {
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      <ConfirmDialog
+        open={!!revertingPayment}
+        title="Revert Payment?"
+        message={
+          revertingPayment
+            ? `Revert the $${revertingPayment.amountPaid.toFixed(2)} ${revertingPayment.method} payment?`
+            : ""
+        }
+        warning="This deletes the payment record and returns the job to Pending Payment. The auto-created next visit is removed too — unless a worker has already started it. To restore, the payment must be re-recorded and re-approved."
+        confirmLabel="Revert"
+        confirmColorPalette="red"
+        inputLabel="Reason"
+        inputPlaceholder="e.g. Check bounced, refunded the client, recorded the wrong amount…"
+        inputOptional
+        onConfirm={async (reason: string) => {
+          const p = revertingPayment;
+          setRevertingPayment(null);
+          if (p) await doRevert(p, reason);
+        }}
+        onCancel={() => setRevertingPayment(null)}
+      />
     </Box>
   );
 }
@@ -1868,5 +1916,7 @@ export default function PaymentsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   if (!isAvail) return <UnavailableNotice />;
 
-  return forAdmin ? <AdminPayments forAdmin={forAdmin} /> : <WorkerPayments me={me} forAdmin={forAdmin} />;
+  // Payment approval + editing/deleting payment records are Super-only.
+  const isSuper = purpose === "SUPER";
+  return forAdmin ? <AdminPayments forAdmin={forAdmin} isSuper={isSuper} /> : <WorkerPayments me={me} forAdmin={forAdmin} />;
 }
