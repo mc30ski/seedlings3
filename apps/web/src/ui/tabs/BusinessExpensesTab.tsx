@@ -728,6 +728,25 @@ export default function BusinessExpensesTab() {
         </Card.Root>
       )}
 
+      {/* TEMP — CPA-review reminder. Remove after reviewing equipment-rental treatment. */}
+      <Box bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md" p={3} mb={3}>
+        <Text fontSize="sm" fontWeight="bold" color="red.700" mb={1}>
+          Reminder — review equipment-rental treatment with a CPA
+        </Text>
+        <Text fontSize="xs" color="red.700">
+          Equipment rental charges are internal — they reduce a worker's take-home and the business
+          recovers them; they don't flow into any tax export (Gusto / QuickBooks).{" "}
+          <b>Contractors (1099):</b> a business-to-business charge — confirm with a CPA how it nets
+          against reported income.{" "}
+          <b>Employees (W-2):</b> charging an employee for equipment is a wage deduction
+          (payroll / labor-law regulated) — review with a CPA and payroll before charging real W-2
+          staff. Owner charges are a wash.
+        </Text>
+        <Text fontSize="xs" color="red.600" mt={1} fontStyle="italic">
+          Remove this note once reviewed with a CPA.
+        </Text>
+      </Box>
+
       {/* Earnings vs Expenses — for the selected timeframe */}
       {comparison && (() => {
         const rangeLabel = expensePreset === "all"

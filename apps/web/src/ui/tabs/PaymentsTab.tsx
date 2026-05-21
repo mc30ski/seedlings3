@@ -161,9 +161,10 @@ function WorkerPayments({ me, forAdmin }: { me: TabPropsType["me"]; forAdmin: bo
       ]);
       setItems(res.items ?? []);
       setTotalAmount(res.totalAmount ?? 0);
-      // Employees/trainees don't pay equipment rental charges
-      const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-      setEquipCharges(isEmp ? [] : (charges ?? []));
+      // Show whatever equipment charges the API returned — it already filters
+      // to checkouts with a real recorded rentalCost. No worker-type gating:
+      // every worker (and the owner) is tracked the same way.
+      setEquipCharges(charges ?? []);
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to load payments.", err) });
     } finally {
@@ -1644,7 +1645,9 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
             {filteredCharges.map((c) => {
               const cardId = `aec-${c.id}`;
               const isCardCompact = compact && !expandedCards.has(cardId);
-              const isEmpCharge = (c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE";
+              // "No charge" vs the amount is driven by the recorded rentalCost,
+              // not the worker type — owners and every worker are treated alike.
+              const noCharge = (c.rentalCost ?? 0) <= 0;
               const toggleCard = compact ? () => setExpandedCards((prev) => {
                 const next = new Set(prev);
                 next.has(cardId) ? next.delete(cardId) : next.add(cardId);
@@ -1670,7 +1673,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                       </Text>
                       <HStack gap={1} flexShrink={0}>
                         <Text fontSize="xs" color="fg.muted">{c.user.displayName ?? c.user.email ?? c.user.id}</Text>
-                        {isEmpCharge ? (
+                        {noCharge ? (
                           <Badge colorPalette="green" variant="subtle" fontSize="xs">No charge</Badge>
                         ) : (
                           <Text fontWeight="bold" color="orange.600" fontSize="lg">
@@ -1707,7 +1710,7 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                         </Text>
                       )}
                     </VStack>
-                    {(c.user as any).workerType === "EMPLOYEE" || (c.user as any).workerType === "TRAINEE" ? (
+                    {noCharge ? (
                       <Badge colorPalette="green" variant="subtle" fontSize="sm" flexShrink={0}>
                         No charge
                       </Badge>

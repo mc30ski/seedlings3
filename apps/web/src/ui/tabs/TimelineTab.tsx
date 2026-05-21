@@ -644,17 +644,30 @@ export default function TimelineTab({ isSuper = false }: Props) {
                               </>
                             )}
                             {isSuper && r.archivedAt && (
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                colorPalette="teal"
-                                px="1.5"
-                                minW="0"
-                                onClick={() => unarchive(r.id)}
-                                title="Restore from archive"
-                              >
-                                <ArchiveRestore size={13} />
-                              </Button>
+                              <>
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="teal"
+                                  px="1.5"
+                                  minW="0"
+                                  onClick={() => unarchive(r.id)}
+                                  title="Restore from archive"
+                                >
+                                  <ArchiveRestore size={13} />
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  colorPalette="red"
+                                  px="1.5"
+                                  minW="0"
+                                  onClick={() => setConfirmAction({ kind: "delete", ev: r })}
+                                  title="Permanently delete"
+                                >
+                                  <Trash2 size={13} />
+                                </Button>
+                              </>
                             )}
                           </>
                         )}

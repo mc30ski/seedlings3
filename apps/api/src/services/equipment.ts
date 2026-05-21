@@ -936,4 +936,43 @@ export const equipment: ServicesEquipment = {
       },
     });
   },
+
+  // Equipment-usage history for the Usage dashboard. Returns actual checkouts
+  // (checkedOutAt set — reservations that were never picked up don't count as
+  // usage) overlapping the requested range. With userId the result is scoped
+  // to one worker's own checkouts; without it, every worker (admin view).
+  async listUsage(params?: { from?: string; to?: string; userId?: string }) {
+    const where: any = { checkedOutAt: { not: null } };
+    if (params?.to) where.checkedOutAt.lte = etEndOfDay(params.to);
+    if (params?.from) {
+      // Overlap: the checkout was still open, or released on/after `from`.
+      where.OR = [
+        { releasedAt: null },
+        { releasedAt: { gte: etMidnight(params.from) } },
+      ];
+    }
+    if (params?.userId) where.userId = params.userId;
+    const checkouts = await prisma.checkout.findMany({
+      where,
+      orderBy: { checkedOutAt: "desc" },
+      include: {
+        equipment: {
+          select: { id: true, shortDesc: true, brand: true, model: true, type: true, qrSlug: true },
+        },
+        user: { select: { id: true, displayName: true, email: true, workerType: true } },
+        group: { select: { id: true, name: true } },
+      },
+    });
+    return checkouts.map((c) => ({
+      id: c.id,
+      equipmentId: c.equipmentId,
+      equipment: c.equipment,
+      user: c.user,
+      group: c.group,
+      checkedOutAt: c.checkedOutAt,
+      releasedAt: c.releasedAt,
+      rentalDays: c.rentalDays,
+      active: c.releasedAt == null,
+    }));
+  },
 };

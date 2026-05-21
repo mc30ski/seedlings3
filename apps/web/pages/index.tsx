@@ -49,6 +49,8 @@ import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
+import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
+import EquipmentUsageTab from "@/src/ui/tabs/EquipmentUsageTab";
 import AdminGroupsTab from "@/src/ui/tabs/AdminGroupsTab";
 import PricingTab from "@/src/ui/tabs/PricingTab";
 import ExportsTab from "@/src/ui/tabs/ExportsTab";
@@ -116,7 +118,7 @@ export default function HomePage() {
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
-  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "System");
+  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Reports");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
@@ -124,7 +126,7 @@ export default function HomePage() {
     if (sessionStorage.getItem("equipmentQrSlug")) {
       setTopTab("worker");
       setWorkerInnerTab("equipment");
-      setWorkerCategory("Inventory");
+      setWorkerCategory("Equipment");
     }
   }, []);
 
@@ -513,13 +515,12 @@ export default function HomePage() {
     },
   ];
 
+  // Order matters: BreadcrumbNav derives the category list (and the inner-tab
+  // list within each category) from the order tabs appear here. Keep tabs of
+  // the same category contiguous, categories in the intended display order:
+  // Work · Equipment · Directory · Money · Reports · System.
   const workerTabs: TabItem[] = [
-    {
-      value: "tasks",
-      label: "Actions",
-      icon: FiPlus,
-      content: <AdminTasksTab tasks={workerTasks} />,
-    },
+    // ── Work ──
     {
       value: "home",
       label: "Home",
@@ -539,46 +540,58 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<JobsTab key={`wjobs-${jobsRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
-      value: "equipment",
-      label: "Equipment",
-      icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab key={`weq-${equipmentRemountKey}`} me={me} purpose="WORKER" />),
-    },
-    {
-      value: "supplies",
-      label: "Supplies",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
-    },
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" />),
-    },
-    {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
-
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<PreviewRoutesTab />),
     },
     {
+      value: "tasks",
+      label: "Actions",
+      icon: FiPlus,
+      content: <AdminTasksTab tasks={workerTasks} />,
+    },
+    // ── Equipment ──
+    {
+      value: "equipment",
+      label: "Inventory",
+      icon: FiTool,
+      content: wrapWithInlineMessage(<EquipmentTab key={`weq-${equipmentRemountKey}`} me={me} purpose="WORKER" />),
+    },
+    {
+      value: "collections",
+      label: "Collections",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<WorkerCollectionsTab />),
+    },
+    {
+      value: "usage",
+      label: "Usage",
+      icon: FiBarChart2,
+      content: wrapWithInlineMessage(<EquipmentUsageTab purpose="WORKER" />),
+    },
+    // ── Directory ──
+    {
       value: "clients",
       label: "Clients",
       icon: FiUsers,
-
       content: wrapWithInlineMessage(<ClientsTab me={me} purpose="WORKER" />),
     },
     {
       value: "properties",
       label: "Properties",
       icon: FiMapPin,
-
       content: wrapWithInlineMessage(
         <PropertiesTab me={me} purpose="WORKER" />
       ),
+    },
+    // ── Money ──
+    {
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PaymentsTab key={`wpay-${paymentsRemountKey}`} me={me} purpose="WORKER" />),
     },
     {
       value: "pricing",
@@ -587,30 +600,31 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<PricingTab readOnly />),
     },
     {
+      value: "supplies",
+      label: "Supplies",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
+    },
+    // ── Reports ──
+    {
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
-
       visible: () => !!me?.workerType,
       content: wrapWithInlineMessage(<StatisticsTab myId={me?.id} />),
     },
+    // ── System ──
     {
       value: "profile",
       label: "Profile",
       icon: FiUser,
-
       content: wrapWithInlineMessage(<ProfileTab me={me} purpose="WORKER" onProfileUpdated={refreshMe} />),
     },
   ];
 
   const adminTabs: TabItem[] = [
     {
-      value: "tasks",
-      label: "Actions",
-      icon: FiPlus,
-      content: <AdminTasksTab tasks={adminTasks} />,
-    },
-    {
+      // ── Work ──
       value: "admin-home",
       label: "Home",
       icon: FiHome,
@@ -629,49 +643,9 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminJobsTab key={`ajobs-${adminJobsRemountKey}`} me={me} purpose="ADMIN" />),
     },
     {
-      value: "equipment",
-      label: "Equipment",
-      icon: FiTool,
-      content: wrapWithInlineMessage(<EquipmentTab key={`aeq-${adminEquipmentRemountKey}`} me={me} purpose="ADMIN" />),
-    },
-    {
-      value: "collections",
-      label: "Collections",
-      icon: FiPackage,
-
-      content: wrapWithInlineMessage(<AdminCollectionsTab />),
-    },
-    {
-      value: "supplies",
-      label: "Supplies",
-      icon: FiPackage,
-      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
-    },
-    {
-      value: "payments",
-      label: "Payments",
-      icon: TfiMoney,
-      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" />),
-    },
-    {
-      value: "clients",
-      label: "Clients",
-      icon: FiUsers,
-
-      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="ADMIN" />),
-    },
-    {
-      value: "properties",
-      label: "Properties",
-      icon: FiMapPin,
-
-      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
-    },
-    {
       value: "routes",
       label: "Routes",
       icon: FiNavigation,
-
       content: wrapWithInlineMessage(<AdminRoutesTab />),
     },
     {
@@ -681,10 +655,47 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<ServicesTab me={me} purpose="ADMIN" />),
     },
     {
+      value: "tasks",
+      label: "Actions",
+      icon: FiPlus,
+      content: <AdminTasksTab tasks={adminTasks} />,
+    },
+    {
+      // ── Equipment ──
+      value: "equipment",
+      label: "Inventory",
+      icon: FiTool,
+      content: wrapWithInlineMessage(<EquipmentTab key={`aeq-${adminEquipmentRemountKey}`} me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "collections",
+      label: "Collections",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<AdminCollectionsTab />),
+    },
+    {
+      value: "usage",
+      label: "Usage",
+      icon: FiBarChart2,
+      content: wrapWithInlineMessage(<EquipmentUsageTab purpose="ADMIN" />),
+    },
+    {
+      // ── Directory ──
+      value: "clients",
+      label: "Clients",
+      icon: FiUsers,
+      content: wrapWithInlineMessage(<ClientsTab me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "properties",
+      label: "Properties",
+      icon: FiMapPin,
+      content: wrapWithInlineMessage(<PropertiesTab me={me} purpose="ADMIN" />),
+    },
+    {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
-
       content: wrapWithInlineMessage(<UsersTab role="admin" />),
     },
     {
@@ -694,66 +705,73 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<AdminGroupsTab />),
     },
     {
+      // ── Money ──
+      value: "payments",
+      label: "Payments",
+      icon: TfiMoney,
+      content: wrapWithInlineMessage(<PaymentsTab key={`apay-${adminPaymentsRemountKey}`} me={me} purpose="ADMIN" />),
+    },
+    {
       value: "pricing",
       label: "Pricing",
       icon: TfiMoney,
       content: wrapWithInlineMessage(<PricingTab readOnly />),
     },
     {
+      value: "supplies",
+      label: "Supplies",
+      icon: FiPackage,
+      content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
+    },
+    {
+      // ── Reports ──
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
-
       content: wrapWithInlineMessage(<StatisticsTab />),
-    },
-    {
-      value: "notify",
-      label: "Notify",
-      icon: FiBell,
-
-      content: wrapWithInlineMessage(<AdminNotifyTab />),
-    },
-    {
-      value: "profile",
-      label: "Profile",
-      icon: FiUser,
-
-      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
     },
     {
       value: "activity",
       label: "Engagement",
       icon: FiActivity,
-
       content: wrapWithInlineMessage(<ActivityTab role="admin" />),
     },
     {
       value: "history",
       label: "History",
       icon: FiFileText,
-
       content: wrapWithInlineMessage(<HistoryTab role="admin" />),
-    },
-    {
-      value: "documents",
-      label: "Documents",
-      icon: FiFolder,
-
-      content: wrapWithInlineMessage(<DocumentsTab />),
     },
     {
       value: "timeline",
       label: "Timeline",
       icon: FiCalendar,
-
       content: wrapWithInlineMessage(<TimelineTab />),
+    },
+    {
+      value: "documents",
+      label: "Documents",
+      icon: FiFolder,
+      content: wrapWithInlineMessage(<DocumentsTab />),
+    },
+    {
+      // ── System ──
+      value: "notify",
+      label: "Notify",
+      icon: FiBell,
+      content: wrapWithInlineMessage(<AdminNotifyTab />),
     },
     {
       value: "settings",
       label: "Settings",
       icon: FiSettings,
-
       content: wrapWithInlineMessage(<SettingsTab me={me} purpose="ADMIN" />),
+    },
+    {
+      value: "profile",
+      label: "Profile",
+      icon: FiUser,
+      content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="ADMIN" onProfileUpdated={refreshMe} />),
     },
   ];
 
@@ -861,23 +879,21 @@ export default function HomePage() {
         </>
       ),
       innerTabs: (() => {
-        // Mirror the admin layout: clients/properties live in Directory,
-        // profile lives in Settings. Keeps the mental model aligned so a
-        // worker promoted to admin doesn't have to relearn the tab map.
+        // Mirror the admin layout so a worker promoted to admin doesn't have
+        // to relearn the tab map. Categories: Work · Equipment · Directory ·
+        // Money · Reports · System.
         const catMap: Record<string, string> = {
-          home: "Work",
-          tasks: "Actions",
-          reminders: "Work", jobs: "Work", routes: "Work",
-          equipment: "Inventory", supplies: "Inventory",
-          payments: "Money", statistics: "Money",
-          clients: "Directory", properties: "Directory", pricing: "Directory",
-          profile: "Settings",
+          home: "Work", reminders: "Work", jobs: "Work", routes: "Work", tasks: "Work",
+          equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+          clients: "Directory", properties: "Directory",
+          payments: "Money", pricing: "Money", supplies: "Money",
+          statistics: "Reports",
+          profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, Settings: FiSettings,
+          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Reports: FiBarChart2, System: FiSettings,
         };
-        const highlightCats = new Set(["Actions"]);
-        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
+        return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
       })(),
     },
     {
@@ -912,18 +928,17 @@ export default function HomePage() {
       ),
       innerTabs: (() => {
         const catMap: Record<string, string> = {
-          tasks: "Actions",
-          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
-          equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
-          payments: "Money", statistics: "Money",
-          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory", pricing: "Directory",
-          profile: "System", activity: "System", history: "System", documents: "System", timeline: "System", settings: "System", notify: "System",
+          "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+          equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+          clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
+          payments: "Money", pricing: "Money", supplies: "Money",
+          statistics: "Reports", activity: "Reports", history: "Reports", timeline: "Reports", documents: "Reports",
+          notify: "System", settings: "System", profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Actions: FiPlus, Work: FiClipboard, Inventory: FiPackage, Money: TfiMoney, Directory: FiUsers, System: FiSettings,
+          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Reports: FiBarChart2, System: FiSettings,
         };
-        const highlightCats = new Set(["Actions"]);
-        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], categoryHighlight: highlightCats.has(catMap[t.value]) }));
+        return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
       })(),
     },
     {
@@ -933,6 +948,7 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
+          // ── Money ──
           value: "payments",
           label: "Payments",
           icon: TfiMoney,
@@ -953,16 +969,16 @@ export default function HomePage() {
           label: "Supplies",
           icon: FiPackage,
           content: wrapWithInlineMessage(<SuppliesTab />),
-          category: "Inventory",
-          categoryIcon: FiPackage,
+          category: "Money",
+          categoryIcon: TfiMoney,
         },
         {
           value: "pricing",
           label: "Pricing",
           icon: TfiMoney,
           content: wrapWithInlineMessage(<PricingTab isSuper />),
-          category: "Directory",
-          categoryIcon: FiUsers,
+          category: "Money",
+          categoryIcon: TfiMoney,
         },
         {
           value: "exports",
@@ -973,34 +989,44 @@ export default function HomePage() {
           categoryIcon: TfiMoney,
         },
         {
-          value: "documents",
-          label: "Documents",
-          icon: FiFolder,
-          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          value: "timeline",
-          label: "Timeline",
-          icon: FiCalendar,
-          content: wrapWithInlineMessage(<TimelineTab isSuper />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
+          // ── Reports ──
           value: "operations",
           label: "Operations",
           icon: FiBarChart2,
           content: <OperationsTab />,
-          category: "System",
-          categoryIcon: FiSettings,
+          category: "Reports",
+          categoryIcon: FiBarChart2,
         },
         {
           value: "audit",
           label: "Audit",
           icon: FiSearch,
           content: <AuditTab />,
+          category: "Reports",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "timeline",
+          label: "Timeline",
+          icon: FiCalendar,
+          content: wrapWithInlineMessage(<TimelineTab isSuper />),
+          category: "Reports",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "documents",
+          label: "Documents",
+          icon: FiFolder,
+          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "Reports",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          // ── System ──
+          value: "settings",
+          label: "Settings",
+          icon: FiSettings,
+          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -1009,14 +1035,6 @@ export default function HomePage() {
           label: "Profile",
           icon: FiUser,
           content: wrapWithInlineMessage(<ProfileTab me={me} isAdmin purpose="SUPER" onProfileUpdated={refreshMe} />),
-          category: "System",
-          categoryIcon: FiSettings,
-        },
-        {
-          value: "settings",
-          label: "Settings",
-          icon: FiSettings,
-          content: wrapWithInlineMessage(<SettingsTab me={me} purpose="SUPER" />),
           category: "System",
           categoryIcon: FiSettings,
         },
@@ -1530,11 +1548,11 @@ export default function HomePage() {
     if (isSuper) {
       setTopTab("super");
       setSuperInnerTab("timeline" as any);
-      setSuperCategory("System");
+      setSuperCategory("Reports");
     } else if (isAdmin) {
       setTopTab("admin");
       setAdminInnerTab("timeline" as any);
-      setAdminCategory("System");
+      setAdminCategory("Reports");
     }
   }, [isSuper, isAdmin]);
 
@@ -1652,12 +1670,12 @@ export default function HomePage() {
   // the inner-tab bar can render the wrong set of tabs.
   useEffect(() => {
     const adminCatMap: Record<string, string> = {
-      tasks: "Actions",
-      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", jobs: "Work", routes: "Work",
-      equipment: "Inventory", collections: "Inventory", supplies: "Inventory",
-      payments: "Money", statistics: "Money",
-      clients: "Directory", properties: "Directory", users: "Directory",
-      profile: "System", activity: "System", history: "System", settings: "System", notify: "System",
+      "admin-home": "Work", reminders: "Work", "admin-jobs": "Work", routes: "Work", jobs: "Work", tasks: "Work",
+      equipment: "Equipment", collections: "Equipment", usage: "Equipment",
+      clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
+      payments: "Money", pricing: "Money", supplies: "Money",
+      statistics: "Reports", activity: "Reports", history: "Reports", timeline: "Reports", documents: "Reports",
+      notify: "System", settings: "System", profile: "System",
     };
     const onNav = (e: Event) => {
       const { tab, remount } = (e as CustomEvent).detail || {};
@@ -1696,9 +1714,9 @@ export default function HomePage() {
       programmaticNavRef.current = true;
       setTopTab("super");
       setSuperInnerTab(tab as any);
-      if (tab === "supplies") setSuperCategory("Inventory");
-      else if (tab === "business-expenses") setSuperCategory("Money");
-      else if (tab === "operations" || tab === "audit" || tab === "settings" || tab === "documents" || tab === "timeline") setSuperCategory("System");
+      if (tab === "supplies" || tab === "business-expenses" || tab === "payments" || tab === "pricing" || tab === "exports") setSuperCategory("Money");
+      else if (tab === "operations" || tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Reports");
+      else if (tab === "settings" || tab === "profile") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
     window.addEventListener("navigate:superTab", onNav as EventListener);
@@ -1959,11 +1977,11 @@ export default function HomePage() {
       if (isSuper) {
         setTopTab("super");
         setSuperInnerTab("documents" as any);
-        setSuperCategory("System");
+        setSuperCategory("Reports");
       } else if (isAdmin) {
         setTopTab("admin");
         setAdminInnerTab("documents" as any);
-        setAdminCategory("System");
+        setAdminCategory("Reports");
       } else {
         // No documents tab visible to this role; nothing to do.
         return;
@@ -2038,11 +2056,11 @@ export default function HomePage() {
       if (isSuper) {
         setTopTab("super");
         setSuperInnerTab("timeline" as any);
-        setSuperCategory("System");
+        setSuperCategory("Reports");
       } else if (isAdmin) {
         setTopTab("admin");
         setAdminInnerTab("timeline" as any);
-        setAdminCategory("System");
+        setAdminCategory("Reports");
       } else {
         return;
       }
@@ -2156,7 +2174,7 @@ export default function HomePage() {
     } else {
       setTopTab("worker");
       setWorkerInnerTab("equipment");
-      setWorkerCategory("Inventory");
+      setWorkerCategory("Equipment");
     }
     const savedId = equipmentId;
     let attempts = 0;

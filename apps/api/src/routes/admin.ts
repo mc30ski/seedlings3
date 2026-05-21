@@ -1456,6 +1456,12 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.equipment.listEquipmentCharges({ from, to, userId });
   });
 
+  // Equipment-usage dashboard — every worker's checkouts in a date range.
+  app.get("/admin/equipment-usage", adminGuard, async (req: any) => {
+    const { from, to } = (req.query || {}) as { from?: string; to?: string };
+    return services.equipment.listUsage({ from, to });
+  });
+
   // ── Admin Expenses ──
 
   app.get("/admin/occurrences/:occurrenceId/expenses", adminGuard, async (req: any) => {

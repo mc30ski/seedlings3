@@ -23,9 +23,10 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
   };
 
   // ── Worker (and admin) read access ───────────────────────────────
-  // Returns all collections with their members, including a current-availability
-  // snapshot so worker UIs can render "X of Y available" badges.
-  app.get("/equipment-collections", workerGuard, async () => {
+  // Returns all collections with their members. Each item carries `heldByMe`
+  // — true when the requesting worker currently has an open checkout on that
+  // piece — so the worker Collections tab can flag which kits they're using.
+  app.get("/equipment-collections", workerGuard, async (req) => {
     const collections = await prisma.equipmentCollection.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       include: {
@@ -47,7 +48,33 @@ export default async function equipmentCollectionsRoutes(app: FastifyInstance) {
         },
       },
     });
-    return collections;
+
+    const myId = (req as any).user?.id as string | undefined;
+    let heldEquipmentIds = new Set<string>();
+    if (myId) {
+      const equipmentIds = collections.flatMap((c) =>
+        c.items.map((i) => i.equipmentId),
+      );
+      if (equipmentIds.length > 0) {
+        const active = await prisma.checkout.findMany({
+          where: {
+            userId: myId,
+            releasedAt: null,
+            equipmentId: { in: equipmentIds },
+          },
+          select: { equipmentId: true },
+        });
+        heldEquipmentIds = new Set(active.map((c) => c.equipmentId));
+      }
+    }
+
+    return collections.map((c) => ({
+      ...c,
+      items: c.items.map((i) => ({
+        ...i,
+        heldByMe: heldEquipmentIds.has(i.equipmentId),
+      })),
+    }));
   });
 
   // ── Admin CRUD ────────────────────────────────────────────────────
