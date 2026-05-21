@@ -527,7 +527,9 @@ export type ServicesJobs = {
       isTentative?: boolean;
       isEstimate?: boolean;
       isAdminOnly?: boolean;
-    }
+      paymentRevertReason?: string | null;
+    },
+    options?: { isAdmin?: boolean }
   ): Promise<JobOccurrence>;
 
   addOccurrenceAssignee(
@@ -674,7 +676,7 @@ export type ServicesPayments = {
   approvePayment(
     currentUserId: string,
     paymentId: string,
-    overrides?: { amountPaid?: number; method?: string; note?: string | null },
+    overrides?: { amountPaid?: number; method?: string; note?: string | null; processorFeeAmount?: number },
   ): Promise<any>;
 
   /**

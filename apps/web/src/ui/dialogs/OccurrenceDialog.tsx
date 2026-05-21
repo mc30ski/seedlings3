@@ -179,6 +179,10 @@ export default function OccurrenceDialog({
   const [proposalAmount, setProposalAmount] = useState("");
   const [proposalNotes, setProposalNotes] = useState("");
   const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
+  // Job-level default guidance description — on a NEW occurrence it's included
+  // by default but can be de-selected so this instance is created without it.
+  const [jobGuidanceNote, setJobGuidanceNote] = useState<string | null>(null);
+  const [includeGuidanceNote, setIncludeGuidanceNote] = useState(true);
   const [addons, setAddons] = useState<{ id: string; tag?: string | null; customLabel?: string | null; price: number }[]>([]);
   const [addonTag, setAddonTag] = useState("");
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
@@ -309,6 +313,16 @@ export default function OccurrenceDialog({
     apiGet<WorkerItem[]>("/api/workers")
       .then((list) => setWorkers(Array.isArray(list) ? list : []))
       .catch(() => {});
+    // Load the job's default guidance description so a NEW occurrence can
+    // inherit it (de-selectable). UPDATE occurrences keep their own.
+    if (mode === "CREATE" && jobId) {
+      setIncludeGuidanceNote(true);
+      apiGet<{ guidanceNote?: string | null }>(`/api/admin/jobs/${jobId}`)
+        .then((j) => setJobGuidanceNote(j?.guidanceNote ?? null))
+        .catch(() => setJobGuidanceNote(null));
+    } else {
+      setJobGuidanceNote(null);
+    }
     // Load supplies (worker-readable list — works for any role) for the
     // inline inventory picker. Filters out archived; computes available =
     // onHand − active holds server-side.
@@ -379,6 +393,11 @@ export default function OccurrenceDialog({
         ...(isAdminOnly ? { isAdminOnly: true } : {}),
         ...(jobType ? { jobType } : {}),
         ...(jobTags.length > 0 ? { jobTags } : {}),
+        // Job default guidance description: send it (or explicit null to
+        // opt this occurrence out) only when the job actually has one.
+        ...(mode === "CREATE" && jobGuidanceNote
+          ? { guidanceNote: includeGuidanceNote ? jobGuidanceNote : null }
+          : {}),
         ...(occFrequencyDays !== "" ? { frequencyDays: Number(occFrequencyDays) } : {}),
         ...(workflow === "ESTIMATE" ? {
           contactName: contactName.trim() || undefined,
@@ -1048,6 +1067,24 @@ export default function OccurrenceDialog({
                   <Checkbox.Control />
                   <Checkbox.Label>Administered (workers cannot claim, must be assigned)</Checkbox.Label>
                 </Checkbox.Root>
+
+                {mode === "CREATE" && jobGuidanceNote && (
+                  <Box mt={2} borderWidth="1px" borderColor="blue.200" bg="blue.50" borderRadius="md" p={2}>
+                    <Checkbox.Root
+                      checked={includeGuidanceNote}
+                      onCheckedChange={(e) => setIncludeGuidanceNote(!!e.checked)}
+                    >
+                      <Checkbox.HiddenInput />
+                      <Checkbox.Control />
+                      <Checkbox.Label fontSize="xs" fontWeight="semibold">
+                        Include the job's default guidance description
+                      </Checkbox.Label>
+                    </Checkbox.Root>
+                    <Text fontSize="xs" color="fg.muted" mt={1} whiteSpace="pre-wrap">
+                      {jobGuidanceNote}
+                    </Text>
+                  </Box>
+                )}
 
                 {propertyId && (
                   <Box mt={2}>

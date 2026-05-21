@@ -25,7 +25,7 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "profile" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "profile" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline" | "payments";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
@@ -429,6 +429,7 @@ export type JobListItem = {
   occurrenceCount?: number;
   description?: string | null;
   notes?: string | null;
+  guidanceNote?: string | null;
   defaultPrice?: number | null;
   estimatedMinutes?: number | null;
   createdAt?: string;

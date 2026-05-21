@@ -52,6 +52,7 @@ import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import StatusButton from "@/src/ui/components/StatusButton";
 import JobDialog from "@/src/ui/dialogs/JobDialog";
+import JobDefaultGuidanceDialog from "@/src/ui/dialogs/JobDefaultGuidanceDialog";
 import OccurrenceDialog from "@/src/ui/dialogs/OccurrenceDialog";
 import AddAddonDialog from "@/src/ui/dialogs/AddAddonDialog";
 import EstimateDialog from "@/src/ui/dialogs/EstimateDialog";
@@ -211,6 +212,7 @@ export default function ServicesTab({
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobListItem | null>(null);
   const [guidanceOcc, setGuidanceOcc] = useState<{ occId: string; propertyId: string; count: number; jobId: string; guidanceNote: string | null } | null>(null);
+  const [defaultGuidanceJob, setDefaultGuidanceJob] = useState<{ jobId: string; propertyId: string; guidanceNote: string | null } | null>(null);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
   const [instructionsOcc, setInstructionsOcc] = useState<any>(null);
   const [instructionsJobId, setInstructionsJobId] = useState<string>("");
@@ -1367,6 +1369,15 @@ export default function ServicesTab({
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
                     />
+                    <StatusButton
+                      id="job-default-guidance"
+                      itemId={job.id}
+                      label="Default Guidance"
+                      onClick={async () => setDefaultGuidanceJob({ jobId: job.id, propertyId: job.propertyId, guidanceNote: (job as any).guidanceNote ?? null })}
+                      variant="outline"
+                      busyId={statusButtonBusyId}
+                      setBusyId={setStatusButtonBusyId}
+                    />
                     {job.status === "ACCEPTED" && (
                       <>
                         <StatusButton
@@ -2131,40 +2142,6 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status === "CLOSED" && (
-                              <StatusButton
-                                id="occ-revert-payment"
-                                itemId={occ.id}
-                                label="Revert Payment"
-                                onClick={async () => {
-                                  setConfirmAction({
-                                    title: "Revert Payment?",
-                                    message: "This will delete the payment record and revert the occurrence to Pending Payment. You can then edit and re-accept payment.",
-                                    confirmLabel: "Revert",
-                                    colorPalette: "red",
-                                    inputLabel: "Reason",
-                                    inputPlaceholder: "e.g. Check bounced, refunded the client, recorded the wrong amount…",
-                                    inputOptional: true,
-                                    onConfirm: async (reason?: string) => {
-                                      try {
-                                        await apiPatch(`/api/admin/occurrences/${occ.id}`, {
-                                          status: "PENDING_PAYMENT",
-                                          paymentRevertReason: reason?.trim() || null,
-                                        });
-                                        publishInlineMessage({ type: "SUCCESS", text: "Payment reverted. Occurrence is now Pending Payment." });
-                                        void loadDetail(job.id, true);
-                                        void load(false);
-                                      } catch (err) {
-                                        publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to revert.", err) });
-                                      }
-                                    },
-                                  });
-                                }}
-                                variant="outline"
-                                busyId={statusButtonBusyId}
-                                setBusyId={setStatusButtonBusyId}
-                              />
-                            )}
                             {(occ.workflow === "ESTIMATE" || occ.isEstimate) && occ.status === "PROPOSAL_SUBMITTED" && (
                               <StatusButton
                                 id="occ-accept-proposal"
@@ -2878,6 +2855,18 @@ export default function ServicesTab({
           </Dialog.Positioner>
         </Portal>
       </Dialog.Root>
+
+      {/* Default Guidance Dialog (job-level) */}
+      {defaultGuidanceJob && (
+        <JobDefaultGuidanceDialog
+          open={!!defaultGuidanceJob}
+          onOpenChange={(o) => { if (!o) setDefaultGuidanceJob(null); }}
+          jobId={defaultGuidanceJob.jobId}
+          propertyId={defaultGuidanceJob.propertyId}
+          guidanceNote={defaultGuidanceJob.guidanceNote}
+          onSaved={() => { void loadDetail(defaultGuidanceJob.jobId, true); }}
+        />
+      )}
 
       {/* Manage Instructions Dialog */}
       {instructionsOcc && (

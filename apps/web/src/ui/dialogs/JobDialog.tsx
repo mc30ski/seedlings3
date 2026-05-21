@@ -30,7 +30,6 @@ import {
   publishInlineMessage,
 } from "@/src/ui/components/InlineMessage";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
-import JobPropertyPhotosPicker from "@/src/ui/components/JobPropertyPhotosPicker";
 
 type PropertyLite = {
   id: string;
@@ -77,7 +76,6 @@ export default function JobDialog({
   const [notes, setNotes] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("");
   const [estimatedMinutes, setEstimatedMinutes] = useState("");
-  const [propertyPhotoIds, setPropertyPhotoIds] = useState<string[] | null>(null);
   // Recommended equipment collections — admin can attach kits to a job so
   // workers see them as suggested checkouts on the job/occurrence view.
   type CollectionLite = { id: string; name: string; items: { equipmentId: string }[] };
@@ -134,7 +132,6 @@ export default function JobDialog({
       setNotes(initial.notes ?? "");
       setDefaultPrice(initial.defaultPrice != null ? String(initial.defaultPrice) : "");
       setEstimatedMinutes((initial as any).estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
-      setPropertyPhotoIds(null);
     } else {
       setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
       setKindValue([initial?.kind ?? JOB_KIND[0]]);
@@ -222,10 +219,6 @@ export default function JobDialog({
       } else {
         if (!initial?.id) throw new Error("Missing job id");
         await apiPatch(`/api/admin/jobs/${initial.id}`, payload);
-        // Save property photo selections if changed
-        if (propertyPhotoIds !== null) {
-          await apiPut(`/api/admin/jobs/${initial.id}/property-photos`, { propertyPhotoIds });
-        }
         // Save recommended collections if changed
         if (recommendedDirty) {
           await apiPut(`/api/admin/jobs/${initial.id}/recommended-collections`, {
@@ -399,11 +392,6 @@ export default function JobDialog({
                   </Box>
                 </div>
 
-                {mode === "UPDATE" && initial?.id && initial?.propertyId && (
-                  <div>
-                    <JobPropertyPhotosPicker jobId={initial.id} propertyId={initial.propertyId} onSelectionChange={setPropertyPhotoIds} />
-                  </div>
-                )}
 
                 {mode === "UPDATE" && initial?.id && (
                   <div>

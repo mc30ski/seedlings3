@@ -734,6 +734,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       frequencyDays,
       description: body.description != null ? String(body.description) : null,
       notes: body.notes != null ? String(body.notes) : null,
+      guidanceNote: body.guidanceNote != null ? String(body.guidanceNote) : null,
       defaultPrice: body.defaultPrice != null ? Number(body.defaultPrice) : null,
       estimatedMinutes: body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null,
     } as any);
@@ -773,6 +774,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     if ("description" in body) patch.description = body.description != null ? String(body.description) : null;
     if ("notes" in body) patch.notes = body.notes != null ? String(body.notes) : null;
+    if ("guidanceNote" in body) patch.guidanceNote = body.guidanceNote != null ? String(body.guidanceNote) : null;
     if ("defaultPrice" in body) patch.defaultPrice = body.defaultPrice != null ? Number(body.defaultPrice) : null;
     if ("estimatedMinutes" in body) patch.estimatedMinutes = body.estimatedMinutes != null ? Math.round(Number(body.estimatedMinutes)) : null;
 
@@ -1041,6 +1043,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     if ("jobTags" in body) input.jobTags = body.jobTags ? JSON.stringify(body.jobTags) : null;
     if ("pinnedNote" in body) input.pinnedNote = body.pinnedNote ? String(body.pinnedNote).trim() : null;
     if ("pinnedNoteRepeats" in body) input.pinnedNoteRepeats = !!body.pinnedNoteRepeats;
+    // Explicit null = the New Occurrence dialog opted this instance out of the
+    // job's default guidance description; absent = inherit the job default.
+    if ("guidanceNote" in body) input.guidanceNote = body.guidanceNote ? String(body.guidanceNote) : null;
     // Dates: accept ISO strings; service should parse/validate
     if (body.startAt != null) input.startAt = body.startAt;
     if (body.endAt != null) input.endAt = body.endAt;
@@ -1410,7 +1415,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   // Update a payment (admin)
-  app.patch("/admin/payments/:paymentId", adminGuard, async (req: any) => {
+  app.patch("/admin/payments/:paymentId", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
     const input: any = {};
@@ -1428,7 +1433,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   // Delete a payment (admin)
-  app.delete("/admin/payments/:paymentId", adminGuard, async (req: any) => {
+  app.delete("/admin/payments/:paymentId", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     await services.payments.deletePayment(uid, String(req.params.paymentId));
     return { ok: true };
@@ -2416,9 +2421,6 @@ Respond ONLY with valid JSON in this exact format:
     }
     if (key === "PAYROLL_PERIOD_CADENCE" && value !== "WEEKLY" && value !== "BIWEEKLY" && value !== "MONTHLY") {
       throw app.httpErrors.badRequest("PAYROLL_PERIOD_CADENCE must be WEEKLY, BIWEEKLY, or MONTHLY.");
-    }
-    if (key === "PROCESSOR_FEE_ABSORPTION" && value !== "BUSINESS" && value !== "SPLIT") {
-      throw app.httpErrors.badRequest("PROCESSOR_FEE_ABSORPTION must be BUSINESS or SPLIT.");
     }
     if (key === "PAYMENT_METHODS") {
       const { validatePaymentMethodsJson } = await import("../services/paymentMethods");
@@ -4689,21 +4691,22 @@ Respond ONLY with valid JSON in this exact format:
   // Admins (and super) approve self-reported payments before the occurrence
   // closes. See services/payments.ts for the approve/reject/list logic.
 
-  app.get("/admin/payments/pending", adminGuard, async () => {
+  app.get("/admin/payments/pending", superGuard, async () => {
     return services.payments.listPendingApprovals();
   });
 
-  app.post("/admin/payments/:id/approve", adminGuard, async (req: any) => {
+  app.post("/admin/payments/:id/approve", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};
-    const overrides: { amountPaid?: number; method?: string; note?: string | null } = {};
+    const overrides: { amountPaid?: number; method?: string; note?: string | null; processorFeeAmount?: number } = {};
     if (body.amountPaid !== undefined) overrides.amountPaid = Number(body.amountPaid);
     if (body.method) overrides.method = String(body.method);
     if (body.note !== undefined) overrides.note = body.note === null ? null : String(body.note);
+    if (body.processorFeeAmount !== undefined) overrides.processorFeeAmount = Number(body.processorFeeAmount);
     return services.payments.approvePayment(uid, String(req.params.id), overrides);
   });
 
-  app.post("/admin/payments/:id/reject", adminGuard, async (req: any) => {
+  app.post("/admin/payments/:id/reject", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const reason = req.body?.reason ? String(req.body.reason) : null;
     await services.payments.rejectPayment(uid, String(req.params.id), reason);
@@ -4713,10 +4716,34 @@ Respond ONLY with valid JSON in this exact format:
   // Write-off path: client never paid. Approves with collected=0 so
   // employees+trainees still get their promised net (business absorbs the
   // shortfall) and contractors get $0. See services/payments.ts.
-  app.post("/admin/payments/:id/write-off", adminGuard, async (req: any) => {
+  app.post("/admin/payments/:id/write-off", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const reason = req.body?.reason ? String(req.body.reason) : null;
     return services.payments.writeOffPayment(uid, String(req.params.id), reason);
+  });
+
+  // Revert an already-approved payment: deletes the payment record and takes
+  // the occurrence CLOSED → PENDING_PAYMENT. Super-only. Reuses the exact
+  // revert logic in updateOccurrence (which also removes the auto-created
+  // next occurrence when it's still untouched).
+  app.post("/admin/payments/:id/revert", superGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const paymentId = String(req.params.id);
+    const reason = req.body?.reason ? String(req.body.reason) : null;
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { occurrenceId: true, confirmed: true },
+    });
+    if (!payment) throw app.httpErrors.notFound("Payment not found.");
+    if (!payment.confirmed) {
+      throw app.httpErrors.badRequest("Only an approved payment can be reverted.");
+    }
+    return services.jobs.updateOccurrence(
+      uid,
+      payment.occurrenceId,
+      { status: "PENDING_PAYMENT", paymentRevertReason: reason },
+      { isAdmin: true },
+    );
   });
 
   // Resend payment request for an occurrence already in PENDING_PAYMENT.

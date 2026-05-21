@@ -38,6 +38,8 @@ type PendingRow = {
   note: string | null;
   selfReported: boolean;
   createdAt: string;
+  /** Estimated processor fee stamped at record time; overridable at approval. */
+  processorFeeAmount: number | null;
   collectedBy: { id: string; displayName: string | null; email: string | null } | null;
   occurrence: {
     id: string;
@@ -130,10 +132,11 @@ export default function PendingApprovalsSection() {
   // Adjust & Approve path). If the amount is fraudulent/totally wrong,
   // admin Rejects with a reason and the worker re-records via Accept
   // Payment. If the client refuses to pay, admin Writes off instead.
-  async function approve(row: PendingRow, overrideAmount?: number) {
+  async function approve(row: PendingRow, overrideAmount?: number, feeOverride?: number) {
     try {
-      const body: { amountPaid?: number } = {};
+      const body: { amountPaid?: number; processorFeeAmount?: number } = {};
       if (overrideAmount !== undefined) body.amountPaid = overrideAmount;
+      if (feeOverride !== undefined) body.processorFeeAmount = feeOverride;
       const result = await apiPost<{ nextOccurrence?: { startAt?: string | null } | null; nextOccurrenceSkipReason?: string | null }>(
         `/api/admin/payments/${row.id}/approve`,
         body,
@@ -320,24 +323,51 @@ export default function PendingApprovalsSection() {
           })}
         </VStack>
       </Card.Body>
-      <ConfirmDialog
-        open={!!approvingRow}
-        title="Approve this payment?"
-        message={
-          approvingRow
-            ? `Approve ${dollar(approvingRow.amountPaid)} via ${approvingRow.method} as reported. The job will close and worker payouts will be recorded${willScheduleNext(approvingRow) ? ", and the next occurrence will be scheduled." : "."}`
-            : ""
-        }
-        warning="If the actual amount in your account doesn't match what was reported, use Adjust instead. If the payment will never arrive, use Write off. Approve is for when the reported amount is correct."
-        confirmLabel="Approve"
-        confirmColorPalette="green"
-        onConfirm={async () => {
-          const r = approvingRow;
-          setApprovingRow(null);
-          if (r) await approve(r);
-        }}
-        onCancel={() => setApprovingRow(null)}
-      />
+      {(() => {
+        const hasFee = !!approvingRow && (approvingRow.processorFeeAmount ?? 0) > 0;
+        return (
+          <ConfirmDialog
+            open={!!approvingRow}
+            title="Approve this payment?"
+            message={
+              approvingRow
+                ? `Approve ${dollar(approvingRow.amountPaid)} via ${approvingRow.method} as reported. The job will close and worker payouts will be recorded${willScheduleNext(approvingRow) ? ", and the next occurrence will be scheduled." : "."}`
+                : ""
+            }
+            warning={
+              hasFee
+                ? "The processor fee below is prefilled with an estimate — correct it to the actual fee from your payment statement (e.g. Venmo) so QuickBooks is exact. The business absorbs this fee; it never changes worker payouts."
+                : "If the actual amount in your account doesn't match what was reported, use Adjust instead. If the payment will never arrive, use Write off. Approve is for when the reported amount is correct."
+            }
+            confirmLabel="Approve"
+            confirmColorPalette="green"
+            {...(hasFee
+              ? {
+                  amountLabel: "Processor fee (actual, from your statement)",
+                  amountDefaultValue: (approvingRow!.processorFeeAmount ?? 0).toFixed(2),
+                  amountPlaceholder: "0.00",
+                }
+              : {})}
+            onConfirm={async (_input: string, amountStr?: string) => {
+              const r = approvingRow;
+              setApprovingRow(null);
+              if (!r) return;
+              let feeOverride: number | undefined;
+              if (hasFee) {
+                const parsed = Number.parseFloat((amountStr ?? "").trim());
+                if (!Number.isFinite(parsed) || parsed < 0 || parsed > r.amountPaid) {
+                  publishInlineMessage({ type: "ERROR", text: "Enter a valid processor fee (0 to the payment amount)." });
+                  return;
+                }
+                // Only send as an override when it differs from the estimate.
+                if (Math.abs(parsed - (r.processorFeeAmount ?? 0)) >= 0.005) feeOverride = parsed;
+              }
+              await approve(r, undefined, feeOverride);
+            }}
+            onCancel={() => setApprovingRow(null)}
+          />
+        );
+      })()}
 
       <ConfirmDialog
         open={!!rejectingRow}

@@ -582,6 +582,10 @@ model Job {
   defaultPrice     Float?
   estimatedMinutes Int?
 
+  // Default guidance description, seeded onto new occurrences as their
+  // editable JobOccurrence.guidanceNote (mirrors the default photo set).
+  guidanceNote String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

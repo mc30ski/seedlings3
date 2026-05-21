@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Box, Checkbox, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Checkbox, HStack, Spinner, Text, VStack } from "@chakra-ui/react";
 import { Camera } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 
@@ -62,6 +62,13 @@ export default function JobPropertyPhotosPicker({ jobId, propertyId, occurrenceI
     });
   }
 
+  function toggleAll() {
+    const allSelected = selectedIds.size === allPhotos.length;
+    const next = allSelected ? new Set<string>() : new Set(allPhotos.map((p) => p.id));
+    setSelectedIds(next);
+    onSelectionChange?.(Array.from(next));
+  }
+
   if (loading) return <HStack gap={2} py={2}><Spinner size="sm" /><Text fontSize="xs" color="fg.muted">Loading...</Text></HStack>;
 
   if (allPhotos.length === 0) {
@@ -74,9 +81,14 @@ export default function JobPropertyPhotosPicker({ jobId, propertyId, occurrenceI
 
   return (
     <Box>
-      <HStack gap={1} mb={2} fontSize="xs" fontWeight="semibold" color="fg.muted">
-        <Camera size={14} />
-        <Text>Default Guidance ({selectedIds.size} of {allPhotos.length})</Text>
+      <HStack gap={1} mb={2} justify="space-between">
+        <HStack gap={1} fontSize="xs" fontWeight="semibold" color="fg.muted">
+          <Camera size={14} />
+          <Text>Default Guidance ({selectedIds.size} of {allPhotos.length})</Text>
+        </HStack>
+        <Button size="xs" variant="ghost" onClick={toggleAll}>
+          {selectedIds.size === allPhotos.length ? "Deselect all" : "Select all"}
+        </Button>
       </HStack>
 
       <VStack align="stretch" gap={1}>
