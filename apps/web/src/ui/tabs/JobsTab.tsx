@@ -146,6 +146,28 @@ function addonTotal(occ: any): number {
   return (occ.addons ?? []).reduce((s: number, a: any) => s + (a.price ?? 0), 0);
 }
 
+// Whether the claimer can still edit a job's billables (expenses, add-on
+// services). They keep full edit access through completion and while the
+// occurrence sits in PENDING_PAYMENT *before* payment is committed —
+// claimers routinely reconcile the evening before sending the client their
+// payment request. Editing locks the moment payment is committed: a request
+// was sent to the client (paymentRequestSentAt) or a payment was
+// recorded/accepted (a Payment row exists). CLOSED and terminal states are
+// always frozen — admins do retroactive edits via the Services tab.
+function occInEditableState(occ: any): boolean {
+  switch (occ?.status) {
+    case "SCHEDULED":
+    case "IN_PROGRESS":
+    case "PAUSED":
+    case "COMPLETED":
+      return true;
+    case "PENDING_PAYMENT":
+      return !occ.payment && !occ.paymentRequestSentAt;
+    default:
+      return false;
+  }
+}
+
 function totalPrice(occ: any): number | null {
   const base = (occ.price || null) ?? (occ.proposalAmount || null);
   if (base == null) return addonTotal(occ) > 0 ? addonTotal(occ) : null;
@@ -1717,7 +1739,19 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         // window. Likes are just bookmarks; they should still respect filters.
         if (allowDateBypass && pinnedIds.has(occ.id)) return true;
         if (allowDateBypass && (occ as any).reminder && !reminderBypassFinished.has(occ.status as string)) return true;
-        const day = occ.startAt ? bizDateKey(occ.startAt) : null;
+        // A reminder/pinned ghost is placed on its ghost date (the reminder's
+        // remindAt), not the underlying occurrence's startAt — so a reminder
+        // set on a job from another date surfaces in the range that contains
+        // the reminder date. Mirrors the day-grouping logic below. Without
+        // this, a reminder on a completed (past-dated) job stays pinned to
+        // that past date and never appears in a future range like "this week".
+        const ghostDate = (occ as any)._ghostDate;
+        const day =
+          ((occ as any)._isReminderGhost || (occ as any)._isPinnedGhost) && ghostDate
+            ? (typeof ghostDate === "string" && ghostDate.length === 10
+                ? ghostDate
+                : bizDateKey(ghostDate))
+            : (occ.startAt ? bizDateKey(occ.startAt) : null);
         if (!day) return true; // no date — include
         if (dateFrom && day < dateFrom) return false;
         if (dateTo && day > dateTo) return false;
@@ -3856,13 +3890,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                   </>
                                 )}
                                 {(() => {
-                                  // Once the job leaves the active states the
-                                  // expense list is frozen on JobsTab — admins
-                                  // do retroactive edits via the Services tab.
-                                  const isActive =
-                                    occ.status === "SCHEDULED" ||
-                                    occ.status === "IN_PROGRESS" ||
-                                    occ.status === "PAUSED";
+                                  // Editable through completion and unfinalized
+                                  // PENDING_PAYMENT; frozen once payment is
+                                  // requested/accepted (see occInEditableState).
+                                  const isActive = occInEditableState(occ);
                                   const hasAnyPriv =
                                     forAdmin ||
                                     !!me?.privileges?.canPullInventory ||
@@ -4092,14 +4123,10 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                     </>
                                   )}
                                   {(() => {
-                                    // Lock expense edits on JobsTab once the
-                                    // job leaves the active states (Services
-                                    // tab is the admin path for retroactive
-                                    // changes).
-                                    const isActive =
-                                      occ.status === "SCHEDULED" ||
-                                      occ.status === "IN_PROGRESS" ||
-                                      occ.status === "PAUSED";
+                                    // Lock expense edits on JobsTab once
+                                    // payment is requested/accepted; admins
+                                    // do retroactive edits via Services.
+                                    const isActive = occInEditableState(occ);
                                     const hasAnyPriv =
                                       forAdmin ||
                                       !!me?.privileges?.canPullInventory ||
@@ -4924,14 +4951,12 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                     {/* Expenses */}
                     {/* Add-on services */}
                     {(occ.addons ?? []).length > 0 && (() => {
-                      // Removal allowed for claimer / admin / super on
-                      // active occurrences only. Removed add-ons are
+                      // Removal allowed for claimer / admin / super while the
+                      // job is still editable (through completion and
+                      // unfinalized PENDING_PAYMENT). Removed add-ons are
                       // hard-deleted (no carry-forward to next occurrence
                       // exists anyway, so there's nothing to reconcile).
-                      const isActive =
-                        occ.status === "SCHEDULED" ||
-                        occ.status === "IN_PROGRESS" ||
-                        (occ.status as string) === "PAUSED";
+                      const isActive = occInEditableState(occ);
                       const canRemove = isActive && (forAdmin || isAdmin || isSuper || isClaimer);
                       return (
                       <Box mt={1} p={1} bg="green.50" rounded="sm" w="full" borderWidth="1px" borderColor="green.200">
@@ -5949,10 +5974,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           Only surfaces while the occurrence is in an active
                           state; admins do retroactive edits via Services. */}
                       {(() => {
-                        const isActive =
-                          occ.status === "SCHEDULED" ||
-                          occ.status === "IN_PROGRESS" ||
-                          (occ.status as string) === "PAUSED";
+                        const isActive = occInEditableState(occ);
                         const hasAnyPriv =
                           forAdmin ||
                           !!me?.privileges?.canPullInventory ||
@@ -5979,10 +6001,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                           events don't carry add-ons. Mirrors the gating used
                           on Add Expense so workers see both side-by-side. */}
                       {(() => {
-                        const isActive =
-                          occ.status === "SCHEDULED" ||
-                          occ.status === "IN_PROGRESS" ||
-                          (occ.status as string) === "PAUSED";
+                        const isActive = occInEditableState(occ);
                         const canAdd =
                           isActive
                           && !isTaskOrReminder

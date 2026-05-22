@@ -12,6 +12,30 @@ async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
 }
 
+// Whether a claimer can still edit a job's billables (expenses, add-on
+// services). Editable through completion and while the occurrence sits in
+// PENDING_PAYMENT *before* payment is committed — claimers reconcile the
+// evening before sending the client their payment request. Locks once a
+// payment request was sent (paymentRequestSentAt) or a payment was
+// recorded/accepted (a Payment row exists). CLOSED/terminal are frozen.
+function occInEditableState(occ: {
+  status: string;
+  payment?: { id: string } | null;
+  paymentRequestSentAt?: Date | null;
+}): boolean {
+  switch (occ.status) {
+    case "SCHEDULED":
+    case "IN_PROGRESS":
+    case "PAUSED":
+    case "COMPLETED":
+      return true;
+    case "PENDING_PAYMENT":
+      return !occ.payment && !occ.paymentRequestSentAt;
+    default:
+      return false;
+  }
+}
+
 export default async function workerRoutes(app: FastifyInstance) {
   const workerGuard = {
     preHandler: (req: FastifyRequest, reply: FastifyReply) =>
@@ -2520,6 +2544,136 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.expenses.deleteExpense(uid, String(req.params.id));
   });
 
+  // ── Job-expense receipts ──
+  //
+  // Receipt routes for one-off job expenses, keyed on the job Expense id
+  // (what the Manage Expenses dialog has). The receipt itself lives on the
+  // paired BusinessExpense. Open to the occurrence's claimer as well as any
+  // admin/super — so a claimer who paid a company-account expense can attach
+  // the receipt themselves. Guarded by requireApproved (not workerGuard) so
+  // an admin without the WORKER role still passes; the per-expense claimer/
+  // admin check happens in resolveExpenseBe.
+  const approvedGuard = {
+    preHandler: (req: FastifyRequest, reply: FastifyReply) =>
+      app.requireApproved(req, reply),
+  };
+
+  async function resolveExpenseBe(uid: string, expenseId: string): Promise<string> {
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      select: {
+        businessExpenseId: true,
+        occurrence: {
+          select: { assignees: { select: { userId: true, assignedById: true } } },
+        },
+      },
+    });
+    if (!expense) throw app.httpErrors.notFound("Expense not found.");
+    if (!expense.businessExpenseId) {
+      throw app.httpErrors.conflict(
+        "This expense has no business-expense ledger row to hold a receipt.",
+      );
+    }
+    const me = await prisma.user.findUnique({
+      where: { id: uid },
+      include: { roles: true },
+    });
+    const isAdminOrSuper = !!me?.roles?.some(
+      (r) => r.role === "ADMIN" || r.role === "SUPER",
+    );
+    const isClaimer = expense.occurrence.assignees.some(
+      (a) => a.userId === uid && a.assignedById === uid,
+    );
+    if (!isAdminOrSuper && !isClaimer) {
+      throw app.httpErrors.forbidden(
+        "Only the claimer or an admin can manage this expense's receipt.",
+      );
+    }
+    return expense.businessExpenseId;
+  }
+
+  app.post("/expenses/:expenseId/receipt/upload-url", approvedGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
+    const b = req.body || {};
+    const fileName = String(b.fileName ?? "receipt").trim();
+    const contentType = String(b.contentType ?? "image/jpeg");
+    if (!/^image\/|^application\/pdf$/.test(contentType)) {
+      throw app.httpErrors.badRequest("Receipt must be an image or PDF.");
+    }
+    const safeName = fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+    const key = `receipts/${beId}/${Date.now()}-${safeName}`;
+    const uploadUrl = await getUploadUrl(key, contentType, 300, "receipts");
+    return { uploadUrl, key, contentType, fileName: safeName };
+  });
+
+  app.post("/expenses/:expenseId/receipt", approvedGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
+    const b = req.body || {};
+    const key = String(b.key ?? "");
+    const fileName = String(b.fileName ?? "");
+    const contentType = String(b.contentType ?? "");
+    if (!key.startsWith(`receipts/${beId}/`)) {
+      throw app.httpErrors.badRequest("Receipt key does not belong to this expense.");
+    }
+    const prev = await prisma.businessExpense.findUnique({
+      where: { id: beId },
+      select: { receiptR2Key: true },
+    });
+    if (prev?.receiptR2Key && prev.receiptR2Key !== key) {
+      await deleteObject(prev.receiptR2Key, "receipts").catch(() => {});
+    }
+    return prisma.businessExpense.update({
+      where: { id: beId },
+      data: {
+        receiptR2Key: key,
+        receiptFileName: fileName || null,
+        receiptContentType: contentType || null,
+        receiptUploadedAt: new Date(),
+      },
+      select: {
+        id: true,
+        receiptR2Key: true,
+        receiptFileName: true,
+        receiptContentType: true,
+        receiptUploadedAt: true,
+      },
+    });
+  });
+
+  app.get("/expenses/:expenseId/receipt-url", approvedGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
+    const be = await prisma.businessExpense.findUnique({
+      where: { id: beId },
+      select: { receiptR2Key: true, receiptContentType: true, receiptFileName: true },
+    });
+    if (!be?.receiptR2Key) throw app.httpErrors.notFound("No receipt uploaded.");
+    const url = await getDownloadUrl(be.receiptR2Key, 3600, "receipts");
+    return { url, contentType: be.receiptContentType, fileName: be.receiptFileName };
+  });
+
+  app.delete("/expenses/:expenseId/receipt", approvedGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const beId = await resolveExpenseBe(uid, String(req.params.expenseId));
+    const be = await prisma.businessExpense.findUnique({
+      where: { id: beId },
+      select: { receiptR2Key: true },
+    });
+    if (be?.receiptR2Key) await deleteObject(be.receiptR2Key, "receipts").catch(() => {});
+    await prisma.businessExpense.update({
+      where: { id: beId },
+      data: {
+        receiptR2Key: null,
+        receiptFileName: null,
+        receiptContentType: null,
+        receiptUploadedAt: null,
+      },
+    });
+    return { deleted: true };
+  });
+
   // ── Supplies (claimer / admin) ──
   //
   // Catalog read-only for workers (so the inventory picker can show available
@@ -2561,11 +2715,20 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (!claimer) throw app.httpErrors.forbidden("Only the claimer or an admin can add services.");
     }
 
-    // Only active occurrences accept new add-ons.
-    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, select: { status: true, workflow: true } });
+    // Add-ons stay editable through completion and unfinalized
+    // PENDING_PAYMENT — frozen once payment is requested/accepted.
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        status: true,
+        workflow: true,
+        paymentRequestSentAt: true,
+        payment: { select: { id: true } },
+      },
+    });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found");
-    if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS" && (occ.status as string) !== "PAUSED") {
-      throw app.httpErrors.conflict("Add-ons can only be added on active jobs.");
+    if (!occInEditableState(occ)) {
+      throw app.httpErrors.conflict("Services can't be changed once payment has been requested or accepted.");
     }
     const w = occ.workflow ?? "STANDARD";
     if (w === "TASK" || w === "REMINDER" || w === "EVENT" || w === "FOLLOWUP" || w === "ANNOUNCEMENT") {
@@ -2597,10 +2760,17 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (!claimer) throw app.httpErrors.forbidden("Only the claimer or an admin can remove services.");
     }
 
-    const occ = await prisma.jobOccurrence.findUnique({ where: { id: occurrenceId }, select: { status: true } });
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        status: true,
+        paymentRequestSentAt: true,
+        payment: { select: { id: true } },
+      },
+    });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found");
-    if (occ.status !== "SCHEDULED" && occ.status !== "IN_PROGRESS" && (occ.status as string) !== "PAUSED") {
-      throw app.httpErrors.conflict("Add-ons can only be removed on active jobs.");
+    if (!occInEditableState(occ)) {
+      throw app.httpErrors.conflict("Services can't be changed once payment has been requested or accepted.");
     }
 
     await prisma.occurrenceAddon.delete({ where: { id: addonId } });
@@ -2619,6 +2789,12 @@ export default async function workerRoutes(app: FastifyInstance) {
   app.delete("/supply-holds/:holdId", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     return services.supplies.removeHold(uid, String(req.params.holdId));
+  });
+
+  app.patch("/supply-holds/:holdId", workerGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.adjustHold(uid, String(req.params.holdId), Number(b.quantity));
   });
 
   // ── Photos ──

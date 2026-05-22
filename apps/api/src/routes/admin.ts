@@ -4203,6 +4203,12 @@ Respond ONLY with valid JSON in this exact format:
     return services.supplies.removeHold(uid, String(req.params.holdId));
   });
 
+  app.patch("/admin/supply-holds/:holdId", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const b = req.body || {};
+    return services.supplies.adjustHold(uid, String(req.params.holdId), Number(b.quantity));
+  });
+
   // ─── Groups (crews) ─────────────────────────────────────────────────────
   // Admins manage groups via Admin → Directory → Groups. See services/groups.ts
   // for the lock rule (no edits while group has in-flight occurrences or

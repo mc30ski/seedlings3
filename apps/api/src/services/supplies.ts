@@ -566,6 +566,100 @@ export const supplies: ServicesSupplies = {
     return { removed: true };
   },
 
+  // Adjust a hold's quantity in place — the claimer reconciling actual usage
+  // (e.g. pulled 10 bags of mulch, only used 9). Reprices the paired payout
+  // Expense and reconciles physical stock so the unused unit returns to (or
+  // an extra unit leaves) inventory.
+  async adjustHold(currentUserId, holdId, newQuantity) {
+    const hold = await prisma.supplyHold.findUnique({
+      where: { id: holdId },
+      include: {
+        supply: true,
+        occurrence: { include: { assignees: true } },
+      },
+    });
+    if (!hold) throw new ServiceError("NOT_FOUND", "Hold not found.", 404);
+
+    const isClaimer = hold.occurrence.assignees.some(
+      (a) => a.userId === currentUserId && a.assignedById === currentUserId,
+    );
+    if (!isClaimer && !(await isAdminUser(currentUserId))) {
+      throw new ServiceError(
+        "FORBIDDEN",
+        "Only the claimer or an admin can adjust a supply hold.",
+        403,
+      );
+    }
+
+    if (hold.status === "RELEASED") {
+      throw new ServiceError(
+        "INVALID_STATE",
+        "This supply hold was released and can no longer be adjusted.",
+        409,
+      );
+    }
+
+    const qty = requireInt(newQuantity, "Quantity");
+    if (qty <= 0) {
+      throw new ServiceError(
+        "INVALID_INPUT",
+        "Quantity must be positive — use Remove to take the supply off the job entirely.",
+        400,
+      );
+    }
+
+    const delta = qty - hold.quantity;
+    if (delta === 0) {
+      return prisma.supplyHold.findUnique({ where: { id: holdId }, include: holdInclude });
+    }
+
+    return prisma.$transaction(async (tx) => {
+      // Availability guard when increasing. activeHoldsTotal counts ACTIVE
+      // holds (including this one when it's still ACTIVE), so onHand − held
+      // is the free pool beyond everything already reserved/consumed.
+      if (delta > 0) {
+        const held = await activeHoldsTotal(tx, hold.supplyId);
+        const available = hold.supply.onHand - held;
+        if (available < delta) {
+          throw new ServiceError(
+            "INSUFFICIENT_INVENTORY",
+            `Only ${available} more ${hold.supply.unit}(s) of ${hold.supply.name} available.`,
+            409,
+          );
+        }
+      }
+
+      // A CONSUMED hold already decremented onHand by its old quantity, so a
+      // change reconciles physical stock by the delta: shrinking returns
+      // units, growing consumes more. ACTIVE holds only reserve — onHand is
+      // untouched until completion, so nothing to reconcile there.
+      if (hold.status === "CONSUMED") {
+        await tx.supply.update({
+          where: { id: hold.supplyId },
+          data: { onHand: { decrement: delta } },
+        });
+      }
+
+      // Reprice the paired payout Expense off the hold's snapshot per-unit
+      // cost (not the supply's current cost — snapshots don't drift).
+      if (hold.expenseId) {
+        await tx.expense.update({
+          where: { id: hold.expenseId },
+          data: {
+            cost: Math.round(qty * hold.jobPayoutCost * 100) / 100,
+            description: `${hold.supply.name} × ${qty} ${hold.supply.unit}`,
+          },
+        });
+      }
+
+      return tx.supplyHold.update({
+        where: { id: holdId },
+        data: { quantity: qty },
+        include: holdInclude,
+      });
+    });
+  },
+
   consumeHoldsForOccurrence,
   releaseHoldsForOccurrence,
   reactivateHoldsForOccurrence,

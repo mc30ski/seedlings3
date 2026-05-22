@@ -19,7 +19,7 @@ import {
   createListCollection,
   useDisclosure,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ChevronDown, ChevronUp, Copy, Filter, Hand, Heart, LayoutList, List, Maximize2, MoreHorizontal, Pin, Plus, RefreshCw, RotateCcw, ScanLine, Share2, User, Users, X } from "lucide-react";
 import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import {
   determineRoles,
@@ -46,6 +46,7 @@ import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
 import EquipmentDialog from "@/src/ui/dialogs/EquipmentDialog";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 import { EQUIPMENT_KIND, EQUIPMENT_STATUS } from "@/src/lib/types";
 import { parseEquipmentKindsConfig, type EquipmentKindConfig } from "@/src/lib/equipmentSuggestions";
@@ -178,7 +179,13 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [editing, setEditing] = useState<Equipment | null>(null);
   const [toDelete, setToDelete] = useState<ToDeleteProps | null>(null);
   const [scanFor, setScanFor] = useState<string | null>(null);
-  const [scanReturnFor, setScanReturnFor] = useState<string | null>(null);
+  // Scan-to-find: opens the QR scanner just to drop the slug into the
+  // search box, locating the item in the list without checking it out.
+  const [scanSearchOpen, setScanSearchOpen] = useState(false);
+  // Check-in ("Return") no longer requires a QR scan — a confirm dialog
+  // stands in as the deliberate-action guard. The physical-sticker scan
+  // path (/e/[slug] → qrAction) is unaffected.
+  const [returnConfirmEquip, setReturnConfirmEquip] = useState<Equipment | null>(null);
   const [reserveConfirmEquip, setReserveConfirmEquip] = useState<Equipment | null>(null);
   const [reserveChecked, setReserveChecked] = useState(false);
   const [qrAction, setQrAction] = useState<{ equipmentId: string; slug: string; action: "checkout" | "return"; label: string } | null>(null);
@@ -693,22 +700,25 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
       });
     }
   }
-  async function returnVerifiedWithSlug(id: string, slug: string) {
+  // Check-in: no QR slug sent — the server skips the scan verification
+  // when the slug is absent (see equipment.returnWithQr).
+  async function doReturn(e: Equipment) {
+    setStatusButtonBusyId(`equipment-return${e.id}`);
     try {
-      await apiPost(`/api/equipment/${id}/return/verify`, {
-        slug: extractSlug(slug),
-      });
+      await apiPost(`/api/equipment/${e.id}/return/verify`, {});
       notifyEquipmentUpdated();
       await load(false);
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Equipment '${slug}' successfully returned.`,
+        text: `Equipment '${e.qrSlug ?? e.shortDesc}' successfully returned.`,
       });
     } catch (err) {
       publishInlineMessage({
         type: "ERROR",
-        text: getErrorMessage(`Equipment '${slug}' return failed.`, err),
+        text: getErrorMessage(`Equipment '${e.qrSlug ?? e.shortDesc}' return failed.`, err),
       });
+    } finally {
+      setStatusButtonBusyId("");
     }
   }
   async function reserve(e: Equipment) {
@@ -1133,6 +1143,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
           inputId="equipment-search"
           placeholder="Search…"
         />
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          flexShrink={0}
+          onClick={() => setScanSearchOpen(true)}
+          title="Scan a QR code to find equipment"
+          css={{ background: "var(--chakra-colors-gray-100)" }}
+        >
+          <ScanLine size={14} />
+        </Button>
         <Select.Root
           collection={kindCollection}
           value={kind}
@@ -1615,7 +1636,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                           return (
                             <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Return" onClick={(ev: any) => {
                               ev.stopPropagation();
-                              setScanReturnFor(e.id);
+                              setReturnConfirmEquip(e);
                             }}><RotateCcw size={12} /></Box>
                           );
                         }
@@ -1739,12 +1760,30 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                   <EquipmentPhotos equipmentId={e.id} readOnly={!forAdmin} hasPhotos={e.hasPhotos} />
                 </Box>
                 {e.qrSlug && (
-                  <Text fontSize="xs" color="gray.500" mt={0}>
-                    <Text as="span" fontWeight="bold">
-                      ID:{" "}
+                  <HStack gap={1} mt={0} align="center">
+                    <Text fontSize="xs" color="gray.500">
+                      <Text as="span" fontWeight="bold">
+                        ID:{" "}
+                      </Text>
+                      {e.qrSlug}
                     </Text>
-                    {e.qrSlug}
-                  </Text>
+                    <Box
+                      as="button"
+                      flexShrink={0}
+                      color="gray.400"
+                      _hover={{ color: "blue.600" }}
+                      title="Copy ID"
+                      onClick={(ev: any) => {
+                        ev.stopPropagation();
+                        navigator.clipboard?.writeText(e.qrSlug!).then(
+                          () => publishInlineMessage({ type: "SUCCESS", text: `Copied "${e.qrSlug}"` }),
+                          () => publishInlineMessage({ type: "ERROR", text: "Copy failed." }),
+                        );
+                      }}
+                    >
+                      <Copy size={11} />
+                    </Box>
+                  </HStack>
                 )}
                 {e.energy && (
                   <Text fontSize="xs" color="gray.500" mt={0}>
@@ -1857,7 +1896,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     id={"equipment-return"}
                     itemId={e.id}
                     label={"Return"}
-                    onClick={async () => void setScanReturnFor(e.id)}
+                    onClick={async () => void setReturnConfirmEquip(e)}
                     variant={"solid"}
                     colorPalette={"orange"}
                     disabled={loading}
@@ -2032,16 +2071,30 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
         }}
       />
       <QRScannerDialog
-        open={!!scanReturnFor}
-        label="Scan QR Code to Return"
-        onClose={() => void setScanReturnFor(null)}
-        onDetected={async (slug) => {
-          const id = scanReturnFor!;
-          setStatusButtonBusyId(`equipment-return${id}`);
-          setScanReturnFor(null);
-          await returnVerifiedWithSlug(id, slug);
-          setStatusButtonBusyId("");
+        open={scanSearchOpen}
+        label="Scan QR Code to Find Equipment"
+        onClose={() => setScanSearchOpen(false)}
+        onDetected={(slug) => {
+          setQ(extractSlug(slug));
+          setScanSearchOpen(false);
         }}
+      />
+      <ConfirmDialog
+        open={!!returnConfirmEquip}
+        title="Return this equipment?"
+        message={
+          returnConfirmEquip
+            ? `Check in "${returnConfirmEquip.shortDesc || `${returnConfirmEquip.brand ?? ""} ${returnConfirmEquip.model ?? ""}`.trim() || returnConfirmEquip.qrSlug}" and make it available again.`
+            : ""
+        }
+        confirmLabel="Return"
+        confirmColorPalette="orange"
+        onConfirm={async () => {
+          const e = returnConfirmEquip;
+          setReturnConfirmEquip(null);
+          if (e) await doReturn(e);
+        }}
+        onCancel={() => setReturnConfirmEquip(null)}
       />
       {forAdmin && (
         <EquipmentDialog
