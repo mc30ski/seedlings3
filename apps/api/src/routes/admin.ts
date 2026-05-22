@@ -3993,7 +3993,7 @@ Respond ONLY with valid JSON in this exact format:
     const b = req.body || {};
     return services.supplies.recordPurchase(uid, String(req.params.id), {
       quantity: Number(b.quantity),
-      unitCost: Number(b.unitCost),
+      totalCost: Number(b.totalCost),
       date: b.date != null ? String(b.date) : null,
       vendor: b.vendor != null ? String(b.vendor) : null,
       invoiceNumber: b.invoiceNumber != null ? String(b.invoiceNumber) : null,

@@ -296,14 +296,16 @@ export const supplies: ServicesSupplies = {
 
     const quantity = requireInt(input.quantity, "Quantity");
     if (quantity <= 0) throw new ServiceError("INVALID_INPUT", "Quantity must be positive.", 400);
-    const unitCost = requireNonNegativeNum(input.unitCost, "Unit cost");
-    if (unitCost <= 0) throw new ServiceError("INVALID_INPUT", "Unit cost must be greater than zero.", 400);
+    const totalCost = Math.round(requireNonNegativeNum(input.totalCost, "Total cost") * 100) / 100;
+    if (totalCost <= 0) throw new ServiceError("INVALID_INPUT", "Total cost must be greater than zero.", 400);
+    // The receipt total (incl. tax and discounts) is the source of truth.
+    // Per-unit cost is derived — a reference/display figure only.
+    const unitCost = Math.round((totalCost / quantity) * 100) / 100;
 
     const date = resolveDate(input.date);
     const vendor = input.vendor ? input.vendor.trim() || null : null;
     const invoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() || null : null;
     const notes = input.notes ? input.notes.trim() || null : null;
-    const totalCost = Math.round(quantity * unitCost * 100) / 100;
 
     // Dual-write: BusinessExpense (tax ledger) + SupplyPurchase + onHand bump,
     // all in one transaction. The BE description includes the supply name and

@@ -35,6 +35,11 @@ function resolveDate(raw: string | null | undefined): Date {
 const expenseInclude = {
   createdBy: { select: { id: true, displayName: true } },
   businessExpense: true,
+  // The inventory link — without this the UI can't tell an inventory-backed
+  // expense from a custom one, so the quantity stepper never renders.
+  supplyHold: {
+    include: { supply: { select: { id: true, name: true, unit: true } } },
+  },
 } as const;
 
 export const expenses: ServicesExpenses = {
