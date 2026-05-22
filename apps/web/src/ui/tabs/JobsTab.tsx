@@ -1990,8 +1990,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           reminderDueIds.add(occ.id);
         } else {
           rest.push(occ);
-          // Future reminders — add a ghost at the reminder date if it's a different ET day than the occurrence AND within date range
-          if (hasReminder && !suppressReminderVisuals) {
+          // Future reminders — add a ghost at the reminder date if it's a
+          // different ET day than the occurrence AND within date range.
+          // Skip when `occ` is ITSELF an API-built reminder ghost (its
+          // underlying occurrence fell outside the loaded range) — cloning
+          // it here would render the same reminder twice.
+          if (hasReminder && !suppressReminderVisuals && !(occ as any)._isReminderGhost) {
             const remKey = bizDateKey(occ.reminder!.remindAt);
             const occKey = occ.startAt ? bizDateKey(occ.startAt) : "";
             if (remKey !== occKey && (!dateFrom || remKey >= dateFrom) && (!dateTo || remKey <= dateTo)) {
@@ -3146,21 +3150,85 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             const vipReason = (occ.job?.property?.client as any)?.vipReason;
             const isPinned = isWorkerView && pinnedIds.has(occ.id);
 
-            // Ghost reminder cards — render a simplified card
+            // Per-card density: explicit per-card override wins; else the
+            // global cardDensity. Ghost cards key their override separately
+            // (`ghost:<id>`) so a ghost and its real occurrence — which share
+            // an id — don't toggle each other. `isCardCompact` keeps its
+            // legacy meaning ("anything but expanded"); cardMode is the
+            // precise three-state value the ultra branches use.
+            const cardKey = (occ._isReminderGhost || occ._isPinnedGhost)
+              ? `ghost:${occ.id}`
+              : occ.id;
+            const cardMode: CardDensity = cardOverrides.get(cardKey) ?? cardDensity;
+            const isCardCompact = cardMode !== "expanded";
+            // Click cycles this card ultra → semi → expanded → ultra,
+            // independent of the global density.
+            const toggleCard = () => {
+              setCardOverrides((prev) => {
+                const next = new Map(prev);
+                next.set(cardKey, nextDensity(cardMode));
+                return next;
+              });
+            };
+
+            // Ghost reminder cards — a reference card on the reminder's
+            // date. Honors the card density: `ultra` collapses to a single
+            // scan row; tapping anywhere cycles density like a normal card.
             const ghostHighPriority = !!(occ as any).isHighPriority;
             if (isGhost) {
+              const ghostBorderColor = ghostHighPriority ? "purple.500" : "purple.300";
+              const ghostBg = ghostHighPriority ? "purple.100" : "purple.50";
+              const ghostCss = {
+                borderLeft: ghostHighPriority
+                  ? "4px dashed var(--chakra-colors-purple-600)"
+                  : "4px dashed var(--chakra-colors-purple-400)",
+                borderStyle: "dashed",
+                opacity: ghostHighPriority ? 1 : 0.8,
+              };
+              const ghostProp =
+                (occ.job?.property?.displayName ?? occ.title ?? "Job") +
+                (occ.job?.property?.client?.displayName
+                  ? ` — ${clientLabel(occ.job.property.client.displayName)}`
+                  : "");
+              if (cardMode === "ultra") {
+                return (
+                  <Card.Root
+                    key={`ghost-${occ.id}-${occIdx}`}
+                    variant="outline"
+                    borderColor={ghostBorderColor}
+                    borderWidth={ghostHighPriority ? "2px" : "1px"}
+                    bg={ghostBg}
+                    cursor="pointer"
+                    onClick={toggleCard}
+                    css={ghostCss}
+                  >
+                    <Card.Body py="1.5" px="3">
+                      <HStack gap={2} align="center">
+                        <Bell size={13} style={{ color: "var(--chakra-colors-purple-600)", flexShrink: 0 }} />
+                        <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Reminder</Badge>
+                        {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>!</Badge>}
+                        <Text fontSize="xs" fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                          {ghostProp}
+                          {occ.reminder?.note ? ` · ${occ.reminder.note}` : ""}
+                        </Text>
+                        {occ.reminder?.remindAt && (
+                          <Text fontSize="xs" color="purple.600" flexShrink={0}>{fmtDate(occ.reminder.remindAt)}</Text>
+                        )}
+                      </HStack>
+                    </Card.Body>
+                  </Card.Root>
+                );
+              }
               return (
                 <Card.Root
                   key={`ghost-${occ.id}-${occIdx}`}
                   variant="outline"
-                  borderColor={ghostHighPriority ? "purple.500" : "purple.300"}
+                  borderColor={ghostBorderColor}
                   borderWidth={ghostHighPriority ? "2px" : "1px"}
-                  bg={ghostHighPriority ? "purple.100" : "purple.50"}
-                  css={{
-                    borderLeft: ghostHighPriority ? "4px dashed var(--chakra-colors-purple-600)" : "4px dashed var(--chakra-colors-purple-400)",
-                    borderStyle: "dashed",
-                    opacity: ghostHighPriority ? 1 : 0.8,
-                  }}
+                  bg={ghostBg}
+                  cursor="pointer"
+                  onClick={toggleCard}
+                  css={ghostCss}
                 >
                   <Card.Body py="2" px="3">
                     <VStack align="start" gap={1}>
@@ -3184,7 +3252,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         size="xs"
                         variant="outline"
                         colorPalette="purple"
-                        onClick={() => {
+                        onClick={(e: any) => {
+                          e.stopPropagation();
                           setHighlightOccId(occ.id);
                           setCardOverrides(new Map([[occ.id, "expanded"]]));
                           setFilterJobId(null);
@@ -3333,25 +3402,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               : isAssignedToMe ? "teal.700"
               : isAssignedToOthers ? "gray.700"
               : "gray.700";
-
-            // Per-card density: explicit per-card override (cardOverrides)
-            // wins; otherwise the global cardDensity. `isCardCompact` keeps
-            // the existing meaning ("anything but expanded") for the dozens
-            // of legacy checks below; cardMode is the precise three-state
-            // value used by the ultra branch.
-            const cardMode: CardDensity = cardOverrides.get(occ.id) ?? cardDensity;
-            const isCardCompact = cardMode !== "expanded";
-            // Click cycles this card's mode through ultra → semi → expanded
-            // → ultra, independent of the global density. Sets an override
-            // on the Map so the cycle persists until the global density
-            // changes (which clears all overrides).
-            const toggleCard = () => {
-              setCardOverrides((prev) => {
-                const next = new Map(prev);
-                next.set(occ.id, nextDensity(cardMode));
-                return next;
-              });
-            };
 
             // Context-dependent quick-action button (Confirm Client / Start /
             // Pause-Complete menu / Resume / Accept Payment / Claim / etc.)

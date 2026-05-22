@@ -136,7 +136,6 @@ export default function SuppliesTab({
   const [fName, setFName] = useState("");
   const [fUnit, setFUnit] = useState("");
   const [fCategory, setFCategory] = useState("Supplies");
-  const [fBusinessCost, setFBusinessCost] = useState("");
   const [fJobPayoutCost, setFJobPayoutCost] = useState("");
   const [fUpc, setFUpc] = useState("");
   const [fDescription, setFDescription] = useState("");
@@ -145,7 +144,8 @@ export default function SuppliesTab({
   // Buy more dialog
   const [buyOpen, setBuyOpen] = useState<Supply | null>(null);
   const [bQty, setBQty] = useState("");
-  const [bUnitCost, setBUnitCost] = useState("");
+  // Total actually paid for the whole purchase, incl. tax/discounts.
+  const [bTotalCost, setBTotalCost] = useState("");
   const [bDate, setBDate] = useState(todayStr());
   const [bVendor, setBVendor] = useState("");
   const [bInvoice, setBInvoice] = useState("");
@@ -250,7 +250,6 @@ export default function SuppliesTab({
     setFName(prefill?.name ?? "");
     setFUnit("");
     setFCategory("Supplies");
-    setFBusinessCost("");
     setFJobPayoutCost("");
     setFUpc(prefill?.upc ?? "");
     setFDescription(prefill?.description ?? "");
@@ -323,7 +322,6 @@ export default function SuppliesTab({
     setFName(s.name);
     setFUnit(s.unit);
     setFCategory(s.category || "Supplies");
-    setFBusinessCost(s.businessCost.toFixed(2));
     setFJobPayoutCost(s.jobPayoutCost.toFixed(2));
     setFUpc(s.upc ?? "");
     setFDescription(s.description ?? "");
@@ -339,7 +337,6 @@ export default function SuppliesTab({
       name: fName.trim(),
       unit: fUnit.trim(),
       category: fCategory,
-      businessCost: fBusinessCost === "" ? 0 : Number(fBusinessCost),
       jobPayoutCost: fJobPayoutCost === "" ? 0 : Number(fJobPayoutCost),
       upc: fUpc.trim() || null,
       description: fDescription.trim() || null,
@@ -368,7 +365,8 @@ export default function SuppliesTab({
   function openBuy(s: Supply) {
     setBuyOpen(s);
     setBQty("");
-    setBUnitCost(s.businessCost > 0 ? s.businessCost.toFixed(2) : "");
+    // Total is the receipt figure — it varies every trip, so don't prefill.
+    setBTotalCost("");
     setBDate(todayStr());
     setBVendor("");
     setBInvoice("");
@@ -379,13 +377,13 @@ export default function SuppliesTab({
   async function recordPurchase() {
     if (!buyOpen) return;
     const qty = Math.round(Number(bQty));
-    const unit = Number(bUnitCost);
+    const total = Number(bTotalCost);
     if (!Number.isInteger(qty) || qty <= 0) {
       publishInlineMessage({ type: "WARNING", text: "Quantity must be a positive integer." });
       return;
     }
-    if (!Number.isFinite(unit) || unit <= 0) {
-      publishInlineMessage({ type: "WARNING", text: "Unit cost must be greater than zero." });
+    if (!Number.isFinite(total) || total <= 0) {
+      publishInlineMessage({ type: "WARNING", text: "Total cost must be greater than zero." });
       return;
     }
     setSavingBuy(true);
@@ -395,7 +393,7 @@ export default function SuppliesTab({
         businessExpense: { id: string };
       }>(`/api/admin/supplies/${buyOpen.id}/purchases`, {
         quantity: qty,
-        unitCost: unit,
+        totalCost: total,
         date: bDate,
         vendor: bVendor.trim() || null,
         invoiceNumber: bInvoice.trim() || null,
@@ -443,7 +441,7 @@ export default function SuppliesTab({
 
       publishInlineMessage({
         type: "SUCCESS",
-        text: `Recorded purchase: ${qty} ${buyOpen.unit} of ${buyOpen.name} @ ${fmtUSD(unit)}${bReceiptFile ? " · receipt attached" : ""}.`,
+        text: `Recorded purchase: ${qty} ${buyOpen.unit} of ${buyOpen.name} for ${fmtUSD(total)}${bReceiptFile ? " · receipt attached" : ""}.`,
       });
       setBuyOpen(null);
       void load();
@@ -823,10 +821,23 @@ export default function SuppliesTab({
                     <Text fontSize="sm" mb={1}>Unit *</Text>
                     <Input value={fUnit} onChange={(e) => setFUnit(e.target.value)} size="sm" placeholder="e.g. bag, spool, lb" />
                   </Box>
-                  <HStack gap={2}>
+                  <HStack gap={2} align="start">
                     <Box flex="1">
-                      <Text fontSize="sm" mb={1}>Business cost (per unit)</Text>
-                      <CurrencyInput value={fBusinessCost} onChange={setFBusinessCost} size="sm" />
+                      <Text fontSize="sm" mb={1}>Last paid (per unit)</Text>
+                      <Box
+                        fontSize="sm"
+                        px={2}
+                        py="6px"
+                        bg="bg.subtle"
+                        borderWidth="1px"
+                        borderColor="border.muted"
+                        borderRadius="md"
+                        color="fg.muted"
+                      >
+                        {editing && editing.businessCost > 0
+                          ? `${fmtUSD(editing.businessCost)}`
+                          : "—"}
+                      </Box>
                     </Box>
                     <Box flex="1">
                       <Text fontSize="sm" mb={1}>Job payout cost (per unit) *</Text>
@@ -834,7 +845,7 @@ export default function SuppliesTab({
                     </Box>
                   </HStack>
                   <Text fontSize="xs" color="fg.muted">
-                    Job payout cost is what's deducted from the worker's payout per unit consumed. Set it equal to business cost for no markup, or higher to bake in margin (e.g. travel/fuel to fetch the supply).
+                    Last paid is derived from your most recent purchase — it updates automatically and isn't edited here. Job payout cost is what's deducted from the worker's payout per unit consumed; set it equal to what you pay for no markup, or higher to bake in margin (e.g. travel/fuel to fetch the supply).
                   </Text>
                   <Box>
                     <Text fontSize="sm" mb={1}>Schedule C category</Text>
@@ -921,15 +932,16 @@ export default function SuppliesTab({
                       />
                     </Box>
                     <Box flex="1">
-                      <Text fontSize="sm" mb={1}>Unit cost *</Text>
-                      <CurrencyInput value={bUnitCost} onChange={setBUnitCost} size="sm" />
+                      <Text fontSize="sm" mb={1}>Total cost *</Text>
+                      <CurrencyInput value={bTotalCost} onChange={setBTotalCost} size="sm" />
                     </Box>
                   </HStack>
-                  {bQty && bUnitCost && Number(bQty) > 0 && Number(bUnitCost) > 0 && (
-                    <Text fontSize="xs" color="fg.muted">
-                      Total: {fmtUSD(Math.round(Number(bQty) * Number(bUnitCost) * 100) / 100)}
-                    </Text>
-                  )}
+                  <Text fontSize="xs" color="fg.muted">
+                    Enter the total you actually paid for the whole purchase — including sales tax and after any discounts (the receipt figure).
+                    {bQty && bTotalCost && Number(bQty) > 0 && Number(bTotalCost) > 0 && (
+                      <> That's {fmtUSD(Math.round((Number(bTotalCost) / Number(bQty)) * 100) / 100)} per {buyOpen?.unit ?? "unit"}.</>
+                    )}
+                  </Text>
                   <Box>
                     <Text fontSize="sm" mb={1}>Date</Text>
                     <input

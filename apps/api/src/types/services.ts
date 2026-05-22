@@ -777,7 +777,9 @@ export type SupplyPatchInput = {
 
 export type SupplyPurchaseInput = {
   quantity: number;
-  unitCost: number;
+  // Total actually paid for the whole purchase, incl. tax and discounts —
+  // the receipt/bank-statement figure. Per-unit cost is derived from this.
+  totalCost: number;
   date?: string | null;
   vendor?: string | null;
   invoiceNumber?: string | null;
