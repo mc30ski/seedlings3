@@ -73,6 +73,17 @@ function assigneeSummary(assignees: WorkerOccurrence["assignees"]): string {
   return sorted.map((a) => a.user?.displayName ?? a.user?.email ?? "").filter(Boolean).join(", ");
 }
 
+type OutstandingReq = {
+  occurrenceId: string;
+  startAt: string | null;
+  daysSinceRequested: number;
+  stale: boolean;
+  linkExpired: boolean;
+  amount: number;
+  property: string | null;
+  client: string | null;
+};
+
 /** Switch to the Jobs tab (admin or worker) and highlight a specific occurrence.
  *  Used by every "View →" link in the Planning tab.
  *
@@ -105,6 +116,9 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
   const [busyId, setBusyId] = useState<string | null>(null);
   const [routeViewed, setRouteViewed] = useState(false);
   const [workflowLaunched, setWorkflowLaunched] = useState(false);
+  // Payment requests this worker sent that the client hasn't paid yet —
+  // surfaced as a nudge so a quiet request doesn't get forgotten.
+  const [outstandingReqs, setOutstandingReqs] = useState<OutstandingReq[]>([]);
 
   async function loadItems() {
     try {
@@ -126,6 +140,18 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
     window.addEventListener("seedlings3:jobs-changed", handler);
     return () => window.removeEventListener("seedlings3:jobs-changed", handler);
   }, []);
+
+  // Worker's own outstanding payment requests (skip in team view — that's
+  // an aggregate context, not "my requests to chase").
+  useEffect(() => {
+    if (teamView) {
+      setOutstandingReqs([]);
+      return;
+    }
+    apiGet<OutstandingReq[]>("/api/me/outstanding-payment-requests")
+      .then((list) => setOutstandingReqs(Array.isArray(list) ? list : []))
+      .catch(() => setOutstandingReqs([]));
+  }, [teamView]);
 
   const { key: tomorrowKey, label: tomorrowLabel } = useMemo(() => tomorrowDate(), []);
 
@@ -291,6 +317,70 @@ export default function RemindersTab({ myId, me, showAll, forAdmin, teamView, vi
           <TomorrowWeatherWarning size="md" />
         </Box>
       </Box>
+
+      {/* Outstanding payment requests — sent to a client, not yet paid. */}
+      {outstandingReqs.length > 0 && (
+        <Box
+          mb={4}
+          p={3}
+          bg="purple.50"
+          borderWidth="1px"
+          borderColor="purple.300"
+          borderLeftWidth="4px"
+          borderLeftColor="purple.500"
+          borderRadius="md"
+        >
+          <Text fontSize="sm" fontWeight="semibold" color="purple.800">
+            {outstandingReqs.length} payment request{outstandingReqs.length === 1 ? "" : "s"} awaiting client payment
+          </Text>
+          <Text fontSize="xs" color="purple.700" mb={2}>
+            You sent these but the client hasn't paid yet — follow up so they don't get lost.
+          </Text>
+          <VStack align="stretch" gap={1}>
+            {outstandingReqs.map((r) => (
+              <HStack
+                key={r.occurrenceId}
+                justify="space-between"
+                gap={2}
+                bg="white"
+                borderRadius="md"
+                px={2}
+                py={1.5}
+              >
+                <VStack align="start" gap={0} minW={0}>
+                  <Text fontSize="sm">
+                    {r.property ?? "Job"}
+                    {r.client ? ` — ${r.client}` : ""}
+                  </Text>
+                  <HStack gap={1.5} flexWrap="wrap">
+                    <Text
+                      fontSize="xs"
+                      color={r.stale ? "orange.700" : "fg.muted"}
+                      fontWeight={r.stale ? "semibold" : "normal"}
+                    >
+                      {r.daysSinceRequested <= 0
+                        ? "Requested today"
+                        : r.daysSinceRequested === 1
+                          ? "Requested 1 day ago"
+                          : `Requested ${r.daysSinceRequested} days ago`}
+                    </Text>
+                    {r.linkExpired && <Badge size="sm" colorPalette="red">Link expired</Badge>}
+                  </HStack>
+                </VStack>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  colorPalette="purple"
+                  flexShrink={0}
+                  onClick={() => viewOnJobs(r.occurrenceId, r.startAt, forAdmin)}
+                >
+                  View →
+                </Button>
+              </HStack>
+            ))}
+          </VStack>
+        </Box>
+      )}
 
       {/* All set banner */}
       {allDone && (

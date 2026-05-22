@@ -4668,6 +4668,11 @@ Respond ONLY with valid JSON in this exact format:
     return services.payments.listPendingApprovals();
   });
 
+  // Outstanding payment requests — sent to a client, not yet paid back.
+  app.get("/admin/payment-requests/outstanding", superGuard, async () => {
+    return services.paymentRequests.listOutstanding();
+  });
+
   app.post("/admin/payments/:id/approve", superGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};

@@ -107,6 +107,8 @@ export default function ManageExpensesDialog({
   const [loading, setLoading] = useState(false);
   // Serializes inventory +/− clicks — each adjust re-reads server state.
   const [holdBusy, setHoldBusy] = useState(false);
+  // In-progress typed quantity per hold id. Absent = show the server value.
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
 
   // Add mode: nothing selected by default. The user must explicitly pick
   // Custom or From inventory. If they pick a mode they don't have permission
@@ -297,7 +299,44 @@ export default function ManageExpensesDialog({
       });
     } finally {
       setHoldBusy(false);
+      // Drop the typed draft so the input reflects the (refetched) server qty.
+      setQtyDrafts((p) => {
+        if (!(holdId in p)) return p;
+        const n = { ...p };
+        delete n[holdId];
+        return n;
+      });
     }
+  }
+
+  // Commit a typed quantity. Called on blur / Enter of the qty input.
+  function commitQty(holdId: string, currentQty: number) {
+    const draft = qtyDrafts[holdId];
+    if (draft === undefined) return; // untouched
+    const parsed = Math.round(Number(draft));
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+      publishInlineMessage({
+        type: "WARNING",
+        text: "Quantity must be a whole number of at least 1 — use ✕ to remove entirely.",
+      });
+      // Reset the input back to the server value.
+      setQtyDrafts((p) => {
+        const n = { ...p };
+        delete n[holdId];
+        return n;
+      });
+      return;
+    }
+    if (parsed === currentQty) {
+      // No change — just clear the draft.
+      setQtyDrafts((p) => {
+        const n = { ...p };
+        delete n[holdId];
+        return n;
+      });
+      return;
+    }
+    void handleAdjustHold(holdId, parsed);
   }
 
   async function handleUpdate() {
@@ -422,9 +461,24 @@ export default function ManageExpensesDialog({
                                 >
                                   −
                                 </Button>
-                                <Text minW="28px" textAlign="center" fontWeight="medium">
-                                  {h.quantity}
-                                </Text>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  size="xs"
+                                  w="48px"
+                                  textAlign="center"
+                                  px={1}
+                                  disabled={holdBusy}
+                                  value={qtyDrafts[h.id] ?? String(h.quantity)}
+                                  onChange={(e) =>
+                                    setQtyDrafts((p) => ({ ...p, [h.id]: e.target.value }))
+                                  }
+                                  onBlur={() => commitQty(h.id, h.quantity)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                  }}
+                                />
                                 <Button
                                   size="xs"
                                   variant="outline"
