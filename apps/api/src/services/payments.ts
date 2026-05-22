@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { prisma } from "../db/prisma";
 import { JobOccurrenceStatus, type WorkerType } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
@@ -1601,11 +1602,21 @@ export const payments: ServicesPayments = {
       // card can surface "Payment rejected: <reason>" without a per-card
       // audit query. If the user re-pays and admin approves, these get
       // cleared on the way to CLOSED (see approvePayment / createPayment).
+      //
+      // Also void the prior payment request: a rejection means the whole
+      // attempt failed, so the occurrence returns to the genuine "open"
+      // PENDING_PAYMENT state — claimer can edit billables again and
+      // re-initiate from scratch. Clearing paymentRequestSentAt + rotating
+      // the token mirrors cancelPaymentRequest (invalidates the stale
+      // client /pay link); the worker no longer has to cancel separately.
       await tx.jobOccurrence.update({
         where: { id: existing.occurrenceId },
         data: {
           lastPaymentRejectionReason: reason?.trim() || "Rejected",
           lastPaymentRejectedAt: new Date(),
+          paymentRequestSentAt: null,
+          paymentRequestToken: randomBytes(16).toString("hex"),
+          paymentRequestTokenCreatedAt: new Date(),
         },
       });
       await writeAudit(tx, AUDIT.PAYMENT.REJECTED, currentUserId, {

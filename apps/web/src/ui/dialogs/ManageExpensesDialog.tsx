@@ -15,6 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { apiGet, apiPost, apiDelete, apiPatch } from "@/src/lib/api";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
+import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -25,7 +26,15 @@ type Expense = {
   cost: number;
   description: string;
   businessExpenseId?: string | null;
-  businessExpense?: { category?: string | null; vendor?: string | null; date?: string | null } | null;
+  businessExpense?: {
+    category?: string | null;
+    vendor?: string | null;
+    date?: string | null;
+    receiptR2Key?: string | null;
+    receiptFileName?: string | null;
+    receiptContentType?: string | null;
+    receiptUploadedAt?: string | null;
+  } | null;
   // Set when this Expense was created by consuming inventory. The UI hides
   // edit on these rows since cost/description are derived from the hold's
   // qty × jobPayoutCost.
@@ -96,6 +105,8 @@ export default function ManageExpensesDialog({
   const canCharge = privileges.canChargeBusinessExpenses;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
+  // Serializes inventory +/− clicks — each adjust re-reads server state.
+  const [holdBusy, setHoldBusy] = useState(false);
 
   // Add mode: nothing selected by default. The user must explicitly pick
   // Custom or From inventory. If they pick a mode they don't have permission
@@ -248,6 +259,47 @@ export default function ManageExpensesDialog({
     }
   }
 
+  // Bump an inventory-backed hold up or down by one unit. The server
+  // reprices the paired expense and reconciles physical stock (a removed
+  // unit goes back to inventory; an added one is pulled). Re-reads both
+  // lists afterward so costs and availability stay exact.
+  async function handleAdjustHold(holdId: string, newQty: number) {
+    if (newQty < 1 || holdBusy) return;
+    setHoldBusy(true);
+    try {
+      const endpoint = isAdmin
+        ? `/api/admin/supply-holds/${holdId}`
+        : `/api/supply-holds/${holdId}`;
+      await apiPatch(endpoint, { quantity: newQty });
+      const [refreshed, freshSupplies] = await Promise.all([
+        apiGet<Expense[]>(expensesEndpoint),
+        apiGet<any[]>("/api/supplies"),
+      ]);
+      setExpenses(Array.isArray(refreshed) ? refreshed : []);
+      if (Array.isArray(freshSupplies)) {
+        setSupplies(
+          freshSupplies
+            .filter((s) => !s.archivedAt)
+            .map((s) => ({
+              id: s.id,
+              name: s.name,
+              unit: s.unit,
+              jobPayoutCost: Number(s.jobPayoutCost ?? 0),
+              available: Number(s.available ?? 0),
+            })),
+        );
+      }
+      onChanged?.();
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage("Failed to adjust supply quantity.", err),
+      });
+    } finally {
+      setHoldBusy(false);
+    }
+  }
+
   async function handleUpdate() {
     if (!editingId) return;
     const cost = parseFloat(editCost);
@@ -339,7 +391,8 @@ export default function ManageExpensesDialog({
                           </HStack>
                         </VStack>
                       ) : (
-                        <HStack key={exp.id} gap={2} fontSize="xs">
+                        <VStack key={exp.id} align="stretch" gap={1}>
+                        <HStack gap={2} fontSize="xs">
                           <Text color="orange.600" flex="1">
                             ${exp.cost.toFixed(2)} — {exp.description}
                             {exp.supplyHold ? (
@@ -348,11 +401,43 @@ export default function ManageExpensesDialog({
                               <Text as="span" color="fg.muted" ml={1}>· {exp.businessExpense?.category ?? "Supplies"}</Text>
                             )}
                           </Text>
-                          {/* Inventory-backed rows can't be edited inline —
-                              cost/description are derived from the hold's
-                              qty × jobPayoutCost. To change, delete and
-                              re-add. */}
-                          {!exp.supplyHold && (
+                          {/* Inventory-backed rows get a quantity stepper —
+                              cost/description are derived from qty ×
+                              jobPayoutCost, so the server reprices and
+                              reconciles inventory on each step. Custom rows
+                              get the inline Edit form. */}
+                          {exp.supplyHold ? (() => {
+                            const h = exp.supplyHold!;
+                            const sup = supplies.find((s) => s.id === h.supply?.id);
+                            const canInc = !sup || sup.available > 0;
+                            return (
+                              <HStack gap={0.5} flexShrink={0}>
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  px={1.5}
+                                  disabled={holdBusy || h.quantity <= 1}
+                                  title="Remove one — returns it to inventory"
+                                  onClick={() => handleAdjustHold(h.id, h.quantity - 1)}
+                                >
+                                  −
+                                </Button>
+                                <Text minW="28px" textAlign="center" fontWeight="medium">
+                                  {h.quantity}
+                                </Text>
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  px={1.5}
+                                  disabled={holdBusy || !canInc}
+                                  title={canInc ? "Add one more from inventory" : "None left in inventory"}
+                                  onClick={() => handleAdjustHold(h.id, h.quantity + 1)}
+                                >
+                                  +
+                                </Button>
+                              </HStack>
+                            );
+                          })() : (
                             <Button
                               size="xs"
                               variant="ghost"
@@ -375,6 +460,29 @@ export default function ManageExpensesDialog({
                             ✕
                           </Button>
                         </HStack>
+                        {/* Receipt — only for custom (company-account) rows.
+                            Inventory rows derive from a supply purchase whose
+                            receipt was captured at buy time. */}
+                        {!exp.supplyHold && exp.businessExpenseId && (
+                          <Box pl={1}>
+                            <ReceiptUpload
+                              compact
+                              businessExpenseId={exp.businessExpenseId}
+                              apiBase={`/api/expenses/${exp.id}`}
+                              existing={exp.businessExpense ?? null}
+                              onChanged={(next) =>
+                                setExpenses((prev) =>
+                                  prev.map((e) =>
+                                    e.id === exp.id
+                                      ? { ...e, businessExpense: { ...e.businessExpense, ...next } }
+                                      : e,
+                                  ),
+                                )
+                              }
+                            />
+                          </Box>
+                        )}
+                        </VStack>
                       )
                     )}
                     <HStack justify="flex-end" fontSize="sm" pt={1} borderTopWidth="1px" borderColor="gray.200">

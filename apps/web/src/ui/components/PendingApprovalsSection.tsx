@@ -295,24 +295,22 @@ export default function PendingApprovalsSection() {
                     </Button>
                     <Button
                       size="xs"
-                      variant="outline"
                       colorPalette="orange"
                       onClick={() => setAdjustingRow(r)}
                       title="Adjust the amount, then approve (use when the client paid a different amount than reported)"
                     >
-                      <Pencil size={12} />
+                      <Pencil size={12} /> Edit
                     </Button>
-                    <Button size="xs" variant="outline" colorPalette="red" onClick={() => setRejectingRow(r)} title="Reject (the worker will need to re-record)">
-                      <Slash size={12} />
+                    <Button size="xs" colorPalette="red" onClick={() => setRejectingRow(r)} title="Reject (the worker will need to re-record)">
+                      <Slash size={12} /> Reject
                     </Button>
                     <Button
                       size="xs"
-                      variant="outline"
-                      colorPalette="red"
+                      colorPalette="purple"
                       onClick={() => setWritingOffRow(r)}
                       title="Write off (client never paid — employees are still paid their promised amount from business funds)"
                     >
-                      <XCircle size={12} />
+                      <XCircle size={12} /> Write off
                     </Button>
                     <Button size="xs" variant="ghost" onClick={() => openJob(r)} title="Open the job">
                       <ExternalLink size={12} />

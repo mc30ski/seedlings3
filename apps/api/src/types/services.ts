@@ -814,6 +814,7 @@ export type ServicesSupplies = {
   // call this; the route layer enforces.
   addHold(currentUserId: string, occurrenceId: string, input: SupplyHoldInput): Promise<any>;
   removeHold(currentUserId: string, holdId: string): Promise<{ removed: true }>;
+  adjustHold(currentUserId: string, holdId: string, newQuantity: number): Promise<any>;
 
   // Lifecycle: invoked by jobs service when an occurrence transitions.
   consumeHoldsForOccurrence(occurrenceId: string): Promise<{ consumed: number }>;

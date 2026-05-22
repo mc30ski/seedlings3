@@ -34,6 +34,10 @@ type Props = {
   ) => void;
   /** Compact mode for inline use in dense forms (e.g. Buy More dialog). */
   compact?: boolean;
+  /** Override the API base for the receipt endpoints. Defaults to the
+   *  admin business-expense routes. Pass e.g. `/api/expenses/<id>` to use
+   *  the claimer-accessible job-expense receipt routes. */
+  apiBase?: string;
 };
 
 export default function ReceiptUpload({
@@ -41,12 +45,18 @@ export default function ReceiptUpload({
   existing,
   onChanged,
   compact = false,
+  apiBase,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const hasReceipt = !!existing?.receiptR2Key;
+  // The receipt always lives on a BusinessExpense; `base` is whichever
+  // route family can reach it for the current caller.
+  const base =
+    apiBase ??
+    (businessExpenseId ? `/api/admin/business-expenses/${businessExpenseId}` : null);
 
   async function handleUpload(file: File) {
-    if (!businessExpenseId) {
+    if (!base) {
       publishInlineMessage({
         type: "WARNING",
         text: "Save the expense first, then attach a receipt.",
@@ -61,7 +71,7 @@ export default function ReceiptUpload({
       const contentType = isPdf ? "application/pdf" : "image/jpeg";
 
       const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
-        `/api/admin/business-expenses/${businessExpenseId}/receipt/upload-url`,
+        `${base}/receipt/upload-url`,
         { fileName: file.name, contentType },
       );
       const uploadRes = await fetch(uploadUrl, {
@@ -78,7 +88,7 @@ export default function ReceiptUpload({
         receiptFileName: string | null;
         receiptContentType: string | null;
         receiptUploadedAt: string;
-      }>(`/api/admin/business-expenses/${businessExpenseId}/receipt`, {
+      }>(`${base}/receipt`, {
         key,
         fileName: file.name,
         contentType,
@@ -101,10 +111,10 @@ export default function ReceiptUpload({
   }
 
   async function handleView() {
-    if (!businessExpenseId) return;
+    if (!base) return;
     try {
       const { url } = await apiGet<{ url: string }>(
-        `/api/admin/business-expenses/${businessExpenseId}/receipt-url`,
+        `${base}/receipt-url`,
       );
       // Open in a new tab — the URL is presigned, expires in an hour.
       window.open(url, "_blank", "noopener,noreferrer");
@@ -117,11 +127,11 @@ export default function ReceiptUpload({
   }
 
   async function handleDelete() {
-    if (!businessExpenseId) return;
+    if (!base) return;
     if (!confirm("Remove this receipt?")) return;
     setBusy(true);
     try {
-      await apiDelete(`/api/admin/business-expenses/${businessExpenseId}/receipt`);
+      await apiDelete(`${base}/receipt`);
       publishInlineMessage({ type: "SUCCESS", text: "Receipt removed." });
       onChanged?.({
         receiptR2Key: null,

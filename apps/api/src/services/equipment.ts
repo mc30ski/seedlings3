@@ -711,26 +711,29 @@ export const equipment: ServicesEquipment = {
     userId: string,
     slug: string
   ) {
-    if (!slug) throw new ServiceError("INVALID_INPUT", "Missing QR code.", 400);
-
     return prisma.$transaction(async (tx) => {
       await lockEquipment(tx, id);
 
-      // 1) Verify item + QR
+      // 1) Verify item. The QR slug is only checked when one is supplied —
+      // returning ("check-in") from the in-app button doesn't require a
+      // scan; the physical-sticker scan path (/e/[slug]) still passes a
+      // slug and is verified against the item.
       const eq = await tx.equipment.findUnique({ where: { id } });
       if (!eq) throw new ServiceError("NOT_FOUND", "Equipment not found.", 404);
-      if (!eq.qrSlug)
-        throw new ServiceError(
-          "NO_QR",
-          "This item doesn't have a QR code",
-          409
-        );
-      if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
-        throw new ServiceError(
-          "QR_MISMATCH",
-          "QR code doesn't match this item.",
-          403
-        );
+      if (slug) {
+        if (!eq.qrSlug)
+          throw new ServiceError(
+            "NO_QR",
+            "This item doesn't have a QR code",
+            409
+          );
+        if (eq.qrSlug.trim().toLowerCase() !== slug.trim().toLowerCase())
+          throw new ServiceError(
+            "QR_MISMATCH",
+            "QR code doesn't match this item.",
+            403
+          );
+      }
 
       // 2) Find the active checkout for this user & item
       const active = await tx.checkout.findFirst({
