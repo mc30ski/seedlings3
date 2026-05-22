@@ -1193,6 +1193,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     return services.groups.listForClaimer(uid);
   });
 
+  // The caller's own outstanding payment requests — sent to a client but
+  // not yet paid. Powers the Planning-tab nudge so a claimer can chase a
+  // request that's gone quiet.
+  app.get("/me/outstanding-payment-requests", workerGuard, async (req: any) => {
+    return services.paymentRequests.listOutstanding({ claimerUserId: req.user.id });
+  });
+
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const body = req.body || {};

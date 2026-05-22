@@ -8,6 +8,8 @@ import { persistCompletionSplits } from "./payments";
 
 const DEFAULT_BASE_URL = "https://www.seedlings.team";
 const DEFAULT_EXPIRY_HOURS = 72;
+// A sent-but-unpaid request older than this many days is flagged "stale".
+const DEFAULT_STALE_DAYS = 4;
 const DEFAULT_COMMS_MODE: PaymentCommsMode = "CLAIMER";
 
 function newToken(): string {
@@ -464,6 +466,99 @@ export const paymentRequests = {
         actorUserId: null,
         metadata: { occurrenceId, ip: ip ?? null } as any,
       },
+    });
+  },
+
+  /**
+   * Outstanding payment requests — jobs where a request was sent to the
+   * client but no payment has come back yet. These are receivables that can
+   * otherwise be silently forgotten. `stale` flags requests older than the
+   * PAYMENT_REQUEST_STALE_DAYS threshold; `linkExpired` flags ones whose
+   * pay link has lapsed (the client can no longer pay even if they try).
+   * With `claimerUserId`, scoped to one worker's own claimed jobs.
+   */
+  async listOutstanding(opts?: { claimerUserId?: string }) {
+    const expiryHours = Number(
+      (await getSetting("PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS")) ?? DEFAULT_EXPIRY_HOURS,
+    );
+    const staleDays = Number(
+      (await getSetting("PAYMENT_REQUEST_STALE_DAYS")) ?? DEFAULT_STALE_DAYS,
+    );
+    const occs = await prisma.jobOccurrence.findMany({
+      where: {
+        status: "PENDING_PAYMENT",
+        paymentRequestSentAt: { not: null },
+        // No payment recorded yet — once the client pays, it moves to the
+        // approval queue and is no longer "awaiting client payment".
+        payment: { is: null },
+        ...(opts?.claimerUserId
+          ? {
+              assignees: {
+                some: { userId: opts.claimerUserId, role: { not: "observer" } },
+              },
+            }
+          : {}),
+      },
+      orderBy: { paymentRequestSentAt: "asc" },
+      select: {
+        id: true,
+        startAt: true,
+        price: true,
+        paymentRequestSentAt: true,
+        paymentRequestTokenCreatedAt: true,
+        addons: { select: { price: true } },
+        job: {
+          select: {
+            id: true,
+            property: {
+              select: {
+                displayName: true,
+                client: { select: { displayName: true } },
+              },
+            },
+          },
+        },
+        assignees: {
+          where: { role: { not: "observer" } },
+          select: {
+            userId: true,
+            assignedById: true,
+            user: { select: { displayName: true, email: true } },
+          },
+        },
+      },
+    });
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    return occs.map((o) => {
+      const requestedAt = o.paymentRequestSentAt!;
+      const daysSinceRequested = Math.floor((now - requestedAt.getTime()) / dayMs);
+      const linkExpiresAt = o.paymentRequestTokenCreatedAt
+        ? new Date(o.paymentRequestTokenCreatedAt.getTime() + expiryHours * 3_600_000)
+        : null;
+      const claimer = o.assignees.find((a) => a.assignedById === a.userId) ?? null;
+      const amount =
+        (o.price ?? 0) + o.addons.reduce((s, a) => s + (a.price ?? 0), 0);
+      return {
+        occurrenceId: o.id,
+        startAt: o.startAt,
+        requestedAt,
+        daysSinceRequested,
+        stale: daysSinceRequested >= staleDays,
+        linkExpiresAt,
+        linkExpired: linkExpiresAt ? linkExpiresAt.getTime() < now : false,
+        amount,
+        jobId: o.job?.id ?? null,
+        property: o.job?.property?.displayName ?? null,
+        client: o.job?.property?.client?.displayName ?? null,
+        claimer: claimer?.user
+          ? {
+              id: claimer.userId,
+              displayName: claimer.user.displayName,
+              email: claimer.user.email,
+            }
+          : null,
+      };
     });
   },
 };

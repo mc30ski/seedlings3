@@ -1318,6 +1318,30 @@ export default function HomePage() {
     void loadPendingPayments();
   }, [loadPendingPayments]);
 
+  // ---- Stale outstanding payment-request badge (super only) ----
+  // Counts payment requests sent to a client but not paid back, past the
+  // PAYMENT_REQUEST_STALE_DAYS threshold — so they aren't silently lost.
+  const [staleRequestCount, setStaleRequestCount] = useState<number>(0);
+
+  const loadStaleRequests = useCallback(async () => {
+    if (!isSuper) {
+      setStaleRequestCount(0);
+      if (me) markAlertLoaded("staleRequests");
+      return;
+    }
+    try {
+      const list = await apiGet<{ stale: boolean }[]>("/api/admin/payment-requests/outstanding");
+      setStaleRequestCount(Array.isArray(list) ? list.filter((r) => r.stale).length : 0);
+    } catch {
+      setStaleRequestCount(0);
+    }
+    markAlertLoaded("staleRequests");
+  }, [isSuper]);
+
+  useEffect(() => {
+    void loadStaleRequests();
+  }, [loadStaleRequests]);
+
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
@@ -1393,7 +1417,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.staleRequests);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2391,6 +2415,7 @@ export default function HomePage() {
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
+              if (isSuper && staleRequestCount > 0) alerts.push({ label: "Unpaid Requests", count: staleRequestCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#9333EA", onClick: goToPaymentApprovals });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
