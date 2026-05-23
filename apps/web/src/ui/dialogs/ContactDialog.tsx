@@ -13,7 +13,7 @@ import {
   Checkbox,
 } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
-import { apiPost, apiPatch } from "@/src/lib/api";
+import { apiGet, apiPost, apiPatch } from "@/src/lib/api";
 import {
   Role,
   DialogMode,
@@ -72,6 +72,33 @@ export default function ClientDialog({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
+
+  // Pre-flight: debounced lookup that warns the admin if an active contact
+  // already exists with the same email or phone. Catches the recreate-
+  // after-delete and shared-household-email cases while they're still
+  // typing, before the workflow's batchSave hits the per-client unique
+  // constraint at submit time.
+  type ContactMatch = {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string | null;
+    phone: string | null;
+    normalizedPhone: string | null;
+    isPrimary: boolean;
+    client: { id: string; displayName: string };
+  };
+  const [contactMatches, setContactMatches] = useState<ContactMatch[]>([]);
+
+  // Primary-contact invariant: every client must have exactly one primary.
+  // We force isPrimary=true and disable the checkbox when:
+  //   - The workflow path passes defaultIsPrimary (first contact ever on a
+  //     brand-new client), OR
+  //   - CREATE on a real client that has no active primary today, OR
+  //   - UPDATE on the sole active primary (can't demote without first
+  //     promoting someone else).
+  const [primaryForced, setPrimaryForced] = useState(false);
+  const [primaryForcedReason, setPrimaryForcedReason] = useState<string>("");
 
   const statusItems = useMemo(
     () =>
@@ -149,6 +176,87 @@ export default function ClientDialog({
       setShowMissingWarning(false);
     }
   }, [open]);
+
+  // Resolve primary-forced state on dialog open. The workflow path
+  // (clientId === "__deferred__") always forces. For real clients, we look
+  // up the live contacts to decide.
+  useEffect(() => {
+    if (!open) {
+      setPrimaryForced(false);
+      setPrimaryForcedReason("");
+      return;
+    }
+    const isDeferred = clientId === "__deferred__";
+    if (isDeferred) {
+      setPrimaryForced(true);
+      setPrimaryForcedReason("This is the first contact for a brand-new client, so it's automatically the primary.");
+      setIsPrimary(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = await apiGet<{ contacts: Array<{ id: string; status: string; isPrimary: boolean }> }>(
+          `/api/admin/clients/${clientId}`,
+        );
+        if (cancelled) return;
+        const activeContacts = (client?.contacts ?? []).filter((c) => c.status === "ACTIVE");
+        const otherActivePrimaries = activeContacts.filter(
+          (c) => c.isPrimary && c.id !== initial?.id,
+        );
+        if (mode === "CREATE" && otherActivePrimaries.length === 0) {
+          setPrimaryForced(true);
+          setPrimaryForcedReason("This client has no primary contact yet, so this one will be set as primary.");
+          setIsPrimary(true);
+          return;
+        }
+        if (mode === "UPDATE" && initial?.isPrimary && otherActivePrimaries.length === 0) {
+          setPrimaryForced(true);
+          setPrimaryForcedReason("This is the only primary contact for this client. Set another contact as primary first to change it.");
+          setIsPrimary(true);
+          return;
+        }
+        setPrimaryForced(false);
+        setPrimaryForcedReason("");
+      } catch {
+        if (!cancelled) {
+          setPrimaryForced(false);
+          setPrimaryForcedReason("");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId, mode, initial?.id, initial?.isPrimary]);
+
+  // Debounced pre-flight: ~400ms after the admin stops typing email or
+  // phone, look up existing contacts with those values and surface a
+  // warning. Self-exclusion: when editing, don't flag the contact being
+  // edited as a match. Workflow CREATE mode (clientId === "__deferred__")
+  // also runs this — it can't compare against the new client (doesn't
+  // exist yet) but other-client matches are still useful context.
+  useEffect(() => {
+    if (!open) { setContactMatches([]); return; }
+    const trimmedEmail = email.trim();
+    const trimmedPhone = phone.trim();
+    if (!trimmedEmail && !trimmedPhone) { setContactMatches([]); return; }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (trimmedEmail) qs.set("email", trimmedEmail);
+        if (trimmedPhone) qs.set("phone", trimmedPhone);
+        const rows = await apiGet<ContactMatch[]>(`/api/admin/client-contacts/check?${qs}`);
+        if (cancelled) return;
+        const selfId = initial?.id;
+        setContactMatches(Array.isArray(rows) ? rows.filter((r) => r.id !== selfId) : []);
+      } catch {
+        if (!cancelled) setContactMatches([]);
+      }
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [open, email, phone, initial?.id]);
 
   async function handleSave() {
     if (!firstName.trim()) {
@@ -349,15 +457,72 @@ export default function ClientDialog({
                     placeholder="15551234567"
                   />
                 </div>
-                <Checkbox.Root
-                  checked={isPrimary}
-                  onCheckedChange={(e) => setIsPrimary(!!e.checked)}
-                  disabled={false}
-                >
-                  <Checkbox.HiddenInput />
-                  <Checkbox.Control />
-                  <Checkbox.Label>Primary point of contact</Checkbox.Label>
-                </Checkbox.Root>
+                {contactMatches.length > 0 && (
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      backgroundColor: "var(--chakra-colors-orange-50)",
+                      borderWidth: 1,
+                      borderStyle: "solid",
+                      borderColor: "var(--chakra-colors-orange-300)",
+                      borderLeftWidth: 4,
+                      borderLeftColor: "var(--chakra-colors-orange-500)",
+                    }}
+                  >
+                    <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
+                      Already in use
+                    </Text>
+                    <Text fontSize="xs" color="orange.700" mb={1}>
+                      {contactMatches.length === 1
+                        ? "A contact with this email or phone already exists:"
+                        : `${contactMatches.length} other contacts share this email or phone:`}
+                    </Text>
+                    <VStack align="stretch" gap={0.5}>
+                      {contactMatches.map((m) => {
+                        const matchesEmail =
+                          !!m.email && !!email.trim() && m.email.toLowerCase() === email.trim().toLowerCase();
+                        const matchesPhone =
+                          (!!m.phone && !!phone.trim() && m.phone === phone.trim()) ||
+                          (!!m.normalizedPhone && !!phone.trim() && m.normalizedPhone === phone.trim());
+                        const why =
+                          matchesEmail && matchesPhone
+                            ? "email + phone"
+                            : matchesEmail
+                              ? "email"
+                              : matchesPhone
+                                ? "phone"
+                                : "match";
+                        return (
+                          <Text key={m.id} fontSize="xs" color="orange.800">
+                            • <Text as="span" fontWeight="semibold">{m.firstName} {m.lastName}</Text>
+                            {" "}— on <Text as="span" fontWeight="semibold">{m.client.displayName}</Text>
+                            {" "}({why})
+                          </Text>
+                        );
+                      })}
+                    </VStack>
+                    <Text fontSize="xs" color="orange.700" mt={1.5}>
+                      Use a different email/phone, or open the existing client to reuse that contact.
+                    </Text>
+                  </div>
+                )}
+                <VStack align="stretch" gap={1}>
+                  <Checkbox.Root
+                    checked={isPrimary}
+                    onCheckedChange={(e) => setIsPrimary(!!e.checked)}
+                    disabled={primaryForced}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label>Primary point of contact</Checkbox.Label>
+                  </Checkbox.Root>
+                  {primaryForced && primaryForcedReason && (
+                    <Text fontSize="xs" color="gray.600" pl="6">
+                      {primaryForcedReason}
+                    </Text>
+                  )}
+                </VStack>
               </VStack>
             </Dialog.Body>
             {showMissingWarning && (

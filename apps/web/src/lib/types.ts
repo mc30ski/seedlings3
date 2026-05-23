@@ -165,7 +165,6 @@ export type Equipment = {
   age?: string | undefined;
 
   dailyRate?: number | null;
-  employeeDailyRate?: number | null;
   requiresInsurance?: boolean;
 
   createdAt: string | undefined;

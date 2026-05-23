@@ -45,6 +45,7 @@ type HandoffPayload = {
   emailSubject: string;
   emailBody: string;
   contacts: Array<{ id: string; firstName: string | null; phone: string | null; email: string | null }>;
+  missingPrimaryContact?: boolean;
 };
 
 type Assignee = {
@@ -380,12 +381,23 @@ export default function AcceptPaymentDialog({
         .finally(() => setRequestBusy(false));
       return;
     }
-    const phoneContact = handoff.contacts.find((c) => c.phone);
-    const emailContact = handoff.contacts.find((c) => c.email);
+    // The service layer already filtered handoff.contacts to the primary
+    // contact only. If empty, the client has no primary set — surface that
+    // explicitly so the admin can fix the data invariant.
+    if (handoff.missingPrimaryContact || handoff.contacts.length === 0) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: "No primary contact set for this client. Open the client's contacts and mark one as Primary before requesting payment.",
+      });
+      return;
+    }
+    const primaryContact = handoff.contacts[0];
+    const phoneContact = primaryContact.phone ? primaryContact : null;
+    const emailContact = primaryContact.email ? primaryContact : null;
     if (!phoneContact && !emailContact) {
       publishInlineMessage({
         type: "ERROR",
-        text: "Client has no phone or email on file. Add contact info before requesting payment.",
+        text: "Primary contact has no phone or email on file. Update their contact info before requesting payment.",
       });
       return;
     }
@@ -636,28 +648,33 @@ export default function AcceptPaymentDialog({
                 <Dialog.Body>
                   <VStack align="stretch" gap={3}>
                     {(() => {
-                      const phoneContact = handoff?.contacts.find((c) => c.phone) ?? null;
-                      const emailContact = handoff?.contacts.find((c) => c.email) ?? null;
-                      const channel: "sms" | "email" | "server" | "none" =
+                      const missingPrimary =
+                        !!handoff?.missingPrimaryContact || (handoff?.contacts.length ?? 0) === 0;
+                      const primaryContact = handoff?.contacts[0] ?? null;
+                      const phoneContact = primaryContact?.phone ? primaryContact : null;
+                      const emailContact = primaryContact?.email ? primaryContact : null;
+                      const channel: "sms" | "email" | "server" | "none" | "missing-primary" =
                         handoff?.mode === "SERVER"
                           ? "server"
-                          : phoneContact?.phone
-                            ? "sms"
-                            : emailContact?.email
-                              ? "email"
-                              : "none";
+                          : missingPrimary
+                            ? "missing-primary"
+                            : phoneContact?.phone
+                              ? "sms"
+                              : emailContact?.email
+                                ? "email"
+                                : "none";
                       return (
                         <>
                           <Box
                             p={3}
-                            bg="blue.50"
+                            bg={channel === "missing-primary" ? "red.50" : "blue.50"}
                             borderWidth="1px"
-                            borderColor="blue.300"
+                            borderColor={channel === "missing-primary" ? "red.300" : "blue.300"}
                             borderLeftWidth="4px"
-                            borderLeftColor="blue.500"
+                            borderLeftColor={channel === "missing-primary" ? "red.500" : "blue.500"}
                             rounded="md"
                           >
-                            <Text fontSize="sm" color="blue.900">
+                            <Text fontSize="sm" color={channel === "missing-primary" ? "red.900" : "blue.900"}>
                               {channel === "server" && (
                                 <>The payment request was already sent. Confirming will save the per-worker splits. Once the client indicates payment, an admin will review before the job is closed.</>
                               )}
@@ -667,9 +684,12 @@ export default function AcceptPaymentDialog({
                               {channel === "email" && (
                                 <>Your email app will open with a pre-filled message. Send it from there. Once the client indicates payment, an admin will review before the job is closed.</>
                               )}
+                              {channel === "missing-primary" && (
+                                <>This client has no primary contact set. Open the client's contacts and mark one as Primary before requesting payment.</>
+                              )}
                               {channel === "none" && (
                                 <Text color="red.700">
-                                  This client has no phone or email on file. Add one before requesting payment.
+                                  The primary contact has no phone or email on file. Update their contact info before requesting payment.
                                 </Text>
                               )}
                             </Text>
@@ -704,9 +724,10 @@ export default function AcceptPaymentDialog({
                         !handoff ||
                         (() => {
                           if (handoff?.mode === "SERVER") return false;
-                          const hasPhone = !!handoff?.contacts.find((c) => c.phone);
-                          const hasEmail = !!handoff?.contacts.find((c) => c.email);
-                          return !hasPhone && !hasEmail;
+                          if (handoff?.missingPrimaryContact) return true;
+                          const primary = handoff?.contacts[0];
+                          if (!primary) return true;
+                          return !primary.phone && !primary.email;
                         })()
                       }
                       size="sm"

@@ -1270,9 +1270,10 @@ export default async function workerRoutes(app: FastifyInstance) {
         : undefined;
 
     // Gate: real jobs (not tasks/announcements/etc.) cannot transition into
-    // PENDING_PAYMENT unless the property has at least one contact with
-    // phone or email — otherwise the payment request can't be sent. The
-    // gate is silent for non-job workflows since those don't accept payment.
+    // PENDING_PAYMENT unless the client's primary contact is reachable —
+    // invoice routing only ever targets the primary, so an unreachable or
+    // missing primary blocks the payment request. The gate is silent for
+    // non-job workflows since those don't accept payment.
     const occForGate = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
       select: {
@@ -1284,7 +1285,7 @@ export default async function workerRoutes(app: FastifyInstance) {
                 client: {
                   select: {
                     contacts: {
-                      where: { status: "ACTIVE" },
+                      where: { status: "ACTIVE", isPrimary: true },
                       select: { phone: true, normalizedPhone: true, email: true },
                     },
                   },
@@ -1300,11 +1301,16 @@ export default async function workerRoutes(app: FastifyInstance) {
       || occForGate.workflow === "ONE_OFF"
       || occForGate.workflow === "ESTIMATE";
     if (isJobWorkflow) {
-      const contacts = occForGate?.job?.property?.client?.contacts ?? [];
-      const reachable = contacts.some((c) => c.phone || c.normalizedPhone || c.email);
+      const primaryContacts = occForGate?.job?.property?.client?.contacts ?? [];
+      if (primaryContacts.length === 0) {
+        throw app.httpErrors.badRequest(
+          "Can't complete — this client has no primary contact set. Open the client's contacts and mark one as Primary first.",
+        );
+      }
+      const reachable = primaryContacts.some((c) => c.phone || c.normalizedPhone || c.email);
       if (!reachable) {
         throw app.httpErrors.badRequest(
-          "Can't complete — the client has no phone or email on file. Add contact info first.",
+          "Can't complete — the primary contact has no phone or email on file. Update their contact info first.",
         );
       }
     }
@@ -1381,13 +1387,19 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
     const mode = await services.paymentRequests.resolveCommsMode(claimerAssignee?.userId ?? null);
     const prepared = await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
-    // Strip down the contacts to what the icons actually need.
+    // Strip down the contacts to what the icons actually need. The service
+    // layer already filtered to the primary contact only — anything that
+    // shows up here is the primary.
     const handoffContacts = prepared.contacts.map((c) => ({
       id: c.id,
       firstName: c.firstName,
       phone: c.normalizedPhone ?? c.phone ?? null,
       email: c.email ?? null,
     }));
+    // Explicit data-invariant flag so the frontend can render a clear
+    // "no primary contact set" error rather than silently showing
+    // disabled icons.
+    const missingPrimaryContact = handoffContacts.length === 0;
     return {
       mode,
       token: prepared.token,
@@ -1398,6 +1410,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       emailSubject: prepared.emailSubject,
       emailBody: prepared.emailBody,
       contacts: handoffContacts,
+      missingPrimaryContact,
     };
   });
 

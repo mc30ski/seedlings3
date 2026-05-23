@@ -253,6 +253,35 @@ export default async function adminRoutes(app: FastifyInstance) {
     return out;
   });
 
+  // Pre-flight check: does this email/phone already exist on any active
+  // contact? Used by the ContactDialog to warn the admin before they
+  // finish a wizard step — catches "recreate after delete" and shared-
+  // household-email collisions while they're still typing, instead of
+  // failing at the final batchSave.
+  app.get("/admin/client-contacts/check", adminGuard, async (req: any) => {
+    const { email, phone } = (req.query || {}) as { email?: string; phone?: string };
+    const e = (email ?? "").trim();
+    const p = (phone ?? "").trim();
+    const orClauses: any[] = [];
+    if (e) orClauses.push({ email: { equals: e, mode: "insensitive" as const } });
+    if (p) orClauses.push({ normalizedPhone: p });
+    if (orClauses.length === 0) return [];
+    return prisma.clientContact.findMany({
+      where: { status: "ACTIVE", OR: orClauses },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        normalizedPhone: true,
+        isPrimary: true,
+        client: { select: { id: true, displayName: true } },
+      },
+      take: 10,
+    });
+  });
+
   // Unlinked contacts to choose from when admin is wiring up a phantom.
   // Returns ACTIVE contacts that don't yet have a clerkUserId, optionally
   // sorted by email-local-part similarity to a hint (`?nearEmail=...`).

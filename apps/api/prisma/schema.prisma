@@ -238,7 +238,6 @@ model Equipment {
   age       String?
 
   dailyRate         Float?
-  employeeDailyRate Float?
   requiresInsurance Boolean @default(false)
 
   checkouts        Checkout[]
@@ -447,6 +446,15 @@ model ClientContact {
 
   jobContacts JobContact[]
 
+  // Email + normalizedPhone are GLOBALLY unique. That's load-bearing for
+  // the Clerk auto-link in /client/link: when a new Clerk user signs in,
+  // we find their ClientContact by email match. If two contacts on
+  // different clients shared the same email, that lookup would be
+  // non-deterministic and risk binding the Clerk identity to the wrong
+  // client. One identity, one contact. The recreate-after-delete edge
+  // case is handled by surfacing the existing contact via the pre-flight
+  // check in ContactDialog (admin clears the old row before reusing the
+  // email).
   // Postgres allows multiple NULLs in UNIQUE constraints—works for optional fields:
   @@unique([email])
   @@unique([normalizedPhone])

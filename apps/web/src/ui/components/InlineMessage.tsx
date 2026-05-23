@@ -100,8 +100,13 @@ export default function InlineMessage({
         det.autoHideMs = 4000;
       }
 
-      // arm auto-hide (starts fade, then clears after fadeOutMs)
-      if (det.autoHideMs && det.autoHideMs > 0) {
+      // arm auto-hide (starts fade, then clears after fadeOutMs).
+      // ERROR messages are STICKY — never auto-dismiss regardless of any
+      // caller-passed autoHideMs. Users routinely miss error toasts that
+      // fade away mid-task (e.g., the NewJobSetup batchSave failure
+      // surfaced this — the toast did show but slipped past). Errors stay
+      // until the user dismisses them.
+      if (det.autoHideMs && det.autoHideMs > 0 && det.type !== "ERROR") {
         autoTimerRef.current = window.setTimeout(() => {
           beginHide(det.fadeOutMs ?? 180);
           autoTimerRef.current = null;

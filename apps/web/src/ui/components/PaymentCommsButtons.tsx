@@ -41,6 +41,7 @@ type HandoffPayload = {
   emailSubject: string;
   emailBody: string;
   contacts: HandoffContact[];
+  missingPrimaryContact?: boolean;
 };
 
 export default function PaymentCommsButtons({
@@ -80,6 +81,14 @@ export default function PaymentCommsButtons({
   if (loading) return null;
   if (!data) return null;
 
+  if (data.missingPrimaryContact) {
+    return (
+      <Text fontSize="xs" color="red.700">
+        No primary contact set for this client — open the client's contacts and mark one as Primary before sending the payment link.
+      </Text>
+    );
+  }
+
   if (data.mode === "SERVER") {
     return (
       <HStack gap={1.5} fontSize="xs" color="fg.muted">
@@ -89,14 +98,24 @@ export default function PaymentCommsButtons({
     );
   }
 
-  // CLAIMER mode — SMS preferred, email fallback.
-  const phoneContact = data.contacts.find((c) => c.phone);
-  const emailContact = data.contacts.find((c) => c.email);
+  // CLAIMER mode — the primary contact is the only routing target. Phone
+  // wins; email is the fallback. The service layer already filtered to the
+  // primary, so data.contacts is at most one entry.
+  const primaryContact = data.contacts[0] ?? null;
+  const phoneContact = primaryContact?.phone ? primaryContact : null;
+  const emailContact = primaryContact?.email ? primaryContact : null;
 
+  if (!primaryContact) {
+    return (
+      <Text fontSize="xs" color="red.700">
+        No primary contact set for this client — open the client's contacts and mark one as Primary before sending the payment link.
+      </Text>
+    );
+  }
   if (!phoneContact && !emailContact) {
     return (
       <Text fontSize="xs" color="orange.700">
-        Client has no phone or email — add contact info to send the payment link.
+        Primary contact has no phone or email — update their contact info to send the payment link.
       </Text>
     );
   }
