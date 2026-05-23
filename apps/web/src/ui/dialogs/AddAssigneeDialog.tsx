@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -8,9 +8,11 @@ import {
   Dialog,
   HStack,
   Portal,
+  Select,
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { createListCollection } from "@chakra-ui/react/collection";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   getErrorMessage,
@@ -55,6 +57,17 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
   const [groups, setGroups] = useState<GroupBrief[]>([]);
   const [pickGroupId, setPickGroupId] = useState("");
   const [groupBusy, setGroupBusy] = useState(false);
+
+  const groupCollection = useMemo(
+    () =>
+      createListCollection({
+        items: groups.map((g) => ({
+          label: `${g.name} (${g.members.length + 1})`,
+          value: g.id,
+        })),
+      }),
+    [groups],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -233,20 +246,31 @@ export default function AddAssigneeDialog({ open, onOpenChange, occurrenceId, my
                   <Text fontSize="xs" fontWeight="semibold" color="purple.800" mb={1}>
                     Or assign a group
                   </Text>
-                  <HStack gap={2} wrap="wrap">
-                    <select
-                      value={pickGroupId}
-                      onChange={(e) => setPickGroupId(e.target.value)}
-                      style={{
-                        padding: "6px 8px", fontSize: "14px", flex: 1, minWidth: "180px",
-                        border: "1px solid var(--chakra-colors-gray-200)", borderRadius: "6px",
-                      }}
-                    >
-                      <option value="">— pick a group —</option>
-                      {groups.map((g) => (
-                        <option key={g.id} value={g.id}>{g.name} ({g.members.length + 1})</option>
-                      ))}
-                    </select>
+                  <HStack gap={2} wrap="wrap" align="stretch">
+                    <Box flex={1} minW="180px">
+                      <Select.Root
+                        collection={groupCollection}
+                        value={pickGroupId ? [pickGroupId] : []}
+                        onValueChange={(e) => setPickGroupId(e.value[0] ?? "")}
+                        size="sm"
+                        positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                      >
+                        <Select.Control>
+                          <Select.Trigger>
+                            <Select.ValueText placeholder="Pick a group…" />
+                          </Select.Trigger>
+                        </Select.Control>
+                        <Select.Positioner>
+                          <Select.Content>
+                            {groupCollection.items.map((it) => (
+                              <Select.Item key={it.value} item={it.value}>
+                                <Select.ItemText>{it.label}</Select.ItemText>
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Select.Root>
+                    </Box>
                     <Button size="sm" colorPalette="purple" onClick={() => void attachGroup()} disabled={!pickGroupId} loading={groupBusy}>
                       Attach
                     </Button>
