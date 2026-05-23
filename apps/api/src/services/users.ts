@@ -190,13 +190,30 @@ export const users: ServicesUsers = {
         }
       }
 
+      // Strip the now-stale clerkUserId off any ClientContact rows that
+      // pointed at this user. Without this, deleting a user leaves ghost
+      // links — the contact shows "Linked" forever even though the Clerk
+      // identity is gone — and blocks the next sign-up with that email
+      // from auto-linking (the /client/link email match filters on
+      // clerkUserId: null). Done in-transaction so a user delete + its
+      // contact cleanup either both succeed or both abort.
+      let contactsUnlinked = 0;
+      if (user.clerkUserId) {
+        const cleared = await tx.clientContact.updateMany({
+          where: { clerkUserId: user.clerkUserId },
+          data: { clerkUserId: null },
+        });
+        contactsUnlinked = cleared.count;
+      }
+
       const userDelete = await tx.user.delete({ where: { id: userId } });
 
       await writeAudit(tx, AUDIT.USER.DELETED, currentUserId, {
         userRecord: { ...userDelete },
+        contactsUnlinked,
       });
 
-      return { deleted: true as const, clerkDeleted };
+      return { deleted: true as const, clerkDeleted, contactsUnlinked };
     });
   },
 

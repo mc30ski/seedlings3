@@ -55,6 +55,12 @@ async function computeAmountDue(occurrenceId: string, tx: Prisma.TransactionClie
   return base + addons;
 }
 
+/**
+ * Returns the active **primary** contact for the occurrence's client (or none
+ * if the data invariant has been broken). Invoice routing — for both SERVER
+ * and CLAIMER modes — is intentionally restricted to the primary so the
+ * client always receives a single, predictable touchpoint.
+ */
 async function getContactsForOccurrence(occurrenceId: string) {
   const occ = await prisma.jobOccurrence.findUnique({
     where: { id: occurrenceId },
@@ -70,7 +76,7 @@ async function getContactsForOccurrence(occurrenceId: string) {
               client: {
                 select: {
                   contacts: {
-                    where: { status: "ACTIVE" },
+                    where: { status: "ACTIVE", isPrimary: true },
                     select: { id: true, firstName: true, email: true, phone: true, normalizedPhone: true },
                   },
                 },
@@ -224,10 +230,23 @@ export const paymentRequests = {
     const prepared = await this.generateTokenForOccurrence(occurrenceId, opts);
     const { token, url, amountDue, propertyLabel: propLabel, contacts } = prepared;
 
+    if (contacts.length === 0) {
+      const err: any = new Error(
+        "This client has no primary contact set. Open the client's contacts and mark one as Primary before sending an invoice.",
+      );
+      err.code = "NO_PRIMARY_CONTACT";
+      // Surface via the error mapper (it routes by statusCode) so the admin
+      // re-send button returns a 409 instead of a 500.
+      err.statusCode = 409;
+      throw err;
+    }
     const reachable = contacts.filter((c) => c.phone || c.email);
     if (reachable.length === 0) {
-      const err: any = new Error("No reachable contacts");
+      const err: any = new Error(
+        "The primary contact has no phone or email on file. Update their contact info before sending an invoice.",
+      );
       err.code = "NO_CONTACT";
+      err.statusCode = 409;
       throw err;
     }
 

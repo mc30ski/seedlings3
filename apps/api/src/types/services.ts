@@ -263,7 +263,7 @@ export type ServicesUsers = {
     clerkUserId: string,
     userId: string,
     actorUserId: string
-  ): Promise<{ deleted: true; clerkDeleted: boolean }>;
+  ): Promise<{ deleted: true; clerkDeleted: boolean; contactsUnlinked: number }>;
 
   pendingApprovalCount(): Promise<{ pending: number }>;
 

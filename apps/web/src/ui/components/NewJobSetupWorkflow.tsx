@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { apiPost } from "@/src/lib/api";
+import { apiDelete, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ClientDialog from "@/src/ui/dialogs/ClientDialog";
 import ContactDialog from "@/src/ui/dialogs/ContactDialog";
@@ -108,17 +108,28 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
       4: "Create Job",
       5: "Create Occurrence",
     };
+    // Track ids of every row we successfully created. On failure we use
+    // these to roll back in reverse so a partial save doesn't leave
+    // orphans (e.g. a stub Client with no Contact/Property when step 2
+    // hits a unique-constraint violation).
+    let clientId: string | null = null;
+    let contactId: string | null = null;
+    let propertyId: string | null = null;
+    let jobId: string | null = null;
+
     try {
       // 1. Create client
       step = 1;
       log(`Step 1/5 → POST /api/admin/clients`, clientData);
       const client = await apiPost<{ id: string }>("/api/admin/clients", clientData);
+      clientId = client.id;
       log(`Step 1/5 ✓ client.id=${client.id}`);
 
       // 2. Create contact for that client
       step = 2;
       log(`Step 2/5 → POST /api/admin/clients/${client.id}/contacts`, contactData);
       const contact = await apiPost<{ id: string }>(`/api/admin/clients/${client.id}/contacts`, contactData);
+      contactId = contact.id;
       log(`Step 2/5 ✓ contact.id=${contact.id}`);
 
       // 3. Create property for that client — fix deferred references
@@ -130,6 +141,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
       }
       log(`Step 3/5 → POST /api/admin/properties`, propPayload);
       const property = await apiPost<{ id: string }>("/api/admin/properties", propPayload);
+      propertyId = property.id;
       log(`Step 3/5 ✓ property.id=${property.id}`);
 
       // 4. Create job for that property
@@ -137,6 +149,7 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
       const jobPayload = { ...jobData, propertyId: property.id };
       log(`Step 4/5 → POST /api/admin/jobs`, jobPayload);
       const job = await apiPost<{ id: string }>("/api/admin/jobs", jobPayload);
+      jobId = job.id;
       log(`Step 4/5 ✓ job.id=${job.id}`);
 
       // 5. Create occurrence for that job
@@ -165,9 +178,33 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
       // eslint-disable-next-line no-console
       console.error(`[NewJobSetup] FAILED at step ${step}/5 (${stepName}):`, err);
       const inner = getErrorMessage("(no details)", err);
+
+      // Roll back any rows we already created so failure doesn't leave
+      // orphan Clients/Properties/etc. cluttering production. Reverse
+      // order matches FK cascade direction — children before parents.
+      // Each delete is best-effort: if it 403s (permissions), 404s
+      // (already gone), or otherwise fails, log and move on. We're not
+      // going to bubble a rollback error over the original cause.
+      const tryDelete = async (path: string, label: string) => {
+        try {
+          await apiDelete(path);
+          log(`Rollback ✓ deleted ${label}`);
+        } catch (delErr) {
+          log(`Rollback ✗ failed to delete ${label} (cleanup may be needed)`, delErr);
+        }
+      };
+      const rolledBack: string[] = [];
+      if (jobId) { await tryDelete(`/api/admin/jobs/${jobId}`, `job ${jobId}`); rolledBack.push("job"); }
+      if (propertyId) { await tryDelete(`/api/admin/properties/${propertyId}`, `property ${propertyId}`); rolledBack.push("property"); }
+      if (contactId && clientId) { await tryDelete(`/api/admin/clients/${clientId}/contacts/${contactId}`, `contact ${contactId}`); rolledBack.push("contact"); }
+      if (clientId) { await tryDelete(`/api/admin/clients/${clientId}`, `client ${clientId}`); rolledBack.push("client"); }
+
+      const rollbackNote = rolledBack.length > 0
+        ? ` (rolled back ${rolledBack.join(", ")})`
+        : "";
       publishInlineMessage({
         type: "ERROR",
-        text: `Setup failed at step ${step}/5 (${stepName}): ${inner}. Check the browser console for the full error.`,
+        text: `Setup failed at step ${step}/5 (${stepName}): ${inner}.${rollbackNote} Check the browser console for the full error.`,
       });
       reset();
       onDone();

@@ -18,6 +18,39 @@ function normalizePhone(raw?: string | null): string | null {
   return "+1" + s;
 }
 
+/**
+ * Primary-contact invariant guard. Blocks pause/archive/delete when the target
+ * is the client's only ACTIVE primary contact — invoice routing depends on a
+ * primary existing, so the admin must promote another contact first.
+ */
+async function assertNotSoleActivePrimary(
+  contactId: string,
+  verb: "pause" | "archive" | "delete",
+): Promise<void> {
+  const target = await prisma.clientContact.findUnique({
+    where: { id: contactId },
+    select: { clientId: true, isPrimary: true, status: true },
+  });
+  if (!target) return;
+  if (!target.isPrimary) return;
+  if (target.status !== "ACTIVE") return;
+  const otherActivePrimaries = await prisma.clientContact.count({
+    where: {
+      clientId: target.clientId,
+      status: "ACTIVE",
+      isPrimary: true,
+      NOT: { id: contactId },
+    },
+  });
+  if (otherActivePrimaries === 0) {
+    throw new ServiceError(
+      "PRIMARY_REQUIRED",
+      `Can't ${verb} this contact — it's the client's only primary contact. Set another contact as Primary first.`,
+      409,
+    );
+  }
+}
+
 // Accept either { firstName,lastName } or a single { name } and split it.
 function normalizeContactPayload(payload: any): {
   status: ContactStatus;
@@ -287,24 +320,31 @@ export const clients: ServicesClients = {
 
   async addContact(currentUserId: string, clientId: string, payload: any) {
     const cp = normalizeContactPayload(payload);
-    const data = {
-      clientId,
-      status: cp.status ?? "ACTIVE",
-      firstName: cp.firstName,
-      lastName: cp.lastName,
-      nickname: cp.nickname,
-      email: cp.email,
-      phone: cp.phone,
-      normalizedPhone: cp.normalizedPhone,
-      role: cp.role,
-      isPrimary: cp.isPrimary,
-    };
     return prisma.$transaction(async (tx) => {
-      const contact = await tx.clientContact.create({
-        data: data,
+      // Primary-contact invariant: every client must have exactly one
+      // primary contact. If this is the first ACTIVE contact on the
+      // client, force isPrimary=true regardless of what the caller passed.
+      const existingActive = await tx.clientContact.count({
+        where: { clientId, status: "ACTIVE" },
       });
-      if (cp.isPrimary) {
-        const client = await tx.clientContact.updateMany({
+      const willBeOnlyActive = existingActive === 0 && (cp.status ?? "ACTIVE") === "ACTIVE";
+      const isPrimary = willBeOnlyActive ? true : cp.isPrimary;
+
+      const data = {
+        clientId,
+        status: cp.status ?? "ACTIVE",
+        firstName: cp.firstName,
+        lastName: cp.lastName,
+        nickname: cp.nickname,
+        email: cp.email,
+        phone: cp.phone,
+        normalizedPhone: cp.normalizedPhone,
+        role: cp.role,
+        isPrimary,
+      };
+      const contact = await tx.clientContact.create({ data });
+      if (isPrimary) {
+        await tx.clientContact.updateMany({
           where: { clientId, NOT: { id: contact.id } },
           data: { isPrimary: false },
         });
@@ -323,21 +363,58 @@ export const clients: ServicesClients = {
     payload: any
   ) {
     const cp = normalizeContactPayload(payload);
-    const data = {
-      status: cp.status,
-      firstName: cp.firstName,
-      lastName: cp.lastName,
-      nickname: cp.nickname,
-      email: cp.email,
-      phone: cp.phone,
-      normalizedPhone: cp.normalizedPhone,
-      role: cp.role,
-      isPrimary: cp.isPrimary,
-    };
     return prisma.$transaction(async (tx) => {
+      const before = await tx.clientContact.findUniqueOrThrow({
+        where: { id: contactId },
+        select: { isPrimary: true, status: true },
+      });
+
+      // Primary-contact invariant: refuse to demote the sole primary, and
+      // refuse to archive/pause the sole primary. The admin must promote a
+      // different contact first.
+      const isBecomingNonPrimary = before.isPrimary && !cp.isPrimary;
+      const isLeavingActive = before.status === "ACTIVE" && cp.status !== "ACTIVE";
+      if (isBecomingNonPrimary || isLeavingActive) {
+        const otherActivePrimaries = await tx.clientContact.count({
+          where: {
+            clientId,
+            status: "ACTIVE",
+            isPrimary: true,
+            NOT: { id: contactId },
+          },
+        });
+        if (before.isPrimary && otherActivePrimaries === 0) {
+          if (isBecomingNonPrimary) {
+            throw new ServiceError(
+              "PRIMARY_REQUIRED",
+              "Every client must have a primary contact. Set another contact as Primary before unchecking this one.",
+              409,
+            );
+          }
+          if (isLeavingActive) {
+            throw new ServiceError(
+              "PRIMARY_REQUIRED",
+              "Every client must have an active primary contact. Set another contact as Primary before pausing or archiving this one.",
+              409,
+            );
+          }
+        }
+      }
+
+      const data = {
+        status: cp.status,
+        firstName: cp.firstName,
+        lastName: cp.lastName,
+        nickname: cp.nickname,
+        email: cp.email,
+        phone: cp.phone,
+        normalizedPhone: cp.normalizedPhone,
+        role: cp.role,
+        isPrimary: cp.isPrimary,
+      };
       const updated = await tx.clientContact.update({
         where: { id: contactId },
-        data: data,
+        data,
       });
       if (cp.isPrimary) {
         await tx.clientContact.updateMany({
@@ -358,6 +435,7 @@ export const clients: ServicesClients = {
   //TODO: DO CREATE, UPDATE, DELETE TOO?
 
   async pauseContact(currentUserId: string, id: string) {
+    await assertNotSoleActivePrimary(id, "pause");
     return action<ContactStatus>(
       currentUserId,
       id,
@@ -378,6 +456,7 @@ export const clients: ServicesClients = {
   },
 
   async archiveContact(currentUserId: string, id: string) {
+    await assertNotSoleActivePrimary(id, "archive");
     return action<ContactStatus>(
       currentUserId,
       id,
@@ -402,6 +481,7 @@ export const clients: ServicesClients = {
     clientId: string,
     contactId: string
   ) {
+    await assertNotSoleActivePrimary(contactId, "delete");
     await prisma.$transaction(async (tx) => {
       await tx.clientContact.delete({ where: { id: contactId } });
       await writeAudit(tx, AUDIT.CLIENT.CONTACT_DELETED, currentUserId, {
@@ -418,6 +498,27 @@ export const clients: ServicesClients = {
     contactId: string
   ) {
     await prisma.$transaction(async (tx) => {
+      // Refuse to promote a non-ACTIVE contact — invoice routing filters
+      // on { status: "ACTIVE", isPrimary: true }, so a paused/archived
+      // primary would silently break sending.
+      const target = await tx.clientContact.findUniqueOrThrow({
+        where: { id: contactId },
+        select: { status: true, clientId: true },
+      });
+      if (target.clientId !== clientId) {
+        throw new ServiceError(
+          "WRONG_CLIENT",
+          "Contact does not belong to this client.",
+          400,
+        );
+      }
+      if (target.status !== "ACTIVE") {
+        throw new ServiceError(
+          "INACTIVE_PRIMARY",
+          "Only an active contact can be set as primary. Unarchive or unpause this contact first.",
+          409,
+        );
+      }
       await tx.clientContact.updateMany({
         where: { clientId },
         data: { isPrimary: false },

@@ -1676,10 +1676,10 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Text>
                     {(() => {
                       const wt = me?.workerType;
+                      // Only contractors are charged. Employees + trainees
+                      // always see "No charge."
                       const palette = wt === "EMPLOYEE" ? "blue" : wt === "TRAINEE" ? "green" : "orange";
-                      const rate = wt === "EMPLOYEE" ? e.employeeDailyRate
-                        : wt === "TRAINEE" ? null
-                        : e.dailyRate;
+                      const rate = wt === "CONTRACTOR" ? e.dailyRate : null;
                       if (rate != null && rate > 0) {
                         return (
                           <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
@@ -1738,11 +1738,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {e.dailyRate != null && e.dailyRate > 0 && (
                         <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor rate">
                           ${e.dailyRate.toFixed(2)}/day
-                        </Badge>
-                      )}
-                      {e.employeeDailyRate != null && e.employeeDailyRate > 0 && (
-                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Employee rate">
-                          ${e.employeeDailyRate.toFixed(2)}/day
                         </Badge>
                       )}
                     </HStack>
@@ -1807,13 +1802,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </HStack>
                     <HStack gap={2}>
                       <Text color="fg.muted">Employee:</Text>
-                      {e.employeeDailyRate != null && e.employeeDailyRate > 0 ? (
-                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                          ${e.employeeDailyRate.toFixed(2)}/day
-                        </Badge>
-                      ) : (
-                        <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
-                      )}
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
                     </HStack>
                   </VStack>
                 ) : me?.workerType === "TRAINEE" ? (
@@ -1823,16 +1812,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     </Badge>
                   </HStack>
                 ) : me?.workerType === "EMPLOYEE" ? (
-                  e.employeeDailyRate != null && e.employeeDailyRate > 0 ? (
-                    <HStack gap={2} mt={0.5}>
-                      <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                        ${e.employeeDailyRate.toFixed(2)}/day
-                      </Badge>
-                      <Text fontSize="xs" color="blue.500">rental cost</Text>
-                    </HStack>
-                  ) : (
-                    <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
-                  )
+                  <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
                 ) : e.dailyRate != null && e.dailyRate > 0 ? (
                   <HStack gap={2} mt={0.5}>
                     <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
@@ -2211,9 +2191,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       )}
                       {(() => {
                         const wt = me?.workerType;
-                        const rate = wt === "EMPLOYEE" ? reserveConfirmEquip.employeeDailyRate
-                          : wt === "TRAINEE" ? null
-                          : reserveConfirmEquip.dailyRate;
+                        // Only contractors are charged. Employees + trainees
+                        // see a green "no charge" message.
+                        const rate = wt === "CONTRACTOR" ? reserveConfirmEquip.dailyRate : null;
                         if (rate != null && rate > 0) {
                           return (
                             <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
@@ -2229,7 +2209,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         return (
                           <Box mt={1} p={2} bg="green.50" rounded="md">
                             <Text fontSize="xs" color="green.700" fontWeight="medium">
-                              {wt === "EMPLOYEE" ? "No charge — employees use equipment at no cost" : "No rental charge for this equipment"}
+                              {wt === "EMPLOYEE" ? "No charge — employees use equipment at no cost"
+                                : wt === "TRAINEE" ? "No charge — trainees use equipment at no cost"
+                                : "No rental charge for this equipment"}
                             </Text>
                           </Box>
                         );
@@ -2254,8 +2236,9 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
 
                     {(() => {
                       const wt = me?.workerType;
-                      if (wt === "TRAINEE") return null;
-                      const rate = wt === "EMPLOYEE" ? reserveConfirmEquip.employeeDailyRate : reserveConfirmEquip.dailyRate;
+                      // Only contractors get the rental-deduction notice.
+                      if (wt !== "CONTRACTOR") return null;
+                      const rate = reserveConfirmEquip.dailyRate;
                       if (rate == null || rate <= 0) return null;
                       return (
                         <Box p={2} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">

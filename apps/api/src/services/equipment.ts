@@ -16,10 +16,12 @@ function computeRentalCost(
   releasedAt: Date,
   workerType: string | null | undefined,
   contractorRate: number | null,
-  employeeRate: number | null,
 ): { rentalDays: number; rentalCost: number } | null {
   if (!checkedOutAt) return null;
-  const rate = workerType === "EMPLOYEE" ? employeeRate : contractorRate;
+  // Only contractors are charged for equipment usage. Employees and trainees
+  // use equipment at no cost.
+  if (workerType !== "CONTRACTOR") return null;
+  const rate = contractorRate;
   if (!rate || rate <= 0) return null;
   // Count distinct calendar days in Eastern Time, inclusive of both ends.
   // Same day = 1 day; crossing one midnight = 2 days; etc.
@@ -307,7 +309,6 @@ export const equipment: ServicesEquipment = {
       age?: string;
       qrSlug?: string | null;
       dailyRate?: number | null;
-      employeeDailyRate?: number | null;
       requiresInsurance?: boolean;
     }
   ) {
@@ -327,7 +328,6 @@ export const equipment: ServicesEquipment = {
         ...(input.issues !== undefined ? { issues: input.issues } : {}),
         ...(input.age !== undefined ? { age: input.age } : {}),
         ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
-        ...(input.employeeDailyRate !== undefined ? { employeeDailyRate: input.employeeDailyRate } : {}),
         ...(input.requiresInsurance !== undefined ? { requiresInsurance: input.requiresInsurance } : {}),
       };
 
@@ -359,7 +359,6 @@ export const equipment: ServicesEquipment = {
         | "issues"
         | "age"
         | "dailyRate"
-        | "employeeDailyRate"
         | "requiresInsurance"
       >
     >
@@ -382,7 +381,6 @@ export const equipment: ServicesEquipment = {
       if (patch.issues !== undefined) data.issues = patch.issues;
       if (patch.age !== undefined) data.age = patch.age;
       if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
-      if (patch.employeeDailyRate !== undefined) data.employeeDailyRate = patch.employeeDailyRate;
       if (patch.requiresInsurance !== undefined) data.requiresInsurance = patch.requiresInsurance;
 
       const updated = await tx.equipment.update({ where: { id }, data });
@@ -505,7 +503,7 @@ export const equipment: ServicesEquipment = {
         const eq = await tx.equipment.findUnique({ where: { id } });
         const holder = await tx.user.findUnique({ where: { id: active.userId } });
         const releasedAt = now();
-        const rental = computeRentalCost(active.checkedOutAt, releasedAt, holder?.workerType, eq?.dailyRate ?? null, eq?.employeeDailyRate ?? null);
+        const rental = computeRentalCost(active.checkedOutAt, releasedAt, holder?.workerType, eq?.dailyRate ?? null);
         const checkout = await tx.checkout.update({
           where: { id: active.id },
           data: {
@@ -756,7 +754,7 @@ export const equipment: ServicesEquipment = {
       // 3) Mark returned + compute rental cost
       const now = new Date();
       const holder = await tx.user.findUnique({ where: { id: userId } });
-      const rental = computeRentalCost(active.checkedOutAt, now, holder?.workerType, eq.dailyRate, eq.employeeDailyRate ?? null);
+      const rental = computeRentalCost(active.checkedOutAt, now, holder?.workerType, eq.dailyRate);
       const returned = await tx.checkout.update({
         where: { id: active.id },
         data: {

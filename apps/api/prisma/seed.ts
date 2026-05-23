@@ -227,8 +227,8 @@ async function seedDatabase() {
       // ("phantom.client") so the similarity sort works, but a different
       // domain/suffix so the auto-link email-equality check correctly fails.
       email: "phantom.client.actual@example.com",
-      phone: "(555) 900-0001",
-      normalizedPhone: "+15559000001",
+      phone: "(555) 040-0001",
+      normalizedPhone: "+15550400001",
     },
   });
 
@@ -420,97 +420,97 @@ async function seedDatabase() {
 
   // Mowers
   const mower1 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 75.0, employeeDailyRate: 50.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 75.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
   });
   const mower2 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 70.0, employeeDailyRate: 48.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 70.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
   });
   const mower3 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 25.0, employeeDailyRate: 16.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
+    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 25.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
   });
   const mower4 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, employeeDailyRate: 32.0, qrSlug: "toro-tc42-001" },
+    data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "toro-tc42-001" },
   });
   await prisma.equipment.create({
-    data: { type: "MOWER", brand: "EGO", model: "LM2135SP", shortDesc: "21\" self-propelled battery mower", longDesc: "Battery-powered push mower. Use for noise-sensitive properties (early morning jobs, near schools/hospitals). Two 5.0Ah batteries included — good for ~45 min combined runtime. Charge overnight before use.", status: "AVAILABLE", energy: "Battery", dailyRate: 30.0, employeeDailyRate: 20.0, qrSlug: "ego-lm2135-001" },
+    data: { type: "MOWER", brand: "EGO", model: "LM2135SP", shortDesc: "21\" self-propelled battery mower", longDesc: "Battery-powered push mower. Use for noise-sensitive properties (early morning jobs, near schools/hospitals). Two 5.0Ah batteries included — good for ~45 min combined runtime. Charge overnight before use.", status: "AVAILABLE", energy: "Battery", dailyRate: 30.0, qrSlug: "ego-lm2135-001" },
   });
   // Trimmers
   const trimmer1 = await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", longDesc: "36.3cc 4-MIX engine, bike handle. Our heaviest-duty trimmer — use for thick overgrowth, heavy weed patches, and commercial edging. Runs on 50:1 mix. Bump-feed head, .095 line. Harness in trailer.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, employeeDailyRate: 10.0, qrSlug: "stihl-fs131-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", longDesc: "36.3cc 4-MIX engine, bike handle. Our heaviest-duty trimmer — use for thick overgrowth, heavy weed patches, and commercial edging. Runs on 50:1 mix. Bump-feed head, .095 line. Harness in trailer.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fs131-001" },
   });
   const trimmer2 = await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", longDesc: "28.4cc, loop handle. Lighter than the FS 131 — better for all-day use and detail work around beds, fences, and obstacles. Same 50:1 fuel mix. Tap-n-go head with .080 line.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 12.0, employeeDailyRate: 8.0, qrSlug: "stihl-fs91r-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", longDesc: "28.4cc, loop handle. Lighter than the FS 131 — better for all-day use and detail work around beds, fences, and obstacles. Same 50:1 fuel mix. Tap-n-go head with .080 line.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 12.0, qrSlug: "stihl-fs91r-001" },
   });
   await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Echo", model: "SRM-2620T", shortDesc: "Commercial string trimmer", longDesc: "25.4cc, i-start for easy pull. Good balance between power and weight. Use as a backup or second trimmer when running two-person crews. Speed-Feed 400 head — fast line reload without disassembly.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, employeeDailyRate: 9.0, qrSlug: "echo-srm2620-001" },
+    data: { type: "TRIMMER", brand: "Echo", model: "SRM-2620T", shortDesc: "Commercial string trimmer", longDesc: "25.4cc, i-start for easy pull. Good balance between power and weight. Use as a backup or second trimmer when running two-person crews. Speed-Feed 400 head — fast line reload without disassembly.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-srm2620-001" },
   });
   // Hedgers
   const trimmer3 = await prisma.equipment.create({
-    data: { type: "HEDGER", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", longDesc: "30\" double-sided blade, 22.7cc. Best for boxwood, privet, and formal hedges up to 6ft. Cut from bottom up for even shape. Clean blades with resin solvent after each use. Blade guard in case.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, employeeDailyRate: 10.0, qrSlug: "stihl-hs82-001" },
+    data: { type: "HEDGER", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", longDesc: "30\" double-sided blade, 22.7cc. Best for boxwood, privet, and formal hedges up to 6ft. Cut from bottom up for even shape. Clean blades with resin solvent after each use. Blade guard in case.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-hs82-001" },
   });
   await prisma.equipment.create({
-    data: { type: "HEDGER", brand: "Echo", model: "HC-2810", shortDesc: "28\" double-sided hedge trimmer", longDesc: "28\" blade, 21.2cc, lighter than the Stihl. Good for routine hedge maintenance and lighter trimming. Use for holly, jasmine, and other softer hedges. Less vibration — better for extended trimming sessions.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, employeeDailyRate: 9.0, qrSlug: "echo-hc2810-001" },
+    data: { type: "HEDGER", brand: "Echo", model: "HC-2810", shortDesc: "28\" double-sided hedge trimmer", longDesc: "28\" blade, 21.2cc, lighter than the Stihl. Good for routine hedge maintenance and lighter trimming. Use for holly, jasmine, and other softer hedges. Less vibration — better for extended trimming sessions.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-hc2810-001" },
   });
   // Blowers
   const blower1 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", longDesc: "79.9cc, 1071 CFM. Our most powerful blower — use for large parking lots, heavy leaf cleanup, and wet debris. Tube-mounted throttle. Hip-mounted frame reduces back fatigue. Ear protection required.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 20.0, employeeDailyRate: 14.0, qrSlug: "echo-pb8010t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", longDesc: "79.9cc, 1071 CFM. Our most powerful blower — use for large parking lots, heavy leaf cleanup, and wet debris. Tube-mounted throttle. Hip-mounted frame reduces back fatigue. Ear protection required.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 20.0, qrSlug: "echo-pb8010t-001" },
   });
   const blower2 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", longDesc: "79.9cc, 912 CFM. Similar power to the Echo PB-8010T. Electric start — no pull cord needed. Slightly heavier but easier to get going. Use interchangeably with the Echo for large cleanups.", status: "AVAILABLE", energy: "Gas", dailyRate: 22.0, employeeDailyRate: 15.0, qrSlug: "stihl-br800-001" },
+    data: { type: "BLOWER", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", longDesc: "79.9cc, 912 CFM. Similar power to the Echo PB-8010T. Electric start — no pull cord needed. Slightly heavier but easier to get going. Use interchangeably with the Echo for large cleanups.", status: "AVAILABLE", energy: "Gas", dailyRate: 22.0, qrSlug: "stihl-br800-001" },
   });
   const blower3 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", longDesc: "58.2cc, 510 CFM. Lighter and quieter than the big blowers. Good for residential post-mow cleanup where you don't need maximum power. Less fuel consumption — runs longer on a tank.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 18.0, employeeDailyRate: 12.0, qrSlug: "echo-pb580t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", longDesc: "58.2cc, 510 CFM. Lighter and quieter than the big blowers. Good for residential post-mow cleanup where you don't need maximum power. Less fuel consumption — runs longer on a tank.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 18.0, qrSlug: "echo-pb580t-001" },
   });
   await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted areas and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 18.0, employeeDailyRate: 12.0, qrSlug: "ego-lb6504-001" },
+    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted areas and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 18.0, qrSlug: "ego-lb6504-001" },
   });
   // Edgers
   const edger1 = await prisma.equipment.create({
-    data: { type: "EDGER", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", longDesc: "28.4cc dedicated edger. Use along sidewalks, driveways, and curbs for a clean defined line. 8\" blade. Adjust depth wheel for initial cut vs. maintenance pass. Blade lasts about 3 weeks of daily use.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, employeeDailyRate: 10.0, qrSlug: "stihl-fc91-001" },
+    data: { type: "EDGER", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", longDesc: "28.4cc dedicated edger. Use along sidewalks, driveways, and curbs for a clean defined line. 8\" blade. Adjust depth wheel for initial cut vs. maintenance pass. Blade lasts about 3 weeks of daily use.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fc91-001" },
   });
   const edger2 = await prisma.equipment.create({
-    data: { type: "EDGER", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", longDesc: "25.4cc stick-style edger. Lighter than the Stihl FC 91 — good for workers who prefer less weight. Converts to trimmer with attachment (attachment in trailer toolbox). Same 50:1 fuel mix.", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, employeeDailyRate: 8.0, qrSlug: "echo-pe2620-001" },
+    data: { type: "EDGER", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", longDesc: "25.4cc stick-style edger. Lighter than the Stihl FC 91 — good for workers who prefer less weight. Converts to trimmer with attachment (attachment in trailer toolbox). Same 50:1 fuel mix.", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, qrSlug: "echo-pe2620-001" },
   });
   await prisma.equipment.create({
-    data: { type: "EDGER", brand: "McLane", model: "101-4.75GT", shortDesc: "Gas powered lawn edger", longDesc: "Walk-behind wheeled edger. 3.5hp Briggs & Stratton engine. Use for properties with very long edge lines (300ft+) where a stick edger would be fatiguing. Cuts deeper and straighter than handheld edgers.", status: "AVAILABLE", energy: "Gas", dailyRate: 18.0, employeeDailyRate: 12.0, qrSlug: "mclane-101-001" },
+    data: { type: "EDGER", brand: "McLane", model: "101-4.75GT", shortDesc: "Gas powered lawn edger", longDesc: "Walk-behind wheeled edger. 3.5hp Briggs & Stratton engine. Use for properties with very long edge lines (300ft+) where a stick edger would be fatiguing. Cuts deeper and straighter than handheld edgers.", status: "AVAILABLE", energy: "Gas", dailyRate: 18.0, qrSlug: "mclane-101-001" },
   });
   // Cutters (chainsaws, pole saws)
   const chainsawEquip = await prisma.equipment.create({
-    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 30.0, employeeDailyRate: 20.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 30.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
   });
   await prisma.equipment.create({
-    data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 25.0, employeeDailyRate: 17.0, qrSlug: "stihl-ht135-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 25.0, qrSlug: "stihl-ht135-001" },
   });
   // Aerators
   const aerator = await prisma.equipment.create({
-    data: { type: "AERATOR", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", longDesc: "160cc Honda engine, 19\" working width. Reciprocating tines — works better in clay soils than drum-style. Water the lawn 24h before aerating for best results. Clean tines after each property.", status: "AVAILABLE", energy: "Gas", dailyRate: 45.0, employeeDailyRate: 30.0, qrSlug: "billygoat-ae401-001" },
+    data: { type: "AERATOR", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", longDesc: "160cc Honda engine, 19\" working width. Reciprocating tines — works better in clay soils than drum-style. Water the lawn 24h before aerating for best results. Clean tines after each property.", status: "AVAILABLE", energy: "Gas", dailyRate: 45.0, qrSlug: "billygoat-ae401-001" },
   });
   await prisma.equipment.create({
-    data: { type: "AERATOR", brand: "Ryan", model: "Lawnaire V", shortDesc: "Core aerator — 5 tine", longDesc: "Drum-style core aerator with 5 tine assemblies. Heavier unit — better for large flat lawns. Pulls 3\" plugs. Transport with trailer only (too heavy for truck bed lift). Schedule in advance — high demand in spring/fall.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, employeeDailyRate: 33.0, qrSlug: "ryan-lawnaire5-001" },
+    data: { type: "AERATOR", brand: "Ryan", model: "Lawnaire V", shortDesc: "Core aerator — 5 tine", longDesc: "Drum-style core aerator with 5 tine assemblies. Heavier unit — better for large flat lawns. Pulls 3\" plugs. Transport with trailer only (too heavy for truck bed lift). Schedule in advance — high demand in spring/fall.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "ryan-lawnaire5-001" },
   });
   // Spreaders
   const spreader = await prisma.equipment.create({
-    data: { type: "SPREADER", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", longDesc: "80lb hopper capacity, stainless steel frame. Use for fertilizer, seed, and pre-emergent applications. Calibrate before each product — settings chart taped inside hopper lid. Wash out after every use to prevent corrosion.", status: "AVAILABLE", energy: "Manual", dailyRate: 10.0, employeeDailyRate: 7.0, qrSlug: "lesco-101186-001" },
+    data: { type: "SPREADER", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", longDesc: "80lb hopper capacity, stainless steel frame. Use for fertilizer, seed, and pre-emergent applications. Calibrate before each product — settings chart taped inside hopper lid. Wash out after every use to prevent corrosion.", status: "AVAILABLE", energy: "Manual", dailyRate: 10.0, qrSlug: "lesco-101186-001" },
   });
   await prisma.equipment.create({
-    data: { type: "SPREADER", brand: "Earthway", model: "2150", shortDesc: "50lb commercial drop spreader", longDesc: "Drop spreader for precision application along borders, near flower beds, and sidewalks where broadcast would overshoot. 22\" spread width. Use when you need exact coverage without waste or drift.", status: "AVAILABLE", energy: "Manual", dailyRate: 8.0, employeeDailyRate: 5.0, qrSlug: "earthway-2150-001" },
+    data: { type: "SPREADER", brand: "Earthway", model: "2150", shortDesc: "50lb commercial drop spreader", longDesc: "Drop spreader for precision application along borders, near flower beds, and sidewalks where broadcast would overshoot. 22\" spread width. Use when you need exact coverage without waste or drift.", status: "AVAILABLE", energy: "Manual", dailyRate: 8.0, qrSlug: "earthway-2150-001" },
   });
   // Washers
   const pressureWasher = await prisma.equipment.create({
-    data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", longDesc: "3100 PSI, 2.5 GPM, Honda GC190 engine. Use for driveways, sidewalks, fences, and siding. 25° nozzle for general cleaning, 15° for stubborn stains. Never use 0° on surfaces — will gouge. Bring own water hose (min 50ft).", status: "AVAILABLE", energy: "Gas", dailyRate: 40.0, employeeDailyRate: 27.0, qrSlug: "simpson-msh3125-001" },
+    data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", longDesc: "3100 PSI, 2.5 GPM, Honda GC190 engine. Use for driveways, sidewalks, fences, and siding. 25° nozzle for general cleaning, 15° for stubborn stains. Never use 0° on surfaces — will gouge. Bring own water hose (min 50ft).", status: "AVAILABLE", energy: "Gas", dailyRate: 40.0, qrSlug: "simpson-msh3125-001" },
   });
   await prisma.equipment.create({
-    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent areas. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 25.0, employeeDailyRate: 17.0, qrSlug: "sunjoe-spx3000-001" },
+    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent areas. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 25.0, qrSlug: "sunjoe-spx3000-001" },
   });
   // Misc
   const trailer = await prisma.equipment.create({
-    data: { type: "MISC", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", longDesc: "12ft x 6.5ft bed, 2990lb GVWR. Ramp gate for loading mowers. Tie-down hooks every 2ft. Requires 2\" ball hitch and 7-pin connector. Check tire pressure weekly (50 PSI). Registration in glovebox of assigned truck.", status: "CHECKED_OUT", energy: "N/A", dailyRate: 35.0, employeeDailyRate: 23.0, qrSlug: "bigtex-35sa-001" },
+    data: { type: "MISC", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", longDesc: "12ft x 6.5ft bed, 2990lb GVWR. Ramp gate for loading mowers. Tie-down hooks every 2ft. Requires 2\" ball hitch and 7-pin connector. Check tire pressure weekly (50 PSI). Registration in glovebox of assigned truck.", status: "CHECKED_OUT", energy: "N/A", dailyRate: 35.0, qrSlug: "bigtex-35sa-001" },
   });
   const wheelbarrow = await prisma.equipment.create({
-    data: { type: "MISC", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", longDesc: "6 cubic ft steel tray, pneumatic tire. Use for mulch spreading, debris hauling, and soil transport on properties. Flat tire — needs tube replaced before returning to service.", status: "RETIRED", energy: "Manual", dailyRate: 5.0, employeeDailyRate: 3.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
+    data: { type: "MISC", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", longDesc: "6 cubic ft steel tray, pneumatic tire. Use for mulch spreading, debris hauling, and soil transport on properties. Flat tire — needs tube replaced before returning to service.", status: "RETIRED", energy: "Manual", dailyRate: 5.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
   });
   await prisma.equipment.create({
-    data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, employeeDailyRate: 8.0, qrSlug: "gorilla-gor1200-001" },
+    data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, qrSlug: "gorilla-gor1200-001" },
   });
 
   // ── Equipment Collections ─────────────────────────────────────────────────
@@ -3006,6 +3006,38 @@ async function seedPaymentsActive() {
   console.log("       Expected: contractor=$0, employee=$48, shortfall=$64, writtenOff=true");
 }
 
+/**
+ * Primary-contact invariant assertion. Every Client with at least one ACTIVE
+ * contact must have exactly one ACTIVE primary. Invoice routing (both SERVER
+ * and CLAIMER paths) depends on this — a seed that produces orphan clients
+ * would mask real bugs in dev. Run at the end of every seed variant.
+ */
+async function assertPrimaryContactInvariant() {
+  const clients = await prisma.client.findMany({
+    select: {
+      id: true,
+      displayName: true,
+      contacts: {
+        where: { status: "ACTIVE" },
+        select: { id: true, isPrimary: true },
+      },
+    },
+  });
+  const violations: string[] = [];
+  for (const c of clients) {
+    if (c.contacts.length === 0) continue;
+    const primaries = c.contacts.filter((ct) => ct.isPrimary).length;
+    if (primaries === 0) violations.push(`Client "${c.displayName}" (${c.id}) has ${c.contacts.length} active contact(s) but no primary.`);
+    else if (primaries > 1) violations.push(`Client "${c.displayName}" (${c.id}) has ${primaries} active primary contacts (expected exactly 1).`);
+  }
+  if (violations.length > 0) {
+    console.error("Primary-contact invariant violations:");
+    for (const v of violations) console.error("  -", v);
+    throw new Error(`Seed produced ${violations.length} primary-contact invariant violation(s).`);
+  }
+  console.log(`✓ Primary-contact invariant holds across ${clients.length} client(s).`);
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const resetOnly = process.argv.includes("--reset-only");
@@ -3040,6 +3072,8 @@ async function main() {
       );
       process.exit(1);
   }
+
+  await assertPrimaryContactInvariant();
 }
 
 main()
