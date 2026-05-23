@@ -342,6 +342,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
   }
 
   const [workerTypeConfirm, setWorkerTypeConfirm] = useState<{ userId: string; workerType: string | null } | null>(null);
+  // Remove-worker confirm — destructive enough to need an explicit modal
+  // (vs. the inline bar used for Delete/Decline). Loses worker capabilities
+  // but doesn't delete the user.
+  const [removeWorkerConfirm, setRemoveWorkerConfirm] = useState<{ userId: string; displayName: string } | null>(null);
 
   function promptWorkerType(userId: string, workerType: string | null) {
     setWorkerTypeConfirm({ userId, workerType });
@@ -756,7 +760,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                                 {isWorker && !isSuper ? (
                                   <Button
                                     size={{ base: "xs", md: "sm" }}
-                                    onClick={() => removeRole(u.id, "WORKER")}
+                                    onClick={() => setRemoveWorkerConfirm({ userId: u.id, displayName: u.displayName || u.email || "this user" })}
                                     variant="outline"
                                     disabled={isAdmin}
                                     title={
@@ -1050,6 +1054,23 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
         confirmLabel="Confirm"
         onConfirm={confirmOwner}
         onCancel={() => setOwnerConfirm(null)}
+      />
+      <ConfirmDialog
+        open={!!removeWorkerConfirm}
+        title="Remove Worker role?"
+        message={
+          removeWorkerConfirm
+            ? `Remove the Worker role from ${removeWorkerConfirm.displayName}? They'll lose access to the Worker tab, can't claim jobs, can't check out equipment, and won't appear in worker assignments. Their user account stays — the role can be re-granted later. This will be blocked if they currently have any equipment reserved or checked out.`
+            : ""
+        }
+        confirmLabel="Remove Worker"
+        confirmColorPalette="red"
+        onConfirm={async () => {
+          const target = removeWorkerConfirm;
+          setRemoveWorkerConfirm(null);
+          if (target) await removeRole(target.userId, "WORKER");
+        }}
+        onCancel={() => setRemoveWorkerConfirm(null)}
       />
 
       {/* Roles & Types Info Overlay */}

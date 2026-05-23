@@ -116,9 +116,17 @@ export default function ClientDialog({
     return !lastName.trim() || (!email.trim() && !phone.trim());
   }
 
-  // seed form when opening/switching modes/records
+  // Seed form ONCE per open — re-running on every `initial` reference
+  // change would wipe what the user typed whenever the parent re-renders
+  // (which happens often during slow workflows: tab refocus, /me polls,
+  // alert-badge refreshes, Clerk session refreshes, …). Consumers always
+  // close-then-reopen the dialog to switch records, so seed-on-open-only
+  // is the right contract.
+  const prevOpenRefSeed = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { prevOpenRefSeed.current = false; return; }
+    if (prevOpenRefSeed.current) return;
+    prevOpenRefSeed.current = true;
     if (mode === "UPDATE" && initial) {
       setKindValue([initial.role ?? CONTACT_KIND[0]]);
       setStatusValue([initial.status ?? CONTACT_STATUS[0]]);
@@ -140,7 +148,7 @@ export default function ClientDialog({
       setIsPrimary(initial?.isPrimary ?? defaultIsPrimary ?? false);
       setShowMissingWarning(false);
     }
-  }, [open, mode, initial]);
+  }, [open]);
 
   async function handleSave() {
     if (!firstName.trim()) {
