@@ -273,12 +273,12 @@ export default function OccurrenceDialog({
     if (open && !prevOpenRef.current) {
       setStatus(defaultStatus ?? "");
       setKind(defaultKind ?? "");
-      // New occurrences default the start date to today so the workflow's
+      // New occurrences default both dates to today so the workflow's
       // Final Step is one click away from "Create Everything" — admins
-      // almost always mean "today" anyway, and an empty date used to block
-      // submit with a warning toast.
+      // almost always mean "today" anyway, and an empty start used to
+      // block submit with a warning toast.
       setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : toDateInput(new Date().toISOString()));
-      setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
+      setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : toDateInput(new Date().toISOString()));
       setNotes(defaultNotes ?? "");
       setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");
       setEstimatedMinutes(defaultEstimatedMinutes != null ? String(defaultEstimatedMinutes) : "");
@@ -1214,9 +1214,12 @@ export default function OccurrenceDialog({
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleSave} loading={busy} disabled={!startAt || (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays)}
-                  title={!startAt ? "Select a start date" : (workflow === "STANDARD" && !occFrequencyDays && !jobFrequencyDays) ? "Enter a frequency for repeating jobs" : undefined}
-                >
+                {/* Never silently disable the submit. handleSave already
+                    validates startAt and (for STANDARD) frequency and shows a
+                    warning toast — disabling here just suppressed that
+                    feedback, leaving users staring at a non-responsive button
+                    (see the "Create Everything" silent-failure regression). */}
+                <Button onClick={handleSave} loading={busy} disabled={busy}>
                   {submitLabel ?? (mode === "CREATE" ? "Create" : "Save")}
                 </Button>
               </HStack>
