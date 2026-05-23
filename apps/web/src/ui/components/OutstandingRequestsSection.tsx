@@ -98,7 +98,7 @@ export default function OutstandingRequestsSection() {
       <Card.Body p={3}>
         <HStack mb={1} justify="space-between">
           <HStack gap={2}>
-            <Text fontSize="sm" fontWeight="semibold">Awaiting client payment</Text>
+            <Text fontSize="sm" fontWeight="semibold">Awaiting payment</Text>
             <Badge size="sm" colorPalette="purple" variant="solid" px="2" borderRadius="full">
               {rows.length}
             </Badge>

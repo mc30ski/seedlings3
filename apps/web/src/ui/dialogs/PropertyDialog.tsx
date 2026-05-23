@@ -237,9 +237,12 @@ export default function PropertyDialog({
     })();
   }, [open, isAdmin]);
 
-  // seed form when opening/switching modes/records
+  // Seed form ONCE per open — see ContactDialog for the rationale.
+  const prevOpenRefSeed = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { prevOpenRefSeed.current = false; return; }
+    if (prevOpenRefSeed.current) return;
+    prevOpenRefSeed.current = true;
     if (mode === "UPDATE" && initial) {
       setAddressSearch("");
       setKindValue([initial.kind ?? PROPERTY_KIND[0]]);
@@ -273,7 +276,7 @@ export default function PropertyDialog({
       setLotSizeUnit("sqft");
       setPocValue(["NONE"]);
     }
-  }, [open, mode, initial, defaultClientId]);
+  }, [open]);
 
   // load contacts whenever selected client changes
   useEffect(() => {

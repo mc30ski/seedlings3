@@ -70,7 +70,10 @@ export default function JobDialog({
   const [properties, setProperties] = useState<PropertyLite[]>([]);
   const [propertyValue, setPropertyValue] = useState<string[]>([]);
   const [kindValue, setKindValue] = useState<string[]>([JOB_KIND[0]]);
-  const [statusValue, setStatusValue] = useState<string[]>([JOB_STATUS[0]]);
+  // New jobs default to ACCEPTED — most jobs created via the New Job
+  // workflow are already verbally agreed-to. Editing an existing job
+  // reflects its actual status (see the UPDATE branch below).
+  const [statusValue, setStatusValue] = useState<string[]>(["ACCEPTED"]);
   const [frequencyDays, setFrequencyDays] = useState("");
   const [description, setDescription] = useState("");
   const [notes, setNotes] = useState("");
@@ -120,9 +123,17 @@ export default function JobDialog({
     setRecommendedDirty(false);
   }, [open, mode, initial?.id]);
 
-  // Seed form state
+  // Seed form ONCE per open. Re-running on every `initial` reference change
+  // would wipe what the user typed whenever the parent re-renders — which
+  // can happen often during slow multi-step workflows (tab refocus, /me
+  // polls, alert-badge refreshes, Clerk session refreshes). Consumers
+  // always close-then-reopen the dialog to switch records, so seed-on-open-
+  // only is the right contract.
+  const prevOpenRefSeed = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { prevOpenRefSeed.current = false; return; }
+    if (prevOpenRefSeed.current) return;
+    prevOpenRefSeed.current = true;
     if (mode === "UPDATE" && initial) {
       setPropertyValue([initial.propertyId]);
       setKindValue([initial.kind]);
@@ -135,14 +146,14 @@ export default function JobDialog({
     } else {
       setPropertyValue(defaultPropertyId ? [defaultPropertyId] : []);
       setKindValue([initial?.kind ?? JOB_KIND[0]]);
-      setStatusValue([initial?.status ?? JOB_STATUS[0]]);
+      setStatusValue([initial?.status ?? "ACCEPTED"]);
       setFrequencyDays(initial?.frequencyDays != null ? String(initial.frequencyDays) : "");
       setDescription(initial?.description ?? "");
       setNotes(initial?.notes ?? "");
       setDefaultPrice(initial?.defaultPrice != null ? String(initial.defaultPrice) : "");
       setEstimatedMinutes((initial as any)?.estimatedMinutes != null ? String((initial as any).estimatedMinutes) : "");
     }
-  }, [open, mode, initial, defaultPropertyId]);
+  }, [open]);
 
   const propertyItems = useMemo(() => {
     const items = properties.map((p) => {

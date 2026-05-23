@@ -273,7 +273,11 @@ export default function OccurrenceDialog({
     if (open && !prevOpenRef.current) {
       setStatus(defaultStatus ?? "");
       setKind(defaultKind ?? "");
-      setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : "");
+      // New occurrences default the start date to today so the workflow's
+      // Final Step is one click away from "Create Everything" — admins
+      // almost always mean "today" anyway, and an empty date used to block
+      // submit with a warning toast.
+      setStartAt(mode === "UPDATE" || defaultStartAt ? toDateInput(defaultStartAt) : toDateInput(new Date().toISOString()));
       setEndAt(mode === "UPDATE" || defaultEndAt ? toDateInput(defaultEndAt) : "");
       setNotes(defaultNotes ?? "");
       setPrice(defaultPrice != null ? defaultPrice.toFixed(2) : "");

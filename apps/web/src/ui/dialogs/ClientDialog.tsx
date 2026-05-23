@@ -101,9 +101,12 @@ export default function ClientDialog({
     return statusValue && kindValue && displayName;
   }
 
-  // seed form when opening/switching modes/records
+  // Seed form ONCE per open — see ContactDialog for the rationale.
+  const prevOpenRefSeed = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { prevOpenRefSeed.current = false; return; }
+    if (prevOpenRefSeed.current) return;
+    prevOpenRefSeed.current = true;
     if (mode === "UPDATE" && initial) {
       setKindValue([initial.type ?? CLIENT_KIND[0]]);
       setStatusValue([initial.status ?? CLIENT_STATUS[0]]);
@@ -121,7 +124,7 @@ export default function ClientDialog({
       setVipReason(initial?.vipReason ?? "");
       setAdminTags(parseAdminTags((initial as any)?.adminTags));
     }
-  }, [open, mode, initial, defaultDisplayName]);
+  }, [open]);
 
   async function handleSave() {
     if (!displayName.trim()) {

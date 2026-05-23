@@ -2423,7 +2423,7 @@ export default function HomePage() {
               if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
               if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
-                label: "Awaiting client payment",
+                label: "Awaiting payment",
                 count: awaitingClientPaymentCount,
                 // Switch to orange tones when ANY of the outstanding requests
                 // have aged past the stale threshold — visual signal that
