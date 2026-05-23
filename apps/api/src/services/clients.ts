@@ -292,16 +292,13 @@ export const clients: ServicesClients = {
   },
 
   async delete(currentUserId: string, id: string) {
-    // Check for related records that would block deletion
-    const contactCount = await prisma.clientContact.count({ where: { clientId: id } });
-    if (contactCount > 0) {
-      throw new ServiceError(
-        "HAS_DEPENDENCIES",
-        `Cannot delete this client because it has ${contactCount} associated ${contactCount === 1 ? "contact" : "contacts"}. Please delete the ${contactCount === 1 ? "contact" : "contacts"} first.`,
-        409
-      );
-    }
-
+    // Properties still block client deletion — they own jobs, occurrences,
+    // payments, and other heavy state that should never be wiped via a
+    // client delete. Contacts, however, cascade. Without that cascade, a
+    // client with a sole primary contact is permanently un-deletable
+    // because the primary-contact invariant refuses to drop the only
+    // primary and the client refuses to drop with any contacts. The
+    // confirm dialog surfaces the contact list so it's never a surprise.
     const propertyCount = await prisma.property.count({ where: { clientId: id } });
     if (propertyCount > 0) {
       throw new ServiceError(
@@ -311,9 +308,20 @@ export const clients: ServicesClients = {
       );
     }
 
+    const contactCount = await prisma.clientContact.count({ where: { clientId: id } });
+
     await prisma.$transaction(async (tx) => {
+      if (contactCount > 0) {
+        // With no properties on the client there are no Jobs and therefore
+        // no JobContact rows referencing these contacts — the deleteMany
+        // is safe against the JobContact onDelete: Restrict FK.
+        await tx.clientContact.deleteMany({ where: { clientId: id } });
+      }
       await tx.client.delete({ where: { id } });
-      await writeAudit(tx, AUDIT.CLIENT.DELETED, currentUserId, { id: id });
+      await writeAudit(tx, AUDIT.CLIENT.DELETED, currentUserId, {
+        id,
+        cascadedContactCount: contactCount,
+      });
     });
     return { deleted: true as const };
   },

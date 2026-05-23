@@ -583,31 +583,31 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                           itemId={c.id}
                           label={"Delete"}
                           onClick={async () => {
-                            const hasContacts = (c.contacts?.length ?? 0) > 0;
+                            const contacts = (c as any)?.contacts ?? [];
+                            const contactCount = contacts.length;
 
+                            // Properties still block; only check when we'd
+                            // otherwise be ready to delete.
                             let hasProperties = false;
-                            if (!hasContacts) {
-                              try {
-                                const props = await apiGet<any[]>(
-                                  `/api/admin/properties?clientId=${c.id}&limit=500`
-                                );
-                                hasProperties = Array.isArray(props) && props.length > 0;
-                              } catch { /* proceed; server will guard */ }
-                            }
+                            try {
+                              const props = await apiGet<any[]>(
+                                `/api/admin/properties?clientId=${c.id}&limit=500`
+                              );
+                              hasProperties = Array.isArray(props) && props.length > 0;
+                            } catch { /* proceed; server will guard */ }
 
-                            const hasDeps = hasContacts || hasProperties;
                             const superRequired = !isSuper;
+                            const blocked = hasProperties || superRequired;
 
                             void setToDelete({
                               id: c.id,
                               title: "Delete client?",
                               summary: c.displayName,
-                              disabled: hasDeps || superRequired,
-                              details: hasContacts ? (
-                                <Text color="red.500">
-                                  This client has associated contacts. Delete all contacts before deleting the client.
-                                </Text>
-                              ) : hasProperties ? (
+                              disabled: blocked,
+                              actionLabel: contactCount > 0 && !blocked
+                                ? `Delete client + ${contactCount} ${contactCount === 1 ? "contact" : "contacts"}`
+                                : "Delete",
+                              details: hasProperties ? (
                                 <Text color="red.500">
                                   This client has associated properties. Delete all properties before deleting the client.
                                 </Text>
@@ -615,6 +615,39 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                 <Text color="red.500">
                                   You must be a Super Admin to delete.
                                 </Text>
+                              ) : contactCount > 0 ? (
+                                <Box
+                                  p="3"
+                                  bg="red.50"
+                                  borderWidth="1px"
+                                  borderColor="red.300"
+                                  borderLeftWidth="4px"
+                                  borderLeftColor="red.500"
+                                  rounded="md"
+                                >
+                                  <Text color="red.800" fontWeight="semibold" fontSize="sm" mb="1">
+                                    Cascading delete
+                                  </Text>
+                                  <Text color="red.800" fontSize="sm" mb="2">
+                                    This will <b>also permanently delete</b> the{" "}
+                                    {contactCount === 1
+                                      ? "following contact"
+                                      : `following ${contactCount} contacts`}{" "}
+                                    attached to this client:
+                                  </Text>
+                                  <VStack align="start" gap="0.5" pl="2">
+                                    {contacts.map((ct: any) => (
+                                      <Text key={ct.id} fontSize="sm" color="red.800">
+                                        • {ct.firstName} {ct.lastName}
+                                        {ct.isPrimary ? " (primary)" : ""}
+                                        {ct.email ? ` — ${ct.email}` : ct.phone ? ` — ${ct.phone}` : ""}
+                                      </Text>
+                                    ))}
+                                  </VStack>
+                                  <Text color="red.700" fontSize="xs" mt="2">
+                                    Contacts cannot be recovered. Any Clerk accounts linked to these contacts will be orphaned.
+                                  </Text>
+                                </Box>
                               ) : undefined,
                               extra: c.displayName,
                             });
