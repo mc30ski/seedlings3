@@ -128,6 +128,46 @@ function isValidAdminTransition(workflow: string, from: string, to: string): boo
   return ADMIN_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
+// Forward states that imply "someone is working on this occurrence." A
+// transition into any of these must have a real worker (non-observer
+// assignee) on the occurrence, otherwise downstream payment/payout logic
+// has no claimer to split against. Reverts back to SCHEDULED/CANCELED/etc.
+// are intentionally exempt — those are the cleanup paths admins use to
+// undo a bad state.
+const STATUSES_REQUIRING_WORKER: ReadonlySet<JobOccurrenceStatus> = new Set([
+  JobOccurrenceStatus.IN_PROGRESS,
+  JobOccurrenceStatus.PAUSED,
+  JobOccurrenceStatus.PENDING_PAYMENT,
+  JobOccurrenceStatus.CLOSED,
+  JobOccurrenceStatus.PROPOSAL_SUBMITTED,
+]);
+
+/**
+ * Refuse status transitions that would leave the occurrence in a "someone
+ * is working on this" state when no actual worker is assigned. Prevents
+ * the contradiction where an admin/super completes an unclaimed occurrence
+ * (using the admin bypass in updateOccurrenceStatus) and lands it in
+ * PENDING_PAYMENT with zero assignees — which breaks the payment flow
+ * because split percentages need at least one worker to apply to.
+ */
+async function assertOccurrenceHasWorker(
+  tx: Prisma.TransactionClient,
+  occurrenceId: string,
+  targetStatus: JobOccurrenceStatus,
+): Promise<void> {
+  if (!STATUSES_REQUIRING_WORKER.has(targetStatus)) return;
+  const workerCount = await tx.jobOccurrenceAssignee.count({
+    where: { occurrenceId, role: { not: "observer" } },
+  });
+  if (workerCount === 0) {
+    throw new ServiceError(
+      "NO_CLAIMER",
+      `This occurrence has no assigned worker. Assign a worker (or claim it) before moving it to ${targetStatus}.`,
+      409,
+    );
+  }
+}
+
 export const jobs: ServicesJobs = {
   async list(params) {
     const q = (params?.q ?? "").trim();
@@ -1013,6 +1053,9 @@ export const jobs: ServicesJobs = {
             throw new ServiceError("NOT_CONFIRMED", "Client confirmation required before starting this job.", 409);
           }
         }
+        // Same claimer-required gate as updateOccurrenceStatus — applied
+        // here too because admins can flip status through this path.
+        await assertOccurrenceHasWorker(tx, occurrenceId, patch.status as JobOccurrenceStatus);
         data.status = patch.status;
       }
 
@@ -1993,6 +2036,11 @@ export const jobs: ServicesJobs = {
           409
         );
       }
+
+      // Block forward transitions when no worker is assigned. Without this,
+      // the admin-bypass above would let a super complete an unclaimed
+      // occurrence, stranding it in PENDING_PAYMENT with no claimer.
+      await assertOccurrenceHasWorker(tx, occurrenceId, finalStatus);
 
       const data: any = { status: finalStatus };
       if (finalStatus === JobOccurrenceStatus.IN_PROGRESS && !occ.startedAt) {
