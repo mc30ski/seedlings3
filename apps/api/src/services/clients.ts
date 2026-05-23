@@ -114,6 +114,7 @@ export const clients: ServicesClients = {
             phone: true,
             normalizedPhone: true,
             isPrimary: true,
+            clerkUserId: true,
           },
           orderBy: [
             { isPrimary: "desc" }, // primary first

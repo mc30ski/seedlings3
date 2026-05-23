@@ -1318,29 +1318,36 @@ export default function HomePage() {
     void loadPendingPayments();
   }, [loadPendingPayments]);
 
-  // ---- Stale outstanding payment-request badge (super only) ----
-  // Counts payment requests sent to a client but not paid back, past the
-  // PAYMENT_REQUEST_STALE_DAYS threshold — so they aren't silently lost.
+  // ---- Awaiting-client-payment badge (super only) ----
+  // Counts every outstanding payment request — sent to a client, not paid
+  // back yet. The worklist on the Super Money Payments tab still flags the
+  // stale ones (past PAYMENT_REQUEST_STALE_DAYS) visually; the alert
+  // surfaces the full set so a fresh request doesn't sit unseen either.
+  const [awaitingClientPaymentCount, setAwaitingClientPaymentCount] = useState<number>(0);
   const [staleRequestCount, setStaleRequestCount] = useState<number>(0);
 
-  const loadStaleRequests = useCallback(async () => {
+  const loadAwaitingClientPayment = useCallback(async () => {
     if (!isSuper) {
+      setAwaitingClientPaymentCount(0);
       setStaleRequestCount(0);
-      if (me) markAlertLoaded("staleRequests");
+      if (me) markAlertLoaded("awaitingClientPayment");
       return;
     }
     try {
       const list = await apiGet<{ stale: boolean }[]>("/api/admin/payment-requests/outstanding");
-      setStaleRequestCount(Array.isArray(list) ? list.filter((r) => r.stale).length : 0);
+      const arr = Array.isArray(list) ? list : [];
+      setAwaitingClientPaymentCount(arr.length);
+      setStaleRequestCount(arr.filter((r) => r.stale).length);
     } catch {
+      setAwaitingClientPaymentCount(0);
       setStaleRequestCount(0);
     }
-    markAlertLoaded("staleRequests");
+    markAlertLoaded("awaitingClientPayment");
   }, [isSuper]);
 
   useEffect(() => {
-    void loadStaleRequests();
-  }, [loadStaleRequests]);
+    void loadAwaitingClientPayment();
+  }, [loadAwaitingClientPayment]);
 
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
@@ -1417,7 +1424,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.staleRequests);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2415,7 +2422,17 @@ export default function HomePage() {
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
-              if (isSuper && staleRequestCount > 0) alerts.push({ label: "Unpaid Requests", count: staleRequestCount, bg: "#F3E8FF", color: "#6B21A8", dotColor: "#9333EA", onClick: goToPaymentApprovals });
+              if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
+                label: "Awaiting client payment",
+                count: awaitingClientPaymentCount,
+                // Switch to orange tones when ANY of the outstanding requests
+                // have aged past the stale threshold — visual signal that
+                // some of them need active follow-up, not just monitoring.
+                bg: staleRequestCount > 0 ? "#FFEDD5" : "#F3E8FF",
+                color: staleRequestCount > 0 ? "#9A3412" : "#6B21A8",
+                dotColor: staleRequestCount > 0 ? "#FB923C" : "#9333EA",
+                onClick: goToPaymentApprovals,
+              });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });

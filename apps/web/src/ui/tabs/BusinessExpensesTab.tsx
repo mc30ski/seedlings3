@@ -813,7 +813,7 @@ export default function BusinessExpensesTab() {
               <Search size={14} color="var(--chakra-colors-gray-500)" />
               <Input
                 size="sm"
-                placeholder="Search description, vendor, notes…"
+                placeholder="Search…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />

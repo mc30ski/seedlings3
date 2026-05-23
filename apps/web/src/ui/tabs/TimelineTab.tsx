@@ -338,7 +338,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
           value={q}
           onChange={(v) => setQ(v)}
           inputId="timeline-search"
-          placeholder="Search activities…"
+          placeholder="Search…"
         />
         <Select.Root
           collection={kindCollection}

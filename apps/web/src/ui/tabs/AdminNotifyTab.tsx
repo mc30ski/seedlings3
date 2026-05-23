@@ -396,7 +396,7 @@ function ComposeView(props: {
                   size="sm"
                   border="none"
                   pl={2}
-                  placeholder="Search workers..."
+                  placeholder="Search…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />

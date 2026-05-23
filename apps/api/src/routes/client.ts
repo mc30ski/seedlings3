@@ -54,15 +54,113 @@ export default async function clientRoutes(app: FastifyInstance) {
       },
     });
 
-    if (!contact) return { linked: false, reason: "no_match" };
+    if (contact) {
+      // Email match — link directly.
+      await prisma.clientContact.update({
+        where: { id: contact.id },
+        data: { clerkUserId },
+      });
+      return { linked: true, contactId: contact.id };
+    }
 
-    // Link it
+    // Smart-hint fallback: did this Clerk user recently come from a payment
+    // page? `signup-from-page` stamps every active contact on the originating
+    // client when a /pay visitor taps "Access your account." If exactly ONE
+    // client has a recently-stamped unlinked contact, we propose it instead
+    // of failing silently — the portal asks the client to confirm.
+    const WINDOW_DAYS = 7;
+    const since = new Date(Date.now() - WINDOW_DAYS * 24 * 3600 * 1000);
+    const stamped = await prisma.clientContact.findMany({
+      where: {
+        clientAccountCreatedFromPaymentPageAt: { gte: since },
+        clerkUserId: null,
+        status: "ACTIVE",
+      },
+      include: { client: { select: { id: true, displayName: true } } },
+    });
+    const byClient = new Map<string, typeof stamped>();
+    for (const s of stamped) {
+      const arr = byClient.get(s.clientId) ?? [];
+      arr.push(s);
+      byClient.set(s.clientId, arr);
+    }
+    if (byClient.size === 1) {
+      const entry = [...byClient.values()][0]!;
+      // Return ALL stamped contacts so the portal can ask "which of you are
+      // you?" when the household has 2+ stamped people. Primary first, then
+      // by stamp time. Single-contact clients use this list with one entry —
+      // the portal renders a simple "Yes, that's me" in that case.
+      const contacts = [...entry]
+        .sort((a, b) => {
+          if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+          const at = a.clientAccountCreatedFromPaymentPageAt?.getTime() ?? 0;
+          const bt = b.clientAccountCreatedFromPaymentPageAt?.getTime() ?? 0;
+          return bt - at;
+        })
+        .map((c) => ({
+          contactId: c.id,
+          contactName: [c.firstName, c.lastName].filter(Boolean).join(" "),
+          isPrimary: c.isPrimary,
+        }));
+      return {
+        linked: false,
+        reason: "candidate" as const,
+        candidate: {
+          clientId: entry[0]!.clientId,
+          displayName: entry[0]!.client.displayName,
+          contacts,
+        },
+      };
+    }
+
+    return { linked: false, reason: "no_match" };
+  });
+
+  // Client confirms the smart-hint candidate proposed by /client/link.
+  // Re-verifies the candidate is still valid (the proposal might be stale
+  // by the time they tap "Yes, that's me") before linking. An optional
+  // `contactId` picks a specific stamped contact when the household has
+  // multiple people — required to honor the portal's "which of you are
+  // you?" prompt. Without it, falls back to primary.
+  app.post("/client/link/confirm-candidate", clientGuard, async (req: any) => {
+    const clerkUserId = req.auth.clerkUserId!;
+    const body = req.body || {};
+    const clientId = String(body.clientId ?? "");
+    const requestedContactId =
+      body.contactId != null ? String(body.contactId) : null;
+    if (!clientId) throw app.httpErrors.badRequest("clientId is required.");
+
+    // If already linked (race with another tab) — short-circuit success.
+    const existing = await prisma.clientContact.findUnique({ where: { clerkUserId } });
+    if (existing) return { linked: true, contactId: existing.id };
+
+    const WINDOW_DAYS = 7;
+    const since = new Date(Date.now() - WINDOW_DAYS * 24 * 3600 * 1000);
+    const baseWhere = {
+      clientId,
+      clientAccountCreatedFromPaymentPageAt: { gte: since },
+      clerkUserId: null,
+      status: "ACTIVE" as const,
+    };
+    // If the client picked a specific contact (multi-contact prompt), bind
+    // the lookup to that id — but still enforce all the candidate filters
+    // so we can't be tricked into linking an arbitrary contact.
+    const candidate = requestedContactId
+      ? await prisma.clientContact.findFirst({
+          where: { ...baseWhere, id: requestedContactId },
+        })
+      : await prisma.clientContact.findFirst({
+          where: baseWhere,
+          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+        });
+    if (!candidate) {
+      throw app.httpErrors.notFound("This proposal is no longer available — ask an admin to link you manually.");
+    }
     await prisma.clientContact.update({
-      where: { id: contact.id },
+      where: { id: candidate.id },
       data: { clerkUserId },
     });
-
-    return { linked: true, contactId: contact.id };
+    return { linked: true, contactId: candidate.id };
   });
 
   // Get client profile

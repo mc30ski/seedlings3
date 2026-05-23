@@ -607,7 +607,7 @@ export default function SuppliesTab({
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name, UPC, description…"
+            placeholder="Search…"
             size="sm"
             pl="8"
           />

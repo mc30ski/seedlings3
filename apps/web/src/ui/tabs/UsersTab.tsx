@@ -467,7 +467,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           value={q}
           onChange={setQ}
           inputId="user-search"
-          placeholder="Search name or email…"
+          placeholder="Search…"
         />
         <Select.Root
           collection={statusFilterCollection}

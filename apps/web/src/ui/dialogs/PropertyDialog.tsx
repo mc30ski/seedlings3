@@ -591,7 +591,7 @@ export default function PropertyDialog({
                     value={addressSearch}
                     onChange={setAddressSearch}
                     onSelect={parseAddressIntoFields}
-                    placeholder="Search for an address..."
+                    placeholder="Search…"
                     size="sm"
                   />
                   <Text fontSize="xs" color="fg.muted" mb="2" mt="1">Select a suggestion to auto-fill, or enter details manually below.</Text>

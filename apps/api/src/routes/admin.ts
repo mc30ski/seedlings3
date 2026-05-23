@@ -204,6 +204,165 @@ export default async function adminRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── Unlinked Clerk client accounts (admin re-link worklist) ──
+  //
+  // The auto-link in /client/link matches a Clerk user to a ClientContact by
+  // exact email. When the client signed up with a different email than what
+  // we have on file, that fails silently — they have a Clerk account that's
+  // not connected to any client record ("phantom"). This endpoint lists
+  // those phantoms so an admin can manually link them.
+  app.get("/admin/clients/unlinked-accounts", adminGuard, async (req: any) => {
+    const { nearEmail } = (req.query || {}) as { nearEmail?: string };
+    const candidates = await prisma.user.findMany({
+      where: {
+        roles: { none: {} },     // no WORKER/ADMIN/SUPER — client-shaped account
+        isApproved: true,        // exclude pending-approval signups (those go through Users approval flow)
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        clerkUserId: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        displayName: true,
+        createdAt: true,
+      },
+    });
+    const linked = await prisma.clientContact.findMany({
+      where: { clerkUserId: { not: null } },
+      select: { clerkUserId: true },
+    });
+    const linkedIds = new Set(linked.map((c) => c.clerkUserId!));
+    const out = candidates.filter((u) => !linkedIds.has(u.clerkUserId));
+    if (nearEmail) {
+      // Shared-prefix similarity on the email local part — same heuristic the
+      // contact-side picker uses, so admin starting from either side sees the
+      // strongest match at the top.
+      const localOf = (e: string | null | undefined) =>
+        (e ?? "").toLowerCase().split("@")[0] ?? "";
+      const hint = localOf(nearEmail);
+      const score = (e: string | null | undefined) => {
+        const a = localOf(e);
+        let i = 0;
+        while (i < Math.min(a.length, hint.length) && a[i] === hint[i]) i++;
+        return i;
+      };
+      out.sort((x, y) => score(y.email) - score(x.email));
+    }
+    return out;
+  });
+
+  // Unlinked contacts to choose from when admin is wiring up a phantom.
+  // Returns ACTIVE contacts that don't yet have a clerkUserId, optionally
+  // sorted by email-local-part similarity to a hint (`?nearEmail=...`).
+  app.get("/admin/client-contacts/unlinked", adminGuard, async (req: any) => {
+    const { nearEmail } = (req.query || {}) as { nearEmail?: string };
+    const rows = await prisma.clientContact.findMany({
+      where: { clerkUserId: null, status: "ACTIVE" },
+      orderBy: [{ updatedAt: "desc" }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        client: { select: { id: true, displayName: true } },
+      },
+      take: 200,
+    });
+    if (nearEmail) {
+      const localOf = (e: string | null | undefined) =>
+        (e ?? "").toLowerCase().split("@")[0] ?? "";
+      const hint = localOf(nearEmail);
+      // Rough similarity: shared-prefix length on the local part. Cheap,
+      // effective for the common "john@gmail.com" vs "john.smith@outlook.com"
+      // pattern. Stable sort keeps the recency tiebreak.
+      const score = (e: string | null | undefined) => {
+        const a = localOf(e);
+        let i = 0;
+        while (i < Math.min(a.length, hint.length) && a[i] === hint[i]) i++;
+        return i;
+      };
+      rows.sort((x, y) => score(y.email) - score(x.email));
+    }
+    return rows;
+  });
+
+  // Link a Clerk user to a contact. With `force=true` admin can override an
+  // existing link on either side. Each link/unlink is audit-logged.
+  app.post("/admin/client-contacts/:contactId/link-clerk", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const contactId = String(req.params.contactId);
+    const body = req.body || {};
+    const clerkUserId = String(body.clerkUserId ?? "").trim();
+    const force = !!body.force;
+    if (!clerkUserId) throw app.httpErrors.badRequest("clerkUserId is required.");
+
+    const contact = await prisma.clientContact.findUnique({ where: { id: contactId } });
+    if (!contact) throw app.httpErrors.notFound("Contact not found.");
+
+    const targetUser = await prisma.user.findUnique({ where: { clerkUserId } });
+    if (!targetUser) throw app.httpErrors.notFound("Clerk user not found.");
+
+    const existing = await prisma.clientContact.findUnique({ where: { clerkUserId } });
+    if (existing && existing.id !== contactId && !force) {
+      throw app.httpErrors.conflict(
+        "That Clerk account is already linked to a different contact. Pass force=true to repoint it.",
+      );
+    }
+    if (contact.clerkUserId && contact.clerkUserId !== clerkUserId && !force) {
+      throw app.httpErrors.conflict(
+        "This contact is already linked to a different Clerk account. Pass force=true to replace.",
+      );
+    }
+
+    return prisma.$transaction(async (tx) => {
+      // If we're repointing the Clerk user away from another contact, clear
+      // the old link first so the unique constraint on clerkUserId is happy.
+      if (existing && existing.id !== contactId) {
+        await tx.clientContact.update({
+          where: { id: existing.id },
+          data: { clerkUserId: null },
+        });
+        await writeAudit(tx, AUDIT.CLIENT.CONTACT_UNLINKED, uid, {
+          contactId: existing.id,
+          clerkUserId,
+          reason: "repointed",
+        });
+      }
+      const updated = await tx.clientContact.update({
+        where: { id: contactId },
+        data: { clerkUserId },
+      });
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_LINKED, uid, {
+        contactId,
+        clerkUserId,
+        force,
+      });
+      return updated;
+    });
+  });
+
+  app.delete("/admin/client-contacts/:contactId/link-clerk", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const contactId = String(req.params.contactId);
+    const contact = await prisma.clientContact.findUnique({ where: { id: contactId } });
+    if (!contact) throw app.httpErrors.notFound("Contact not found.");
+    if (!contact.clerkUserId) return { unlinked: true, contact };
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.clientContact.update({
+        where: { id: contactId },
+        data: { clerkUserId: null },
+      });
+      await writeAudit(tx, AUDIT.CLIENT.CONTACT_UNLINKED, uid, {
+        contactId,
+        clerkUserId: contact.clerkUserId,
+      });
+      return { unlinked: true, contact: updated };
+    });
+  });
+
   app.get("/admin/clients/:id", adminGuard, async (req: any) => {
     return services.clients.get(String(req.params.id));
   });
