@@ -161,7 +161,7 @@ export default function ActivityTab({ role = "worker" }: TabRolePropType) {
           value={q}
           onChange={setQ}
           inputId="user-search"
-          placeholder="Search users…"
+          placeholder="Search…"
         />
         <HStack ml="auto" gap="6px">
           <Button

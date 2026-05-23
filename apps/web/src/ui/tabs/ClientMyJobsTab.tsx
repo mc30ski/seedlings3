@@ -72,6 +72,19 @@ type ClientProfile = {
   client?: { id: string; displayName: string; properties: { id: string; displayName: string; street1?: string | null; city?: string | null; state?: string | null }[] };
 };
 
+type LinkResponse =
+  | { linked: true; contactId: string }
+  | { linked: false; reason: "no_email" | "no_match" }
+  | {
+      linked: false;
+      reason: "candidate";
+      candidate: {
+        clientId: string;
+        displayName: string;
+        contacts: Array<{ contactId: string; contactName: string; isPrimary: boolean }>;
+      };
+    };
+
 function formatDuration(mins: number): string {
   if (mins < 60) return `${mins} min`;
   const h = Math.floor(mins / 60);
@@ -179,27 +192,66 @@ export default function ClientMyJobsTab() {
     }
   }
 
-  useEffect(() => {
-    async function load() {
-      try { await apiPost("/api/client/link"); } catch {}
-      try {
-        const me = await apiGet<ClientProfile>("/api/client/me");
-        setProfile(me);
-        if (me.linked) {
-          const [jobsRes, upcomingRes] = await Promise.all([
-            apiGet<{ items: CompletedJob[] }>("/api/client/jobs"),
-            apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming"),
-          ]);
-          setCompleted(jobsRes.items);
-          setUpcoming(upcomingRes.items);
-        }
-      } catch (err) {
-        console.error("Client load failed:", err);
-        setProfile({ linked: false });
+  // Smart-hint candidate proposed by /client/link when the email-match
+  // auto-link fails but someone recently signed up via this client's pay link.
+  const [linkCandidate, setLinkCandidate] = useState<
+    {
+      clientId: string;
+      displayName: string;
+      contacts: Array<{ contactId: string; contactName: string; isPrimary: boolean }>;
+    } | null
+  >(null);
+  const [confirmingCandidate, setConfirmingCandidate] = useState(false);
+
+  async function load() {
+    try {
+      const res = await apiPost<LinkResponse>("/api/client/link");
+      if (!res.linked && res.reason === "candidate") {
+        setLinkCandidate(res.candidate);
+      } else {
+        setLinkCandidate(null);
       }
-      setLoading(false);
+    } catch {}
+    try {
+      const me = await apiGet<ClientProfile>("/api/client/me");
+      setProfile(me);
+      if (me.linked) {
+        const [jobsRes, upcomingRes] = await Promise.all([
+          apiGet<{ items: CompletedJob[] }>("/api/client/jobs"),
+          apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming"),
+        ]);
+        setCompleted(jobsRes.items);
+        setUpcoming(upcomingRes.items);
+      }
+    } catch (err) {
+      console.error("Client load failed:", err);
+      setProfile({ linked: false });
     }
+    setLoading(false);
+  }
+
+  async function confirmCandidate(contactId?: string) {
+    if (!linkCandidate) return;
+    setConfirmingCandidate(true);
+    try {
+      await apiPost("/api/client/link/confirm-candidate", {
+        clientId: linkCandidate.clientId,
+        ...(contactId ? { contactId } : {}),
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Account linked." });
+      setLinkCandidate(null);
+      setLoading(true);
+      await load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't confirm — please ask an admin to link you.", err) });
+    } finally {
+      setConfirmingCandidate(false);
+    }
+  }
+
+  useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function openAction(type: "reschedule" | "skip" | "accept" | "decline", job: UpcomingJob) {
@@ -306,6 +358,79 @@ export default function ClientMyJobsTab() {
   if (!profile?.linked) {
     return (
       <Box w="full" pb={8}>
+        {linkCandidate ? (
+          // Smart-hint: the server thinks this Clerk user is the same person
+          // who recently tapped "Access your account" on this client's pay
+          // link, but signed up with a different email. Ask the client to
+          // confirm before linking. When the household has 2+ stamped
+          // contacts we ask "which of you are you?" so we link to the right
+          // person, not blindly to the primary.
+          <Box p={5} bg="teal.50" borderWidth="1px" borderColor="teal.300" rounded="lg" mb={3}>
+            <VStack gap={3} align="start">
+              <Text fontSize="xl" fontWeight="bold" color="teal.800">Welcome back!</Text>
+              {linkCandidate.contacts.length > 1 ? (
+                <>
+                  <Text fontSize="sm" color="teal.700">
+                    We think you're with <Text as="span" fontWeight="semibold">{linkCandidate.displayName}</Text>. Which of you are you?
+                  </Text>
+                  <HStack gap={2} wrap="wrap">
+                    {linkCandidate.contacts.map((c) => (
+                      <Button
+                        key={c.contactId}
+                        size="sm"
+                        colorPalette="teal"
+                        variant={c.isPrimary ? "solid" : "outline"}
+                        disabled={confirmingCandidate}
+                        loading={confirmingCandidate}
+                        onClick={() => void confirmCandidate(c.contactId)}
+                      >
+                        {c.contactName || "Unnamed contact"}
+                      </Button>
+                    ))}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={confirmingCandidate}
+                      onClick={() => setLinkCandidate(null)}
+                    >
+                      None of these
+                    </Button>
+                  </HStack>
+                </>
+              ) : (
+                <>
+                  <Text fontSize="sm" color="teal.700">
+                    We think you're connected to <Text as="span" fontWeight="semibold">{linkCandidate.displayName}</Text>
+                    {linkCandidate.contacts[0]?.contactName
+                      ? <> (as <Text as="span" fontWeight="semibold">{linkCandidate.contacts[0].contactName}</Text>)</>
+                      : null}.
+                  </Text>
+                  <Text fontSize="sm" color="teal.700">
+                    If that's right, confirm and we'll connect your account to your service history.
+                  </Text>
+                  <HStack gap={2}>
+                    <Button
+                      size="sm"
+                      colorPalette="teal"
+                      loading={confirmingCandidate}
+                      onClick={() => void confirmCandidate(linkCandidate.contacts[0]?.contactId)}
+                    >
+                      Yes, that's me
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={confirmingCandidate}
+                      onClick={() => setLinkCandidate(null)}
+                    >
+                      Not me
+                    </Button>
+                  </HStack>
+                </>
+              )}
+            </VStack>
+          </Box>
+        ) : null}
         <Box p={5} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="lg">
           <VStack gap={3} align="start">
             <Text fontSize="xl" fontWeight="bold" color="blue.800">Welcome to Seedlings Lawn Care</Text>

@@ -317,7 +317,7 @@ function CollectionEditor(props: {
                     size="sm"
                     border="none"
                     pl={2}
-                    placeholder="Search equipment..."
+                    placeholder="Search…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />

@@ -269,7 +269,7 @@ export default function TaskDialog({ open, onOpenChange, onCreated, editTask, mo
                     <Box position="relative">
                       <input
                         type="text"
-                        placeholder="Search by property, client, or job type..."
+                        placeholder="Search…"
                         value={occSearch}
                         onChange={(e) => { setOccSearch(e.target.value); setShowOccResults(true); }}
                         onFocus={() => setShowOccResults(true)}

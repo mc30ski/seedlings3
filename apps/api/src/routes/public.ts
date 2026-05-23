@@ -635,6 +635,21 @@ export default async function publicRoutes(app: FastifyInstance) {
       },
       data: { clientAccountCreatedFromPaymentPageAt: new Date() },
     });
-    return { ok: true };
+    // Suggested email — biases the Clerk sign-up form toward the on-file
+    // address so the email-match auto-link succeeds without the user even
+    // seeing the smart-hint. Picks the primary contact's email; falls back
+    // to any active contact's email.
+    const primary = await prisma.clientContact.findFirst({
+      where: {
+        status: "ACTIVE",
+        email: { not: null },
+        client: {
+          properties: { some: { jobs: { some: { occurrences: { some: { id: resolved.occurrenceId } } } } } },
+        },
+      },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      select: { email: true },
+    });
+    return { ok: true, suggestedEmail: primary?.email ?? null };
   });
 }

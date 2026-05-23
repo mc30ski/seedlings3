@@ -101,7 +101,7 @@ export default function PricingGuideDialog({ open, onOpenChange, endpoint = "/ap
                   <Search size={16} />
                   <Input
                     size="sm"
-                    placeholder="Search by service, unit, or tag…"
+                    placeholder="Search…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     autoFocus

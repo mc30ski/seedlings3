@@ -36,6 +36,8 @@ import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import ClientDialog from "@/src/ui/dialogs/ClientDialog";
 import ContactDialog from "@/src/ui/dialogs/ContactDialog";
+import UnlinkedClientAccountsSection from "@/src/ui/components/UnlinkedClientAccountsSection";
+import ClientContactLinkActions from "@/src/ui/components/ClientContactLinkActions";
 import DeleteDialog, {
   type ToDeleteProps,
 } from "@/src/ui/dialogs/DeleteDialog";
@@ -293,6 +295,7 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
 
   return (
     <Box w="full">
+      {forAdmin && <UnlinkedClientAccountsSection />}
       <HStack mb={2} gap={2}>
         <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} px="2" flexShrink={0} css={{ background: "var(--chakra-colors-gray-100)" }}>
           <RefreshCw size={14} />
@@ -829,6 +832,10 @@ export default function ClientsTab({ me, purpose = "WORKER" }: TabPropsType) {
                                           />
                                         </>
                                       )}
+                                      <ClientContactLinkActions
+                                        contact={ct}
+                                        onChanged={() => void load()}
+                                      />
                                     </HStack>
                                   )}
                                 </VStack>

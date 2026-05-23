@@ -28,6 +28,10 @@ const MICHAEL_ID        = "cmexiwrfs003kvdysrjteo2hy";
 
 const CLIENT_CLERK_ID   = "user_3C8aJI7a58wmVbrK4Ao3pZRp3RF";
 const PENDING_CLIENT_CLERK_ID = "user_3CJXY4nnIzxamLgzfpLwQLS0dyR";
+// A phantom Clerk-authenticated client — signed up via /pay or /sign-up with
+// an email that DOESN'T match any ClientContact on file. Used to exercise
+// the admin re-link worklist on the Clients tab.
+const PHANTOM_CLIENT_CLERK_ID = "user_seed_phantom_clientacct_001";
 
 // Workers available for assignment (not Michael — overseer)
 const WORKERS = [ADMIN_WORKER_ID, CONTRACTOR_ID, EMPLOYEE_ID, TRAINEE_ID];
@@ -180,6 +184,52 @@ async function seedDatabase() {
       isApproved: false,
     },
     update: { isApproved: false },
+  });
+
+  // ── Phantom client account (admin re-link test fixture) ─────────────────
+  // An approved Clerk-side client signup with NO roles and whose email
+  // doesn't match any ClientContact's email. The admin Clients tab should
+  // surface this in its "Unlinked client accounts" worklist on load.
+  console.log("  Ensuring phantom client account...");
+  await prisma.user.upsert({
+    where: { clerkUserId: PHANTOM_CLIENT_CLERK_ID },
+    create: {
+      clerkUserId: PHANTOM_CLIENT_CLERK_ID,
+      email: "phantom.client@example.com",
+      firstName: "Phantom",
+      lastName: "ClientAcct",
+      displayName: "Phantom ClientAcct",
+      isApproved: true,
+    },
+    update: { isApproved: true, email: "phantom.client@example.com" },
+  });
+
+  // Matching "obvious" target contact — same local-part prefix as the
+  // phantom's email, so the picker's similarity sort surfaces it at the top.
+  // The orphan client + its contact are wiped on every reseed (clearDatabase
+  // empties Client/ClientContact); the phantom User persists across seeds.
+  const phantomTargetClient = await prisma.client.create({
+    data: {
+      type: "PERSON",
+      displayName: "Phantom Test Family",
+      notesInternal:
+        "Seed-only fixture for the admin re-link worklist. The phantom Clerk account 'phantom.client@example.com' should be matched to this client's primary contact.",
+    },
+  });
+  await prisma.clientContact.create({
+    data: {
+      clientId: phantomTargetClient.id,
+      firstName: "Phantom",
+      lastName: "Target",
+      role: "OWNER",
+      isPrimary: true,
+      // DIFFERENT from the phantom user's email — same local-part PREFIX
+      // ("phantom.client") so the similarity sort works, but a different
+      // domain/suffix so the auto-link email-equality check correctly fails.
+      email: "phantom.client.actual@example.com",
+      phone: "(555) 900-0001",
+      normalizedPhone: "+15559000001",
+    },
   });
 
   // ── Privilege overrides on seed workers ──────────────────────────────────

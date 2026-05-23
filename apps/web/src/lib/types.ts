@@ -254,6 +254,8 @@ export type Contact = {
   phone?: string | null;
   normalizedPhone?: string | null;
   isPrimary?: boolean;
+  /** Clerk user id this contact is bound to, or null if not linked yet. */
+  clerkUserId?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

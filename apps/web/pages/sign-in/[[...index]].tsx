@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { SignIn } from "@clerk/clerk-react";
 import { Box, Heading, Text, VStack } from "@chakra-ui/react";
 
@@ -15,6 +16,21 @@ import { Box, Heading, Text, VStack } from "@chakra-ui/react";
  * configured, so this page just needs the standard component.
  */
 export default function SignInPage() {
+  // Email prefill from the /pay/[token] AccountNudge — stashed in
+  // sessionStorage right before the redirect, consumed here once. Biases
+  // the client toward the on-file email so the email-match auto-link
+  // succeeds and the smart-hint never has to fire.
+  const [prefillEmail, setPrefillEmail] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const e = sessionStorage.getItem("seedlings_prefill_email");
+      if (e) {
+        setPrefillEmail(e);
+        sessionStorage.removeItem("seedlings_prefill_email");
+      }
+    } catch {}
+  }, []);
+
   return (
     <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50" p={4}>
       <VStack gap={4} maxW="md" w="full">
@@ -28,6 +44,7 @@ export default function SignInPage() {
           routing="path"
           signUpUrl="/sign-in"
           forceRedirectUrl="/"
+          {...(prefillEmail ? { initialValues: { emailAddress: prefillEmail } } : {})}
           appearance={{
             elements: {
               // Center the Clerk card under the centered heading/text — the

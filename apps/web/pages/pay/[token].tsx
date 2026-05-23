@@ -489,9 +489,17 @@ function ConfirmedView({ data }: { data: ResolveResponse }) {
 
 function AccountNudge({ token }: { token: string }) {
   const onSignup = async () => {
-    // Tag the source so future discount logic can apply credits.
+    // Tag the source so future discount logic can apply credits AND grab the
+    // on-file primary contact email so we can prefill it on the sign-in form
+    // — biases the client to use the email we have, so the email-match
+    // auto-link succeeds without the smart-hint kicking in.
     try {
-      await fetch(`${API_BASE}/api/public/pay/${token}/signup-from-page`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/public/pay/${token}/signup-from-page`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      const suggested: string | null = data?.suggestedEmail ?? null;
+      if (suggested) {
+        try { sessionStorage.setItem("seedlings_prefill_email", suggested); } catch {}
+      }
     } catch {}
     // Send to Clerk sign-up. The /sign-in route handles new accounts too.
     window.location.href = "/sign-in";

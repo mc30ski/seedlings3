@@ -537,7 +537,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
           value={q}
           onChange={(v) => setQ(v)}
           inputId="documents-search"
-          placeholder="Search title, description, type…"
+          placeholder="Search…"
         />
         <Select.Root
           collection={typeCollection}
