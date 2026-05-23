@@ -90,49 +90,85 @@ export default function NewJobSetupWorkflow({ active, onDone, onComplete, estima
   const edState = edStateZip[0] ?? "";
   const edZip = edStateZip[edStateZip.length - 1] ?? "";
 
-  // Batch save everything at the end
+  // Batch save everything at the end. Heavily instrumented so failures in
+  // production (or anywhere) leave a clear trail in the console + an error
+  // toast that says exactly which step blew up.
   async function batchSave(occurrenceData: any) {
     go("saving");
+    const log = (msg: string, extra?: unknown) =>
+      // eslint-disable-next-line no-console
+      console.log(`[NewJobSetup] ${msg}`, extra ?? "");
+    log("Starting batchSave", { clientData, contactData, propertyData, jobData, occurrenceData });
+    type Step = 1 | 2 | 3 | 4 | 5;
+    let step: Step = 1;
+    const stepNames: Record<Step, string> = {
+      1: "Create Client",
+      2: "Create Contact",
+      3: "Create Property",
+      4: "Create Job",
+      5: "Create Occurrence",
+    };
     try {
       // 1. Create client
+      step = 1;
+      log(`Step 1/5 → POST /api/admin/clients`, clientData);
       const client = await apiPost<{ id: string }>("/api/admin/clients", clientData);
+      log(`Step 1/5 ✓ client.id=${client.id}`);
 
       // 2. Create contact for that client
+      step = 2;
+      log(`Step 2/5 → POST /api/admin/clients/${client.id}/contacts`, contactData);
       const contact = await apiPost<{ id: string }>(`/api/admin/clients/${client.id}/contacts`, contactData);
+      log(`Step 2/5 ✓ contact.id=${contact.id}`);
 
       // 3. Create property for that client — fix deferred references
+      step = 3;
       const propPayload = { ...propertyData, clientId: client.id };
       // Replace deferred POC ID with the real contact ID
       if (propPayload.pointOfContactId === "__deferred__" || propPayload.pointOfContactId === "NONE") {
         propPayload.pointOfContactId = contact?.id ?? null;
       }
+      log(`Step 3/5 → POST /api/admin/properties`, propPayload);
       const property = await apiPost<{ id: string }>("/api/admin/properties", propPayload);
+      log(`Step 3/5 ✓ property.id=${property.id}`);
 
       // 4. Create job for that property
-      const job = await apiPost<{ id: string }>("/api/admin/jobs", {
-        ...jobData,
-        propertyId: property.id,
-      });
+      step = 4;
+      const jobPayload = { ...jobData, propertyId: property.id };
+      log(`Step 4/5 → POST /api/admin/jobs`, jobPayload);
+      const job = await apiPost<{ id: string }>("/api/admin/jobs", jobPayload);
+      log(`Step 4/5 ✓ job.id=${job.id}`);
 
       // 5. Create occurrence for that job
+      step = 5;
+      log(`Step 5/5 → POST /api/admin/jobs/${job.id}/occurrences`, occurrenceData);
       await apiPost(`/api/admin/jobs/${job.id}/occurrences`, occurrenceData);
+      log(`Step 5/5 ✓ occurrence created`);
 
       // 6. If converting a light estimate, link it to the new job
       if (ed?.occurrenceId) {
         try {
           await apiPost(`/api/admin/occurrences/${ed.occurrenceId}/link-to-job`, { jobId: job.id });
-        } catch {
-          // Non-critical — the job was still created
+          log(`Linked light estimate ${ed.occurrenceId} → job ${job.id}`);
+        } catch (err) {
+          log(`Light-estimate link failed (non-critical)`, err);
         }
       }
 
+      log(`batchSave complete — job.id=${job.id}`);
       publishInlineMessage({ type: "SUCCESS", text: "New job setup complete!" });
       reset();
       onDone();
       onComplete?.(job.id);
     } catch (err: any) {
-      console.error("NewJobSetupWorkflow batch save failed:", err);
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Setup failed. Some items may have been partially created.", err) });
+      const stepName = stepNames[step];
+      // eslint-disable-next-line no-console
+      console.error(`[NewJobSetup] FAILED at step ${step}/5 (${stepName}):`, err);
+      const inner = getErrorMessage("(no details)", err);
+      publishInlineMessage({
+        type: "ERROR",
+        text: `Setup failed at step ${step}/5 (${stepName}): ${inner}. Check the browser console for the full error.`,
+      });
       reset();
       onDone();
     }
