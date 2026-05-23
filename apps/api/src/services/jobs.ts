@@ -156,8 +156,20 @@ async function assertOccurrenceHasWorker(
   targetStatus: JobOccurrenceStatus,
 ): Promise<void> {
   if (!STATUSES_REQUIRING_WORKER.has(targetStatus)) return;
+  // role is "observer" for observers and NULL for workers/claimers (see
+  // schema.prisma:841). SQL three-valued logic excludes NULLs from a
+  // `role <> 'observer'` comparison, so we explicitly OR in `role IS NULL`
+  // to count workers + claimers correctly. Without this OR, the count is
+  // always zero and the gate falsely fires even on properly assigned
+  // occurrences.
   const workerCount = await tx.jobOccurrenceAssignee.count({
-    where: { occurrenceId, role: { not: "observer" } },
+    where: {
+      occurrenceId,
+      OR: [
+        { role: null },
+        { role: { not: "observer" } },
+      ],
+    },
   });
   if (workerCount === 0) {
     throw new ServiceError(
