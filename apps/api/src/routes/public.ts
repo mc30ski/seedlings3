@@ -575,6 +575,31 @@ export default async function publicRoutes(app: FastifyInstance) {
     if (!resolved) return reply.code(404).send({ error: "not_found" });
     if (!method) return reply.code(400).send({ error: "method_required" });
 
+    // Defense-in-depth: reject self-reports when the request carries a
+    // worker/admin/super Clerk session. The /pay/[token] page is a
+    // client-facing self-report form — a worker submitting it would
+    // queue an unverified payment without the actual money having
+    // changed hands. Workers/admins should use the in-app
+    // Accept Payment flow instead. The frontend also blocks this, but
+    // any direct API call (curl, custom client) is caught here.
+    const clerkUserId = (req as any).auth?.clerkUserId as string | undefined;
+    if (clerkUserId) {
+      const user = await prisma.user.findUnique({
+        where: { clerkUserId },
+        include: { roles: true },
+      });
+      const hasWorkerRole = !!user?.roles?.some((r: any) =>
+        r.role === "WORKER" || r.role === "ADMIN" || r.role === "SUPER",
+      );
+      if (hasWorkerRole) {
+        return reply.code(403).send({
+          error: "worker_self_report_forbidden",
+          message:
+            "Workers can't submit self-reports on the client's behalf. Use Accept Payment in the worker app instead.",
+        });
+      }
+    }
+
     const payment = await services.payments.selfReportPayment(null, {
       occurrenceId: resolved.occurrenceId,
       method,
