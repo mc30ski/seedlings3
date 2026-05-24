@@ -596,16 +596,22 @@ function ConfirmedView({ data }: { data: ResolveResponse }) {
 function AccountNudge({ token }: { token: string }) {
   const onSignup = async () => {
     // Tag the source so future discount logic can apply credits AND grab the
-    // on-file primary contact email so we can prefill it on the sign-in form
-    // — biases the client to use the email we have, so the email-match
-    // auto-link succeeds without the smart-hint kicking in.
+    // on-file primary contact email + name so we can prefill them on the
+    // sign-in form. Clerk's User model requires first/last name on signup;
+    // since we already addressed the client by their name on the invoice,
+    // re-typing it here would be terrible UX — we ship those values along
+    // so the signup completes in one step.
     try {
       const res = await fetch(`${API_BASE}/api/public/pay/${token}/signup-from-page`, { method: "POST" });
       const data = await res.json().catch(() => null);
       const suggested: string | null = data?.suggestedEmail ?? null;
-      if (suggested) {
-        try { sessionStorage.setItem("seedlings_prefill_email", suggested); } catch {}
-      }
+      const suggestedFirst: string | null = data?.suggestedFirstName ?? null;
+      const suggestedLast: string | null = data?.suggestedLastName ?? null;
+      try {
+        if (suggested) sessionStorage.setItem("seedlings_prefill_email", suggested);
+        if (suggestedFirst) sessionStorage.setItem("seedlings_prefill_firstName", suggestedFirst);
+        if (suggestedLast) sessionStorage.setItem("seedlings_prefill_lastName", suggestedLast);
+      } catch {}
     } catch {}
     // Send to Clerk sign-up. The /sign-in route handles new accounts too.
     window.location.href = "/sign-in";

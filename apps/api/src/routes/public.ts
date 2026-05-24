@@ -660,10 +660,13 @@ export default async function publicRoutes(app: FastifyInstance) {
       },
       data: { clientAccountCreatedFromPaymentPageAt: new Date() },
     });
-    // Suggested email — biases the Clerk sign-up form toward the on-file
-    // address so the email-match auto-link succeeds without the user even
-    // seeing the smart-hint. Picks the primary contact's email; falls back
-    // to any active contact's email.
+    // Suggested email + names — biases the Clerk sign-up form toward the
+    // on-file values so the email-match auto-link succeeds without the
+    // user even seeing the smart-hint, AND so the signup carries the
+    // first/last name we already have (Clerk requires them, and asking
+    // the client to re-type a name we already addressed them by is bad
+    // UX). Picks the primary contact when available; falls back to any
+    // active contact with an email.
     const primary = await prisma.clientContact.findFirst({
       where: {
         status: "ACTIVE",
@@ -673,8 +676,13 @@ export default async function publicRoutes(app: FastifyInstance) {
         },
       },
       orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
-      select: { email: true },
+      select: { email: true, firstName: true, lastName: true },
     });
-    return { ok: true, suggestedEmail: primary?.email ?? null };
+    return {
+      ok: true,
+      suggestedEmail: primary?.email ?? null,
+      suggestedFirstName: primary?.firstName ?? null,
+      suggestedLastName: primary?.lastName ?? null,
+    };
   });
 }
