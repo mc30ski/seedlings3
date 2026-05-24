@@ -86,7 +86,28 @@ function dollar(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+// Mounted-gate: `useAuth` asserts ClerkProvider context at call time, and
+// during Next.js static export the assertion fails (provider hasn't
+// initialized server-side) — breaks the build. By gating the actual page
+// behind a mount flag we ensure Clerk hooks only fire after client
+// hydration. SSR just sees the placeholder.
 export default function PaymentPage() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) {
+    return (
+      <PageShell>
+        <HStack justify="center" py={12}>
+          <Loader size={20} />
+          <Text>Loading…</Text>
+        </HStack>
+      </PageShell>
+    );
+  }
+  return <PaymentPageInner />;
+}
+
+function PaymentPageInner() {
   const router = useRouter();
   const { isSignedIn, getToken, isLoaded: isAuthLoaded } = useAuth();
   const token = typeof router.query.token === "string" ? router.query.token : "";

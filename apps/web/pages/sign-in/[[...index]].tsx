@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSignIn, useSignUp } from "@clerk/nextjs";
+import { useSignIn, useSignUp } from "@clerk/clerk-react";
 import {
   Box,
   Button,
@@ -26,8 +26,35 @@ import {
  * Clerk dashboard requirements:
  *   - "Email verification code" enabled for both sign-in and sign-up
  *   - Email-link option OFF (we want the typed-code flow only)
+ *
+ * Pages-Router SSR note: `useSignIn` / `useSignUp` assert ClerkProvider
+ * context at call time. During Next's static export the assertion fails
+ * (the provider hasn't initialized server-side), which breaks the build.
+ * We wrap the actual form in a mounted-gate component so the hook calls
+ * only happen after the client hydrates.
  */
 export default function SignInPage() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return (
+    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50" p={4}>
+      <VStack gap={4} maxW="md" w="full">
+        <Heading size="lg" textAlign="center">Welcome to Seedlings</Heading>
+        {mounted ? <SignInForm /> : <SignInPlaceholder />}
+      </VStack>
+    </Box>
+  );
+}
+
+function SignInPlaceholder() {
+  return (
+    <Text fontSize="sm" color="fg.muted" textAlign="center">
+      Loading…
+    </Text>
+  );
+}
+
+function SignInForm() {
   const { signIn, setActive: setActiveSignIn, isLoaded: signInLoaded } = useSignIn();
   const { signUp, setActive: setActiveSignUp, isLoaded: signUpLoaded } = useSignUp();
 
@@ -143,9 +170,7 @@ export default function SignInPage() {
   }
 
   return (
-    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50" p={4}>
-      <VStack gap={4} maxW="md" w="full">
-        <Heading size="lg" textAlign="center">Welcome to Seedlings</Heading>
+    <>
         {step === "email" ? (
           <>
             <Text fontSize="sm" color="fg.muted" textAlign="center">
@@ -244,7 +269,6 @@ export default function SignInPage() {
             </Box>
           </>
         )}
-      </VStack>
-    </Box>
+    </>
   );
 }
