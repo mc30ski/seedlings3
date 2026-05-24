@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
+import { useAuth } from "@clerk/nextjs";
 import {
   Badge,
   Box,
@@ -24,7 +25,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Check, CheckCircle, ExternalLink, Loader } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle, ExternalLink, Loader } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -87,6 +88,7 @@ function dollar(n: number): string {
 
 export default function PaymentPage() {
   const router = useRouter();
+  const { isSignedIn, getToken, isLoaded: isAuthLoaded } = useAuth();
   const token = typeof router.query.token === "string" ? router.query.token : "";
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<ResolveResponse | null>(null);
@@ -94,6 +96,13 @@ export default function PaymentPage() {
   const [selectedMethod, setSelectedMethod] = useState<MethodKey | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [reportedJustNow, setReportedJustNow] = useState(false);
+  // A signed-in worker (or admin/super) opening their own invoice link
+  // should not be able to "pay" on behalf of the client — that would
+  // shortcut the actual payment received and queue an unverified
+  // approval. We detect the worker role on /api/me and surface a clear
+  // warning instead of the submit UI. Anonymous visitors (the actual
+  // client) see the normal page.
+  const [isWorkerSession, setIsWorkerSession] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -122,6 +131,36 @@ export default function PaymentPage() {
     };
   }, [token]);
 
+  // Detect a worker/admin/super Clerk session. /api/me returns the user's
+  // roles when authenticated; a missing or unauthorized response means we
+  // treat the visitor as the client.
+  useEffect(() => {
+    if (!isAuthLoaded) return;
+    if (!isSignedIn) { setIsWorkerSession(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const t = await getToken();
+        if (!t) { if (!cancelled) setIsWorkerSession(false); return; }
+        const res = await fetch(`${API_BASE}/api/me`, {
+          headers: { Authorization: `Bearer ${t}` },
+        });
+        if (!res.ok) { if (!cancelled) setIsWorkerSession(false); return; }
+        const me: any = await res.json();
+        const roles: string[] = Array.isArray(me?.roles)
+          ? me.roles.map((r: any) => r?.role).filter(Boolean)
+          : [];
+        if (cancelled) return;
+        setIsWorkerSession(
+          roles.includes("WORKER") || roles.includes("ADMIN") || roles.includes("SUPER"),
+        );
+      } catch {
+        if (!cancelled) setIsWorkerSession(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthLoaded, isSignedIn, getToken]);
+
   // Order the taxonomy-driven methods: business-preferred methods first, then
   // the order the server returned them in. Array.sort is stable, so config
   // order is preserved within each group. The taxonomy is the single source
@@ -148,11 +187,28 @@ export default function PaymentPage() {
 
   async function selfReport(method: MethodKey) {
     if (!token || submitting) return;
+    // Client-side guard. The backend also rejects this path for a worker
+    // session — see public.ts /public/pay/:token/self-report — but
+    // catching it here gives a clearer message and skips the network call.
+    if (isWorkerSession) {
+      alert("This page is for the client. Use the worker app's Accept Payment dialog to record payments — don't submit on the client's behalf.");
+      return;
+    }
     setSubmitting(true);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      // Pass the Clerk token along when the visitor happens to be signed
+      // in. The backend uses this purely to refuse worker self-reports;
+      // anonymous visitors (the typical client) still go through.
+      if (isSignedIn) {
+        try {
+          const t = await getToken();
+          if (t) headers["Authorization"] = `Bearer ${t}`;
+        } catch { /* fall through — backend will accept as anonymous */ }
+      }
       const res = await fetch(`${API_BASE}/api/public/pay/${token}/self-report`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ method }),
       });
       if (!res.ok) throw new Error("Failed to record");
@@ -266,43 +322,72 @@ export default function PaymentPage() {
           </HStack>
         )}
 
-        <Box>
-          <Text fontSize="sm" fontWeight="semibold" mb={1}>How would you like to pay?</Text>
-          <Text fontSize="xs" color="fg.muted" mb={2}>
-            Pick a method, send your payment, then tap the button below to let us know. We&apos;ll confirm and email a receipt.
-          </Text>
-          <VStack gap={2} align="stretch">
-            {orderedMethods.length === 0 ? (
-              <Text fontSize="xs" color="fg.muted">
-                No payment methods are configured. Please call or text us.
-              </Text>
-            ) : (
-              orderedMethods.map((m) => (
-                <PaymentMethodCard
-                  key={m.key}
-                  config={m}
-                  preferred={m.preferred}
-                  usedLastTime={data.preferredMethod === m.key}
-                  selected={selectedMethod === m.key}
-                  onSelect={() => setSelectedMethod(m.key)}
-                />
-              ))
-            )}
-          </VStack>
-          <Button
-            mt={3}
-            w="full"
-            colorPalette="teal"
-            loading={submitting}
-            disabled={!selectedMethod}
-            onClick={() => selectedMethod && selfReport(selectedMethod)}
+        {isWorkerSession ? (
+          <Box
+            p={3}
+            bg="orange.50"
+            borderWidth="1px"
+            borderColor="orange.300"
+            borderLeftWidth="4px"
+            borderLeftColor="orange.500"
+            rounded="md"
           >
-            <Check size={14} />
-            {selectedLabel
-              ? `I've sent the ${selectedLabel.toLowerCase()} payment`
-              : "Pick a method above first"}
-          </Button>
-        </Box>
+            <HStack gap={2} mb={1}>
+              <AlertTriangle size={16} color="var(--chakra-colors-orange-700)" />
+              <Text fontSize="sm" fontWeight="semibold" color="orange.800">
+                You&apos;re signed in as a worker
+              </Text>
+            </HStack>
+            <Text fontSize="xs" color="orange.800">
+              This page is for the client to self-report their payment. As a worker, you
+              shouldn&apos;t submit on the client&apos;s behalf — that creates a payment
+              record without actual money received.
+            </Text>
+            <Text fontSize="xs" color="orange.800" mt={2}>
+              To record a payment you collected yourself, open the job in the worker app
+              and use <b>Accept Payment</b>. To send the client this link to pay
+              themselves, use <b>Request Payment</b>.
+            </Text>
+          </Box>
+        ) : (
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>How would you like to pay?</Text>
+            <Text fontSize="xs" color="fg.muted" mb={2}>
+              Pick a method, send your payment, then tap the button below to let us know. We&apos;ll confirm with receipt.
+            </Text>
+            <VStack gap={2} align="stretch">
+              {orderedMethods.length === 0 ? (
+                <Text fontSize="xs" color="fg.muted">
+                  No payment methods are configured. Please call or text us.
+                </Text>
+              ) : (
+                orderedMethods.map((m) => (
+                  <PaymentMethodCard
+                    key={m.key}
+                    config={m}
+                    preferred={m.preferred}
+                    usedLastTime={data.preferredMethod === m.key}
+                    selected={selectedMethod === m.key}
+                    onSelect={() => setSelectedMethod(m.key)}
+                  />
+                ))
+              )}
+            </VStack>
+            <Button
+              mt={3}
+              w="full"
+              colorPalette="teal"
+              loading={submitting}
+              disabled={!selectedMethod}
+              onClick={() => selectedMethod && selfReport(selectedMethod)}
+            >
+              <Check size={14} />
+              {selectedLabel
+                ? `I've sent the ${selectedLabel.toLowerCase()} payment`
+                : "Pick a method above first"}
+            </Button>
+          </Box>
+        )}
       </VStack>
     </PageShell>
   );
@@ -516,7 +601,7 @@ function AccountNudge({ token }: { token: string }) {
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from visits</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming services</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule from your phone</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Receipts (coming soon)</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Receipts</Text></HStack>
       </VStack>
       {/* Single CTA — passwordless auth means new and returning clients do
           the identical step (enter email → verification code), so a separate
