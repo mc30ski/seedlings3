@@ -143,7 +143,13 @@ function SignInForm() {
           window.location.href = "/";
           return;
         }
-        setError("Verification didn't complete. Try the code again or use a different email.");
+        // Sign-in only has email_code as a factor here; anything other
+        // than "complete" usually means a second factor or unexpected
+        // gate is configured in the Clerk dashboard.
+        setError(
+          `Sign-in needs an extra step that isn't configured here (status: ${result.status}). ` +
+            `Contact an admin.`,
+        );
       } else if (mode === "signup") {
         const result = await signUp!.attemptEmailAddressVerification({
           code: code.trim(),
@@ -153,10 +159,38 @@ function SignInForm() {
           window.location.href = "/";
           return;
         }
-        setError("Verification didn't complete. Try the code again or use a different email.");
+        // The most common reason status !== "complete" after email
+        // verification: the Clerk dashboard requires additional User-model
+        // fields (first_name / last_name / username / etc.) that the
+        // anonymous payment-page flow doesn't collect. Surface exactly
+        // what's missing so the admin can either disable the requirement
+        // or extend this flow to collect it.
+        const missingFields: string[] = (result as any).missingFields ?? [];
+        const unverifiedFields: string[] = (result as any).unverifiedFields ?? [];
+        const detail =
+          missingFields.length > 0
+            ? `Missing fields: ${missingFields.join(", ")}. `
+            : unverifiedFields.length > 0
+              ? `Unverified fields: ${unverifiedFields.join(", ")}. `
+              : "";
+        setError(
+          `Sign-up needs more information than this page collects (status: ${result.status}). ${detail}` +
+            `Ask the admin to remove these required fields in the Clerk dashboard, or sign in once the account exists.`,
+        );
       }
     } catch (err: any) {
-      setError(err?.errors?.[0]?.message ?? err?.message ?? "Invalid code. Try again.");
+      // Distinguish a network failure (transient — retry helps) from a
+      // bad code (user-actionable).
+      const clerkMsg = err?.errors?.[0]?.message;
+      const isNetwork =
+        err?.message === "Load failed" ||
+        /network/i.test(err?.message ?? "") ||
+        err?.name === "ClerkNetworkError";
+      if (isNetwork) {
+        setError("Network hiccup talking to the auth service. Tap the button again.");
+      } else {
+        setError(clerkMsg ?? err?.message ?? "Invalid code. Try again.");
+      }
     } finally {
       setBusy(false);
     }
