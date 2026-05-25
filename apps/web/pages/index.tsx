@@ -443,6 +443,23 @@ export default function HomePage() {
       setTopTab(isAdmin ? "admin" : isWorker ? "worker" : "client");
   }, [isAdmin, isWorker, topTab, me]);
 
+  // When a signed-in approved client lands on the prior default tab
+  // ("public" / Community), flip them to "My Properties" — the
+  // personalized view is the more useful landing target. Honors any
+  // explicit later navigation: switching to Community manually persists
+  // and won't be bounced back the next session (the redirect only fires
+  // when the user's stored choice is still "public").
+  const clientDefaultFlippedRef = useRef(false);
+  useEffect(() => {
+    if (!me?.isApproved) return;
+    if (isWorker || isAdmin) return;
+    if (topTab !== "client") return;
+    if (clientInnerTab !== "public") return;
+    if (clientDefaultFlippedRef.current) return;
+    clientDefaultFlippedRef.current = true;
+    setClientInnerTab("my-jobs");
+  }, [me?.isApproved, isWorker, isAdmin, topTab, clientInnerTab, setClientInnerTab]);
+
   // Re-fetch me silently when switching top tabs so admin changes are reflected
   useEffect(() => {
     if (!meLoading) void refreshMe();
@@ -458,18 +475,22 @@ export default function HomePage() {
   }
 
   const clientTabs: TabItem[] = [
-    {
-      value: "public",
-      label: "Community",
-      icon: FiActivity,
-      content: <ClientFeedTab />,
-    },
+    // My Properties is the top + default landing tab for signed-in
+    // approved clients — that's the personalized view they care about
+    // when they open the app. Community and Services sit behind it for
+    // anonymous browsing.
     {
       value: "my-jobs",
       label: "My Properties",
       icon: FiBriefcase,
       visible: () => !!isSignedIn && !!me?.isApproved && !isWorker && !isAdmin,
       content: <ClientMyJobsTab />,
+    },
+    {
+      value: "public",
+      label: "Community",
+      icon: FiActivity,
+      content: <ClientFeedTab />,
     },
     {
       value: "services",
@@ -1386,6 +1407,28 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadOverdue]);
 
+  // Client change-request count for admin header badge.
+  // Counts PENDING reschedule + skip requests submitted by clients via
+  // ClientMyJobsTab. Refreshed when jobs change (any admin acting on a
+  // request fires the same `jobs-changed` event we already listen to).
+  const [changeRequestCount, setChangeRequestCount] = useState(0);
+  const loadChangeRequestCount = useCallback(async () => {
+    if (!isAdmin) { setChangeRequestCount(0); if (me) markAlertLoaded("changeRequests"); return; }
+    try {
+      const result = await apiGet<{ count: number }>("/api/admin/change-requests/pending-count");
+      setChangeRequestCount(result?.count ?? 0);
+    } catch {
+      setChangeRequestCount(0);
+    }
+    markAlertLoaded("changeRequests");
+  }, [isAdmin]);
+  useEffect(() => {
+    void loadChangeRequestCount();
+    const onRefresh = () => void loadChangeRequestCount();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+  }, [loadChangeRequestCount]);
+
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
@@ -1425,7 +1468,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -1489,6 +1532,18 @@ export default function HomePage() {
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent("adminJobs:showOverdue"));
     }, 100);
+  }, []);
+
+  // Jump to the admin Jobs tab and scroll to the Client Requests section.
+  // The section is mounted at the top of the Jobs view for admins, so we
+  // navigate there and then scroll-into-view its anchor.
+  const goToClientRequests = useCallback(() => {
+    setTopTab("admin");
+    setAdminInnerTab("admin-jobs");
+    setTimeout(() => {
+      const el = document.getElementById("client-requests-section");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
   }, []);
 
   // Planning badge count — items on the worker's Planning tab that haven't been dismissed
@@ -2443,6 +2498,7 @@ export default function HomePage() {
                 dotColor: staleRequestCount > 0 ? "#FB923C" : "#9333EA",
                 onClick: goToPaymentApprovals,
               });
+              if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });

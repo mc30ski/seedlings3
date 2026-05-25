@@ -201,6 +201,20 @@ export default async function publicRoutes(app: FastifyInstance) {
     };
   });
 
+  // Branding info — non-sensitive identity fields used on client-facing
+  // surfaces (receipts, /pay page, etc.). Public so anyone rendering a
+  // receipt — signed-in worker, signed-in client, or anonymous on /pay —
+  // gets a consistent business name without needing to be on a
+  // privileged settings endpoint.
+  app.get("/public/branding", async () => {
+    const businessNameSetting = await prisma.setting.findUnique({
+      where: { key: "BUSINESS_NAME" },
+    });
+    return {
+      businessName: businessNameSetting?.value || "Seedlings Lawn Care",
+    };
+  });
+
   // ── Calendar Feed (.ics) ──
   // Token-based auth — no Clerk needed. Calendar apps poll this URL.
   app.get("/public/calendar/:token.ics", async (req: any, reply: any) => {

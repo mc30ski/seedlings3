@@ -1,5 +1,17 @@
 import { jsPDF } from "jspdf";
 
+// The receipt generator takes pre-resolved display strings. The caller
+// is responsible for:
+//   - `businessName` — pulled from the BUSINESS_NAME setting via the
+//     branding hook (apps/web/src/lib/useBranding.ts) or pre-fetched
+//     server-side
+//   - `methodLabel` — resolved from the PAYMENT_METHODS taxonomy. Server
+//     endpoints (e.g. /client/jobs) include this pre-resolved on the
+//     payment object; worker UI resolves via usePaymentMethodLabels
+//
+// Keeping the receipt generator free of any taxonomy / settings lookup
+// means a single rebrand or a new payment method in Settings flows
+// through immediately, without code changes to the receipt PDF.
 export type ReceiptData = {
   businessName: string;
   clientName: string;
@@ -8,19 +20,10 @@ export type ReceiptData = {
   serviceDate: string;
   completedDate: string;
   amount: number;
-  method: string;
+  /** Pre-resolved display label, e.g. "Venmo" — not the raw key. */
+  methodLabel: string;
   workers: string[];
   receiptId: string;
-};
-
-const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash",
-  CHECK: "Check",
-  VENMO: "Venmo",
-  ZELLE: "Zelle",
-  APPLE_PAY: "Apple Pay",
-  CASH_APP: "Cash App",
-  OTHER: "Other",
 };
 
 export function generateReceiptPDF(data: ReceiptData): jsPDF {
@@ -64,7 +67,7 @@ export function generateReceiptPDF(data: ReceiptData): jsPDF {
   addRow("Service Date:", data.serviceDate);
   addRow("Completed:", data.completedDate);
   addRow("Performed By:", data.workers.join(", ") || "—");
-  addRow("Payment Method:", METHOD_LABELS[data.method] ?? data.method);
+  addRow("Payment Method:", data.methodLabel);
 
   y += 10;
   doc.line(margin, y, pageWidth - margin, y);

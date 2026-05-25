@@ -190,14 +190,27 @@ export default async function clientRoutes(app: FastifyInstance) {
   app.get("/client/jobs", clientGuard, async (req: any) => {
     const clerkUserId = req.auth.clerkUserId!;
     const contact = await getLinkedContact(clerkUserId);
-    if (!contact) return { items: [] };
+    if (!contact) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
 
     const propertyIds = contact.client.properties.map((p) => p.id);
-    if (propertyIds.length === 0) return { items: [] };
+    if (propertyIds.length === 0) return { items: [], monthsBack: 1, maxMonthsBack: 12, hasMore: false };
 
-    // Last 30 days of completed/pending payment jobs
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Service history window: monthsBack=N covers the current calendar
+    // month plus the previous (N-1) months. Default is the current month
+    // only; the client's "Show more" button increments monthsBack one
+    // step at a time, up to 12 (one year). Beyond a year, the data is
+    // archived from the client's point of view — they call/text us if
+    // they need older records.
+    const MAX_MONTHS_BACK = 12;
+    const MAX_JOBS = 100;
+    const rawMonths = Number(req.query?.monthsBack);
+    const monthsBack = Number.isFinite(rawMonths)
+      ? Math.min(MAX_MONTHS_BACK, Math.max(1, Math.floor(rawMonths)))
+      : 1;
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    startOfMonth.setMonth(startOfMonth.getMonth() - (monthsBack - 1));
 
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
@@ -205,10 +218,10 @@ export default async function clientRoutes(app: FastifyInstance) {
         job: { propertyId: { in: propertyIds } },
         workflow: { not: "ESTIMATE" },
         isEstimate: false,
-        completedAt: { gte: thirtyDaysAgo },
+        completedAt: { gte: startOfMonth },
       },
       orderBy: { completedAt: "desc" },
-      take: 50,
+      take: MAX_JOBS,
       select: {
         id: true,
         kind: true,
@@ -251,6 +264,15 @@ export default async function clientRoutes(app: FastifyInstance) {
       },
     });
 
+    // Pre-load the PAYMENT_METHODS taxonomy once so each payment row can
+    // ship a resolved `methodLabel` string. Keeps the client receipt
+    // generator from needing to know the taxonomy itself.
+    const { loadPaymentMethods } = await import("../services/paymentMethods");
+    const paymentMethods = await loadPaymentMethods(prisma);
+    const labelByKey = new Map<string, string>(paymentMethods.map((m) => [m.key, m.label]));
+    const resolveMethodLabel = (key: string): string =>
+      labelByKey.get(key) ?? key.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
     // Generate photo URLs and sanitize
     const items = await Promise.all(
       occurrences.map(async (occ) => {
@@ -290,6 +312,10 @@ export default async function clientRoutes(app: FastifyInstance) {
           payment: occ.payment ? {
             amountPaid: occ.payment.amountPaid,
             method: occ.payment.method,
+            // Resolved server-side from the PAYMENT_METHODS taxonomy so
+            // the client receipt generator never needs to know about
+            // the configurable label list.
+            methodLabel: resolveMethodLabel(occ.payment.method),
             paidAt: occ.payment.createdAt,
             confirmed: occ.payment.confirmed,
             selfReported: occ.payment.selfReported,
@@ -298,7 +324,18 @@ export default async function clientRoutes(app: FastifyInstance) {
       })
     );
 
-    return { items };
+    // hasMore = client can still load older months. Stops at the year
+    // cap. Also stops short if we already returned the MAX_JOBS ceiling
+    // (more pagination wouldn't fetch new rows since we always sort
+    // most-recent-first within the requested window).
+    const hasMore = monthsBack < MAX_MONTHS_BACK && items.length < MAX_JOBS;
+    return {
+      items,
+      monthsBack,
+      maxMonthsBack: MAX_MONTHS_BACK,
+      hasMore,
+      windowStart: startOfMonth.toISOString(),
+    };
   });
 
   // Get upcoming scheduled jobs for client's properties
@@ -326,6 +363,8 @@ export default async function clientRoutes(app: FastifyInstance) {
         estimatedMinutes: true,
         workflow: true,
         isEstimate: true,
+        isOneOff: true,
+        frequencyDays: true,
         jobType: true,
         price: true,
         proposalAmount: true,
@@ -334,6 +373,7 @@ export default async function clientRoutes(app: FastifyInstance) {
         job: {
           select: {
             kind: true,
+            frequencyDays: true,
             property: {
               select: { id: true, displayName: true, street1: true, city: true, state: true },
             },
@@ -368,6 +408,9 @@ export default async function clientRoutes(app: FastifyInstance) {
             } catch { return null; }
           })
         );
+        // Effective frequency: occurrence-level override wins, else the
+        // job's default. Null means non-recurring.
+        const effectiveFreq = (occ as any).frequencyDays ?? occ.job?.frequencyDays ?? null;
         return {
           id: occ.id,
           kind: occ.kind,
@@ -377,6 +420,8 @@ export default async function clientRoutes(app: FastifyInstance) {
           estimatedMinutes: occ.estimatedMinutes,
           workflow: occ.workflow,
           isEstimate: occ.isEstimate,
+          isOneOff: (occ as any).isOneOff ?? false,
+          frequencyDays: effectiveFreq,
           jobType: occ.jobType,
           price: occ.price,
           proposalAmount: (occ as any).proposalAmount ?? null,
@@ -415,13 +460,81 @@ export default async function clientRoutes(app: FastifyInstance) {
     return occ;
   }
 
+  /**
+   * Fire-and-forget admin notification when a client submits a change
+   * request. Push to every approved admin/super. SMS/email gated by the
+   * NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL setting (default off, push-only).
+   */
+  async function notifyAdminsOfChangeRequest(opts: {
+    kind: "RESCHEDULE" | "SKIP";
+    propertyLabel: string;
+    clientLabel: string;
+    occurrenceDateLabel: string;
+    comment: string | null;
+  }): Promise<void> {
+    try {
+      const admins = await prisma.user.findMany({
+        where: {
+          isApproved: true,
+          roles: { some: { role: { in: ["ADMIN" as any, "SUPER" as any] } } },
+        },
+        select: { id: true },
+      });
+      const setting = await prisma.setting.findUnique({
+        where: { key: "NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL" },
+      });
+      const allowSmsEmail = setting?.value === "true";
+      const { notifyWorker } = await import("../lib/notifications");
+      const verb = opts.kind === "RESCHEDULE" ? "reschedule" : "skip";
+      const subject = `New ${verb} request — ${opts.clientLabel}`;
+      const body =
+        `${opts.clientLabel} requested a ${verb} for ${opts.propertyLabel} on ${opts.occurrenceDateLabel}.` +
+        (opts.comment ? ` "${opts.comment}"` : "");
+      for (const u of admins) {
+        notifyWorker(u.id, body, { subject, pushOnly: !allowSmsEmail }).catch(() => {});
+      }
+    } catch (err) {
+      // Notifications are best-effort — never let a failure here break
+      // the request creation.
+      // eslint-disable-next-line no-console
+      console.warn("notifyAdminsOfChangeRequest failed:", err);
+    }
+  }
+
+  /** Best-effort context lookup for the notification message. */
+  async function buildChangeRequestContext(occurrenceId: string, requestedByUserId: string) {
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        startAt: true,
+        job: { select: { property: { select: { displayName: true, client: { select: { displayName: true } } } } } },
+      },
+    });
+    const reqUser = await prisma.user.findUnique({
+      where: { id: requestedByUserId },
+      select: { displayName: true, firstName: true, lastName: true, email: true },
+    });
+    const propertyLabel = occ?.job?.property?.displayName ?? "(property)";
+    const clientLabel =
+      occ?.job?.property?.client?.displayName ??
+      reqUser?.displayName ??
+      ([reqUser?.firstName, reqUser?.lastName].filter(Boolean).join(" ") ||
+        reqUser?.email ||
+        "(client)");
+    const dateLabel = occ?.startAt
+      ? new Date(occ.startAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+      : "an upcoming visit";
+    return { propertyLabel, clientLabel, dateLabel };
+  }
+
   app.post("/client/occurrences/:id/reschedule-request", clientGuard, async (req: any) => {
     const id = String(req.params.id);
     const clerkUserId = req.auth.clerkUserId!;
     const body = req.body || {};
-    if (!body.proposedStartAt) throw app.httpErrors.badRequest("proposedStartAt is required");
-    const proposed = new Date(String(body.proposedStartAt));
-    if (isNaN(proposed.getTime())) throw app.httpErrors.badRequest("proposedStartAt is invalid");
+    // New model: reschedule requests are conversation starters, not
+    // commands. The client doesn't propose a specific date — the admin
+    // reaches out to find a time. `proposedStartAt` is accepted but
+    // ignored (kept for back-compat with any client still sending it).
     const occ = await verifyOccurrenceForClient(id, clerkUserId);
     if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
       throw app.httpErrors.badRequest("Only scheduled jobs can be rescheduled.");
@@ -433,15 +546,25 @@ export default async function clientRoutes(app: FastifyInstance) {
       where: { occurrenceId: id, status: "PENDING" },
     });
     if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
-    return prisma.occurrenceChangeRequest.create({
+    const comment = body.comment ? String(body.comment).trim() : null;
+    const created = await prisma.occurrenceChangeRequest.create({
       data: {
         occurrenceId: id,
         requestedById: me.id,
         kind: "RESCHEDULE",
-        proposedStartAt: proposed,
-        comment: body.comment ? String(body.comment).trim() : null,
+        proposedStartAt: null,
+        comment,
       },
     });
+    const ctx = await buildChangeRequestContext(id, me.id);
+    void notifyAdminsOfChangeRequest({
+      kind: "RESCHEDULE",
+      propertyLabel: ctx.propertyLabel,
+      clientLabel: ctx.clientLabel,
+      occurrenceDateLabel: ctx.dateLabel,
+      comment,
+    });
+    return created;
   });
 
   app.post("/client/occurrences/:id/skip-request", clientGuard, async (req: any) => {
@@ -458,14 +581,24 @@ export default async function clientRoutes(app: FastifyInstance) {
       where: { occurrenceId: id, status: "PENDING" },
     });
     if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
-    return prisma.occurrenceChangeRequest.create({
+    const comment = body.comment ? String(body.comment).trim() : null;
+    const created = await prisma.occurrenceChangeRequest.create({
       data: {
         occurrenceId: id,
         requestedById: me.id,
         kind: "SKIP",
-        comment: body.comment ? String(body.comment).trim() : null,
+        comment,
       },
     });
+    const ctx = await buildChangeRequestContext(id, me.id);
+    void notifyAdminsOfChangeRequest({
+      kind: "SKIP",
+      propertyLabel: ctx.propertyLabel,
+      clientLabel: ctx.clientLabel,
+      occurrenceDateLabel: ctx.dateLabel,
+      comment,
+    });
+    return created;
   });
 
   app.delete("/client/change-requests/:id", clientGuard, async (req: any) => {

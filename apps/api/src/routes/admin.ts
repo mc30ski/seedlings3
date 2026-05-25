@@ -3346,17 +3346,58 @@ Respond ONLY with valid JSON in this exact format:
     } else {
       where.status = "PENDING";
     }
+    // Enriched payload for the admin Client Requests panel — surfaces
+    // everything the admin needs to handle the request without
+    // navigating away:
+    //   - the occurrence + job + property (so they know what / where)
+    //   - the job's cadence (so they can talk in concrete terms)
+    //   - the primary contact's name/phone/email (for the call/text/email
+    //     deep-links rendered on each request card)
+    //   - the resolver (for resolved requests in history)
     return prisma.occurrenceChangeRequest.findMany({
       where,
       orderBy: { createdAt: "desc" },
       include: {
         occurrence: {
           select: {
-            id: true, startAt: true, status: true, kind: true, jobType: true,
-            job: { select: { property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } } } },
+            id: true,
+            startAt: true,
+            status: true,
+            kind: true,
+            jobType: true,
+            workflow: true,
+            isOneOff: true,
+            frequencyDays: true,
+            job: {
+              select: {
+                id: true,
+                frequencyDays: true,
+                property: {
+                  select: {
+                    id: true,
+                    displayName: true,
+                    street1: true,
+                    city: true,
+                    state: true,
+                    client: {
+                      select: {
+                        id: true,
+                        displayName: true,
+                        contacts: {
+                          where: { status: "ACTIVE", isPrimary: true },
+                          select: { id: true, firstName: true, lastName: true, email: true, phone: true, normalizedPhone: true },
+                          take: 1,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         requestedBy: { select: { id: true, displayName: true, email: true } },
+        resolvedBy: { select: { id: true, displayName: true } },
       },
     });
   });
@@ -3368,26 +3409,126 @@ Respond ONLY with valid JSON in this exact format:
     return prisma.$transaction(async (tx) => {
       const cr = await tx.occurrenceChangeRequest.findUnique({
         where: { id },
-        include: { occurrence: true },
+        include: {
+          occurrence: {
+            include: {
+              job: {
+                select: {
+                  id: true,
+                  status: true,
+                  frequencyDays: true,
+                  kind: true,
+                  defaultPrice: true,
+                  estimatedMinutes: true,
+                  notes: true,
+                  defaultGroupId: true,
+                  defaultAssignees: { where: { active: true }, select: { userId: true, role: true } },
+                },
+              },
+            },
+          },
+        },
       });
       if (!cr) throw app.httpErrors.notFound("Request not found.");
       if (cr.status !== "PENDING") throw app.httpErrors.badRequest("Already resolved.");
       // Apply the change.
       if (cr.kind === "RESCHEDULE") {
-        if (!cr.proposedStartAt) throw app.httpErrors.badRequest("No proposed time on this request.");
-        const orig = cr.occurrence.startAt ? new Date(cr.occurrence.startAt).getTime() : null;
-        const origEnd = cr.occurrence.endAt ? new Date(cr.occurrence.endAt).getTime() : null;
-        const newStart = cr.proposedStartAt;
-        const newEnd = orig != null && origEnd != null ? new Date(newStart.getTime() + (origEnd - orig)) : null;
-        await tx.jobOccurrence.update({
-          where: { id: cr.occurrenceId },
-          data: { startAt: newStart, ...(newEnd ? { endAt: newEnd } : {}) },
-        });
+        // RESCHEDULE is now a conversation-starter, not a command. The
+        // admin handles the actual date change via the normal occurrence
+        // editor after talking to the client. Approving here just marks
+        // the request resolved — no auto-mutation of startAt.
       } else if (cr.kind === "SKIP") {
+        const occ = cr.occurrence;
         await tx.jobOccurrence.update({
           where: { id: cr.occurrenceId },
           data: { status: "CANCELED" },
         });
+        // Advance the recurring chain. Without this, skipping a
+        // recurring visit would silently halt the schedule (the
+        // next-occurrence chain normally runs on payment approval —
+        // skipped visits have no payment). Mirrors the logic in
+        // payments.ts:approvePayment for the auto-create-next path.
+        const effectiveFreq = (occ as any).frequencyDays ?? occ.job?.frequencyDays ?? null;
+        const isRecurring =
+          !!effectiveFreq &&
+          !(occ as any).isOneOff &&
+          occ.workflow !== "ONE_OFF" &&
+          occ.workflow !== "ESTIMATE" &&
+          occ.job &&
+          occ.job.status !== "PAUSED";
+        if (isRecurring && effectiveFreq && occ.job) {
+          const baseDate = occ.startAt ? new Date(occ.startAt) : new Date();
+          const nextStart = new Date(baseDate);
+          nextStart.setDate(nextStart.getDate() + effectiveFreq);
+          const nextEnd = occ.endAt ? new Date(occ.endAt) : null;
+          if (nextEnd) nextEnd.setDate(nextEnd.getDate() + effectiveFreq);
+          // Dedupe: don't create a second occurrence at the same date.
+          const existingNext = await tx.jobOccurrence.findFirst({
+            where: {
+              jobId: occ.jobId,
+              status: "SCHEDULED",
+              startAt: nextStart,
+              workflow: "STANDARD",
+              isOneOff: false,
+            },
+          });
+          if (!existingNext) {
+            const nextOcc = await tx.jobOccurrence.create({
+              data: {
+                jobId: occ.jobId!,
+                kind: occ.kind,
+                startAt: nextStart,
+                endAt: nextEnd,
+                status: "SCHEDULED",
+                source: "GENERATED",
+                workflow: "STANDARD",
+                isAdminOnly: !!(occ as any).isAdminOnly,
+                jobType: occ.jobType ?? null,
+                jobTags: (occ as any).jobTags ?? null,
+                price: occ.price ?? occ.job.defaultPrice ?? null,
+                estimatedMinutes: occ.estimatedMinutes ?? occ.job.estimatedMinutes ?? null,
+                notes: occ.notes ?? occ.job.notes ?? null,
+                frequencyDays: (occ as any).frequencyDays ?? null,
+              } as any,
+            });
+            // Copy default assignees from the job (group first, then
+            // individual). The earlier occurrence's actual assignees are
+            // ignored — the recurring chain restarts from the template.
+            const assigneeSource: { userId: string; role: string | null }[] = [];
+            if (occ.job.defaultGroupId) {
+              const group = await tx.group.findUnique({
+                where: { id: occ.job.defaultGroupId },
+                include: { members: { select: { userId: true, role: true } } },
+              });
+              if (group && !group.archivedAt) {
+                await tx.jobOccurrence.update({
+                  where: { id: nextOcc.id },
+                  data: { assignedGroupId: group.id } as any,
+                });
+                assigneeSource.push({ userId: group.claimerUserId, role: null });
+                for (const m of group.members) {
+                  assigneeSource.push({ userId: m.userId, role: m.role === "observer" ? "observer" : null });
+                }
+              }
+            } else {
+              for (const d of occ.job.defaultAssignees) {
+                assigneeSource.push({ userId: d.userId, role: d.role ?? null });
+              }
+            }
+            if (assigneeSource.length) {
+              const claimerId = assigneeSource[0].userId;
+              await tx.jobOccurrenceAssignee.createMany({
+                data: assigneeSource.map((a, i) => ({
+                  occurrenceId: nextOcc.id,
+                  userId: a.userId,
+                  role: a.role ?? null,
+                  assignedById: i === 0 ? a.userId : claimerId,
+                })),
+                skipDuplicates: true,
+              });
+            }
+          }
+        }
       }
       const updated = await tx.occurrenceChangeRequest.update({
         where: { id },
