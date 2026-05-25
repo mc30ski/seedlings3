@@ -59,17 +59,22 @@ function SignInForm() {
   const { signUp, setActive: setActiveSignUp, isLoaded: signUpLoaded } = useSignUp();
 
   // Steps:
-  //   email → user enters email; we send a code via sign-in or sign-up
-  //   code  → user enters the code; if signup completes, redirect; if Clerk
-  //           returns missing_requirements (e.g. first_name/last_name we
-  //           couldn't prefill), advance to the `name` step
-  //   name  → collect first/last name and call signUp.update to complete
-  const [step, setStep] = useState<"email" | "code" | "name">("email");
+  //   email    → user enters email; we send a code or surface password
+  //   password → existing account has a password — preferred for workers
+  //   code     → user enters verification code; on success, sign in. For
+  //              signup, may advance to `name` if Clerk needs more fields.
+  //   name     → collect first/last name and call signUp.update to complete
+  const [step, setStep] = useState<"email" | "password" | "code" | "name">("email");
   const [mode, setMode] = useState<"signin" | "signup" | null>(null);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  // Cached email-code factor id from the initial signIn.create, so the
+  // "Send code instead" link from the password step can fire prepare
+  // without re-doing signIn.create.
+  const [emailFactorId, setEmailFactorId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,20 +110,36 @@ function SignInForm() {
     const cleanEmail = email.trim();
     try {
       // Try sign-in first. For an existing account, this returns the list
-      // of first-factor strategies; we then prepare email_code to send
-      // the verification code to the on-file address.
+      // of first-factor strategies that this user actually has set up.
+      // Workers who've configured a password get `password` in that list;
+      // everyone else only has `email_code`. We route accordingly:
+      //   - password supported → show password input (faster for daily logins)
+      //   - password not supported → send email code automatically
       const result = await signIn!.create({ identifier: cleanEmail });
       const emailFactor = result.supportedFirstFactors?.find(
         (f: any) => f.strategy === "email_code",
       ) as any;
-      if (!emailFactor) {
-        throw new Error("Email-code sign-in isn't enabled. Contact the admin.");
+      const hasPasswordFactor = !!result.supportedFirstFactors?.find(
+        (f: any) => f.strategy === "password",
+      );
+      if (!emailFactor && !hasPasswordFactor) {
+        throw new Error("No supported sign-in method on this account. Contact the admin.");
       }
+      setMode("signin");
+      // Cache the email-code factor id so the password step's
+      // "Send code instead" fallback can prepare without redoing
+      // signIn.create.
+      setEmailFactorId(emailFactor?.emailAddressId ?? null);
+      if (hasPasswordFactor) {
+        setStep("password");
+        setBusy(false);
+        return;
+      }
+      // No password set — fall back to email code, same as before.
       await signIn!.prepareFirstFactor({
         strategy: "email_code",
         emailAddressId: emailFactor.emailAddressId,
       });
-      setMode("signin");
       setStep("code");
       setBusy(false);
       return;
@@ -249,6 +270,64 @@ function SignInForm() {
     }
   }
 
+  async function handlePasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await signIn!.attemptFirstFactor({
+        strategy: "password",
+        password,
+      });
+      if (result.status === "complete") {
+        await setActiveSignIn!({ session: result.createdSessionId });
+        window.location.href = "/";
+        return;
+      }
+      setError(
+        `Sign-in didn't complete (status: ${result.status}). Try the code option below.`,
+      );
+    } catch (err: any) {
+      const clerkMsg = err?.errors?.[0]?.message;
+      const isNetwork =
+        err?.message === "Load failed" ||
+        /network/i.test(err?.message ?? "") ||
+        err?.name === "ClerkNetworkError";
+      setError(
+        isNetwork
+          ? "Network hiccup talking to the auth service. Tap the button again."
+          : clerkMsg ?? err?.message ?? "Wrong password. Try again or use a code.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // From the password step: "Send code instead" — switches to the email
+  // code flow without re-doing signIn.create (the cached email factor id
+  // is still valid on this signIn attempt).
+  async function sendCodeInstead() {
+    if (!emailFactorId) {
+      // Shouldn't happen — we only show the link when emailFactorId is set.
+      setError("Email-code option isn't available for this account.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await signIn!.prepareFirstFactor({
+        strategy: "email_code",
+        emailAddressId: emailFactorId,
+      });
+      setStep("code");
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't send code. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleNameSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim()) return;
@@ -280,6 +359,8 @@ function SignInForm() {
   function resetToEmail() {
     setStep("email");
     setCode("");
+    setPassword("");
+    setEmailFactorId(null);
     setError(null);
     setMode(null);
   }
@@ -324,6 +405,68 @@ function SignInForm() {
                 w="full"
               >
                 Send verification code
+              </Button>
+            </VStack>
+          </Box>
+        </>
+      )}
+      {step === "password" && (
+        <>
+          <Text fontSize="sm" color="fg.muted" textAlign="center">
+            Sign in to <b>{email}</b>.
+          </Text>
+          <Box
+            as="form"
+            onSubmit={handlePasswordSubmit}
+            w="full"
+            bg="white"
+            p={6}
+            rounded="lg"
+            boxShadow="0 4px 24px rgba(0,0,0,0.06)"
+          >
+            <VStack gap={3} align="stretch">
+              <Input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                size="lg"
+                autoFocus
+                autoComplete="current-password"
+              />
+              {error && (
+                <Text fontSize="xs" color="red.600">{error}</Text>
+              )}
+              <Button
+                type="submit"
+                loading={busy}
+                disabled={!password}
+                colorPalette="teal"
+                size="lg"
+                w="full"
+              >
+                Sign in
+              </Button>
+              {emailFactorId && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void sendCodeInstead()}
+                  disabled={busy}
+                >
+                  Email me a code instead
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={resetToEmail}
+                disabled={busy}
+              >
+                Use a different email
               </Button>
             </VStack>
           </Box>
