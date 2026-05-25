@@ -11,7 +11,8 @@ import { bizDateKey } from "@/src/lib/lib";
 import { computeDatesFromPreset } from "@/src/lib/datePresets";
 import BrandLabel from "@/src/ui/helpers/BrandLabel";
 import { useRouter } from "next/router";
-import { UserButton, SignInButton, useAuth } from "@clerk/clerk-react";
+import Link from "next/link";
+import { UserButton, useAuth } from "@clerk/clerk-react";
 
 import UsersTab from "@/src/ui/tabs/UsersTab";
 import ActivityTab from "@/src/ui/tabs/ActivityTab";
@@ -2557,16 +2558,20 @@ export default function HomePage() {
                 }}
               />
             ) : mounted && !isSignedIn ? (
-              <SignInButton mode="modal">
+              // Route to our custom /sign-in page (unified flow with
+              // password-first when the user has one) instead of Clerk's
+              // stock modal. See BrandLabel.tsx for the same change.
+              <Link href="/sign-in" legacyBehavior>
                 <Text
-                  as="button"
+                  as="a"
                   fontSize="sm"
                   color="blue.600"
+                  cursor="pointer"
                   _hover={{ textDecoration: "underline" }}
                 >
                   Sign in
                 </Text>
-              </SignInButton>
+              </Link>
             ) : null}
           </div>
         </Box>

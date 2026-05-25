@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { HStack, Text, Box } from "@chakra-ui/react";
 import {
   SignedIn,
   SignedOut,
-  SignInButton,
   UserButton,
 } from "@clerk/clerk-react";
 
@@ -75,16 +75,21 @@ export default function BrandLabel({
             <UserButton />
           </SignedIn>
           <SignedOut>
-            <SignInButton mode="modal">
+            {/* Route through our custom /sign-in page (unified passwordless +
+             *  password flow) instead of Clerk's stock modal — the modal
+             *  doesn't show the password field by default for users who
+             *  have one set; our flow does. */}
+            <Link href="/sign-in" legacyBehavior>
               <Text
-                as="button"
+                as="a"
                 fontSize="sm"
                 color="blue.600"
+                cursor="pointer"
                 _hover={{ textDecoration: "underline" }}
               >
                 Sign in
               </Text>
-            </SignInButton>
+            </Link>
           </SignedOut>
         </Box>
       )}
