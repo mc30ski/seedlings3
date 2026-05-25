@@ -37,7 +37,14 @@ type CompletedJob = {
   durationMinutes: number | null;
   photos: Photo[];
   paid: boolean;
-  payment?: { amountPaid: number; method: string; paidAt: string } | null;
+  paymentPending?: boolean;
+  payment?: {
+    amountPaid: number;
+    method: string;
+    paidAt: string;
+    confirmed?: boolean;
+    selfReported?: boolean;
+  } | null;
 };
 
 type UpcomingJob = {
@@ -624,6 +631,11 @@ export default function ClientMyJobsTab() {
                               Paid
                             </Badge>
                           )}
+                          {!job.paid && job.paymentPending && (
+                            <Badge colorPalette="orange" variant="subtle" fontSize="xs" borderRadius="full" px="2">
+                              Payment pending verification
+                            </Badge>
+                          )}
                           {job.jobType && (
                             <Badge colorPalette="gray" variant="subtle" fontSize="xs" borderRadius="full" px="2">
                               {prettyJobType(job.jobType)}
@@ -637,7 +649,7 @@ export default function ClientMyJobsTab() {
                         {job.workers.length > 0 && (
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
-                        {job.payment && (
+                        {job.payment && job.paid && (
                           <HStack gap={2} align="center">
                             <Text fontSize="xs" color="green.600" fontWeight="medium">
                               ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}
@@ -653,6 +665,12 @@ export default function ClientMyJobsTab() {
                               Receipt
                             </Button>
                           </HStack>
+                        )}
+                        {job.payment && !job.paid && job.paymentPending && (
+                          <Text fontSize="xs" color="orange.700">
+                            We received your note that you sent ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}.
+                            We&apos;ll confirm once it lands on our end — your receipt will be available here as soon as we do.
+                          </Text>
                         )}
                       </VStack>
                       <Text fontSize="xs" color="fg.muted" flexShrink={0}>

@@ -2308,19 +2308,25 @@ export default function HomePage() {
                   50% { opacity: 0.6; transform: scale(1.5); box-shadow: 0 0 6px 3px rgba(234,179,8,0.25); }
                 }
               `}</style>
-              <Box
-                w="10px"
-                h="10px"
-                borderRadius="full"
-                bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
-                flexShrink={0}
-                cursor="pointer"
-                _hover={{ transform: "scale(1.3)" }}
-                transition="transform 0.1s"
-                onClick={() => setNetworkInfoOpen(true)}
-                style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
-              />
-              {queueCount > 0 && (
+              {/* Online/offline indicator + queue badge are operational
+               *  signals for staff (workers/admins/supers) — clients have
+               *  no offline-queued actions and shouldn't see network state
+               *  in the chrome. Gate behind hasAnyRole. */}
+              {hasAnyRole && (
+                <Box
+                  w="10px"
+                  h="10px"
+                  borderRadius="full"
+                  bg={isOffline ? (isForceOffline ? "orange.400" : "red.400") : queueCount > 0 ? "yellow.400" : "green.400"}
+                  flexShrink={0}
+                  cursor="pointer"
+                  _hover={{ transform: "scale(1.3)" }}
+                  transition="transform 0.1s"
+                  onClick={() => setNetworkInfoOpen(true)}
+                  style={!isOffline && queueCount > 0 ? { animation: "pulse-dot 1.2s ease-in-out infinite" } : undefined}
+                />
+              )}
+              {hasAnyRole && queueCount > 0 && (
                 <Box
                   as="button"
                   aria-label={`${queueCount} pending offline action${queueCount !== 1 ? "s" : ""}`}
@@ -2401,8 +2407,11 @@ export default function HomePage() {
                 </Text>
               </Box>
             )}
-            {/* Combined alert badge */}
-            {isSignedIn && !alertsReady && (
+            {/* Combined alert badge — staff only. Clients have no alerts
+             *  (no Pending Users / Pending Payments / Unclaimed jobs /
+             *  Planning / Timeline). Without this gate, clients see a
+             *  pulsating red loading dot that never resolves. */}
+            {isSignedIn && hasAnyRole && !alertsReady && (
               <Box
                 width="24px"
                 height="24px"
@@ -2418,7 +2427,7 @@ export default function HomePage() {
                 <Box w="6px" h="6px" borderRadius="full" bg="white" />
               </Box>
             )}
-            {alertsReady && (() => {
+            {hasAnyRole && alertsReady && (() => {
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
