@@ -137,12 +137,14 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
   // Client Payment Requests
+  BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
   REQUEST_PAYMENT_FROM_CLIENT_ENABLED: "client_requests",
   PAYMENT_REQUEST_BASE_URL: "client_requests",
   PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS: "client_requests",
   PAYMENT_REQUEST_STALE_DAYS: "client_requests",
   NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL: "client_requests",
+  NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL: "client_requests",
   VENMO_BUSINESS_HANDLE: "client_requests",
   ZELLE_ADDRESS: "client_requests",
   // Catalogs & Taxonomies
@@ -1847,6 +1849,7 @@ async function seedDatabase() {
 
   // ── Payment request settings ──────────────────────────────────────────────
   const paymentSettings = [
+    { key: "BUSINESS_NAME", value: "Seedlings Lawn Care", description: "Display name of the business — appears on receipts, the public payment page, and other client-facing surfaces." },
     { key: "VENMO_BUSINESS_HANDLE", value: "SeedlingsLawnCare", description: "@handle clients use to send Venmo payments (no @ prefix)." },
     { key: "ZELLE_ADDRESS", value: "seedlingslawncare", description: "Email or phone clients use to send Zelle payments." },
     { key: "PAYMENT_REQUEST_BASE_URL", value: "https://www.seedlings.team", description: "Base URL used when generating payment-request SMS/email links (e.g., {BASE}/pay/{token})." },

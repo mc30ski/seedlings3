@@ -20,6 +20,7 @@ import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
+import { useBranding } from "@/src/lib/useBranding";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
 type Photo = { id: string; url: string; contentType?: string | null };
@@ -41,6 +42,7 @@ type CompletedJob = {
   payment?: {
     amountPaid: number;
     method: string;
+    methodLabel?: string;
     paidAt: string;
     confirmed?: boolean;
     selfReported?: boolean;
@@ -56,6 +58,8 @@ type UpcomingJob = {
   estimatedMinutes?: number | null;
   workflow?: string | null;
   isEstimate?: boolean | null;
+  isOneOff?: boolean | null;
+  frequencyDays?: number | null;
   jobType?: string | null;
   price?: number | null;
   proposalAmount?: number | null;
@@ -111,6 +115,24 @@ function prettyJobType(jt: string | null | undefined): string {
   return jt.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Cadence label for the recurring/one-off chip on an upcoming job card.
+ * Returns null when the job is neither recurring nor flagged one-off
+ * (e.g. estimates, or scheduled visits with no cadence set yet).
+ */
+function cadenceLabel(job: { isOneOff?: boolean | null; frequencyDays?: number | null; workflow?: string | null }): string | null {
+  if (job.workflow === "ESTIMATE") return null;
+  if (job.isOneOff) return "One-time";
+  const f = job.frequencyDays ?? null;
+  if (!f || f <= 0) return null;
+  if (f === 7) return "Weekly";
+  if (f === 14) return "Every 2 weeks";
+  if (f === 21) return "Every 3 weeks";
+  if (f === 28) return "Every 4 weeks";
+  if (f === 30) return "Monthly";
+  return `Every ${f} days`;
+}
+
 function LazyPhoto({ src, onClick }: { src: string; onClick?: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
@@ -152,8 +174,16 @@ function LazyPhoto({ src, onClick }: { src: string; onClick?: () => void }) {
 }
 
 export default function ClientMyJobsTab() {
+  const { businessName } = useBranding();
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
+  // Month-by-month pagination for completed history. Default window
+  // shows just the current calendar month; "Show more" expands one
+  // month at a time up to a year. Server enforces the same ceilings.
+  const [completedMonthsBack, setCompletedMonthsBack] = useState(1);
+  const [completedHasMore, setCompletedHasMore] = useState(false);
+  const [completedMaxMonths, setCompletedMaxMonths] = useState(12);
+  const [completedLoadingMore, setCompletedLoadingMore] = useState(false);
   const [upcoming, setUpcoming] = useState<UpcomingJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewerPhoto, setViewerPhoto] = useState<string | null>(null);
@@ -224,10 +254,14 @@ export default function ClientMyJobsTab() {
       setProfile(me);
       if (me.linked) {
         const [jobsRes, upcomingRes] = await Promise.all([
-          apiGet<{ items: CompletedJob[] }>("/api/client/jobs"),
+          apiGet<{ items: CompletedJob[]; monthsBack?: number; maxMonthsBack?: number; hasMore?: boolean }>(
+            `/api/client/jobs?monthsBack=${completedMonthsBack}`,
+          ),
           apiGet<{ items: UpcomingJob[] }>("/api/client/upcoming"),
         ]);
         setCompleted(jobsRes.items);
+        setCompletedHasMore(!!jobsRes.hasMore);
+        if (typeof jobsRes.maxMonthsBack === "number") setCompletedMaxMonths(jobsRes.maxMonthsBack);
         setUpcoming(upcomingRes.items);
       }
     } catch (err) {
@@ -235,6 +269,27 @@ export default function ClientMyJobsTab() {
       setProfile({ linked: false });
     }
     setLoading(false);
+  }
+
+  // Expand the history window by one calendar month and re-fetch. Server
+  // returns everything from the new window in one shot (cheap — capped at
+  // 100 rows), so we replace the list rather than concatenating.
+  async function loadMoreHistory() {
+    if (!completedHasMore || completedLoadingMore) return;
+    const next = Math.min(completedMaxMonths, completedMonthsBack + 1);
+    setCompletedLoadingMore(true);
+    try {
+      const jobsRes = await apiGet<{ items: CompletedJob[]; hasMore?: boolean }>(
+        `/api/client/jobs?monthsBack=${next}`,
+      );
+      setCompleted(jobsRes.items);
+      setCompletedMonthsBack(next);
+      setCompletedHasMore(!!jobsRes.hasMore);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Couldn't load older history.", err) });
+    } finally {
+      setCompletedLoadingMore(false);
+    }
   }
 
   async function confirmCandidate(contactId?: string) {
@@ -281,16 +336,12 @@ export default function ClientMyJobsTab() {
     try {
       const { type, job } = actionDialog;
       if (type === "reschedule") {
-        if (!proposedDate) {
-          publishInlineMessage({ type: "WARNING", text: "Please choose a proposed date." });
-          setActionBusy(false);
-          return;
-        }
+        // No client-proposed date in this flow — we just notify the admin
+        // and they reach out to find a new time directly with the client.
         await apiPost(`/api/client/occurrences/${job.id}/reschedule-request`, {
-          proposedStartAt: new Date(proposedDate).toISOString(),
           comment: actionComment.trim() || undefined,
         });
-        publishInlineMessage({ type: "SUCCESS", text: "Reschedule request sent." });
+        publishInlineMessage({ type: "SUCCESS", text: "Request sent — we'll reach out shortly." });
       } else if (type === "skip") {
         await apiPost(`/api/client/occurrences/${job.id}/skip-request`, {
           comment: actionComment.trim() || undefined,
@@ -345,14 +396,17 @@ export default function ClientMyJobsTab() {
     if (!job.payment || !profile?.client) return;
     const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
     const data: ReceiptData = {
-      businessName: "Seedlings Lawn Care",
+      businessName,
       clientName: profile.client.displayName,
       propertyAddress: addr,
       jobType: prettyJobType(job.jobType) || prettyJobType(job.kind) || "Lawn Care",
       serviceDate: job.startAt ? fmtDate(job.startAt) : "—",
       completedDate: job.completedAt ? fmtDate(job.completedAt) : "—",
       amount: job.payment.amountPaid,
-      method: job.payment.method,
+      // Server pre-resolves the method label from PAYMENT_METHODS so the
+      // receipt PDF doesn't need its own taxonomy. Fall back to the raw
+      // key on the rare chance the server skipped it.
+      methodLabel: job.payment.methodLabel ?? job.payment.method,
       workers: job.workers,
       receiptId: job.id.slice(-8).toUpperCase(),
     };
@@ -524,6 +578,22 @@ export default function ClientMyJobsTab() {
                               {prettyJobType(job.jobType)}
                             </Badge>
                           )}
+                          {(() => {
+                            const lbl = cadenceLabel(job);
+                            if (!lbl) return null;
+                            const isOneTime = job.isOneOff;
+                            return (
+                              <Badge
+                                colorPalette={isOneTime ? "gray" : "blue"}
+                                variant="subtle"
+                                fontSize="xs"
+                                borderRadius="full"
+                                px="2"
+                              >
+                                {lbl}
+                              </Badge>
+                            );
+                          })()}
                           {job.estimatedMinutes && (
                             <Text fontSize="xs" color="fg.muted">~{formatDuration(job.estimatedMinutes)}</Text>
                           )}
@@ -555,12 +625,11 @@ export default function ClientMyJobsTab() {
                             <Text fontSize="xs" fontWeight="semibold" color="orange.800">
                               {job.pendingChangeRequest.kind === "RESCHEDULE" ? "Reschedule requested" : "Skip requested"}
                             </Text>
-                            {job.pendingChangeRequest.kind === "RESCHEDULE" && job.pendingChangeRequest.proposedStartAt && (
-                              <Text fontSize="xs" color="orange.700">
-                                Proposed: {fmtDateWeekday(job.pendingChangeRequest.proposedStartAt)}
-                              </Text>
-                            )}
-                            <Text fontSize="2xs" color="orange.600">Awaiting admin approval</Text>
+                            <Text fontSize="2xs" color="orange.600">
+                              {job.pendingChangeRequest.kind === "RESCHEDULE"
+                                ? "We'll reach out shortly to find a new time."
+                                : "Awaiting admin approval."}
+                            </Text>
                           </Box>
                           <Button size="xs" variant="ghost" colorPalette="red" onClick={() => void cancelChangeRequest(job)}>
                             Cancel
@@ -606,11 +675,14 @@ export default function ClientMyJobsTab() {
         </Box>
       )}
 
-      {/* Completed — last 30 days */}
+      {/* Completed service history — windowed by month, with "Show more"
+       *  to expand up to a full year. */}
       {completed.length > 0 && (
         <Box mb={5}>
           <Text fontSize="xs" fontWeight="semibold" color="green.600" mb={2} px={1} textTransform="uppercase" letterSpacing="wide">
-            Completed — Last 30 days
+            Service history — {completedMonthsBack === 1
+              ? "this month"
+              : `last ${completedMonthsBack} months`}
           </Text>
           <VStack align="stretch" gap={2}>
             {completed.map((job) => {
@@ -690,6 +762,23 @@ export default function ClientMyJobsTab() {
               );
             })}
           </VStack>
+          {completedHasMore ? (
+            <HStack justify="center" mt={3}>
+              <Button
+                size="sm"
+                variant="outline"
+                colorPalette="green"
+                onClick={() => void loadMoreHistory()}
+                loading={completedLoadingMore}
+              >
+                Show more
+              </Button>
+            </HStack>
+          ) : completedMonthsBack >= completedMaxMonths ? (
+            <Text fontSize="xs" color="fg.muted" textAlign="center" mt={3}>
+              Showing the last year of service. Contact us if you need older records.
+            </Text>
+          ) : null}
         </Box>
       )}
 
@@ -743,24 +832,17 @@ export default function ClientMyJobsTab() {
                   {actionDialog?.type === "reschedule" && (
                     <>
                       <Box>
-                        <Text fontSize="sm" mb={1}>Preferred new date & time *</Text>
-                        <Input
-                          type="datetime-local"
-                          value={proposedDate}
-                          onChange={(e) => setProposedDate(e.target.value)}
-                        />
-                      </Box>
-                      <Box>
-                        <Text fontSize="sm" mb={1}>Reason (optional)</Text>
+                        <Text fontSize="sm" mb={1}>Anything we should know? (optional)</Text>
                         <Textarea
                           value={actionComment}
                           onChange={(e) => setActionComment(e.target.value)}
-                          placeholder="e.g., Out of town that week"
-                          rows={2}
+                          placeholder="e.g., Out of town next week, prefer mornings, etc."
+                          rows={3}
                         />
                       </Box>
                       <Text fontSize="xs" color="fg.muted">
-                        Your request will be sent to your service provider for approval. The current date stays scheduled until they confirm.
+                        We&apos;ll reach out shortly to find a new time that works for you.
+                        Your current visit stays scheduled until we confirm a new one.
                       </Text>
                     </>
                   )}
@@ -825,7 +907,6 @@ export default function ClientMyJobsTab() {
                     colorPalette={actionDialog?.type === "decline" ? "red" : actionDialog?.type === "accept" ? "green" : "blue"}
                     onClick={() => void submitAction()}
                     loading={actionBusy}
-                    disabled={actionDialog?.type === "reschedule" && !proposedDate}
                   >
                     {actionDialog?.type === "reschedule" && "Send Request"}
                     {actionDialog?.type === "skip" && "Send Skip Request"}

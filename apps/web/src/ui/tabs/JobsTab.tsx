@@ -23,6 +23,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
+import { useBranding } from "@/src/lib/useBranding";
 import { type TabPropsType, type WorkerOccurrence, JOB_OCCURRENCE_STATUS, JOB_KIND } from "@/src/lib/types";
 import SearchWithClear from "@/src/ui/components/SearchWithClear";
 import {
@@ -33,6 +34,7 @@ import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 import HolidayChip from "@/src/ui/components/HolidayChip";
+import ClientRequestsSection from "@/src/ui/components/ClientRequestsSection";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -221,6 +223,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // Method labels resolved from PAYMENT_METHODS taxonomy (single source of
   // truth — edit in Super → Settings, no code change here).
   const { labelFor: methodLabel } = usePaymentMethodLabels();
+  const { businessName } = useBranding();
 
   function shareOccurrenceLink(occId: string, startAt?: string | null) {
     // Embed the occurrence's startAt so the recipient's JobsTab can anchor its
@@ -2829,6 +2832,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
         </>)}
         <VStack align="stretch" gap={3}>
+          {forAdmin && <ClientRequestsSection />}
           {forAdmin && !viewAsUserIds?.length && (
             <Box px={3} py={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.200" borderRadius="md">
               <Text fontSize="xs" color="yellow.800">Showing all jobs for all workers, including unclaimed.</Text>
@@ -4680,14 +4684,14 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                   const poc = occ.job?.property?.pointOfContact;
                                   setReceiptContact({ phone: poc?.phone, email: poc?.email });
                                   setReceiptData({
-                                    businessName: "Seedlings Lawn Care",
+                                    businessName,
                                     clientName: occ.job?.property?.client?.displayName ?? "Client",
                                     propertyAddress: [occ.job?.property?.street1, occ.job?.property?.city, occ.job?.property?.state].filter(Boolean).join(", "),
                                     jobType: [parseJobTags(occ).length > 0 ? parseJobTags(occ).map(jobTagLabel).join(", ") : null, (occ as any).jobType ? `Custom: ${(occ as any).jobType}` : null].filter(Boolean).join(" · ") || occ.kind || "Lawn Care",
                                     serviceDate: occ.startAt ? fmtDate(occ.startAt) : "—",
                                     completedDate: occ.completedAt ? fmtDate(occ.completedAt) : "—",
                                     amount: (occ.payment as any).amountPaid,
-                                    method: (occ.payment as any).method ?? "CASH",
+                                    methodLabel: methodLabel((occ.payment as any).method ?? "CASH"),
                                     workers: (occ.assignees ?? []).filter((a) => a.role !== "observer").map((a) => a.user?.displayName ?? ""),
                                     receiptId: occ.id.slice(-8).toUpperCase(),
                                   });
