@@ -21,6 +21,7 @@ import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
 import { useBranding } from "@/src/lib/useBranding";
+import SafePhoto from "@/src/ui/components/SafePhoto";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 
 type Photo = { id: string; url: string; contentType?: string | null };
@@ -131,46 +132,6 @@ function cadenceLabel(job: { isOneOff?: boolean | null; frequencyDays?: number |
   if (f === 28) return "Every 4 weeks";
   if (f === 30) return "Monthly";
   return `Every ${f} days`;
-}
-
-function LazyPhoto({ src, onClick }: { src: string; onClick?: () => void }) {
-  const [loaded, setLoaded] = useState(false);
-  const [inView, setInView] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
-      { rootMargin: "200px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <Box ref={ref} flexShrink={0} w="80px" h="80px" rounded="lg" overflow="hidden" cursor={onClick ? "pointer" : undefined} onClick={onClick} borderWidth="1px" borderColor="gray.200" position="relative">
-      {!loaded && (
-        <>
-          <style>{`
-            @keyframes img-shimmer {
-              0% { background-position: 200% 0; }
-              100% { background-position: -200% 0; }
-            }
-          `}</style>
-          <Box position="absolute" inset="0" style={{
-            background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
-            backgroundSize: "200% 100%",
-            animation: "img-shimmer 1.5s ease-in-out infinite",
-          }} />
-        </>
-      )}
-      {inView && (
-        <img src={src} alt="Photo" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: loaded ? 1 : 0, transition: "opacity 0.3s ease" }} onLoad={() => setLoaded(true)} />
-      )}
-    </Box>
-  );
 }
 
 export default function ClientMyJobsTab() {
@@ -663,7 +624,7 @@ export default function ClientMyJobsTab() {
                     {(job.photos ?? []).length > 0 && (
                       <HStack gap={2} mt={2} wrap="wrap">
                         {(job.photos ?? []).map((p, idx) => (
-                          <LazyPhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos!, idx)} />
+                          <SafePhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos!, idx)} />
                         ))}
                       </HStack>
                     )}
@@ -753,7 +714,7 @@ export default function ClientMyJobsTab() {
                     {job.photos.length > 0 && (
                       <HStack gap={2} mt={2} wrap="wrap">
                         {job.photos.map((p, idx) => (
-                          <LazyPhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos, idx)} />
+                          <SafePhoto key={p.id} src={p.url} onClick={() => openViewer(job.photos, idx)} />
                         ))}
                       </HStack>
                     )}
@@ -795,7 +756,20 @@ export default function ClientMyJobsTab() {
           {viewerIdx > 0 && (
             <Box position="absolute" left="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigateViewer(-1); }} userSelect="none">◀</Box>
           )}
-          <img src={viewerPhoto} alt="Photo" style={{ maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: "8px" }} onClick={(e) => e.stopPropagation()} />
+          {/* If the photo 404s while the viewer is open (R2 object was
+           *  purged), close the viewer instead of leaving a broken-image
+           *  icon visible. publishInlineMessage gives the user a hint. */}
+          <img
+            src={viewerPhoto}
+            alt="Photo"
+            style={{ maxWidth: "90vw", maxHeight: "85vh", objectFit: "contain", borderRadius: "8px" }}
+            onClick={(e) => e.stopPropagation()}
+            onError={() => {
+              setViewerPhoto(null);
+              setViewerPhotos([]);
+              publishInlineMessage({ type: "INFO", text: "That photo is no longer available." });
+            }}
+          />
           {viewerIdx < viewerPhotos.length - 1 && (
             <Box position="absolute" right="3" top="50%" transform="translateY(-50%)" color="white" fontSize="2xl" cursor="pointer" p={2} onClick={(e) => { e.stopPropagation(); navigateViewer(1); }} userSelect="none">▶</Box>
           )}

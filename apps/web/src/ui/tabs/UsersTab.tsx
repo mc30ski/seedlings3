@@ -29,7 +29,12 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 //TODO:
-export type TabRolePropType = { role: "worker" | "admin" };
+// `readOnly` lets non-super admins see the directory without any
+// mutation surface — no approve, no role/worker-type changes, no
+// privilege toggles, no delete, and pending users are hidden entirely
+// (since admins can't act on them anyway). User-management is now a
+// SUPER-only activity.
+export type TabRolePropType = { role: "worker" | "admin"; readOnly?: boolean };
 
 type ApiUser = {
   id: string;
@@ -100,7 +105,7 @@ const workerTypeFilterItems = [
 ];
 const workerTypeFilterCollection = createListCollection({ items: workerTypeFilterItems });
 
-export default function UsersTab({ role = "worker" }: TabRolePropType) {
+export default function UsersTab({ role = "worker", readOnly = false }: TabRolePropType) {
   if (role !== "admin") return <UnavailableNotice />;
 
   const [items, setItems] = useState<ApiUser[]>([]);
@@ -249,6 +254,13 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
 
   const filtered = useMemo(() => {
     let rows = items;
+    // Read-only mode: pending users hidden entirely. Admins (non-super)
+    // can't act on them and shouldn't be tempted to try; the "Pending
+    // Users" alert badge has been moved to super-only, so this is the
+    // only surface where they might have seen them.
+    if (readOnly) {
+      rows = rows.filter((u) => u.isApproved);
+    }
     // Client filter: approved, no roles
     if (accessRole === "client") {
       rows = rows.filter((u) => u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN"));
@@ -269,7 +281,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
       });
     }
     return rows;
-  }, [items, q, workerTypeFilter, accessRole]);
+  }, [items, q, workerTypeFilter, accessRole, readOnly]);
 
   async function approve(userId: string) {
     try {
@@ -473,7 +485,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
           inputId="user-search"
           placeholder="Search…"
         />
-        <Select.Root
+        {/* Status filter — hidden in read-only mode since pending users
+         *  are excluded from the list entirely. Approved-only is the
+         *  only meaningful view for read-only admins. */}
+        {!readOnly && <Select.Root
           collection={statusFilterCollection}
           value={[status]}
           onValueChange={(e) => setStatus(e.value[0] as Status)}
@@ -496,7 +511,7 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
               ))}
             </Select.Content>
           </Select.Positioner>
-        </Select.Root>
+        </Select.Root>}
         <Select.Root
           collection={roleFilterCollection}
           value={[accessRole]}
@@ -685,8 +700,10 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                   </HStack>
                 </Box>
 
-                {/* Actions */}
-                {meReady && (
+                {/* Actions — entire mutation surface is super-only. In
+                 *  read-only mode (Admin Directory → Users) the card
+                 *  renders identity badges only, no buttons. */}
+                {!readOnly && meReady && (
                   <Stack
                     direction="row"
                     gap="2"
@@ -874,8 +891,9 @@ export default function UsersTab({ role = "worker" }: TabRolePropType) {
                 )}
 
                 {/* Permissions — collapsed by default. Header toggles open;
-                    body shows the same per-permission switches as before. */}
-                {isWorker && (() => {
+                    body shows the same per-permission switches as before.
+                    Super-only — admin's read-only view never sees toggles. */}
+                {!readOnly && isWorker && (() => {
                   const open = permsOpen.has(u.id);
                   return (
                     <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">

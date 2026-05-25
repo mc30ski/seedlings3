@@ -14,6 +14,7 @@ import {
 import { LayoutGrid, List as ListIcon } from "lucide-react";
 import { apiGet } from "@/src/lib/api";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
+import SafePhoto from "@/src/ui/components/SafePhoto";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 
 type FeedPhoto = {
@@ -330,70 +331,22 @@ export default function ClientFeedTab() {
   );
 }
 
+// Thin wrappers over the shared SafePhoto component so call sites stay
+// the same while gaining "broken photo → hide square" behavior. R2
+// objects do get cleaned up over time (e.g. when admins prune old jobs)
+// and the previous shimmer would otherwise run forever for missing
+// images.
 function LazyImage({ src, alt, onClick }: { src: string; alt: string; onClick?: () => void }) {
-  const [loaded, setLoaded] = useState(false);
-  const [inView, setInView] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  return <SafePhoto src={src} alt={alt} onClick={onClick} size={90} />;
+}
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
-      { rootMargin: "200px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
+function HeroImage({ src, alt }: { src: string; alt: string }) {
+  // Hero is a flexible-width banner inside its parent. SafePhoto with
+  // layout="fill" stretches to fill that container; the parent provides
+  // the fixed 240px height.
   return (
-    <Box
-      ref={ref}
-      flexShrink={0}
-      w="90px"
-      h="90px"
-      rounded="lg"
-      overflow="hidden"
-      cursor={onClick ? "pointer" : undefined}
-      onClick={onClick}
-      borderWidth="1px"
-      borderColor="gray.200"
-      position="relative"
-    >
-      {/* Skeleton shimmer */}
-      {!loaded && (
-        <>
-          <style>{`
-            @keyframes img-shimmer {
-              0% { background-position: 200% 0; }
-              100% { background-position: -200% 0; }
-            }
-          `}</style>
-          <Box
-            position="absolute"
-            inset="0"
-            style={{
-              background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
-              backgroundSize: "200% 100%",
-              animation: "img-shimmer 1.5s ease-in-out infinite",
-            }}
-          />
-        </>
-      )}
-      {inView && (
-        <img
-          src={src}
-          alt={alt}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            opacity: loaded ? 1 : 0,
-            transition: "opacity 0.3s ease",
-          }}
-          onLoad={() => setLoaded(true)}
-        />
-      )}
+    <Box w="full" h="240px" bg="gray.200" overflow="hidden">
+      <SafePhoto src={src} alt={alt} layout="fill" rounded="none" bordered={false} />
     </Box>
   );
 }
@@ -455,59 +408,6 @@ function TileCard({ item, onPhotoClick }: { item: FeedItem; onPhotoClick: (photo
         </HStack>
       </Card.Body>
     </Card.Root>
-  );
-}
-
-function HeroImage({ src, alt }: { src: string; alt: string }) {
-  const [loaded, setLoaded] = useState(false);
-  const [inView, setInView] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
-      { rootMargin: "300px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <Box ref={ref} position="relative" w="full" h="240px" bg="gray.200" overflow="hidden">
-      {!loaded && (
-        <>
-          <style>{`
-            @keyframes hero-shimmer {
-              0% { background-position: 200% 0; }
-              100% { background-position: -200% 0; }
-            }
-          `}</style>
-          <Box
-            position="absolute"
-            inset="0"
-            style={{
-              background: "linear-gradient(90deg, #e2e8f0 0%, #f7fafc 50%, #e2e8f0 100%)",
-              backgroundSize: "200% 100%",
-              animation: "hero-shimmer 1.5s ease-in-out infinite",
-            }}
-          />
-        </>
-      )}
-      {inView && (
-        <img
-          src={src}
-          alt={alt}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            opacity: loaded ? 1 : 0,
-            transition: "opacity 0.3s ease",
-          }}
-          onLoad={() => setLoaded(true)}
-        />
-      )}
-    </Box>
   );
 }
 

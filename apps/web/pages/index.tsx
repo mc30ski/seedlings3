@@ -718,7 +718,11 @@ export default function HomePage() {
       value: "users",
       label: "Users",
       icon: AiOutlineTeam,
-      content: wrapWithInlineMessage(<UsersTab role="admin" />),
+      // Read-only for admins. User management (approve / role changes /
+      // privilege toggles / delete) moved to the Super tab. Admins see
+      // the directory for context but can't mutate it, and pending
+      // users are hidden entirely so the queue doesn't tempt action.
+      content: wrapWithInlineMessage(<UsersTab role="admin" readOnly />),
     },
     {
       value: "groups",
@@ -969,6 +973,19 @@ export default function HomePage() {
       icon: FiShield,
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
+        {
+          // ── Directory ──
+          // Super-only writable Users view. The same component admins
+          // see read-only on their Directory tab, but with full mutation
+          // surface (approve / role changes / privilege toggles / delete).
+          // The "Pending Users" alert chip in the title bar routes here.
+          value: "users",
+          label: "Users",
+          icon: AiOutlineTeam,
+          content: wrapWithInlineMessage(<UsersTab role="admin" />),
+          category: "Directory",
+          categoryIcon: AiOutlineTeam,
+        },
         {
           // ── Money ──
           value: "payments",
@@ -1294,11 +1311,14 @@ export default function HomePage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // ---- Pending approvals badge (admin only) ----
+  // ---- Pending approvals badge (super only) ----
+  // User-management is a Super activity now — admins see the directory
+  // read-only and don't need a pending count. Loader bails for non-super
+  // so we don't spend an API call we won't render.
   const [pending, setPending] = useState<number>(0);
 
   const loadPending = useCallback(async () => {
-    if (!isAdmin) {
+    if (!isSuper) {
       setPending(0);
       if (me) markAlertLoaded("pending");
       return;
@@ -1312,7 +1332,7 @@ export default function HomePage() {
       setPending(0);
     }
     markAlertLoaded("pending");
-  }, [isAdmin]);
+  }, [isSuper]);
 
   useEffect(() => {
     void loadPending();
@@ -2280,9 +2300,11 @@ export default function HomePage() {
   }, [me?.isApproved, meLoading]);
 
   const goToApprovals = useCallback(() => {
+    // User management is now a Super-only activity. The "Pending Users"
+    // alert chip in the title bar (also super-gated) routes here.
     window.sessionStorage.setItem("admin:usersOpenOnce", JSON.stringify({ status: "pending" }));
-    setTopTab("admin");
-    setAdminInnerTab("users");
+    setTopTab("super");
+    setSuperInnerTab("users");
     // Also dispatch event for when component is already mounted
     setTimeout(() => {
       window.dispatchEvent(
@@ -2485,7 +2507,7 @@ export default function HomePage() {
             {hasAnyRole && alertsReady && (() => {
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
-              if (isAdmin && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (isSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
               if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
                 label: "Awaiting payment",
