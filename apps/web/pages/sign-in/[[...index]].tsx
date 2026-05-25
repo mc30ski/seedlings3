@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Heading,
+  HStack,
   Input,
   Text,
   VStack,
@@ -370,8 +371,8 @@ function SignInForm() {
       {step === "email" && (
         <>
           <Text fontSize="sm" color="fg.muted" textAlign="center">
-            Enter your email — we&apos;ll send you a verification code to type in.
-            New here or returning, it&apos;s the same step.
+            Enter your email to continue. If you have a password, you&apos;ll
+            type it next; otherwise we&apos;ll send a verification code.
           </Text>
           <Box
             as="form"
@@ -404,7 +405,7 @@ function SignInForm() {
                 size="lg"
                 w="full"
               >
-                Send verification code
+                Continue
               </Button>
             </VStack>
           </Box>
@@ -446,19 +447,33 @@ function SignInForm() {
                 size="lg"
                 w="full"
               >
-                Sign in
+                Sign in with password
               </Button>
+
               {emailFactorId && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void sendCodeInstead()}
-                  disabled={busy}
-                >
-                  Email me a code instead
-                </Button>
+                <>
+                  {/* Divider with "or" label so the code option reads as a
+                   *  genuine alternative — not a small "forgot password?"
+                   *  afterthought. */}
+                  <HStack align="center" my={1}>
+                    <Box flex={1} h="1px" bg="gray.200" />
+                    <Text fontSize="xs" color="fg.muted">or</Text>
+                    <Box flex={1} h="1px" bg="gray.200" />
+                  </HStack>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    colorPalette="teal"
+                    size="lg"
+                    w="full"
+                    loading={busy}
+                    onClick={() => void sendCodeInstead()}
+                  >
+                    Email me a one-time code
+                  </Button>
+                </>
               )}
+
               <Button
                 type="button"
                 variant="ghost"

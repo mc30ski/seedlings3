@@ -32,6 +32,7 @@ import {
 import UnavailableNotice from "@/src/ui/notices/UnavailableNotice";
 import LoadingCenter from "@/src/ui/helpers/LoadingCenter";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
+import HolidayChip from "@/src/ui/components/HolidayChip";
 import StatusButton from "@/src/ui/components/StatusButton";
 import AddAssigneeDialog from "@/src/ui/dialogs/AddAssigneeDialog";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
@@ -2880,6 +2881,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full" px="1.5" fontSize="2xs" lineHeight="1">
                     {group.items.length}
                   </Badge>
+                  <HolidayChip dateKey={group.key} />
                   <Text fontSize="xs" color="gray.400">{collapsedGroups.has(group.key) ? "▶" : "▼"}</Text>
                 </HStack>
                 <Box flex="1" borderBottomWidth="2px" borderColor="gray.300" />
