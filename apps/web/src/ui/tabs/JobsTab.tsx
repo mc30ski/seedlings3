@@ -3990,6 +3990,16 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
+                          {/* "Awaiting admin approval" — surfaces when a
+                           *  Payment row exists on a PENDING_PAYMENT
+                           *  occurrence but admin hasn't confirmed yet.
+                           *  Without this badge, the job card looked
+                           *  identical to a "ready to take payment"
+                           *  one, even though the action button below
+                           *  is intentionally inert in this state. */}
+                          {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
+                            <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
@@ -4304,6 +4314,16 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
+                          {/* "Awaiting admin approval" — surfaces when a
+                           *  Payment row exists on a PENDING_PAYMENT
+                           *  occurrence but admin hasn't confirmed yet.
+                           *  Without this badge, the job card looked
+                           *  identical to a "ready to take payment"
+                           *  one, even though the action button below
+                           *  is intentionally inert in this state. */}
+                          {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
+                            <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
