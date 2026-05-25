@@ -26,7 +26,7 @@ export type AdminTabs =
   | "documents"
   | "timeline";
 
-export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "profile" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline" | "payments";
+export type SuperTabs = "operations" | "unclaimed" | "audit" | "settings" | "profile" | "business-expenses" | "supplies" | "pricing" | "documents" | "timeline" | "payments" | "users";
 
 export type ClientTabs = "my-jobs" | "public" | "services";
 
