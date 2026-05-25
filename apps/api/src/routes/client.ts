@@ -240,7 +240,13 @@ export default async function clientRoutes(app: FastifyInstance) {
           orderBy: { createdAt: "asc" },
         },
         payment: {
-          select: { amountPaid: true, method: true, createdAt: true },
+          select: {
+            amountPaid: true,
+            method: true,
+            createdAt: true,
+            confirmed: true,
+            selfReported: true,
+          },
         },
       },
     });
@@ -272,11 +278,21 @@ export default async function clientRoutes(app: FastifyInstance) {
             ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
             : null,
           photos: photos.filter(Boolean),
-          paid: !!occ.payment,
+          // `paid` is true ONLY after the admin confirms the payment.
+          // Until then, the row exists (because the client self-reported
+          // via /pay/[token]) but the money hasn't been verified
+          // received. We expose a separate `paymentPending` flag so the
+          // client UI can render "we got your note — we'll confirm
+          // shortly" instead of an outright "Paid" badge and a downloadable
+          // receipt for money the business hasn't actually counted yet.
+          paid: !!occ.payment?.confirmed,
+          paymentPending: !!occ.payment && !occ.payment.confirmed,
           payment: occ.payment ? {
             amountPaid: occ.payment.amountPaid,
             method: occ.payment.method,
             paidAt: occ.payment.createdAt,
+            confirmed: occ.payment.confirmed,
+            selfReported: occ.payment.selfReported,
           } : null,
         };
       })
