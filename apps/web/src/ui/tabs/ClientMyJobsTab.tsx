@@ -298,15 +298,32 @@ export default function ClientMyJobsTab() {
     try {
       const { type, job } = actionDialog;
       if (type === "reschedule") {
-        // Suggested date is optional but defaults to 3 days from now.
-        // Admin gets it as context for the conversation — not an
-        // auto-applied command. Date-only: jobs are scheduled by day.
-        // `+T12:00:00Z` anchors to noon UTC so it renders as the right
-        // calendar day in any reasonable display timezone (same
+        // Suggested date is required and must be in the future. Browser
+        // <input min> usually enforces this but some implementations
+        // ignore the attribute, so re-check here. Server has a third
+        // layer.
+        if (!proposedDate) {
+          publishInlineMessage({ type: "WARNING", text: "Pick a suggested new date." });
+          setActionBusy(false);
+          return;
+        }
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const minDate = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+        if (proposedDate < minDate) {
+          publishInlineMessage({ type: "WARNING", text: "The suggested date must be in the future." });
+          setActionBusy(false);
+          return;
+        }
+        // Admin gets the suggestion as context for the conversation —
+        // not an auto-applied command. Date-only: jobs are scheduled by
+        // day. `+T12:00:00Z` anchors to noon UTC so it renders as the
+        // right calendar day in any reasonable display timezone (same
         // convention OccurrenceDialog uses for startAt).
         await apiPost(`/api/client/occurrences/${job.id}/reschedule-request`, {
           comment: actionComment.trim() || undefined,
-          proposedStartAt: proposedDate ? proposedDate + "T12:00:00Z" : undefined,
+          proposedStartAt: proposedDate + "T12:00:00Z",
         });
         publishInlineMessage({ type: "SUCCESS", text: "Request sent — we'll reach out shortly." });
       } else if (type === "skip") {
@@ -863,15 +880,32 @@ export default function ClientMyJobsTab() {
                     </Box>
                   )}
 
-                  {actionDialog?.type === "reschedule" && (
+                  {actionDialog?.type === "reschedule" && (() => {
+                    // Hard floor: tomorrow (in local time). Both as the
+                    // <input min> attribute (browser-enforced when honored)
+                    // and as a client-side validation in submitAction, with
+                    // a third layer of validation on the server.
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    const minDate = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+                    const isPast = !!proposedDate && proposedDate < minDate;
+                    return (
                     <>
                       <Box>
-                        <Text fontSize="sm" mb={1}>Suggested new date</Text>
+                        <Text fontSize="sm" mb={1}>Suggested new date *</Text>
                         <Input
                           type="date"
                           value={proposedDate}
+                          min={minDate}
+                          required
                           onChange={(e) => setProposedDate(e.target.value)}
                         />
+                        {isPast && (
+                          <Text fontSize="xs" color="red.600" mt={1}>
+                            Pick a date in the future.
+                          </Text>
+                        )}
                         <Text fontSize="xs" color="fg.muted" mt={1}>
                           This is just a suggestion. We&apos;ll reach out to confirm a date
                           that actually works on our end before anything moves.
@@ -890,7 +924,8 @@ export default function ClientMyJobsTab() {
                         Your current visit stays scheduled until we confirm a new one.
                       </Text>
                     </>
-                  )}
+                    );
+                  })()}
 
                   {actionDialog?.type === "skip" && (
                     <>

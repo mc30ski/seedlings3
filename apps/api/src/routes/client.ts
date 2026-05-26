@@ -558,14 +558,25 @@ export default async function clientRoutes(app: FastifyInstance) {
     });
     if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
     const comment = body.comment ? String(body.comment).trim() : null;
-    // Optional suggested date — validated only if provided.
-    let proposed: Date | null = null;
-    if (body.proposedStartAt) {
-      const d = new Date(String(body.proposedStartAt));
-      if (isNaN(d.getTime())) {
-        throw app.httpErrors.badRequest("proposedStartAt is not a valid date.");
-      }
-      proposed = d;
+    // Required suggested date — must parse AND be in the future.
+    // Three layers of defense (browser min attr, client submit guard,
+    // and here) — this one is the final gate so client cannot bypass
+    // by crafting a direct API call.
+    if (!body.proposedStartAt) {
+      throw app.httpErrors.badRequest("proposedStartAt is required.");
+    }
+    const proposed = new Date(String(body.proposedStartAt));
+    if (isNaN(proposed.getTime())) {
+      throw app.httpErrors.badRequest("proposedStartAt is not a valid date.");
+    }
+    // "In the future" = after start-of-today, so a same-day reschedule
+    // (e.g., a client picking today late at night for a tomorrow visit
+    // that already moved past midnight) doesn't get rejected. The UI
+    // pushes them at least to tomorrow anyway.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (proposed.getTime() < startOfToday.getTime()) {
+      throw app.httpErrors.badRequest("The suggested date must be in the future.");
     }
     const created = await prisma.occurrenceChangeRequest.create({
       data: {
