@@ -97,6 +97,21 @@ function fmtDateTime(iso: string | null): string {
   }
 }
 
+// Date-only formatter. Use for fields the system tracks by day, not
+// time-of-day (job startAt, reschedule suggestions, etc.).
+function fmtDateOnly(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 function fmtRelative(iso: string): string {
   try {
     const ms = Date.now() - new Date(iso).getTime();
@@ -129,10 +144,10 @@ function propertyAddress(row: ChangeRequestRow): string | null {
 }
 
 function buildOutreachMessage(row: ChangeRequestRow): string {
-  const date = fmtDateTime(row.occurrence.startAt);
+  const date = fmtDateOnly(row.occurrence.startAt);
   const verb = row.kind === "RESCHEDULE" ? "reschedule" : "skip";
   const firstName = row.occurrence.job?.property?.client?.contacts?.[0]?.firstName ?? "there";
-  return `Hi ${firstName}, I got your ${verb} request for ${date}. Wanted to find a time that works for you.`;
+  return `Hi ${firstName}, I got your ${verb} request for ${date}. Wanted to find a date that works for you.`;
 }
 
 export default function ClientRequestsSection() {
@@ -256,11 +271,11 @@ export default function ClientRequestsSection() {
                       {addr && <> · {addr}</>}
                     </Text>
                     <Text fontSize="xs" color="fg.muted">
-                      Scheduled: {fmtDateTime(row.occurrence.startAt)}
+                      Scheduled: {fmtDateOnly(row.occurrence.startAt)}
                     </Text>
                     {row.kind === "RESCHEDULE" && row.proposedStartAt && (
                       <Text fontSize="xs" color="orange.700" fontWeight="medium">
-                        Client suggested: {fmtDateTime(row.proposedStartAt)}
+                        Client suggested: {fmtDateOnly(row.proposedStartAt)}
                       </Text>
                     )}
                   </Box>

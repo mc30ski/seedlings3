@@ -281,13 +281,12 @@ export default function ClientMyJobsTab() {
     setActionDialog({ type, job } as any);
     setActionComment("");
     if (type === "reschedule") {
-      // Default the suggested date to 3 days from now. This is just a
-      // hint to the admin — the actual rescheduling happens after a
-      // real conversation between admin and client.
+      // Default the suggested date to 3 days from now. Date-only —
+      // jobs are scheduled by day in this system, not by time slot.
       const base = new Date();
       base.setDate(base.getDate() + 3);
       const pad = (n: number) => String(n).padStart(2, "0");
-      setProposedDate(`${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}T${pad(base.getHours())}:${pad(base.getMinutes())}`);
+      setProposedDate(`${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}`);
     } else {
       setProposedDate("");
     }
@@ -301,12 +300,13 @@ export default function ClientMyJobsTab() {
       if (type === "reschedule") {
         // Suggested date is optional but defaults to 3 days from now.
         // Admin gets it as context for the conversation — not an
-        // auto-applied command. The actual reschedule happens through
-        // the admin's regular occurrence editor after they confirm
-        // with the client.
+        // auto-applied command. Date-only: jobs are scheduled by day.
+        // `+T12:00:00Z` anchors to noon UTC so it renders as the right
+        // calendar day in any reasonable display timezone (same
+        // convention OccurrenceDialog uses for startAt).
         await apiPost(`/api/client/occurrences/${job.id}/reschedule-request`, {
           comment: actionComment.trim() || undefined,
-          proposedStartAt: proposedDate ? new Date(proposedDate).toISOString() : undefined,
+          proposedStartAt: proposedDate ? proposedDate + "T12:00:00Z" : undefined,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Request sent — we'll reach out shortly." });
       } else if (type === "skip") {
@@ -866,14 +866,14 @@ export default function ClientMyJobsTab() {
                   {actionDialog?.type === "reschedule" && (
                     <>
                       <Box>
-                        <Text fontSize="sm" mb={1}>Suggested new date & time</Text>
+                        <Text fontSize="sm" mb={1}>Suggested new date</Text>
                         <Input
-                          type="datetime-local"
+                          type="date"
                           value={proposedDate}
                           onChange={(e) => setProposedDate(e.target.value)}
                         />
                         <Text fontSize="xs" color="fg.muted" mt={1}>
-                          This is just a suggestion. We&apos;ll reach out to confirm a time
+                          This is just a suggestion. We&apos;ll reach out to confirm a date
                           that actually works on our end before anything moves.
                         </Text>
                       </Box>
