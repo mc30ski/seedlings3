@@ -31,7 +31,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, Mail, Phone, RefreshCw, SkipForward } from "lucide-react";
+import { Calendar, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -165,6 +165,13 @@ export default function ClientRequestsSection() {
   const [rescheduleDate, setRescheduleDate] = useState<string>("");
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
   const [skippingRow, setSkippingRow] = useState<ChangeRequestRow | null>(null);
+  // "Dismiss" closes a pending request without acting on the
+  // occurrence — used after the admin talked to the client and the
+  // client changed their mind. Server-side this is the same as
+  // "deny": status → DENIED, optional resolutionNote, no job changes.
+  // The framing is intentionally softer than "Decline" though, since
+  // the path is mutual, not adversarial.
+  const [dismissingRow, setDismissingRow] = useState<ChangeRequestRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,6 +186,22 @@ export default function ClientRequestsSection() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** Close out a request without changing the occurrence — used after
+   *  the admin talked to the client and the client changed their mind.
+   *  Server flips the request to DENIED with an optional note for the
+   *  audit trail (e.g., "Client decided to keep the original date"). */
+  async function dismissRequest(row: ChangeRequestRow, note: string) {
+    try {
+      await apiPost(`/api/admin/change-requests/${row.id}/deny`, {
+        note: note?.trim() ? note.trim() : undefined,
+      });
+      publishInlineMessage({ type: "SUCCESS", text: "Request dismissed." });
+      await load();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+    }
+  }
 
   /** Skip approval — flips the occurrence to CANCELED and the request
    *  to APPROVED. Recurring chain advance happens server-side. */
@@ -385,6 +408,17 @@ export default function ClientRequestsSection() {
                           <SkipForward size={12} /> Skip this visit
                         </Button>
                       )}
+                      {/* Dismiss: client changed their mind after the
+                       *  conversation — close the request without
+                       *  touching the occurrence. */}
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="gray"
+                        onClick={() => setDismissingRow(row)}
+                      >
+                        <X size={12} /> Dismiss
+                      </Button>
                     </HStack>
                   </Box>
                 </VStack>
@@ -403,6 +437,25 @@ export default function ClientRequestsSection() {
         confirmColorPalette="purple"
         onConfirm={() => { const row = skippingRow!; setSkippingRow(null); void approveSkip(row); }}
         onCancel={() => setSkippingRow(null)}
+      />
+
+      {/* Dismiss confirm — optional note for the audit trail.
+       *  Closes out the request without touching the occurrence. */}
+      <ConfirmDialog
+        open={!!dismissingRow}
+        title="Dismiss this request?"
+        message="The job stays exactly as scheduled. The client's pending request banner will clear from their view."
+        inputLabel="Note (optional)"
+        inputPlaceholder="e.g., Client changed their mind on the phone."
+        inputOptional
+        confirmLabel="Dismiss"
+        confirmColorPalette="gray"
+        onConfirm={(note: string) => {
+          const row = dismissingRow!;
+          setDismissingRow(null);
+          void dismissRequest(row, note);
+        }}
+        onCancel={() => setDismissingRow(null)}
       />
 
       {/* Reschedule + resolve combined dialog. Admin already agreed on

@@ -664,17 +664,29 @@ export default function ClientMyJobsTab() {
                       </Box>
                     )}
 
-                    {/* Quick action buttons */}
-                    {canRequestChange && (
-                      <HStack gap={1} mt={2}>
-                        <Button size="xs" variant="outline" onClick={() => openAction("reschedule", job)}>
-                          <Calendar size={12} /> Reschedule
-                        </Button>
-                        <Button size="xs" variant="outline" onClick={() => openAction("skip", job)}>
-                          <SkipForward size={12} /> Skip
-                        </Button>
-                      </HStack>
-                    )}
+                    {/* Quick action buttons. Skip is recurring-only —
+                     *  on a one-off, "skip" would be the same thing as
+                     *  cancel, which is a heavier conversation that
+                     *  shouldn't go through the casual Skip path.
+                     *  Reschedule still shows for one-offs (client can
+                     *  ask to move the date). */}
+                    {canRequestChange && (() => {
+                      const isOneOff = !!job.isOneOff || job.workflow === "ONE_OFF";
+                      const hasFrequency = !!(job.frequencyDays && job.frequencyDays > 0);
+                      const canSkip = !isOneOff && hasFrequency;
+                      return (
+                        <HStack gap={1} mt={2}>
+                          <Button size="xs" variant="outline" onClick={() => openAction("reschedule", job)}>
+                            <Calendar size={12} /> Reschedule
+                          </Button>
+                          {canSkip && (
+                            <Button size="xs" variant="outline" onClick={() => openAction("skip", job)}>
+                              <SkipForward size={12} /> Skip
+                            </Button>
+                          )}
+                        </HStack>
+                      );
+                    })()}
                     {isProposalSubmitted && (
                       <HStack gap={1} mt={2}>
                         <Button size="xs" colorPalette="green" onClick={() => openAction("accept", job)}>
