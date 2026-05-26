@@ -451,7 +451,16 @@ export default async function clientRoutes(app: FastifyInstance) {
     const propertyIds = new Set(contact.client.properties.map((p) => p.id));
     const occ = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
-      select: { id: true, status: true, startAt: true, workflow: true, isEstimate: true, job: { select: { propertyId: true } } },
+      select: {
+        id: true,
+        status: true,
+        startAt: true,
+        workflow: true,
+        isEstimate: true,
+        isOneOff: true,
+        frequencyDays: true,
+        job: { select: { propertyId: true, frequencyDays: true } },
+      },
     });
     if (!occ) throw app.httpErrors.notFound("Occurrence not found.");
     if (!occ.job?.propertyId || !propertyIds.has(occ.job.propertyId)) {
@@ -606,6 +615,17 @@ export default async function clientRoutes(app: FastifyInstance) {
     const occ = await verifyOccurrenceForClient(id, clerkUserId);
     if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
       throw app.httpErrors.badRequest("Only scheduled jobs can be skipped.");
+    }
+    // Skip is recurring-only. Skipping a one-off would just be a
+    // cancellation, which is a heavier conversation that shouldn't go
+    // through the casual self-service skip path. The UI hides the Skip
+    // button on one-offs; this is the server-side enforcement.
+    const isOneOff = !!(occ as any).isOneOff || occ.workflow === "ONE_OFF";
+    const effectiveFreq = (occ as any).frequencyDays ?? occ.job?.frequencyDays ?? null;
+    if (isOneOff || !effectiveFreq || effectiveFreq <= 0) {
+      throw app.httpErrors.badRequest(
+        "Only recurring visits can be skipped. For a one-time visit, contact us to cancel."
+      );
     }
     const me = await getMyUser(clerkUserId);
     if (!me) throw app.httpErrors.unauthorized("User not provisioned.");
