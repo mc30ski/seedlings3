@@ -15,11 +15,11 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, CheckCircle2, Download, SkipForward, X } from "lucide-react";
+import { Calendar, CheckCircle2, Download, Eye, SkipForward, X } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "@/src/lib/api";
 import { fmtDate, fmtDateWeekday } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
-import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
+import { type ReceiptData, downloadReceipt, getReceiptBlob } from "@/src/lib/receipt";
 import { useBranding } from "@/src/lib/useBranding";
 import SafePhoto from "@/src/ui/components/SafePhoto";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
@@ -281,9 +281,11 @@ export default function ClientMyJobsTab() {
     setActionDialog({ type, job } as any);
     setActionComment("");
     if (type === "reschedule") {
-      // Default proposed date to one week after the current scheduled date.
-      const base = job.startAt ? new Date(job.startAt) : new Date();
-      base.setDate(base.getDate() + 7);
+      // Default the suggested date to 3 days from now. This is just a
+      // hint to the admin — the actual rescheduling happens after a
+      // real conversation between admin and client.
+      const base = new Date();
+      base.setDate(base.getDate() + 3);
       const pad = (n: number) => String(n).padStart(2, "0");
       setProposedDate(`${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}T${pad(base.getHours())}:${pad(base.getMinutes())}`);
     } else {
@@ -297,10 +299,14 @@ export default function ClientMyJobsTab() {
     try {
       const { type, job } = actionDialog;
       if (type === "reschedule") {
-        // No client-proposed date in this flow — we just notify the admin
-        // and they reach out to find a new time directly with the client.
+        // Suggested date is optional but defaults to 3 days from now.
+        // Admin gets it as context for the conversation — not an
+        // auto-applied command. The actual reschedule happens through
+        // the admin's regular occurrence editor after they confirm
+        // with the client.
         await apiPost(`/api/client/occurrences/${job.id}/reschedule-request`, {
           comment: actionComment.trim() || undefined,
+          proposedStartAt: proposedDate ? new Date(proposedDate).toISOString() : undefined,
         });
         publishInlineMessage({ type: "SUCCESS", text: "Request sent — we'll reach out shortly." });
       } else if (type === "skip") {
@@ -353,10 +359,13 @@ export default function ClientMyJobsTab() {
     }
   }
 
-  function handleDownloadReceipt(job: CompletedJob) {
-    if (!job.payment || !profile?.client) return;
+  /** Build the ReceiptData payload from a CompletedJob. Shared between
+   *  the View (inline) and Download (save) paths so the two surfaces
+   *  always render the exact same receipt. */
+  function buildReceiptData(job: CompletedJob): ReceiptData | null {
+    if (!job.payment || !profile?.client) return null;
     const addr = [job.property.street1, job.property.city, job.property.state].filter(Boolean).join(", ");
-    const data: ReceiptData = {
+    return {
       businessName,
       clientName: profile.client.displayName,
       propertyAddress: addr,
@@ -371,8 +380,42 @@ export default function ClientMyJobsTab() {
       workers: job.workers,
       receiptId: job.id.slice(-8).toUpperCase(),
     };
+  }
+
+  function handleDownloadReceipt(job: CompletedJob) {
+    const data = buildReceiptData(job);
+    if (!data) return;
     downloadReceipt(data);
     publishInlineMessage({ type: "SUCCESS", text: "Receipt downloaded." });
+  }
+
+  /** Open the receipt PDF inline in a new browser tab. Uses a blob URL
+   *  so no file lands on disk. The URL is revoked after a short delay
+   *  to free memory without canceling the load if the browser is slow
+   *  to render. Falls back to download if the popup is blocked (some
+   *  mobile browsers block window.open inside a tap handler if the
+   *  blob isn't created synchronously enough — getReceiptBlob is sync
+   *  so this should be rare). */
+  function handleViewReceipt(job: CompletedJob) {
+    const data = buildReceiptData(job);
+    if (!data) return;
+    try {
+      const blob = getReceiptBlob(data);
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        // Popup blocked — fall back to download so the user still gets
+        // the receipt somehow.
+        downloadReceipt(data);
+        publishInlineMessage({
+          type: "INFO",
+          text: "Your browser blocked the inline view, so we downloaded it instead.",
+        });
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: "Couldn't open the receipt. Try downloading it instead." });
+    }
   }
 
   if (loading) return <Box py={10} textAlign="center"><Spinner size="lg" /></Box>;
@@ -586,9 +629,14 @@ export default function ClientMyJobsTab() {
                             <Text fontSize="xs" fontWeight="semibold" color="orange.800">
                               {job.pendingChangeRequest.kind === "RESCHEDULE" ? "Reschedule requested" : "Skip requested"}
                             </Text>
+                            {job.pendingChangeRequest.kind === "RESCHEDULE" && job.pendingChangeRequest.proposedStartAt && (
+                              <Text fontSize="2xs" color="orange.700">
+                                Suggested: {fmtDateWeekday(job.pendingChangeRequest.proposedStartAt)}
+                              </Text>
+                            )}
                             <Text fontSize="2xs" color="orange.600">
                               {job.pendingChangeRequest.kind === "RESCHEDULE"
-                                ? "We'll reach out shortly to find a new time."
+                                ? "We'll reach out shortly to confirm a time."
                                 : "Awaiting admin approval."}
                             </Text>
                           </Box>
@@ -683,7 +731,7 @@ export default function ClientMyJobsTab() {
                           <Text fontSize="xs" color="fg.muted">Crew: {workerLabel(job.workers)}</Text>
                         )}
                         {job.payment && job.paid && (
-                          <HStack gap={2} align="center">
+                          <HStack gap={2} align="center" wrap="wrap">
                             <Text fontSize="xs" color="green.600" fontWeight="medium">
                               ${job.payment.amountPaid.toFixed(2)} via {job.payment.method.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}
                             </Text>
@@ -692,10 +740,22 @@ export default function ClientMyJobsTab() {
                               variant="outline"
                               colorPalette="teal"
                               px="2"
+                              onClick={() => handleViewReceipt(job)}
+                              title="View receipt in a new tab"
+                            >
+                              <Eye size={12} />
+                              View
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette="teal"
+                              px="2"
                               onClick={() => handleDownloadReceipt(job)}
+                              title="Download receipt PDF"
                             >
                               <Download size={12} />
-                              Receipt
+                              Download
                             </Button>
                           </HStack>
                         )}
@@ -806,6 +866,18 @@ export default function ClientMyJobsTab() {
                   {actionDialog?.type === "reschedule" && (
                     <>
                       <Box>
+                        <Text fontSize="sm" mb={1}>Suggested new date & time</Text>
+                        <Input
+                          type="datetime-local"
+                          value={proposedDate}
+                          onChange={(e) => setProposedDate(e.target.value)}
+                        />
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          This is just a suggestion. We&apos;ll reach out to confirm a time
+                          that actually works on our end before anything moves.
+                        </Text>
+                      </Box>
+                      <Box>
                         <Text fontSize="sm" mb={1}>Anything we should know? (optional)</Text>
                         <Textarea
                           value={actionComment}
@@ -815,7 +887,6 @@ export default function ClientMyJobsTab() {
                         />
                       </Box>
                       <Text fontSize="xs" color="fg.muted">
-                        We&apos;ll reach out shortly to find a new time that works for you.
                         Your current visit stays scheduled until we confirm a new one.
                       </Text>
                     </>

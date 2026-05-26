@@ -50,6 +50,9 @@ type ChangeRequestRow = {
   kind: "RESCHEDULE" | "SKIP";
   status: "PENDING" | "APPROVED" | "DENIED" | "CANCELED";
   comment: string | null;
+  /** Client-suggested new date for RESCHEDULE requests. Just a hint —
+   *  approving the request does NOT auto-apply this date. */
+  proposedStartAt: string | null;
   createdAt: string;
   requestedBy: { id: string; displayName: string | null; email: string | null } | null;
   occurrence: {
@@ -255,6 +258,11 @@ export default function ClientRequestsSection() {
                     <Text fontSize="xs" color="fg.muted">
                       Scheduled: {fmtDateTime(row.occurrence.startAt)}
                     </Text>
+                    {row.kind === "RESCHEDULE" && row.proposedStartAt && (
+                      <Text fontSize="xs" color="orange.700" fontWeight="medium">
+                        Client suggested: {fmtDateTime(row.proposedStartAt)}
+                      </Text>
+                    )}
                   </Box>
 
                   {row.comment && (
