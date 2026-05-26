@@ -23,13 +23,16 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Input,
+  Portal,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Calendar, Check, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
-import { apiGet, apiPost } from "@/src/lib/api";
+import { Calendar, Mail, Phone, RefreshCw, SkipForward } from "lucide-react";
+import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -153,8 +156,14 @@ function buildOutreachMessage(row: ChangeRequestRow): string {
 export default function ClientRequestsSection() {
   const [rows, setRows] = useState<ChangeRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [resolvingRow, setResolvingRow] = useState<ChangeRequestRow | null>(null);
-  const [decliningRow, setDecliningRow] = useState<ChangeRequestRow | null>(null);
+  // Reschedule combines "edit the occurrence date" and "mark the
+  // request resolved" into one action — the admin already worked out
+  // the new date with the client over phone/text/email before opening
+  // this dialog. State holds the row being rescheduled and the picked
+  // date (yyyy-mm-dd).
+  const [reschedulingRow, setReschedulingRow] = useState<ChangeRequestRow | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState<string>("");
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
   const [skippingRow, setSkippingRow] = useState<ChangeRequestRow | null>(null);
 
   const load = useCallback(async () => {
@@ -171,27 +180,58 @@ export default function ClientRequestsSection() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function approve(row: ChangeRequestRow) {
+  /** Skip approval — flips the occurrence to CANCELED and the request
+   *  to APPROVED. Recurring chain advance happens server-side. */
+  async function approveSkip(row: ChangeRequestRow) {
     try {
       await apiPost(`/api/admin/change-requests/${row.id}/approve`, {});
-      publishInlineMessage({
-        type: "SUCCESS",
-        text: row.kind === "SKIP" ? "Visit skipped." : "Request marked resolved.",
-      });
+      publishInlineMessage({ type: "SUCCESS", text: "Visit skipped." });
       await load();
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
     }
   }
 
-  async function deny(row: ChangeRequestRow) {
+  /** Combined reschedule: edit the occurrence's startAt to the new
+   *  date, then approve the change request. Two API calls, one user
+   *  intent — the admin already agreed on the date with the client
+   *  through the contact-link buttons above. */
+  async function applyReschedule() {
+    if (!reschedulingRow || !rescheduleDate) return;
+    setRescheduleBusy(true);
     try {
-      await apiPost(`/api/admin/change-requests/${row.id}/deny`, {});
-      publishInlineMessage({ type: "INFO", text: "Request declined." });
+      // Mirror the OccurrenceDialog convention: noon UTC anchors the
+      // date so it lands on the right calendar day in any timezone.
+      const newStartAt = rescheduleDate + "T12:00:00Z";
+      await apiPatch(`/api/admin/occurrences/${reschedulingRow.occurrence.id}`, {
+        startAt: newStartAt,
+      });
+      await apiPost(`/api/admin/change-requests/${reschedulingRow.id}/approve`, {});
+      publishInlineMessage({ type: "SUCCESS", text: "Rescheduled and request resolved." });
+      setReschedulingRow(null);
+      setRescheduleDate("");
       await load();
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
     } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Action failed.", err) });
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Reschedule failed.", err) });
+    } finally {
+      setRescheduleBusy(false);
     }
+  }
+
+  function openReschedule(row: ChangeRequestRow) {
+    // Pre-fill with the client's suggested date if provided, else the
+    // current scheduled date.
+    const source = row.proposedStartAt ?? row.occurrence.startAt;
+    if (source) {
+      const d = new Date(source);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setRescheduleDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    } else {
+      setRescheduleDate("");
+    }
+    setReschedulingRow(row);
   }
 
   if (loading && rows.length === 0) {
@@ -229,7 +269,6 @@ export default function ClientRequestsSection() {
                 row.kind === "RESCHEDULE" ? "Rescheduling your service" : "About your skip request"
               )}&body=${encodeURIComponent(outreach)}`
             : null;
-          const editJobHref = `/?tab=services&occurrence=${row.occurrence.id}`;
           return (
             <Card.Root
               key={row.id}
@@ -327,21 +366,14 @@ export default function ClientRequestsSection() {
                     <Text fontSize="xs" color="fg.muted" mb={1}>Take action:</Text>
                     <HStack gap={1.5} wrap="wrap">
                       {row.kind === "RESCHEDULE" && (
-                        <>
-                          <Button size="xs" variant="outline" colorPalette="blue" asChild>
-                            <a href={editJobHref}>
-                              <Calendar size={12} /> Edit job dates
-                            </a>
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="solid"
-                            colorPalette="green"
-                            onClick={() => setResolvingRow(row)}
-                          >
-                            <Check size={12} /> Mark resolved
-                          </Button>
-                        </>
+                        <Button
+                          size="xs"
+                          variant="solid"
+                          colorPalette="blue"
+                          onClick={() => openReschedule(row)}
+                        >
+                          <Calendar size={12} /> Reschedule
+                        </Button>
                       )}
                       {row.kind === "SKIP" && (
                         <Button
@@ -353,14 +385,6 @@ export default function ClientRequestsSection() {
                           <SkipForward size={12} /> Skip this visit
                         </Button>
                       )}
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        colorPalette="red"
-                        onClick={() => setDecliningRow(row)}
-                      >
-                        <X size={12} /> Decline
-                      </Button>
                     </HStack>
                   </Box>
                 </VStack>
@@ -371,35 +395,106 @@ export default function ClientRequestsSection() {
       </VStack>
 
       <ConfirmDialog
-        open={!!resolvingRow}
-        title="Mark reschedule resolved?"
-        message=""
-        warning="This closes the client's request. Edit the job's date through the normal admin editor before marking resolved."
-        confirmLabel="Mark resolved"
-        confirmColorPalette="green"
-        onConfirm={() => { const row = resolvingRow!; setResolvingRow(null); void approve(row); }}
-        onCancel={() => setResolvingRow(null)}
-      />
-      <ConfirmDialog
         open={!!skippingRow}
         title="Skip this visit?"
         message=""
         warning="The occurrence is canceled. For recurring jobs, the next visit will be created on the regular cadence."
         confirmLabel="Skip visit"
         confirmColorPalette="purple"
-        onConfirm={() => { const row = skippingRow!; setSkippingRow(null); void approve(row); }}
+        onConfirm={() => { const row = skippingRow!; setSkippingRow(null); void approveSkip(row); }}
         onCancel={() => setSkippingRow(null)}
       />
-      <ConfirmDialog
-        open={!!decliningRow}
-        title="Decline this request?"
-        message=""
-        warning="The job stays as scheduled. Reach out to the client first so they know why."
-        confirmLabel="Decline"
-        confirmColorPalette="red"
-        onConfirm={() => { const row = decliningRow!; setDecliningRow(null); void deny(row); }}
-        onCancel={() => setDecliningRow(null)}
-      />
+
+      {/* Reschedule + resolve combined dialog. Admin already agreed on
+       *  a date with the client via the contact-link buttons; this is
+       *  where they record it. Single save → updates the occurrence's
+       *  startAt AND marks the change-request resolved. */}
+      <Dialog.Root
+        open={!!reschedulingRow}
+        onOpenChange={(e) => { if (!e.open) { setReschedulingRow(null); setRescheduleDate(""); } }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>Reschedule visit</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {reschedulingRow && (() => {
+                  // Compute min=today (server is lenient about same-day;
+                  // browser min stops a stray past-date pick).
+                  const today = new Date();
+                  const pad = (n: number) => String(n).padStart(2, "0");
+                  const minDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+                  const isPast = !!rescheduleDate && rescheduleDate < minDate;
+                  return (
+                    <VStack align="stretch" gap={3}>
+                      <Box p={2} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                        <Text fontSize="xs" color="fg.muted">
+                          Currently scheduled: <b>{fmtDateOnly(reschedulingRow.occurrence.startAt)}</b>
+                        </Text>
+                        {reschedulingRow.proposedStartAt && (
+                          <Text fontSize="xs" color="orange.700">
+                            Client suggested: <b>{fmtDateOnly(reschedulingRow.proposedStartAt)}</b>
+                          </Text>
+                        )}
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>New date *</Text>
+                        <Input
+                          type="date"
+                          value={rescheduleDate}
+                          min={minDate}
+                          required
+                          onChange={(e) => setRescheduleDate(e.target.value)}
+                        />
+                        {isPast && (
+                          <Text fontSize="xs" color="red.600" mt={1}>
+                            Pick a date that isn&apos;t in the past.
+                          </Text>
+                        )}
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          Saving moves the visit to this date AND marks the client&apos;s
+                          request as resolved. Confirm with the client before saving.
+                        </Text>
+                      </Box>
+                    </VStack>
+                  );
+                })()}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap={2}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setReschedulingRow(null); setRescheduleDate(""); }}
+                    disabled={rescheduleBusy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="blue"
+                    onClick={() => void applyReschedule()}
+                    loading={rescheduleBusy}
+                    disabled={
+                      !rescheduleDate ||
+                      (() => {
+                        const today = new Date();
+                        const pad = (n: number) => String(n).padStart(2, "0");
+                        const minDate = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+                        return rescheduleDate < minDate;
+                      })()
+                    }
+                  >
+                    Save & Resolve
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }
