@@ -1089,6 +1089,66 @@ export const jobs: ServicesJobs = {
       if ("startedAt" in patch) data.startedAt = patch.startedAt ? new Date(patch.startedAt) : null;
       if ("completedAt" in patch) data.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
       if ("totalPausedMs" in patch) data.totalPausedMs = patch.totalPausedMs != null ? Math.max(0, Math.round(Number(patch.totalPausedMs))) : 0;
+
+      // Auto-revert status when admin clears a timestamp that
+      // semantically defines a status. Without this, an admin clearing
+      // startedAt on an IN_PROGRESS occurrence leaves status=IN_PROGRESS
+      // with startedAt=null — internally inconsistent, and the JobsTab
+      // "Complete Job" button (which gates on status, not startedAt)
+      // still shows. Same for completedAt on PENDING_PAYMENT / CLOSED.
+      //
+      // Only fires when the patch explicitly sets the field to null AND
+      // the caller didn't already pass an explicit status. Editing the
+      // timestamp to a different value (not null) is a normal correction
+      // and doesn't change status. Note: the existing "reverting status
+      // to non-CLOSED" branch below will then clean up the Payment row
+      // for us, no extra work needed.
+      const startedCleared = "startedAt" in patch && patch.startedAt == null;
+      const completedCleared = "completedAt" in patch && patch.completedAt == null;
+      const callerSetStatus = patch.status != null;
+      if (!callerSetStatus && startedCleared) {
+        const downstream = new Set<string>([
+          JobOccurrenceStatus.IN_PROGRESS,
+          JobOccurrenceStatus.PAUSED,
+          JobOccurrenceStatus.PENDING_PAYMENT,
+          JobOccurrenceStatus.CLOSED,
+          JobOccurrenceStatus.PROPOSAL_SUBMITTED,
+        ]);
+        if (downstream.has(original.status)) {
+          data.status = JobOccurrenceStatus.SCHEDULED;
+          // A job that "was never started" can't have any of these.
+          data.completedAt = null;
+          data.pausedAt = null;
+          data.totalPausedMs = 0;
+          data.startLat = null;
+          data.startLng = null;
+          data.completeLat = null;
+          data.completeLng = null;
+          data.lastPaymentRejectionReason = null;
+          data.lastPaymentRejectedAt = null;
+          data.lastPaymentRevertReason = null;
+          data.lastPaymentRevertedAt = null;
+        }
+      } else if (!callerSetStatus && completedCleared) {
+        const completedStatuses = new Set<string>([
+          JobOccurrenceStatus.PENDING_PAYMENT,
+          JobOccurrenceStatus.CLOSED,
+        ]);
+        if (completedStatuses.has(original.status)) {
+          // Revert to IN_PROGRESS — completedAt was the marker that took
+          // us out of IN_PROGRESS in the first place. The Payment row
+          // (if any) will be cleaned up by the existing branch below
+          // because the new status isn't CLOSED.
+          data.status = JobOccurrenceStatus.IN_PROGRESS;
+          data.completeLat = null;
+          data.completeLng = null;
+          data.lastPaymentRejectionReason = null;
+          data.lastPaymentRejectedAt = null;
+          data.lastPaymentRevertReason = null;
+          data.lastPaymentRevertedAt = null;
+        }
+      }
+
       if ("title" in patch) data.title = patch.title ?? null;
       if ("contactName" in patch) data.contactName = patch.contactName ?? null;
       if ("contactPhone" in patch) data.contactPhone = patch.contactPhone ?? null;

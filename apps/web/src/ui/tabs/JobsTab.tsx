@@ -886,6 +886,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const isTrainee = viewAsWorkerType !== undefined ? viewAsWorkerType === "TRAINEE" : me?.workerType === "TRAINEE";
   const [manageOccurrence, setManageOccurrence] = useState<WorkerOccurrence | null>(null);
   const [completeDialogOcc, setCompleteDialogOcc] = useState<WorkerOccurrence | null>(null);
+  // Admin-only "Reset Job" confirm. Holds the occurrence the admin
+  // wants to reset; null when no confirm is open. Wired through
+  // ConfirmDialog so an accidental thumb tap doesn't wipe time tracking.
+  const [resetJobOcc, setResetJobOcc] = useState<WorkerOccurrence | null>(null);
   const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
   const [actionMenuOcc, setActionMenuOcc] = useState<string | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
@@ -1309,6 +1313,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("offlineQueue:processed", handler);
   }, []);
 
+  // Re-fetch when another tab (e.g. admin Services edits an
+  // occurrence's startedAt / completedAt / status) signals that job
+  // data changed. Without this, the JobsTab card stays on its stale
+  // snapshot — e.g. still shows "Complete Job" even though an admin
+  // just cleared the start time on Services.
+  useEffect(() => {
+    const handler = () => { void loadRef.current(false); };
+    window.addEventListener("seedlings3:jobs-changed", handler);
+    return () => window.removeEventListener("seedlings3:jobs-changed", handler);
+  }, []);
+
   // Check for Begin Work Day workflow date override
   useEffect(() => {
     try {
@@ -1724,6 +1739,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       publishInlineMessage({ type: "SUCCESS", text: "Job resumed." });
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to resume.", err) });
+    }
+    setBusyOccId(null);
+  }
+
+  // Admin-only "Reset Job" — clears start/complete timestamps and any
+  // accrued time tracking, reverts status to SCHEDULED, and wipes any
+  // payment row that snuck in (handled by updateOccurrence's existing
+  // revert branch). The scheduled date (startAt) is intentionally
+  // untouched. Server-side handles the actual state transitions: we
+  // just PATCH startedAt=null and the auto-revert logic in jobs.ts
+  // does the rest. See services/jobs.ts:updateOccurrence.
+  async function resetJob(occ: WorkerOccurrence) {
+    setBusyOccId(occ.id);
+    try {
+      await apiPatch(`/api/admin/occurrences/${occ.id}`, { startedAt: null });
+      await load(false);
+      publishInlineMessage({ type: "SUCCESS", text: "Job reset to Scheduled." });
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to reset job.", err) });
     }
     setBusyOccId(null);
   }
@@ -3990,15 +4025,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
-                          {/* "Awaiting admin approval" — surfaces when a
-                           *  Payment row exists on a PENDING_PAYMENT
-                           *  occurrence but admin hasn't confirmed yet.
-                           *  Without this badge, the job card looked
-                           *  identical to a "ready to take payment"
-                           *  one, even though the action button below
-                           *  is intentionally inert in this state. */}
+                          {/* Three-state badges for PENDING_PAYMENT —
+                           *  mirrors the action-button logic in this
+                           *  card so the chip and the disabled state of
+                           *  the button always agree:
+                           *    - Payment row exists, not confirmed →
+                           *      "Awaiting admin approval"
+                           *    - No payment row, but request was sent →
+                           *      "Awaiting client payment"
+                           *    - Neither → no extra chip (just the
+                           *      Pending_Payment status badge above) */}
                           {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
                             <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
+                          {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
+                            <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
@@ -4314,15 +4355,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
-                          {/* "Awaiting admin approval" — surfaces when a
-                           *  Payment row exists on a PENDING_PAYMENT
-                           *  occurrence but admin hasn't confirmed yet.
-                           *  Without this badge, the job card looked
-                           *  identical to a "ready to take payment"
-                           *  one, even though the action button below
-                           *  is intentionally inert in this state. */}
+                          {/* Three-state badges for PENDING_PAYMENT —
+                           *  mirrors the action-button logic in this
+                           *  card so the chip and the disabled state of
+                           *  the button always agree:
+                           *    - Payment row exists, not confirmed →
+                           *      "Awaiting admin approval"
+                           *    - No payment row, but request was sent →
+                           *      "Awaiting client payment"
+                           *    - Neither → no extra chip (just the
+                           *      Pending_Payment status badge above) */}
                           {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
                             <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
+                          {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
+                            <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
@@ -5398,23 +5445,37 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       </Button>
                     )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
-                      <HStack gap={2}>
+                      <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
                         </Button>
                         <Button size="sm" variant="outline" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void pauseJob(occ)}>
                           Pause
                         </Button>
+                        {/* Admin-only "Reset Job" — clears time tracking
+                         *  and reverts the occurrence to SCHEDULED so it
+                         *  can be started over. Scheduled date is
+                         *  preserved. */}
+                        {forAdmin && (isAdmin || isSuper) && (
+                          <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
+                            Reset Job
+                          </Button>
+                        )}
                       </HStack>
                     )}
                     {(isClaimer || forAdmin) && (occ.status as string) === "PAUSED" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
-                      <HStack gap={2}>
+                      <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="orange" loading={busyOccId === occ.id} onClick={() => void resumeJob(occ)}>
                           Resume
                         </Button>
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
                           Complete Job
                         </Button>
+                        {forAdmin && (isAdmin || isSuper) && (
+                          <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
+                            Reset Job
+                          </Button>
+                        )}
                       </HStack>
                     )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
@@ -6425,6 +6486,20 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         onOpenChange={(o) => { setFollowupDialogOpen(o); if (!o) setEditingFollowup(null); }}
         onCreated={() => void load(false)}
         editFollowup={editingFollowup}
+      />
+
+      {/* Admin "Reset Job" confirmation — wipes time tracking and
+       *  reverts to SCHEDULED. Per project policy, every destructive
+       *  mutation goes through a ConfirmDialog. */}
+      <ConfirmDialog
+        open={!!resetJobOcc}
+        title="Reset this job?"
+        message=""
+        warning="This clears the start/complete times and any tracked work time, then puts the job back to Scheduled so it can be started over. The scheduled date isn't changed. If a payment was recorded, it will also be removed."
+        confirmLabel="Reset job"
+        confirmColorPalette="red"
+        onConfirm={() => { const occ = resetJobOcc!; setResetJobOcc(null); void resetJob(occ); }}
+        onCancel={() => setResetJobOcc(null)}
       />
 
       {/* Pre-dialog before launching New Job Setup from accepted light estimate */}
