@@ -1434,6 +1434,28 @@ export const jobs: ServicesJobs = {
         followupJobs: {
           include: { job: { include: { property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } } } } },
         },
+        // Most-recent change request that resolved with a note. Used to
+        // surface the admin's dismiss/approve note on the job card on
+        // both the worker/admin JobsTab and the client's My Properties.
+        // Filtered down to resolutionNote != null so we never grab a
+        // resolved-without-note row that has nothing to display.
+        // Naturally disappears for the next recurring occurrence: that
+        // occurrence is a new row with no requests on it.
+        changeRequests: {
+          where: {
+            status: { in: ["DENIED", "APPROVED"] },
+            resolutionNote: { not: null },
+          },
+          orderBy: { resolvedAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            kind: true,
+            status: true,
+            resolutionNote: true,
+            resolvedAt: true,
+          },
+        },
       },
       orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
     });

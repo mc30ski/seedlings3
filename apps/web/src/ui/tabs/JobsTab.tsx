@@ -4427,6 +4427,28 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                   </Box>
                 )}
 
+                {/* Resolved client-request note — visible to workers
+                 *  and admins so they know the latest exchange with the
+                 *  client. Same note that the client sees on their My
+                 *  Properties card. Falls off naturally on the next
+                 *  recurring occurrence. */}
+                {(() => {
+                  const cr = (occ as any).changeRequests?.[0];
+                  if (!cr?.resolutionNote) return null;
+                  const verb = cr.kind === "RESCHEDULE" ? "Reschedule" : "Skip";
+                  const action = cr.status === "DENIED" ? "dismissed" : "approved";
+                  return (
+                    <Box mx="4" mt="2" p="2" bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                      <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                        {verb} request {action} — note to client
+                      </Text>
+                      <Text fontSize="sm" color="blue.900" mt={0.5}>
+                        {cr.resolutionNote}
+                      </Text>
+                    </Box>
+                  );
+                })()}
+
                 {isCardCompact ? (
                   <Card.Body py="2" px="3" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
