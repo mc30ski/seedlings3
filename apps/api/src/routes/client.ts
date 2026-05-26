@@ -471,6 +471,10 @@ export default async function clientRoutes(app: FastifyInstance) {
     clientLabel: string;
     occurrenceDateLabel: string;
     comment: string | null;
+    /** Optional client-suggested new date for RESCHEDULE. Not applied
+     *  by approval — just included in the admin push so they have it
+     *  before reaching out. */
+    proposedStartAt?: Date | null;
   }): Promise<void> {
     try {
       const admins = await prisma.user.findMany({
@@ -487,8 +491,13 @@ export default async function clientRoutes(app: FastifyInstance) {
       const { notifyWorker } = await import("../lib/notifications");
       const verb = opts.kind === "RESCHEDULE" ? "reschedule" : "skip";
       const subject = `New ${verb} request — ${opts.clientLabel}`;
+      const suggestion =
+        opts.kind === "RESCHEDULE" && opts.proposedStartAt
+          ? ` Suggested: ${opts.proposedStartAt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}.`
+          : "";
       const body =
         `${opts.clientLabel} requested a ${verb} for ${opts.propertyLabel} on ${opts.occurrenceDateLabel}.` +
+        suggestion +
         (opts.comment ? ` "${opts.comment}"` : "");
       for (const u of admins) {
         notifyWorker(u.id, body, { subject, pushOnly: !allowSmsEmail }).catch(() => {});
@@ -531,10 +540,12 @@ export default async function clientRoutes(app: FastifyInstance) {
     const id = String(req.params.id);
     const clerkUserId = req.auth.clerkUserId!;
     const body = req.body || {};
-    // New model: reschedule requests are conversation starters, not
-    // commands. The client doesn't propose a specific date — the admin
-    // reaches out to find a time. `proposedStartAt` is accepted but
-    // ignored (kept for back-compat with any client still sending it).
+    // Reschedule requests are conversation starters, not commands. The
+    // client *may* suggest a date (defaults to 3 days from now in the
+    // UI); the admin uses it as context when reaching out to confirm a
+    // real time. Approving the request does NOT auto-apply this date —
+    // the admin does the actual schedule edit through normal admin
+    // tooling after talking to the client.
     const occ = await verifyOccurrenceForClient(id, clerkUserId);
     if (occ.status !== "SCHEDULED" && occ.status !== "ACCEPTED") {
       throw app.httpErrors.badRequest("Only scheduled jobs can be rescheduled.");
@@ -547,12 +558,21 @@ export default async function clientRoutes(app: FastifyInstance) {
     });
     if (existing) throw app.httpErrors.conflict("A change request is already pending for this job.");
     const comment = body.comment ? String(body.comment).trim() : null;
+    // Optional suggested date — validated only if provided.
+    let proposed: Date | null = null;
+    if (body.proposedStartAt) {
+      const d = new Date(String(body.proposedStartAt));
+      if (isNaN(d.getTime())) {
+        throw app.httpErrors.badRequest("proposedStartAt is not a valid date.");
+      }
+      proposed = d;
+    }
     const created = await prisma.occurrenceChangeRequest.create({
       data: {
         occurrenceId: id,
         requestedById: me.id,
         kind: "RESCHEDULE",
-        proposedStartAt: null,
+        proposedStartAt: proposed,
         comment,
       },
     });
@@ -563,6 +583,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       clientLabel: ctx.clientLabel,
       occurrenceDateLabel: ctx.dateLabel,
       comment,
+      proposedStartAt: proposed,
     });
     return created;
   });
