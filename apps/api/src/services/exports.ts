@@ -458,7 +458,9 @@ const PROCESSOR_FEE_CATEGORY = "Payment Processing Fees";
 export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   const [rows, feePayments] = await Promise.all([
     prisma.businessExpense.findMany({
-      where: { date: { gte: start, lte: end } },
+      // QB Expenses export — Schedule C lines apply only to operating
+      // expenses. Equity entries flow through qbEquityCsv.
+      where: { type: "EXPENSE", date: { gte: start, lte: end } },
       orderBy: { date: "asc" },
     }),
     // Processor fees ride alongside business expenses in the QB export. We
@@ -557,6 +559,65 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   return lines.join("\n") + "\n";
 }
 
+// QuickBooks Equity export — owner capital contributions and owner draws.
+// These are equity-account movements (balance-sheet), not P&L. The CPA imports
+// them into the corresponding equity accounts; do NOT mix into qb-expenses.
+//
+// Account names are the QuickBooks defaults for a sole-prop / single-member
+// LLC chart of accounts. Override in QB at import time if the user's COA uses
+// different account names.
+const QB_EQUITY_ACCOUNT: Record<"CAPITAL_CONTRIBUTION" | "OWNER_DRAW", string> = {
+  CAPITAL_CONTRIBUTION: "Owner's Investment",
+  OWNER_DRAW: "Owner's Draw",
+};
+
+export async function qbEquityCsv(start: Date, end: Date): Promise<string> {
+  const rows = await prisma.businessExpense.findMany({
+    where: {
+      type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
+      date: { gte: start, lte: end },
+    },
+    orderBy: [{ date: "asc" }, { type: "asc" }],
+  });
+
+  const header = [
+    "Date",
+    "Type",
+    "Account",
+    "Amount",
+    "Description",
+    "Vendor",
+    "Notes",
+  ];
+  const lines: string[] = [csvRow(header)];
+  let contributionTotal = 0;
+  let drawTotal = 0;
+  for (const r of rows) {
+    const typeKey = r.type as "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
+    const account = QB_EQUITY_ACCOUNT[typeKey];
+    const amount = round2(r.cost);
+    lines.push(
+      csvRow([
+        toIsoDate(r.date),
+        typeKey === "CAPITAL_CONTRIBUTION" ? "Capital Contribution" : "Owner Draw",
+        account,
+        amount.toFixed(2),
+        r.description ?? "",
+        r.vendor ?? "",
+        r.notes ?? "",
+      ]),
+    );
+    if (typeKey === "CAPITAL_CONTRIBUTION") contributionTotal += amount;
+    else drawTotal += amount;
+  }
+  // Two sub-totals so the CPA / spreadsheet check eyeballs each equity
+  // account independently — they post to different lines in QB.
+  lines.push(csvRow(["SUBTOTAL Capital Contributions", "", "", round2(contributionTotal).toFixed(2), "", "", ""]));
+  lines.push(csvRow(["SUBTOTAL Owner Draws", "", "", round2(drawTotal).toFixed(2), "", "", ""]));
+  lines.push(csvRow(["TOTALS", "", "", round2(contributionTotal + drawTotal).toFixed(2), "", "", ""]));
+  return lines.join("\n") + "\n";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Preview — JSON sanity figures for the Exports tab page (row counts + totals
 // for each of the four files). Avoids the user having to download just to peek.
@@ -570,6 +631,11 @@ export type ExportPreview = {
     total: number;
     businessExpenseTotal: number;
     processorFeeTotal: number;
+  };
+  qbEquity: {
+    rows: number;
+    contributionTotal: number;
+    drawTotal: number;
   };
 };
 
@@ -597,12 +663,31 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
   const qbIncomeTotal = payments.reduce((s, p) => s + p.amountPaid, 0);
 
   const expenses = await prisma.businessExpense.findMany({
-    where: { date: { gte: start, lte: end } },
+    // Preview row count + total for the QB Expenses CSV button. Equity
+    // entries (contributions/draws) export via the QB Equity CSV — different
+    // account class, must not be mixed into the expense total.
+    where: { type: "EXPENSE", date: { gte: start, lte: end } },
     select: { cost: true },
   });
   const businessExpenseTotal = expenses.reduce((s, e) => s + e.cost, 0);
   const processorFeeTotal = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
   const processorFeeRows = payments.filter((p) => (p.processorFeeAmount ?? 0) > 0).length;
+
+  // Equity preview — capital contributions + owner draws in range, summed
+  // separately so the CPA-facing tab shows both numbers up front.
+  const equityRows = await prisma.businessExpense.findMany({
+    where: {
+      type: { in: ["CAPITAL_CONTRIBUTION", "OWNER_DRAW"] },
+      date: { gte: start, lte: end },
+    },
+    select: { type: true, cost: true },
+  });
+  let contributionTotal = 0;
+  let drawTotal = 0;
+  for (const r of equityRows) {
+    if (r.type === "CAPITAL_CONTRIBUTION") contributionTotal += r.cost;
+    else if (r.type === "OWNER_DRAW") drawTotal += r.cost;
+  }
 
   return {
     gustoW2: {
@@ -624,6 +709,11 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
       // Sub-totals exposed for the Exports tab preview ("$X expenses + $Y fees").
       businessExpenseTotal: round2(businessExpenseTotal),
       processorFeeTotal: round2(processorFeeTotal),
+    },
+    qbEquity: {
+      rows: equityRows.length,
+      contributionTotal: round2(contributionTotal),
+      drawTotal: round2(drawTotal),
     },
   };
 }

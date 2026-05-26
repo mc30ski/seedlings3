@@ -1371,6 +1371,46 @@ async function seedDatabase() {
     });
   }
 
+  // Equity entries — capital contributions (owner → business) and owner
+  // draws (business → owner). Same table as expenses, discriminated by
+  // `type`. Used to exercise the Accounting Type filter, equity-only
+  // badges, and the qb-equity.csv export. Category/equipmentId stay null
+  // for these (they post to QB equity accounts, not Schedule C lines).
+  const equityEntryData: {
+    ago: number;
+    cost: number;
+    desc: string;
+    type: "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
+    vendor?: string;
+    notes?: string;
+    recurrence?: RecurrenceCadence;
+  }[] = [
+    // Recent owner draws — recurring monthly so the "Due to record" panel
+    // surfaces the next one.
+    { ago: 2, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
+    { ago: 32, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
+    { ago: 62, cost: 2200.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
+    // Capital contributions — one-offs, typical startup pattern (initial
+    // seed + a top-up to cover a big equipment purchase).
+    { ago: 365, cost: 10000.00, desc: "Initial owner investment", type: "CAPITAL_CONTRIBUTION", vendor: "Personal → Chase Business", notes: "Seed capital to start operations" },
+    { ago: 95, cost: 3500.00, desc: "Cash injection for equipment purchase", type: "CAPITAL_CONTRIBUTION", vendor: "Personal → Chase Business", notes: "Covered down payment on commercial mower" },
+  ];
+
+  for (const e of equityEntryData) {
+    await prisma.businessExpense.create({
+      data: {
+        createdById: ADMIN_WORKER_ID,
+        type: e.type,
+        date: daysAgo(e.ago, 12),
+        cost: e.cost,
+        description: e.desc,
+        vendor: e.vendor ?? null,
+        notes: e.notes ?? null,
+        recurrence: e.recurrence ?? null,
+      },
+    });
+  }
+
   // ── Supplies (step-3) ────────────────────────────────────────────────────
   // Inventory-tracked consumables. Each purchase creates a paired
   // BusinessExpense (tax-ledger) entry. After purchases run, two of the

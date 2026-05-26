@@ -3289,29 +3289,51 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ as any).jobType && ` · ${(occ as any).jobType}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        colorPalette="purple"
-                        onClick={(e: any) => {
-                          e.stopPropagation();
-                          setHighlightOccId(occ.id);
-                          setCardOverrides(new Map([[occ.id, "expanded"]]));
-                          setFilterJobId(null);
-                          setQ("");
-                          if (occ.startAt) {
-                            const d = new Date(occ.startAt);
-                            const from = new Date(d); from.setDate(from.getDate() - 3);
-                            const to = new Date(d); to.setDate(to.getDate() + 3);
-                            setDatePreset(null);
-                            setDateFrom(bizDateKey(from));
-                            setDateTo(bizDateKey(to));
-                            void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occ.id);
-                          }
-                        }}
-                      >
-                        View Original
-                      </Button>
+                      <HStack gap={2} wrap="wrap">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          colorPalette="purple"
+                          onClick={(e: any) => {
+                            e.stopPropagation();
+                            setHighlightOccId(occ.id);
+                            setCardOverrides(new Map([[occ.id, "expanded"]]));
+                            setFilterJobId(null);
+                            setQ("");
+                            if (occ.startAt) {
+                              const d = new Date(occ.startAt);
+                              const from = new Date(d); from.setDate(from.getDate() - 3);
+                              const to = new Date(d); to.setDate(to.getDate() + 3);
+                              setDatePreset(null);
+                              setDateFrom(bizDateKey(from));
+                              setDateTo(bizDateKey(to));
+                              void load(true, { from: bizDateKey(from), to: bizDateKey(to) }, occ.id);
+                            }
+                          }}
+                        >
+                          View Original
+                        </Button>
+                        {/* Reschedule the reminder itself — opens the
+                         *  same dialog used elsewhere, pre-filled with
+                         *  the current reminder's date and note.
+                         *  Reminders are per-user, so if it appears on
+                         *  this user's feed it's their own. */}
+                        {occ.reminder && (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorPalette="orange"
+                            onClick={(e: any) => {
+                              e.stopPropagation();
+                              setReminderDialogOccId(occ.id);
+                              setReminderDate(bizDateKey(occ.reminder!.remindAt));
+                              setReminderNote(occ.reminder!.note ?? "");
+                            }}
+                          >
+                            <Bell size={12} /> Reschedule
+                          </Button>
+                        )}
+                      </HStack>
                     </VStack>
                   </Card.Body>
                 </Card.Root>
@@ -6577,14 +6599,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         onCancel={() => setConfirmAction(null)}
       />
 
-      {/* Set Reminder Dialog */}
+      {/* Set / Reschedule Reminder Dialog. The title flips based on
+       *  whether the occurrence already has a reminder — same dialog
+       *  body handles both create and update via the upsert endpoint. */}
       <Dialog.Root open={!!reminderDialogOccId} onOpenChange={(e) => { if (!e.open) setReminderDialogOccId(null); }}>
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
             <Dialog.Content maxW="sm">
               <Dialog.Header>
-                <Dialog.Title>Set Reminder</Dialog.Title>
+                <Dialog.Title>
+                  {(() => {
+                    const target = reminderDialogOccId ? items.find((o) => o.id === reminderDialogOccId) : null;
+                    return target?.reminder ? "Reschedule Reminder" : "Set Reminder";
+                  })()}
+                </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
@@ -6640,7 +6669,10 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                     }
                   }}
                 >
-                  Set Reminder
+                  {(() => {
+                    const target = reminderDialogOccId ? items.find((o) => o.id === reminderDialogOccId) : null;
+                    return target?.reminder ? "Save Reminder" : "Set Reminder";
+                  })()}
                 </Button>
               </Dialog.Footer>
             </Dialog.Content>
