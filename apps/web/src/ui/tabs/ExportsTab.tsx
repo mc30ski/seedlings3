@@ -18,6 +18,11 @@ type Preview = {
     businessExpenseTotal: number;
     processorFeeTotal: number;
   };
+  qbEquity: {
+    rows: number;
+    contributionTotal: number;
+    drawTotal: number;
+  };
 };
 
 function pad(n: number): string {
@@ -302,6 +307,35 @@ export default function ExportsTab() {
                   </Text>
                 </HStack>
               )}
+              {preview.qbEquity.rows > 0 && (
+                <>
+                  <HStack justify="space-between">
+                    <Text color="fg.muted">QB Equity (contributions + draws):</Text>
+                    <Text>
+                      {preview.qbEquity.rows} row{preview.qbEquity.rows === 1 ? "" : "s"}{" · "}
+                      <b>
+                        ${(preview.qbEquity.contributionTotal + preview.qbEquity.drawTotal).toFixed(2)}
+                      </b>
+                    </Text>
+                  </HStack>
+                  {preview.qbEquity.contributionTotal > 0 && (
+                    <HStack justify="space-between" pl={4} fontSize="xs">
+                      <Text color="fg.muted">↳ Capital Contributions:</Text>
+                      <Text color="fg.muted">
+                        <b>${preview.qbEquity.contributionTotal.toFixed(2)}</b>
+                      </Text>
+                    </HStack>
+                  )}
+                  {preview.qbEquity.drawTotal > 0 && (
+                    <HStack justify="space-between" pl={4} fontSize="xs">
+                      <Text color="fg.muted">↳ Owner Draws:</Text>
+                      <Text color="fg.muted">
+                        <b>${preview.qbEquity.drawTotal.toFixed(2)}</b>
+                      </Text>
+                    </HStack>
+                  )}
+                </>
+              )}
             </VStack>
           ) : (
             <Text fontSize="sm" color="fg.muted">
@@ -362,6 +396,16 @@ export default function ExportsTab() {
               onClick={() => download("qb-expenses", "QB Expenses CSV")}
             >
               <FiDownload /> Download Expenses CSV
+            </Button>
+            <Button
+              variant="outline"
+              colorPalette="green"
+              size="sm"
+              loading={busyKey === "qb-equity"}
+              onClick={() => download("qb-equity", "QB Equity CSV")}
+              title="Capital contributions + owner draws — equity account movements (not P&L)"
+            >
+              <FiDownload /> Download Equity CSV
             </Button>
           </VStack>
         </Card.Body>

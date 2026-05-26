@@ -3566,7 +3566,26 @@ Respond ONLY with valid JSON in this exact format:
     return { count };
   });
 
-  // ── Business Expenses (super only) ──
+  // ── Business Expenses (super only) — backs the "Accounting" tab ──
+  //
+  // Route prefix kept as /business-expenses because the model is still named
+  // BusinessExpense and clients deep-link via this path. UI label is
+  // "Accounting"; see BusinessExpensesTab.tsx + schema.prisma model comment
+  // for the full picture of what BusinessExpense actually represents (three
+  // creation paths: freestanding, job-paired, supply-paired) and the
+  // `type` discriminator (EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW).
+  //
+  // Filtering rules per route:
+  //   - list (GET /)         : optional `type` query param; all types by default
+  //   - create (POST /)      : `type` defaults to EXPENSE; category/equipment
+  //                            forced null on equity types
+  //   - update (PATCH /:id)  : `type` editable on freestanding rows only
+  //   - summary              : EXPENSE only (P&L surface)
+  //   - vs-revenue           : EXPENSE only (P&L surface)
+  //   - due-soon             : all types; series key includes type
+  //   - qbExpensesCsv        : EXPENSE only (Schedule C lines)
+  //   - qbEquityCsv          : CAPITAL_CONTRIBUTION + OWNER_DRAW
+  //                            ("Owner's Investment" / "Owner's Draw" accounts)
 
   app.get("/admin/business-expenses", superGuard, async (req: any) => {
     const q = (req.query || {}) as {
@@ -3577,6 +3596,9 @@ Respond ONLY with valid JSON in this exact format:
       limit?: string;
       offset?: string;
       all?: string;
+      // Optional type filter: EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW.
+      // Unspecified → all types (the unfiltered Accounting view).
+      type?: string;
     };
     const where: any = {};
     if (q.from || q.to) {
@@ -3589,6 +3611,12 @@ Respond ONLY with valid JSON in this exact format:
       }
     }
     if (q.category) where.category = q.category;
+    if (q.type) {
+      if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(q.type)) {
+        throw app.httpErrors.badRequest(`Invalid type: ${q.type}`);
+      }
+      where.type = q.type;
+    }
     if (q.q && q.q.trim()) {
       const term = q.q.trim();
       where.OR = [
@@ -3656,12 +3684,26 @@ Respond ONLY with valid JSON in this exact format:
     if (!b.description?.trim()) throw app.httpErrors.badRequest("description is required");
     if (b.cost == null || isNaN(Number(b.cost))) throw app.httpErrors.badRequest("cost is required");
     if (!b.date) throw app.httpErrors.badRequest("date is required");
+    // Type defaults to EXPENSE for backward compat with existing callers
+    // (the dialog always sends one explicitly; the supplies/expenses
+    // services rely on the schema default).
+    const type = b.type ? String(b.type).toUpperCase() : "EXPENSE";
+    if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(type)) {
+      throw app.httpErrors.badRequest(`Invalid type: ${type}`);
+    }
     const trimmedCategory = b.category ? String(b.category).trim() : null;
-    if (trimmedCategory && !(await loadCategoryLabels()).has(trimmedCategory)) {
-      throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
+    // Schedule C category is meaningful only for EXPENSE. Silently drop on
+    // equity entries — they post to QB equity accounts, not P&L categories.
+    if (type === "EXPENSE" && trimmedCategory) {
+      if (!(await loadCategoryLabels()).has(trimmedCategory)) {
+        throw app.httpErrors.badRequest(`Invalid category: "${trimmedCategory}". Must be a Schedule C line.`);
+      }
     }
     const equipmentId = b.equipmentId ? String(b.equipmentId) : null;
     if (equipmentId) {
+      if (type !== "EXPENSE") {
+        throw app.httpErrors.badRequest("Only expenses can link to equipment.");
+      }
       const exists = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { id: true } });
       if (!exists) throw app.httpErrors.badRequest(`Equipment not found: ${equipmentId}`);
     }
@@ -3672,14 +3714,15 @@ Respond ONLY with valid JSON in this exact format:
     return prisma.businessExpense.create({
       data: {
         createdById: uid,
+        type: type as any,
         description: String(b.description).trim(),
         cost: Number(b.cost),
         date: parseUserDate(String(b.date)),
-        category: trimmedCategory,
+        category: type === "EXPENSE" ? trimmedCategory : null,
         vendor: b.vendor ? String(b.vendor).trim() : null,
         invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
-        equipmentId,
+        equipmentId: type === "EXPENSE" ? equipmentId : null,
         recurrence: recurrence as any,
       },
     });
@@ -3692,6 +3735,17 @@ Respond ONLY with valid JSON in this exact format:
     if ("description" in b) data.description = String(b.description ?? "").trim();
     if ("cost" in b) data.cost = Number(b.cost);
     if ("date" in b) data.date = b.date ? parseUserDate(String(b.date)) : null;
+    // Type can be changed (e.g., misclassified entry), but only on
+    // freestanding rows — job-paired and supply-paired BEs are always
+    // EXPENSE by construction. Blocked below after we know the link status.
+    let nextType: string | null = null;
+    if ("type" in b) {
+      const t = String(b.type ?? "").toUpperCase();
+      if (!["EXPENSE", "CAPITAL_CONTRIBUTION", "OWNER_DRAW"].includes(t)) {
+        throw app.httpErrors.badRequest(`Invalid type: ${t}`);
+      }
+      nextType = t;
+    }
     if ("category" in b) {
       const trimmedCategory = b.category ? String(b.category).trim() : null;
       if (trimmedCategory && !(await loadCategoryLabels()).has(trimmedCategory)) {
@@ -3739,6 +3793,23 @@ Respond ONLY with valid JSON in this exact format:
       throw app.httpErrors.badRequest(
         `This expense is linked to a supply purchase (${linkedSupplyPurchase.supply.name}). To change cost or description, edit the purchase from the Supplies tab.`,
       );
+    }
+    // Type changes only allowed on freestanding rows. Job-paired and
+    // supply-paired BEs are always EXPENSE; changing them to equity would
+    // break the linked Expense/SupplyPurchase semantics.
+    if (nextType !== null) {
+      if (linkedExpense || linkedSupplyPurchase) {
+        throw app.httpErrors.badRequest(
+          "Cannot change type on an expense linked to a job or supply purchase.",
+        );
+      }
+      data.type = nextType;
+      // Clearing fields that are meaningless on equity entries — avoid
+      // misleading badges or stale category labels after a re-type.
+      if (nextType !== "EXPENSE") {
+        data.category = null;
+        data.equipmentId = null;
+      }
     }
     return prisma.$transaction(async (tx) => {
       const updated = await tx.businessExpense.update({ where: { id }, data });
@@ -3813,6 +3884,9 @@ Respond ONLY with valid JSON in this exact format:
         select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       prisma.businessExpense.findMany({
+        // P&L is operating only — equity entries (contributions, draws) are
+        // balance-sheet movements and must not affect Net.
+        where: { type: "EXPENSE" },
         select: { date: true, cost: true },
       }),
       prisma.checkout.findMany({
@@ -3862,7 +3936,9 @@ Respond ONLY with valid JSON in this exact format:
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0, 0, 0, 0);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const where: any = {};
+    // Summary card on the Accounting tab is "expenses only" — by-category
+    // breakdown and totals are only meaningful for operating cash-out.
+    const where: any = { type: "EXPENSE" };
     if (q.from || q.to) {
       where.date = {};
       if (q.from) where.date.gte = new Date(q.from);
@@ -3924,6 +4000,8 @@ Respond ONLY with valid JSON in this exact format:
 
     // Pull all flagged rows. Exclude BEs paired with a job-Expense or
     // SupplyPurchase — those are event-driven, not calendar-driven.
+    // Includes all EntryType values: a recurring owner draw or capital
+    // contribution surfaces in the panel just like a recurring software sub.
     const rows = await prisma.businessExpense.findMany({
       where: {
         recurrence: { not: null },
@@ -3932,16 +4010,18 @@ Respond ONLY with valid JSON in this exact format:
       },
       orderBy: { date: "desc" },
       select: {
-        id: true, date: true, cost: true, description: true, category: true,
+        id: true, type: true, date: true, cost: true, description: true, category: true,
         vendor: true, invoiceNumber: true, notes: true, equipmentId: true,
         recurrence: true, recurrenceSkippedUntil: true,
       },
     });
 
-    // Group by (description, vendor); the first row hit (most recent) wins.
+    // Group by (type, description, vendor); the first row hit (most recent)
+    // wins. Type is in the key so a recurring monthly draw and a recurring
+    // monthly expense that happen to share a description don't collapse.
     const seen = new Map<string, typeof rows[number]>();
     for (const r of rows) {
-      const key = `${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
+      const key = `${r.type}::${(r.description || "").trim().toLowerCase()}::${(r.vendor || "").trim().toLowerCase()}`;
       if (!seen.has(key)) seen.set(key, r);
     }
 
@@ -3962,11 +4042,14 @@ Respond ONLY with valid JSON in this exact format:
       .map(({ latest, expected }) => ({
         // Pre-fill payload — what the dialog needs to open with everything
         // populated. Cost and date are editable; description/vendor/category
-        // copy as-is.
+        // copy as-is. `type` carries through so the dialog opens in the
+        // right mode (expense vs equity).
         nextExpectedDate: expected.toISOString().slice(0, 10),
         overdueDays: Math.max(0, Math.floor((now.getTime() - expected.getTime()) / 86400000)),
         recurrence: latest.recurrence,
+        type: latest.type,
         prefill: {
+          type: latest.type,
           description: latest.description,
           cost: latest.cost,
           category: latest.category,
@@ -5079,7 +5162,7 @@ Respond ONLY with valid JSON in this exact format:
   // CSV downloads for verifying payroll/bookkeeping data before Gusto/QB
   // subscriptions go live. All routes anchor on Payment.confirmedAt (cash-
   // basis) except qb-expenses which uses BusinessExpense.date.
-  const { gustoW2Csv, gustoContractorsCsv, qbIncomeCsv, qbExpensesCsv, exportPreview } =
+  const { gustoW2Csv, gustoContractorsCsv, qbIncomeCsv, qbExpensesCsv, qbEquityCsv, exportPreview } =
     await import("../services/exports");
 
   function readDateRange(req: any): { start: Date; end: Date } {
@@ -5130,6 +5213,16 @@ Respond ONLY with valid JSON in this exact format:
     const { start, end } = readDateRange(req);
     const csv = await qbExpensesCsv(start, end);
     const fn = `qb-expenses-${String(req.query.start)}_${String(req.query.end)}.csv`;
+    return sendCsv(reply, fn, csv);
+  });
+
+  // Equity export — capital contributions + owner draws. Separate file from
+  // qb-expenses because these post to QB equity accounts (balance sheet),
+  // not P&L expense lines. Mixing would mis-categorize on import.
+  app.get("/admin/exports/qb-equity.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const csv = await qbEquityCsv(start, end);
+    const fn = `qb-equity-${String(req.query.start)}_${String(req.query.end)}.csv`;
     return sendCsv(reply, fn, csv);
   });
 }

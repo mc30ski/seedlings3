@@ -86,6 +86,8 @@ import {
   FiSearch,
   FiFolder,
   FiCalendar,
+  FiBook,
+  FiTag,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -618,7 +620,7 @@ export default function HomePage() {
     {
       value: "pricing",
       label: "Pricing",
-      icon: TfiMoney,
+      icon: FiTag,
       content: wrapWithInlineMessage(<PricingTab readOnly />),
     },
     {
@@ -740,7 +742,7 @@ export default function HomePage() {
     {
       value: "pricing",
       label: "Pricing",
-      icon: TfiMoney,
+      icon: FiTag,
       content: wrapWithInlineMessage(<PricingTab readOnly />),
     },
     {
@@ -996,9 +998,18 @@ export default function HomePage() {
           categoryIcon: TfiMoney,
         },
         {
+          // Internally this tab is BusinessExpensesTab and the API/model is
+          // BusinessExpense — both kept for historical reasons. The visible
+          // label is "Accounting" because the tab houses three kinds of
+          // money entries that flow to QuickBooks: operating expenses,
+          // capital contributions (equity in), and owner draws (equity out).
+          // See the EntryType discriminator on the BusinessExpense model.
+          // The URL key "business-expenses" is preserved so existing deep
+          // links and localStorage handoffs (Supply badge, Job badge) keep
+          // working.
           value: "business-expenses",
-          label: "Expenses",
-          icon: TfiMoney,
+          label: "Accounting",
+          icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
           category: "Money",
           categoryIcon: TfiMoney,
@@ -1014,7 +1025,7 @@ export default function HomePage() {
         {
           value: "pricing",
           label: "Pricing",
-          icon: TfiMoney,
+          icon: FiTag,
           content: wrapWithInlineMessage(<PricingTab isSuper />),
           category: "Money",
           categoryIcon: TfiMoney,

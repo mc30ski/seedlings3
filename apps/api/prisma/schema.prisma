@@ -1042,16 +1042,56 @@ model Expense {
   @@index([createdById])
 }
 
-// Business expenses NOT tied to a specific job/occurrence — used for general bookkeeping (insurance, fuel, equipment purchases, etc.)
+// BusinessExpense is the canonical Accounting ledger row. Despite the name,
+// it now stores three KINDS of money entries — discriminated by `type`:
+//   EXPENSE              — operating cash-out (default; backward-compat)
+//   CAPITAL_CONTRIBUTION — owner money INTO the business (equity)
+//   OWNER_DRAW           — owner money OUT of the business (equity)
+//
+// All three share the same shape (date, amount, vendor, description,
+// receipt, recurrence) so the UI, receipt anchor, and recurrence engine
+// work identically for all of them. Surfaces that semantically mean
+// "expenses only" must filter `type = EXPENSE` explicitly:
+//   - vs-revenue (P&L)
+//   - summary
+//   - qbExpensesCsv (QB import — Schedule C lines)
+//   - Schedule C CSV export
+// Surfaces that span all types (full bookkeeping list, due-soon recurrence
+// suggestions, receipt routes) do NOT filter by type.
+//
+// Three creation paths, all land here regardless of type:
+//   1. Freestanding — admin types into Add Entry. The Type picker chooses
+//      EXPENSE / CAPITAL_CONTRIBUTION / OWNER_DRAW.
+//   2. Job-paired — worker logs an Expense on a JobOccurrence (always
+//      EXPENSE). Linked via Expense.businessExpenseId.
+//   3. Supply-paired — SupplyPurchase creates a BE at buy time (always
+//      EXPENSE). Linked via SupplyPurchase.businessExpenseId.
+//
+// Export shape:
+//   - Schedule C CSV (Accounting tab "Export" button) — EXPENSE only, line
+//     numbers from EXPENSE_CATEGORIES taxonomy.
+//   - qb-expenses.csv (Exports tab) — EXPENSE + processor fees.
+//   - qb-equity.csv (Exports tab) — CAPITAL_CONTRIBUTION + OWNER_DRAW with
+//     standard equity account names ("Owner's Investment" / "Owner's Draw").
+//
+// Tax-export integrity: only raw cash-flow fields (cost, date, vendor) flow
+// into any export — no derived margin/shortfall fields ever appear.
 model BusinessExpense {
   id String @id @default(cuid())
 
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  // Discriminator. Default is EXPENSE so existing rows keep their meaning;
+  // see EntryType enum doc for the full picture.
+  type EntryType @default(EXPENSE)
+
   date          DateTime
   cost          Float
   description   String
+  // Schedule C category — meaningful only for type = EXPENSE. For
+  // CAPITAL_CONTRIBUTION / OWNER_DRAW this stays null (those are equity
+  // accounts, not Schedule C lines).
   category      String?
   vendor        String?
   invoiceNumber String?
@@ -1104,6 +1144,7 @@ model BusinessExpense {
   @@index([createdById])
   @@index([equipmentId])
   @@index([occurrenceId])
+  @@index([type])
 }
 
 model Setting {
@@ -1571,6 +1612,19 @@ enum ExpenseRecurrence {
   MONTHLY
   QUARTERLY
   ANNUALLY
+}
+
+// EntryType discriminates the BusinessExpense table into the three kinds of
+// "money out / money in" the Accounting tab tracks. All three land in the
+// same table so receipt upload, recurrence, filters, and editing UI work
+// identically; surfaces that mean "expenses only" (Schedule C export,
+// vs-revenue P&L, qb-expenses CSV, summary) filter explicitly on
+// type = EXPENSE. CAPITAL_CONTRIBUTION and OWNER_DRAW flow to QuickBooks via
+// the equity export under standard sole-prop equity account names.
+enum EntryType {
+  EXPENSE
+  CAPITAL_CONTRIBUTION
+  OWNER_DRAW
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

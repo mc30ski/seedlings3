@@ -1,5 +1,42 @@
 "use client";
 
+// Accounting tab (filename + component still "BusinessExpenses" for history —
+// the model is named BusinessExpense in Prisma and the API route prefix is
+// /api/admin/business-expenses; renaming any of those would be a wide blast
+// radius for no functional gain, so the rename is label-only).
+//
+// Entry types (BusinessExpense.type discriminator, see schema.prisma):
+//   - EXPENSE              — operating cash-out (Schedule C / P&L)
+//   - CAPITAL_CONTRIBUTION — owner money INTO the business (equity)
+//   - OWNER_DRAW           — owner money OUT of the business (equity)
+// Entry type is chosen at create time in the dialog. The Type picker is
+// locked on rows linked to a job or supply purchase (always EXPENSE).
+//
+// What this tab shows:
+//   1. "Due to record" — forecasted next instance of recurring rows of any
+//      type (predictions). Sourced from /business-expenses/due-soon.
+//   2. Summary card — total / count / by-category for the filtered range.
+//      EXPENSE-only on the backend; hidden when the user is filtered to an
+//      equity-only view (the numbers would be misleading).
+//   3. Earnings vs Expenses — management P&L. EXPENSE-only on the backend;
+//      same hide rule as Summary.
+//   4. Filters + paginated list. Type filter (All / Expenses / Capital
+//      contributions / Owner draws) sits next to Category. Type badge is
+//      rendered on equity entries only (expense cards stay visually clean).
+//   5. CSV export ("Export" button) — Schedule C-aligned; hard-pinned to
+//      type=EXPENSE regardless of on-screen filter. Equity export lives on
+//      the Exports tab as qb-equity.csv.
+//
+// Three creation paths into BusinessExpense (always EXPENSE except #1):
+//   - Freestanding — admin types into Add Entry (any type).
+//   - Job-paired — worker logs an Expense on a JobOccurrence (EXPENSE).
+//   - Supply-paired — SupplyPurchase creates a BE at buy time (EXPENSE).
+//
+// QuickBooks-side mapping:
+//   EXPENSE              → Schedule C line via EXPENSE_CATEGORIES setting
+//   CAPITAL_CONTRIBUTION → "Owner's Investment" equity account
+//   OWNER_DRAW           → "Owner's Draw" equity account
+
 import { useEffect, useMemo, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
@@ -29,8 +66,26 @@ import ReceiptUpload from "@/src/ui/components/ReceiptUpload";
 import { compressOnly } from "@/src/lib/imageRedact";
 import { useExpenseCategories } from "@/src/lib/useExpenseCategories";
 
+type EntryType = "EXPENSE" | "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
+
+const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
+  EXPENSE: "Expense",
+  CAPITAL_CONTRIBUTION: "Capital Contribution",
+  OWNER_DRAW: "Owner Draw",
+};
+
+// Color palette per type for the badge on each card. EXPENSE keeps the
+// neutral look it already had (no badge below); equity entries get a
+// distinct color so the operator immediately sees that it's not a P&L item.
+const ENTRY_TYPE_COLOR: Record<EntryType, string> = {
+  EXPENSE: "gray",
+  CAPITAL_CONTRIBUTION: "green",
+  OWNER_DRAW: "pink",
+};
+
 type BusinessExpense = {
   id: string;
+  type: EntryType;
   date: string;
   cost: number;
   description: string;
@@ -61,7 +116,9 @@ type DueSoonSuggestion = {
   nextExpectedDate: string;
   overdueDays: number;
   recurrence: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "ANNUALLY";
+  type: EntryType;
   prefill: {
+    type: EntryType;
     description: string;
     cost: number;
     category: string | null;
@@ -156,20 +213,30 @@ function ymd(d: Date): string {
 // Backward-looking, calendar-accurate ranges for the summary timeframe — the
 // shared datePresets lib is forward-looking (built for job scheduling), wrong
 // for expenses. Tax-oriented: month/quarter/year to date, plus last year.
-type ExpensePreset = "all" | "month" | "quarter" | "year" | "lastYear" | "custom";
+type ExpensePreset = "last30" | "month" | "quarter" | "year" | "lastYear" | "all" | "custom";
 
+// Order matters — these render left-to-right. "All time" sits at the end
+// because it's the rarest choice (and the most expensive query). Default is
+// "Last 30 days" — covers the typical "what did we spend recently" question
+// without pulling the full history every time the tab opens.
 const EXPENSE_PRESETS: { key: ExpensePreset; label: string }[] = [
-  { key: "all", label: "All time" },
+  { key: "last30", label: "Last 30 days" },
   { key: "month", label: "This month" },
   { key: "quarter", label: "This quarter" },
   { key: "year", label: "This year" },
   { key: "lastYear", label: "Last year" },
+  { key: "all", label: "All time" },
 ];
 
 function rangeForExpensePreset(p: ExpensePreset): { from: string; to: string } {
   const now = new Date();
   const today = ymd(now);
   switch (p) {
+    case "last30": {
+      const from = new Date(now);
+      from.setDate(from.getDate() - 30);
+      return { from: ymd(from), to: today };
+    }
     case "month":
       return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
     case "quarter": {
@@ -198,11 +265,15 @@ export default function BusinessExpensesTab() {
 
   // Filters. filterFrom/filterTo are the shared date range — set by the
   // summary timeframe control and scoped across the summary, list, and export.
+  // Default to last-30-days so the tab opens to a sensible, bounded window.
+  const initialRange = rangeForExpensePreset("last30");
   const [q, setQ] = useState("");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
+  const [filterFrom, setFilterFrom] = useState(initialRange.from);
+  const [filterTo, setFilterTo] = useState(initialRange.to);
   const [filterCategory, setFilterCategory] = useState("");
-  const [expensePreset, setExpensePreset] = useState<ExpensePreset>("all");
+  // "" = all types. EXPENSE | CAPITAL_CONTRIBUTION | OWNER_DRAW narrows.
+  const [filterType, setFilterType] = useState<"" | EntryType>("");
+  const [expensePreset, setExpensePreset] = useState<ExpensePreset>("last30");
 
   function applyPreset(p: ExpensePreset) {
     setExpensePreset(p);
@@ -226,6 +297,7 @@ export default function BusinessExpensesTab() {
   const [confirmDelete, setConfirmDelete] = useState<BusinessExpense | null>(null);
 
   // Form
+  const [fType, setFType] = useState<EntryType>("EXPENSE");
   const [fDate, setFDate] = useState("");
   const [fCost, setFCost] = useState("");
   const [fDescription, setFDescription] = useState("");
@@ -252,6 +324,7 @@ export default function BusinessExpensesTab() {
       if (filterFrom) params.set("from", filterFrom);
       if (filterTo) params.set("to", filterTo);
       if (filterCategory) params.set("category", filterCategory);
+      if (filterType) params.set("type", filterType);
       if (q.trim()) params.set("q", q.trim());
       params.set("limit", String(pageSize));
       params.set("offset", String((page - 1) * pageSize));
@@ -295,7 +368,7 @@ export default function BusinessExpensesTab() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, pageSize]);
 
   // Re-load when filters or pagination change. Search is debounced; page/
   // pageSize changes load immediately.
@@ -303,10 +376,13 @@ export default function BusinessExpensesTab() {
     const t = setTimeout(() => void load(), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, filterFrom, filterTo, filterCategory, page, pageSize]);
+  }, [q, filterFrom, filterTo, filterCategory, filterType, page, pageSize]);
 
   function openCreate() {
     setEditing(null);
+    // If the user is filtered to a specific entry type, default new entries
+    // to that type — they're almost certainly adding more of the same.
+    setFType(filterType || "EXPENSE");
     setFDate(todayStr());
     setFCost("");
     setFDescription("");
@@ -322,6 +398,7 @@ export default function BusinessExpensesTab() {
 
   function openEdit(e: BusinessExpense) {
     setEditing(e);
+    setFType(e.type);
     setFDate(e.date.slice(0, 10));
     setFCost(e.cost.toFixed(2));
     setFDescription(e.description);
@@ -346,6 +423,7 @@ export default function BusinessExpensesTab() {
   // becomes the most-recent in its series after save.
   function openFromSuggestion(s: DueSoonSuggestion) {
     setEditing(null);
+    setFType(s.prefill.type);
     setFDate(s.nextExpectedDate);
     setFCost(s.prefill.cost.toFixed(2));
     setFDescription(s.prefill.description);
@@ -390,14 +468,17 @@ export default function BusinessExpensesTab() {
     setSaving(true);
     try {
       const payload: any = {
+        type: fType,
         date: fDate,
         cost: parseFloat(fCost),
         description: fDescription.trim(),
-        category: fCategory.trim() || null,
+        // Category/equipment are expense-only — server ignores them on
+        // equity types, but blank them on the wire too for clarity.
+        category: fType === "EXPENSE" ? (fCategory.trim() || null) : null,
         vendor: fVendor.trim() || null,
         invoiceNumber: fInvoiceNumber.trim() || null,
         notes: fNotes.trim() || null,
-        equipmentId: fEquipmentId || null,
+        equipmentId: fType === "EXPENSE" ? (fEquipmentId || null) : null,
         recurrence: fRecurrence || null,
       };
       if (editing) {
@@ -476,10 +557,14 @@ export default function BusinessExpensesTab() {
 
   function clearFilters() {
     setQ("");
-    setFilterFrom("");
-    setFilterTo("");
     setFilterCategory("");
-    setExpensePreset("all");
+    setFilterType("");
+    // Reset the date range to the default last-30-days window rather than
+    // dumping the user into the full-history "All time" view.
+    const r = rangeForExpensePreset("last30");
+    setFilterFrom(r.from);
+    setFilterTo(r.to);
+    setExpensePreset("last30");
   }
 
   // Schedule C-aligned CSV export. Columns chosen for compatibility with tax
@@ -495,6 +580,10 @@ export default function BusinessExpensesTab() {
     if (filterTo) params.set("to", filterTo);
     if (filterCategory) params.set("category", filterCategory);
     if (q.trim()) params.set("q", q.trim());
+    // Schedule C CSV is tax-shaped — columns are expense-specific. Hard-pin
+    // to EXPENSE regardless of the on-screen Type filter so the file is
+    // always meaningful. Equity entries export from the Exports tab.
+    params.set("type", "EXPENSE");
     params.set("all", "true");
     let allRows: BusinessExpense[] = [];
     try {
@@ -579,18 +668,27 @@ export default function BusinessExpensesTab() {
     URL.revokeObjectURL(url);
   }
 
-  const hasFilters = !!(q || filterFrom || filterTo || filterCategory);
+  const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType);
 
   return (
-    <Box w="full">
+    <Box w="full" position="relative">
+      {/* Full-tab loading overlay — same pattern used by Payments, Clients,
+          Equipment, etc. Dims everything and centers a Spinner on top while
+          a new timeframe or filter is being fetched. */}
+      {loading && (
+        <>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>
+      )}
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
-        <Text fontWeight="bold" fontSize="lg">Business Expenses</Text>
+        <Text fontWeight="bold" fontSize="lg">Accounting</Text>
         <HStack gap={2}>
           <Button size="sm" variant="outline" onClick={() => void exportCsv()} disabled={total === 0} title="Download CSV for tax software / CPA">
             <Download size={14} /> Export
           </Button>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
-            <Plus size={14} /> Add Expense
+            <Plus size={14} /> Add Entry
           </Button>
         </HStack>
       </HStack>
@@ -663,10 +761,14 @@ export default function BusinessExpensesTab() {
       )}
 
       {/* Summary */}
-      {summary && (
+      {/* Summary + Earnings vs Expenses are expense-only by design (P&L
+          surfaces). Hide them when the user is filtered to an equity-only
+          view — they'd be showing operating numbers that don't match the
+          list. */}
+      {summary && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (
         <Card.Root variant="outline" mb={3}>
           <Card.Body p={3}>
-            {/* Timeframe — shared range, scopes the summary, list, and export */}
+            {/* Timeframe — shared range, scopes the summary, list, and export. */}
             <HStack gap={1.5} wrap="wrap" align="center" mb={3}>
               {EXPENSE_PRESETS.map((p) => (
                 <Button
@@ -748,7 +850,7 @@ export default function BusinessExpensesTab() {
       </Box>
 
       {/* Earnings vs Expenses — for the selected timeframe */}
-      {comparison && (() => {
+      {comparison && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (() => {
         const rangeLabel = expensePreset === "all"
           ? "All time"
           : EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range";
@@ -818,6 +920,23 @@ export default function BusinessExpensesTab() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </HStack>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as "" | EntryType)}
+              title="Filter by entry type"
+              style={{
+                padding: "4px 8px",
+                fontSize: "13px",
+                border: "1px solid var(--chakra-colors-gray-200)",
+                borderRadius: "6px",
+                background: "white",
+              }}
+            >
+              <option value="">All types</option>
+              <option value="EXPENSE">Expenses</option>
+              <option value="CAPITAL_CONTRIBUTION">Capital contributions</option>
+              <option value="OWNER_DRAW">Owner draws</option>
+            </select>
             <CategoryFilterSelect
               value={filterCategory}
               onChange={setFilterCategory}
@@ -832,13 +951,14 @@ export default function BusinessExpensesTab() {
         </Card.Body>
       </Card.Root>
 
-      {/* List */}
-      {loading && expenses.length === 0 ? (
-        <Box py={8} textAlign="center"><Spinner /></Box>
-      ) : expenses.length === 0 ? (
-        <Box py={8} textAlign="center" color="fg.muted">
-          <Text>{hasFilters ? "No expenses match the current filters." : "No business expenses yet. Click Add Expense to get started."}</Text>
-        </Box>
+      {/* List. Initial-load spinner is handled by the full-tab overlay
+          above; here we just show the empty state when not loading. */}
+      {expenses.length === 0 ? (
+        !loading && (
+          <Box py={8} textAlign="center" color="fg.muted">
+            <Text>{hasFilters ? "No entries match the current filters." : "No entries yet. Click Add Entry to get started."}</Text>
+          </Box>
+        )
       ) : (
         <VStack align="stretch" gap={1}>
           {expenses.map((e) => (
@@ -848,6 +968,20 @@ export default function BusinessExpensesTab() {
                   <Box flex="1" minW={0}>
                     <HStack gap={2} wrap="wrap" mb={0.5}>
                       <Text fontSize="sm" fontWeight="semibold">{e.description}</Text>
+                      {/* Type badge — shown only for equity entries so the
+                          expense list stays visually identical to before. */}
+                      {e.type !== "EXPENSE" && (
+                        <Badge
+                          size="sm"
+                          colorPalette={ENTRY_TYPE_COLOR[e.type]}
+                          variant="subtle"
+                          borderRadius="full"
+                          px="2"
+                          title="Equity entry — excluded from P&L and Schedule C"
+                        >
+                          {ENTRY_TYPE_LABELS[e.type]}
+                        </Badge>
+                      )}
                       {e.recurrence && (
                         <Badge
                           size="sm"
@@ -1060,10 +1194,62 @@ export default function BusinessExpensesTab() {
             <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
               <Dialog.CloseTrigger />
               <Dialog.Header>
-                <Dialog.Title>{editing ? "Edit Expense" : "Add Expense"}</Dialog.Title>
+                <Dialog.Title>
+                  {editing
+                    ? `Edit ${ENTRY_TYPE_LABELS[fType]}`
+                    : `Add ${ENTRY_TYPE_LABELS[fType]}`}
+                </Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <VStack align="stretch" gap={3}>
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Type *</Text>
+                    {/* Switching type wipes category/equipment so a stale
+                        Schedule C label doesn't survive on an equity entry.
+                        Type changes are blocked server-side on rows linked
+                        to a job or supply purchase. */}
+                    <select
+                      value={fType}
+                      onChange={(e) => {
+                        const next = e.target.value as EntryType;
+                        setFType(next);
+                        if (next !== "EXPENSE") {
+                          setFCategory("");
+                          setFEquipmentId("");
+                        }
+                      }}
+                      disabled={
+                        !!editing &&
+                        (!!editing.occurrenceId || !!editing.supplyPurchase)
+                      }
+                      style={{
+                        padding: "6px 8px",
+                        fontSize: "14px",
+                        border: "1px solid var(--chakra-colors-gray-200)",
+                        borderRadius: "6px",
+                        width: "100%",
+                        background: "white",
+                      }}
+                    >
+                      <option value="EXPENSE">Expense (operating cash-out)</option>
+                      <option value="CAPITAL_CONTRIBUTION">Capital Contribution (owner → business)</option>
+                      <option value="OWNER_DRAW">Owner Draw (business → owner)</option>
+                    </select>
+                    {fType !== "EXPENSE" && (
+                      <Text fontSize="xs" color="fg.muted" mt={1}>
+                        Equity entries post to QuickBooks under{" "}
+                        <Text as="span" fontWeight="semibold">
+                          {fType === "CAPITAL_CONTRIBUTION" ? "Owner's Investment" : "Owner's Draw"}
+                        </Text>
+                        . They're excluded from the P&L and Schedule C export.
+                      </Text>
+                    )}
+                    {editing && (editing.occurrenceId || editing.supplyPurchase) && (
+                      <Text fontSize="xs" color="fg.muted" mt={1}>
+                        Type is locked because this entry is tied to a job or supply purchase.
+                      </Text>
+                    )}
+                  </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Date *</Text>
                     <input
@@ -1075,48 +1261,69 @@ export default function BusinessExpensesTab() {
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Description *</Text>
-                    <Input size="sm" value={fDescription} onChange={(e) => setFDescription(e.target.value)} placeholder="e.g., Liability insurance Q1" />
+                    <Input
+                      size="sm"
+                      value={fDescription}
+                      onChange={(e) => setFDescription(e.target.value)}
+                      placeholder={
+                        fType === "CAPITAL_CONTRIBUTION"
+                          ? "e.g., Initial owner investment"
+                          : fType === "OWNER_DRAW"
+                            ? "e.g., Monthly owner draw"
+                            : "e.g., Liability insurance Q1"
+                      }
+                    />
                   </Box>
                   <Box>
-                    <Text fontSize="sm" mb={1}>Cost *</Text>
+                    <Text fontSize="sm" mb={1}>
+                      {fType === "EXPENSE"
+                        ? "Cost *"
+                        : fType === "CAPITAL_CONTRIBUTION"
+                          ? "Amount contributed *"
+                          : "Amount drawn *"}
+                    </Text>
                     <CurrencyInput value={fCost} onChange={setFCost} size="sm" placeholder="0.00" />
                   </Box>
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Category (Schedule C line)</Text>
-                    <CategoryDropdown value={fCategory} onChange={setFCategory} />
-                    {fCategory && !selectableCategories.some((c) => c.label === fCategory) && (
-                      <Text fontSize="xs" color="orange.600" mt={1}>
-                        Legacy category "{fCategory}" — pick a Schedule C category to update it.
-                      </Text>
-                    )}
-                    <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
-                      <Text fontSize="xs" color="blue.800">
-                        <Text as="span" fontWeight="semibold">Supplies vs Depreciation:</Text>{" "}
-                        Use <Text as="span" fontWeight="semibold">Supplies (line 22)</Text> for consumables and small items
-                        — string trimmer line, fertilizer, fuel, hand tools, anything under roughly{" "}
-                        <Text as="span" fontWeight="semibold">$2,500</Text>.
-                        Use <Text as="span" fontWeight="semibold">Depreciation (line 13)</Text> for major
-                        equipment that lasts multiple years — commercial mowers, trailers, trucks, anything
-                        ~$2,500 and up. The app records the purchase; your CPA decides at tax time whether
-                        to fully deduct it under Section 179 (usually yes for small businesses) or depreciate
-                        it over several years.
-                        Tip: when picking <Text as="span" fontWeight="semibold">Depreciation</Text>, link the
-                        expense to the equipment record below so you have a clean audit trail.
-                      </Text>
-                    </Box>
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Linked equipment (optional)</Text>
-                    <EquipmentDropdown
-                      value={fEquipmentId}
-                      onChange={setFEquipmentId}
-                      equipment={equipmentList}
-                    />
-                    <Text fontSize="xs" color="fg.muted" mt={1}>
-                      Use for capital purchases (Depreciation) or major repairs you want to track
-                      against a specific piece of equipment.
-                    </Text>
-                  </Box>
+                  {fType === "EXPENSE" && (
+                    <>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Category (Schedule C line)</Text>
+                        <CategoryDropdown value={fCategory} onChange={setFCategory} />
+                        {fCategory && !selectableCategories.some((c) => c.label === fCategory) && (
+                          <Text fontSize="xs" color="orange.600" mt={1}>
+                            Legacy category "{fCategory}" — pick a Schedule C category to update it.
+                          </Text>
+                        )}
+                        <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" borderRadius="md">
+                          <Text fontSize="xs" color="blue.800">
+                            <Text as="span" fontWeight="semibold">Supplies vs Depreciation:</Text>{" "}
+                            Use <Text as="span" fontWeight="semibold">Supplies (line 22)</Text> for consumables and small items
+                            — string trimmer line, fertilizer, fuel, hand tools, anything under roughly{" "}
+                            <Text as="span" fontWeight="semibold">$2,500</Text>.
+                            Use <Text as="span" fontWeight="semibold">Depreciation (line 13)</Text> for major
+                            equipment that lasts multiple years — commercial mowers, trailers, trucks, anything
+                            ~$2,500 and up. The app records the purchase; your CPA decides at tax time whether
+                            to fully deduct it under Section 179 (usually yes for small businesses) or depreciate
+                            it over several years.
+                            Tip: when picking <Text as="span" fontWeight="semibold">Depreciation</Text>, link the
+                            expense to the equipment record below so you have a clean audit trail.
+                          </Text>
+                        </Box>
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Linked equipment (optional)</Text>
+                        <EquipmentDropdown
+                          value={fEquipmentId}
+                          onChange={setFEquipmentId}
+                          equipment={equipmentList}
+                        />
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          Use for capital purchases (Depreciation) or major repairs you want to track
+                          against a specific piece of equipment.
+                        </Text>
+                      </Box>
+                    </>
+                  )}
                   <Box>
                     <Text fontSize="sm" mb={1}>Vendor</Text>
                     <Input size="sm" value={fVendor} onChange={(e) => setFVendor(e.target.value)} placeholder="e.g., State Farm" />
