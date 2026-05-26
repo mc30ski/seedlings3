@@ -439,14 +439,17 @@ export default function ClientRequestsSection() {
         onCancel={() => setSkippingRow(null)}
       />
 
-      {/* Dismiss confirm — optional note for the audit trail.
-       *  Closes out the request without touching the occurrence. */}
+      {/* Dismiss confirm — the note (when set) is shown to the client
+       *  on their My Properties card AND to workers/admin on the
+       *  JobsTab card. Disappears naturally when the next recurring
+       *  visit is created. Write it as something a client would
+       *  reasonably read. */}
       <ConfirmDialog
         open={!!dismissingRow}
         title="Dismiss this request?"
-        message="The job stays exactly as scheduled. The client's pending request banner will clear from their view."
-        inputLabel="Note (optional)"
-        inputPlaceholder="e.g., Client changed their mind on the phone."
+        message="The job stays exactly as scheduled. The client's pending banner clears, and your note (if any) shows on both their job card and ours until the next visit."
+        inputLabel="Note to client (optional)"
+        inputPlaceholder="e.g., Confirmed by phone — keeping the original date."
         inputOptional
         confirmLabel="Dismiss"
         confirmColorPalette="gray"

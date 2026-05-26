@@ -390,11 +390,34 @@ export default async function clientRoutes(app: FastifyInstance) {
           orderBy: { createdAt: "asc" },
           take: 5,
         },
+        // Two surfaces use these:
+        //   - pendingChangeRequest (status=PENDING) → banner on the card
+        //     while admin processes the request
+        //   - latest resolved-with-note → admin's dismissal/approval note
+        //     shown on the card so the client sees the response.
+        //     Naturally disappears when the next recurring occurrence is
+        //     created (that's a different row, no requests on it).
+        // Both fetched in one query (take 5 covers any realistic spread
+        // of resolved + pending; client side splits them).
         changeRequests: {
-          where: { status: "PENDING" },
+          where: {
+            OR: [
+              { status: "PENDING" },
+              { resolutionNote: { not: null } },
+            ],
+          },
           orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { id: true, kind: true, status: true, proposedStartAt: true, comment: true, createdAt: true },
+          take: 5,
+          select: {
+            id: true,
+            kind: true,
+            status: true,
+            proposedStartAt: true,
+            comment: true,
+            resolutionNote: true,
+            resolvedAt: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -429,7 +452,11 @@ export default async function clientRoutes(app: FastifyInstance) {
           property: occ.job?.property ?? null,
           workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
           photos: photos.filter(Boolean),
-          pendingChangeRequest: occ.changeRequests[0] ?? null,
+          // Split the prefetched change requests into pending (banner)
+          // and most-recent-resolved-with-note (response from admin).
+          pendingChangeRequest: occ.changeRequests.find((c) => c.status === "PENDING") ?? null,
+          lastResolvedRequest:
+            occ.changeRequests.find((c) => c.status !== "PENDING" && !!c.resolutionNote) ?? null,
         };
       })
     );

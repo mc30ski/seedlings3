@@ -76,6 +76,16 @@ type UpcomingJob = {
     comment?: string | null;
     createdAt: string;
   } | null;
+  /** Most-recent resolved change request that carried a note from
+   *  the admin. Naturally disappears for the next recurring occurrence
+   *  because that's a different row. */
+  lastResolvedRequest?: {
+    id: string;
+    kind: "RESCHEDULE" | "SKIP";
+    status: string;
+    resolutionNote?: string | null;
+    resolvedAt?: string | null;
+  } | null;
 };
 
 type ClientProfile = {
@@ -661,6 +671,21 @@ export default function ClientMyJobsTab() {
                             Cancel
                           </Button>
                         </HStack>
+                      </Box>
+                    )}
+
+                    {/* Note from us — visible after admin resolves a
+                     *  request with a note. Disappears when the next
+                     *  recurring occurrence is created (that's a
+                     *  different row with no resolved requests). */}
+                    {!job.pendingChangeRequest && job.lastResolvedRequest?.resolutionNote && (
+                      <Box mt={2} p={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+                        <Text fontSize="xs" fontWeight="semibold" color="blue.800">
+                          Note from us
+                        </Text>
+                        <Text fontSize="sm" color="blue.900" mt={0.5}>
+                          {job.lastResolvedRequest.resolutionNote}
+                        </Text>
                       </Box>
                     )}
 
