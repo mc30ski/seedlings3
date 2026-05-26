@@ -3990,15 +3990,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
-                          {/* "Awaiting admin approval" — surfaces when a
-                           *  Payment row exists on a PENDING_PAYMENT
-                           *  occurrence but admin hasn't confirmed yet.
-                           *  Without this badge, the job card looked
-                           *  identical to a "ready to take payment"
-                           *  one, even though the action button below
-                           *  is intentionally inert in this state. */}
+                          {/* Three-state badges for PENDING_PAYMENT —
+                           *  mirrors the action-button logic in this
+                           *  card so the chip and the disabled state of
+                           *  the button always agree:
+                           *    - Payment row exists, not confirmed →
+                           *      "Awaiting admin approval"
+                           *    - No payment row, but request was sent →
+                           *      "Awaiting client payment"
+                           *    - Neither → no extra chip (just the
+                           *      Pending_Payment status badge above) */}
                           {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
                             <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
+                          {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
+                            <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
@@ -4314,15 +4320,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                               variant="solid"
                             />
                           ) : null}
-                          {/* "Awaiting admin approval" — surfaces when a
-                           *  Payment row exists on a PENDING_PAYMENT
-                           *  occurrence but admin hasn't confirmed yet.
-                           *  Without this badge, the job card looked
-                           *  identical to a "ready to take payment"
-                           *  one, even though the action button below
-                           *  is intentionally inert in this state. */}
+                          {/* Three-state badges for PENDING_PAYMENT —
+                           *  mirrors the action-button logic in this
+                           *  card so the chip and the disabled state of
+                           *  the button always agree:
+                           *    - Payment row exists, not confirmed →
+                           *      "Awaiting admin approval"
+                           *    - No payment row, but request was sent →
+                           *      "Awaiting client payment"
+                           *    - Neither → no extra chip (just the
+                           *      Pending_Payment status badge above) */}
                           {occ.status === "PENDING_PAYMENT" && !!occ.payment && occ.payment.confirmed === false && (
                             <StatusBadge status="Awaiting admin approval" palette="orange" variant="solid" />
+                          )}
+                          {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
+                            <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}

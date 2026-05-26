@@ -892,8 +892,10 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
 
                 {/* Permissions — collapsed by default. Header toggles open;
                     body shows the same per-permission switches as before.
-                    Super-only — admin's read-only view never sees toggles. */}
-                {!readOnly && isWorker && (() => {
+                    Read-only mode renders the switches in their current
+                    state but disabled, so admins can see what's granted
+                    without being able to mutate it. */}
+                {isWorker && (() => {
                   const open = permsOpen.has(u.id);
                   return (
                     <Box mt={3} pt={3} borderTopWidth="1px" borderColor="gray.200">
@@ -954,10 +956,17 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                                 </Box>
                                 <Switch.Root
                                   checked={effective}
-                                  disabled={grantedByRole}
-                                  onCheckedChange={(e) =>
-                                    void setPrivilegeOverride(u.id, perm.key, e.checked)
-                                  }
+                                  // Disabled when role-granted (can't
+                                  // override an Admin/Super grant) OR
+                                  // when this whole tab is read-only
+                                  // (admin's directory view — Super
+                                  // does the actual editing on the
+                                  // Super Users tab).
+                                  disabled={grantedByRole || readOnly}
+                                  onCheckedChange={(e) => {
+                                    if (readOnly) return;
+                                    void setPrivilegeOverride(u.id, perm.key, e.checked);
+                                  }}
                                   colorPalette="green"
                                 >
                                   <Switch.HiddenInput />
