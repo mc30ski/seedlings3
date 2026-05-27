@@ -121,7 +121,7 @@ export default function HomePage() {
   const [workerInnerTab, setWorkerInnerTab] = usePersistedState<WorkerTabs>("workerTab", "reminders");
   const [workerCategory, setWorkerCategory] = usePersistedState<string>("workerCategory", "Work");
   const [adminCategory, setAdminCategory] = usePersistedState<string>("adminCategory", "Work");
-  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Reports");
+  const [superCategory, setSuperCategory] = usePersistedState<string>("superCategory", "Records");
   const [superInnerTab, setSuperInnerTab] = usePersistedState<SuperTabs>("superTab", "operations");
 
   // Handle /e/[slug] QR redirect — navigate to equipment tab
@@ -542,7 +542,7 @@ export default function HomePage() {
   // Order matters: BreadcrumbNav derives the category list (and the inner-tab
   // list within each category) from the order tabs appear here. Keep tabs of
   // the same category contiguous, categories in the intended display order:
-  // Work · Equipment · Directory · Money · Reports · System.
+  // Work · Equipment · Directory · Money · Records · System.
   const workerTabs: TabItem[] = [
     // ── Work ──
     {
@@ -629,7 +629,7 @@ export default function HomePage() {
       icon: FiPackage,
       content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
     },
-    // ── Reports ──
+    // ── Records ──
     {
       value: "statistics",
       label: "Statistics",
@@ -752,7 +752,7 @@ export default function HomePage() {
       content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
     },
     {
-      // ── Reports ──
+      // ── Records ──
       value: "statistics",
       label: "Statistics",
       icon: FiBarChart2,
@@ -909,17 +909,17 @@ export default function HomePage() {
       innerTabs: (() => {
         // Mirror the admin layout so a worker promoted to admin doesn't have
         // to relearn the tab map. Categories: Work · Equipment · Directory ·
-        // Money · Reports · System.
+        // Money · Records · System.
         const catMap: Record<string, string> = {
           home: "Work", reminders: "Work", jobs: "Work", routes: "Work", tasks: "Work",
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
-          statistics: "Reports",
+          statistics: "Records",
           profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Reports: FiBarChart2, System: FiSettings,
+          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
         return workerTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
       })(),
@@ -960,11 +960,11 @@ export default function HomePage() {
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
-          statistics: "Reports", activity: "Reports", history: "Reports", timeline: "Reports", documents: "Reports",
+          statistics: "Records", activity: "Records", history: "Records", timeline: "Records", documents: "Records",
           notify: "System", settings: "System", profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
-          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Reports: FiBarChart2, System: FiSettings,
+          Work: FiClipboard, Equipment: FiTool, Directory: FiUsers, Money: TfiMoney, Records: FiBarChart2, System: FiSettings,
         };
         return adminTabs.map((t) => ({ value: t.value, label: t.label, icon: t.icon, visible: t.visible, content: t.content, category: catMap[t.value], categoryIcon: catIconMap[catMap[t.value]], chip: t.value === "tasks" }));
       })(),
@@ -1039,12 +1039,12 @@ export default function HomePage() {
           categoryIcon: TfiMoney,
         },
         {
-          // ── Reports ──
+          // ── Records ──
           value: "operations",
           label: "Operations",
           icon: FiBarChart2,
           content: <OperationsTab />,
-          category: "Reports",
+          category: "Records",
           categoryIcon: FiBarChart2,
         },
         {
@@ -1052,7 +1052,7 @@ export default function HomePage() {
           label: "Audit",
           icon: FiSearch,
           content: <AuditTab />,
-          category: "Reports",
+          category: "Records",
           categoryIcon: FiBarChart2,
         },
         {
@@ -1060,7 +1060,7 @@ export default function HomePage() {
           label: "Timeline",
           icon: FiCalendar,
           content: wrapWithInlineMessage(<TimelineTab isSuper />),
-          category: "Reports",
+          category: "Records",
           categoryIcon: FiBarChart2,
         },
         {
@@ -1068,7 +1068,7 @@ export default function HomePage() {
           label: "Documents",
           icon: FiFolder,
           content: wrapWithInlineMessage(<DocumentsTab isSuper />),
-          category: "Reports",
+          category: "Records",
           categoryIcon: FiBarChart2,
         },
         {
@@ -1460,6 +1460,44 @@ export default function HomePage() {
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadChangeRequestCount]);
 
+  // Estimate follow-up count for the header badge. Estimates whose
+  // proposal was sent to the client but no ACCEPTED/REJECTED came back
+  // within 1–4 weeks of the visit. Acts as a soft nudge while the window
+  // is open, then lets the alert fall off after 4 weeks.
+  const [estimateFollowupCount, setEstimateFollowupCount] = useState(0);
+  const loadEstimateFollowupCount = useCallback(async () => {
+    if (!isAdmin) { setEstimateFollowupCount(0); if (me) markAlertLoaded("estimateFollowups"); return; }
+    try {
+      const result = await apiGet<{ count: number }>("/api/admin/estimates/stale-followup-count");
+      setEstimateFollowupCount(result?.count ?? 0);
+    } catch {
+      setEstimateFollowupCount(0);
+    }
+    markAlertLoaded("estimateFollowups");
+  }, [isAdmin]);
+  useEffect(() => {
+    void loadEstimateFollowupCount();
+    const onRefresh = () => void loadEstimateFollowupCount();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+  }, [loadEstimateFollowupCount]);
+
+  // Navigate to admin Jobs tab with the estimate-followup filter applied.
+  // Mirrors goToOverdue / goToUnclaimed: writes a flag to localStorage so
+  // the tab picks it up on mount, then fires an event in case it's already
+  // mounted.
+  const goToEstimateFollowups = useCallback(() => {
+    try {
+      localStorage.setItem("seedlings_adminJobs_showEstimateFollowups", "1");
+      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+    } catch {}
+    setTopTab("admin");
+    setAdminInnerTab("admin-jobs");
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showEstimateFollowups"));
+    }, 100);
+  }, []);
+
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
@@ -1499,7 +1537,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -1666,11 +1704,11 @@ export default function HomePage() {
     if (isSuper) {
       setTopTab("super");
       setSuperInnerTab("timeline" as any);
-      setSuperCategory("Reports");
+      setSuperCategory("Records");
     } else if (isAdmin) {
       setTopTab("admin");
       setAdminInnerTab("timeline" as any);
-      setAdminCategory("Reports");
+      setAdminCategory("Records");
     }
   }, [isSuper, isAdmin]);
 
@@ -1792,7 +1830,7 @@ export default function HomePage() {
       equipment: "Equipment", collections: "Equipment", usage: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",
-      statistics: "Reports", activity: "Reports", history: "Reports", timeline: "Reports", documents: "Reports",
+      statistics: "Records", activity: "Records", history: "Records", timeline: "Records", documents: "Records",
       notify: "System", settings: "System", profile: "System",
     };
     const onNav = (e: Event) => {
@@ -1833,7 +1871,7 @@ export default function HomePage() {
       setTopTab("super");
       setSuperInnerTab(tab as any);
       if (tab === "supplies" || tab === "business-expenses" || tab === "payments" || tab === "pricing" || tab === "exports") setSuperCategory("Money");
-      else if (tab === "operations" || tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Reports");
+      else if (tab === "operations" || tab === "audit" || tab === "documents" || tab === "timeline") setSuperCategory("Records");
       else if (tab === "settings" || tab === "profile") setSuperCategory("System");
       setTimeout(() => { programmaticNavRef.current = false; }, 50);
     };
@@ -2095,11 +2133,11 @@ export default function HomePage() {
       if (isSuper) {
         setTopTab("super");
         setSuperInnerTab("documents" as any);
-        setSuperCategory("Reports");
+        setSuperCategory("Records");
       } else if (isAdmin) {
         setTopTab("admin");
         setAdminInnerTab("documents" as any);
-        setAdminCategory("Reports");
+        setAdminCategory("Records");
       } else {
         // No documents tab visible to this role; nothing to do.
         return;
@@ -2174,11 +2212,11 @@ export default function HomePage() {
       if (isSuper) {
         setTopTab("super");
         setSuperInnerTab("timeline" as any);
-        setSuperCategory("Reports");
+        setSuperCategory("Records");
       } else if (isAdmin) {
         setTopTab("admin");
         setAdminInnerTab("timeline" as any);
-        setAdminCategory("Reports");
+        setAdminCategory("Records");
       } else {
         return;
       }
@@ -2532,6 +2570,7 @@ export default function HomePage() {
                 onClick: goToPaymentApprovals,
               });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
+              if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });

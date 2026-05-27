@@ -758,6 +758,46 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showOverdue", onShowOverdue);
   }, [forAdmin]);
 
+  // "Estimate follow-ups" header alert → filter to ESTIMATE/PROPOSAL_SUBMITTED
+  // visits from 4 weeks ago through 1 week ago. Same shape as applyOverdue:
+  // reset everything, then narrow.
+  const applyEstimateFollowups = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setKind(["ALL"]);
+    setStatusFilter(["PROPOSAL_SUBMITTED"]);
+    setTypeFilter(["ESTIMATE"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
+    setDatePreset(null);
+    setOverdueActive(false);
+    const now = new Date();
+    const oneWeekAgo = new Date(now); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
+    const from = localDate(fourWeeksAgo);
+    const to = localDate(oneWeekAgo);
+    setDateFrom(from);
+    setDateTo(to);
+    void load(true, { from, to });
+  }, []);
+
+  useEffect(() => {
+    if (!forAdmin) return;
+    try {
+      const flag = localStorage.getItem("seedlings_adminJobs_showEstimateFollowups");
+      if (flag) {
+        localStorage.removeItem("seedlings_adminJobs_showEstimateFollowups");
+        applyEstimateFollowups();
+      }
+    } catch {}
+    const onShow = () => applyEstimateFollowups();
+    window.addEventListener("adminJobs:showEstimateFollowups", onShow);
+    return () => window.removeEventListener("adminJobs:showEstimateFollowups", onShow);
+  }, [forAdmin, applyEstimateFollowups]);
+
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);

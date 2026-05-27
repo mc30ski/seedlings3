@@ -398,14 +398,19 @@ export async function gustoContractorsCsv(start: Date, end: Date): Promise<strin
 export async function qbIncomeCsv(start: Date, end: Date): Promise<string> {
   const payments = await loadConfirmedPayments(start, end);
 
+  // `Ref` is the first column on every QB export so QuickBooks can match
+  // rows against the bank feed and detect duplicates on re-import. The
+  // value is a source-prefixed Prisma cuid (`PAY-…` / `BE-…` / `FEE-…`)
+  // — stable across re-exports of the same row, and prefixed so the
+  // three CSVs never collide if a user accidentally merges them.
   const header = [
+    "Ref",
     "Date",
     "Customer",
     "Property",
     "Amount",
     "Method",
     "Job ID",
-    "Payment ID",
     "Note",
   ];
   const lines: string[] = [csvRow(header)];
@@ -417,13 +422,13 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<string> {
       .join(" — ");
     lines.push(
       csvRow([
+        `PAY-${p.id}`,
         p.confirmedAt ? toIsoDate(p.confirmedAt) : "",
         prop?.client?.displayName ?? "",
         propLabel,
         round2(p.amountPaid).toFixed(2),
         p.method ?? "",
         p.occurrence.id,
-        p.id,
         p.note ?? "",
       ]),
     );
@@ -431,11 +436,11 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<string> {
   }
   lines.push(
     csvRow([
+      "",
       "TOTALS",
       "",
       "",
       round2(total).toFixed(2),
-      "",
       "",
       "",
       "",
@@ -496,7 +501,11 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   // single source of truth, editable in Settings with no code change.
   const lineMap = await loadScheduleCLineMap();
 
+  // See `Ref` note on qbIncomeCsv. BusinessExpense rows use `BE-{id}`;
+  // processor-fee rows derived from Payment use `FEE-{paymentId}` since
+  // there's no BusinessExpense row backing them.
   const header = [
+    "Ref",
     "Date",
     "Vendor",
     "Schedule C Category",
@@ -511,6 +520,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
     const category = r.category ?? "Other";
     lines.push(
       csvRow([
+        `BE-${r.id}`,
         toIsoDate(r.date),
         r.vendor ?? "",
         category,
@@ -534,6 +544,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
     const desc = `${p.method} fee on ${clientName}${propName ? ` — ${propName}` : ""} (gross $${round2(p.grossCharged ?? 0).toFixed(2)}, payment ${p.id})`;
     lines.push(
       csvRow([
+        `FEE-${p.id}`,
         p.confirmedAt ? toIsoDate(p.confirmedAt) : "",
         p.method ?? "",
         PROCESSOR_FEE_CATEGORY,
@@ -547,6 +558,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<string> {
   }
   lines.push(
     csvRow([
+      "",
       "TOTALS",
       "",
       "",
@@ -580,13 +592,16 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<string> {
     orderBy: [{ date: "asc" }, { type: "asc" }],
   });
 
+  // No Vendor column — equity entries have no external party (the only
+  // sides are the owner and the business). Description + Notes carry any
+  // context the CPA might need. See qbIncomeCsv for `Ref` rationale.
   const header = [
+    "Ref",
     "Date",
     "Type",
     "Account",
     "Amount",
     "Description",
-    "Vendor",
     "Notes",
   ];
   const lines: string[] = [csvRow(header)];
@@ -598,12 +613,12 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<string> {
     const amount = round2(r.cost);
     lines.push(
       csvRow([
+        `BE-${r.id}`,
         toIsoDate(r.date),
         typeKey === "CAPITAL_CONTRIBUTION" ? "Capital Contribution" : "Owner Draw",
         account,
         amount.toFixed(2),
         r.description ?? "",
-        r.vendor ?? "",
         r.notes ?? "",
       ]),
     );
@@ -612,9 +627,9 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<string> {
   }
   // Two sub-totals so the CPA / spreadsheet check eyeballs each equity
   // account independently — they post to different lines in QB.
-  lines.push(csvRow(["SUBTOTAL Capital Contributions", "", "", round2(contributionTotal).toFixed(2), "", "", ""]));
-  lines.push(csvRow(["SUBTOTAL Owner Draws", "", "", round2(drawTotal).toFixed(2), "", "", ""]));
-  lines.push(csvRow(["TOTALS", "", "", round2(contributionTotal + drawTotal).toFixed(2), "", "", ""]));
+  lines.push(csvRow(["", "SUBTOTAL Capital Contributions", "", "", round2(contributionTotal).toFixed(2), "", ""]));
+  lines.push(csvRow(["", "SUBTOTAL Owner Draws", "", "", round2(drawTotal).toFixed(2), "", ""]));
+  lines.push(csvRow(["", "TOTALS", "", "", round2(contributionTotal + drawTotal).toFixed(2), "", ""]));
   return lines.join("\n") + "\n";
 }
 
