@@ -1296,7 +1296,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       } else {
         setForeignRows([]);
       }
-      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
+      // NB: don't dispatch `seedlings3:jobs-changed` here — load() is a
+      // read-only fetch, not a mutation, and JobsTab listens for the same
+      // event itself (to refresh after other tabs mutate). Firing here
+      // creates an infinite load → event → load loop. Real mutation
+      // handlers (e.g. resetJob) fire the event themselves.
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       publishInlineMessage({
@@ -3253,8 +3257,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             };
 
             // Ghost reminder cards — a reference card on the reminder's
-            // date. Honors the card density: `ultra` collapses to a single
-            // scan row; tapping anywhere cycles density like a normal card.
+            // date. Three visual states like regular cards:
+            //   ultra    — single scan row
+            //   semi     — title strip + minimal body + action buttons
+            //   expanded — same as semi PLUS a full reminder-details
+            //              panel (untruncated note + reminder time).
             const ghostHighPriority = !!(occ as any).isHighPriority;
             if (isGhost) {
               const ghostBorderColor = ghostHighPriority ? "purple.500" : "purple.300";
@@ -3307,13 +3314,34 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   borderColor={ghostBorderColor}
                   borderWidth={ghostHighPriority ? "2px" : "1px"}
                   bg={ghostBg}
-                  cursor="pointer"
-                  onClick={toggleCard}
                   css={ghostCss}
                 >
                   <Card.Body py="2" px="3">
                     <VStack align="start" gap={1}>
-                      <HStack gap={2} align="center">
+                      {/* Title row = the tap target for the density cycle.
+                          Same darker-strip pattern as regular cards: bleeds
+                          past Card.Body's px="3" py="2" via negative
+                          margins so the strip is flush with the card
+                          edges. Body content below is inert. */}
+                      <HStack
+                        gap={2}
+                        align="center"
+                        mx="-3"
+                        mt="-2"
+                        mb={1}
+                        px="3"
+                        py="2"
+                        w="calc(100% + 24px)"
+                        bg="blackAlpha.100"
+                        cursor="pointer"
+                        userSelect="none"
+                        _hover={{ bg: "blackAlpha.200" }}
+                        onClick={(e: any) => {
+                          const el = e.target as HTMLElement;
+                          if (el?.closest?.("a, button")) return;
+                          toggleCard();
+                        }}
+                      >
                         <Bell size={14} style={{ color: "var(--chakra-colors-purple-600)" }} />
                         <Badge colorPalette="purple" variant="solid" fontSize="xs" px="2" borderRadius="full">Reminder</Badge>
                         {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="2" borderRadius="full">High Priority</Badge>}
@@ -3329,6 +3357,35 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {(occ as any).jobType && ` · ${(occ as any).jobType}`}
                         {occ.startAt && ` · Scheduled: ${fmtDate(occ.startAt)}`}
                       </Text>
+                      {/* Fully-expanded ghost card adds a reminder-details
+                          panel: explicit "set for" date + untruncated note.
+                          Click on the title strip again collapses back to
+                          ultra; this is the 3rd state of the density cycle. */}
+                      {cardMode === "expanded" && occ.reminder && (
+                        <Box
+                          w="full"
+                          px="3"
+                          py="2"
+                          bg="purple.100"
+                          borderRadius="md"
+                          borderWidth="1px"
+                          borderColor="purple.200"
+                        >
+                          <Text fontSize="2xs" fontWeight="semibold" color="purple.800" textTransform="uppercase" letterSpacing="wide" mb={1}>
+                            Reminder details
+                          </Text>
+                          {occ.reminder.remindAt && (
+                            <Text fontSize="xs" color="purple.700">
+                              Set for {fmtDate(occ.reminder.remindAt)}
+                            </Text>
+                          )}
+                          {occ.reminder.note && (
+                            <Text fontSize="sm" color="purple.900" mt={1} whiteSpace="pre-wrap">
+                              {occ.reminder.note}
+                            </Text>
+                          )}
+                        </Box>
+                      )}
                       <HStack gap={2} wrap="wrap">
                         <Button
                           size="xs"
@@ -3716,6 +3773,64 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               return null;
             })() : null;
 
+            // "More actions" dropdown — extracted into a JSX variable so the
+            // ultra, semi, and expanded title rows all render the same button
+            // + menu without code duplication. Body uses position:fixed and
+            // computes coords from its parent Box; renders wherever it's used.
+            const moreActionsMenu = (
+              <Box position="relative">
+                <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
+                  <MoreHorizontal size={16} />
+                </Button>
+                {actionMenuOcc === occ.id && (
+                  <VStack
+                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                    ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                    onClick={(e: any) => e.stopPropagation()}
+                  >
+                    {isWorkerView && (
+                      <>
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
+                          <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
+                          <Box as="span" ml={2}>{likedIds.has(occ.id) ? "Unlike" : "Like"}</Box>
+                        </Button>
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void togglePin(occ.id); }}>
+                          <Pin size={14} fill={pinnedIds.has(occ.id) ? "currentColor" : "none"} />
+                          <Box as="span" ml={2}>{pinnedIds.has(occ.id) ? "Unpin" : "Pin"}</Box>
+                        </Button>
+                      </>
+                    )}
+                    {(() => {
+                      // Editable through completion and unfinalized
+                      // PENDING_PAYMENT; frozen once payment is
+                      // requested/accepted (see occInEditableState).
+                      const isActive = occInEditableState(occ);
+                      const hasAnyPriv =
+                        forAdmin ||
+                        !!me?.privileges?.canPullInventory ||
+                        !!me?.privileges?.canChargeBusinessExpenses;
+                      // Admin/Super always pass — they can manage expenses on any job (e.g.
+                      // adding a custom expense on behalf of a contractor who lacks the
+                      // "Charge business expenses" privilege). Workers must be the claimer
+                      // AND have at least one expense-related privilege.
+                      const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
+                      if (!canManage) return null;
+                      return (
+                        <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
+                          <CircleDollarSign size={14} />
+                          <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
+                        </Button>
+                      );
+                    })()}
+                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
+                      <Share2 size={14} />
+                      <Box as="span" ml={2}>Share link</Box>
+                    </Button>
+                  </VStack>
+                )}
+              </Box>
+            );
+
             return (
               <Card.Root
                 key={occ.id}
@@ -3726,17 +3841,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 overflow="hidden"
                 position="relative"
                 css={{
-                  // Cards are always clickable now (click cycles density).
-                  cursor: "pointer",
+                  // Ultra (mini) cards are tap-anywhere to expand — keeps
+                  // discoverability of the density cycle and matches prior
+                  // behavior. Semi + expanded cards are NOT tap-anywhere
+                  // (too easy to bump while scrolling); their Card.Header
+                  // is the dedicated title-bar toggle instead.
+                  cursor: cardMode === "ultra" ? "pointer" : "default",
                   "& a, & button": { pointerEvents: "auto" },
                   ...(isHighPriority ? { borderLeft: "4px solid var(--chakra-colors-purple-600)" } : isReminder ? { borderLeft: "4px solid var(--chakra-colors-purple-400)" } : isAnnouncement ? { borderLeft: "4px solid var(--chakra-colors-purple-400)", ...(isClosed ? { opacity: 0.7 } : {}) } : (isFollowup && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-400)" } : (isFollowup && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-red-300)", opacity: 0.7 } : (isEvent && !isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-400)" } : (isEvent && isClosed) ? { borderLeft: "4px solid var(--chakra-colors-yellow-300)", opacity: 0.7 } : isTask ? { borderLeft: "4px solid var(--chakra-colors-blue-400)" } : {}),
                 }}
-                onClick={(e: any) => {
+                onClick={cardMode === "ultra" ? (e: any) => {
                   if (!toggleCard) return;
                   const el = e.target as HTMLElement;
                   if (el?.closest?.("a, button")) return;
                   toggleCard();
-                }}
+                } : undefined}
               >
                 {/* Loading overlay */}
                 {busyOccId === occ.id && (
@@ -3876,46 +3995,53 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         >
                           {assigneeText}
                         </Text>
+                        {/* "..." menu on the ultra row too — same affordances
+                            (Like / Pin / Add expense / Share link) without
+                            having to expand the card first. */}
+                        {moreActionsMenu}
                       </HStack>
                     );
                   })()
                 ) : (
                 <>
-                {/* Client confirmation banner — expanded cards only, above title */}
-                {!isCardCompact && needsConfirmation && (
-                  <Box mx="4" mt="3" px="3" py="2" bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
-                    <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
-                  </Box>
-                )}
-                {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && occ.jobId && (
-                  <Box px="4" pt="3" pb="0">
-                    <Button
-                      size="xs"
-                      variant="solid"
-                      colorPalette="blue"
-                      onClick={() =>
-                        openEventSearch(
-                          "jobsTabToServicesTabSearch",
-                          occ.job?.property?.displayName ?? "",
-                          true,
-                          `${occ.job?.id}:${occ.id}`,
-                        )
-                      }
-                    >
-                      Manage in Services
-                    </Button>
-                  </Box>
-                )}
-                {(isAdmin || isSuper) && !isCardCompact && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
-                  <Box px="4" pt="3" pb="0">
-                    <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
-                  </Box>
-                )}
+                {/* "Client confirmation required" banner moved into the
+                    Card.Header (under the title row). "Manage in Services"
+                    and the "Stand-alone estimate" note moved into the
+                    Card.Footer action button row (in front of Claim, etc.). */}
+                {/* Only the title row (first HStack inside each branch)
+                    gets the darker bg + toggle click. Status badges /
+                    chips below sit on the regular card bg so they're not
+                    visually tied to the tap target. Ultra cards skip
+                    Card.Header entirely and keep tap-anywhere behavior
+                    on Card.Root. */}
                 <Card.Header py="2" px="3" pb="0" display="block">
                   {isCardCompact ? (
                     /* ── COMPACT HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                     <Box display="flex" flexDirection="column" gap={1}>
-                      <HStack gap={1} justifyContent="space-between" alignItems="center">
+                      {/* Title row = the tap target. Negative mx/mt bleed
+                          past Card.Header's px="3" py="2" so the darker
+                          strip is flush with the card edges. mb={1}
+                          replaces the parent Box's gap so badges sit on
+                          regular card bg below. */}
+                      <HStack
+                        gap={1}
+                        justifyContent="space-between"
+                        alignItems="center"
+                        mx="-3"
+                        mt="-2"
+                        mb={1}
+                        px="3"
+                        py="2"
+                        bg="blackAlpha.100"
+                        cursor="pointer"
+                        userSelect="none"
+                        _hover={{ bg: "blackAlpha.200" }}
+                        onClick={(e: any) => {
+                          const el = e.target as HTMLElement;
+                          if (el?.closest?.("a, button")) return;
+                          toggleCard();
+                        }}
+                      >
                         {/* Quick action icon — extracted to quickActionButton above */}
                         {quickActionButton}
                         {likedIds.has(occ.id) && (
@@ -4020,59 +4146,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                               </Box>
                             );
                           })()}
-                          <Box position="relative">
-                            <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
-                              <MoreHorizontal size={16} />
-                            </Button>
-                            {actionMenuOcc === occ.id && (
-                              <VStack
-                                position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
-                                ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
-                                onClick={(e: any) => e.stopPropagation()}
-                              >
-                                {isWorkerView && (
-                                  <>
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
-                                      <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                                      <Box as="span" ml={2}>{likedIds.has(occ.id) ? "Unlike" : "Like"}</Box>
-                                    </Button>
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void togglePin(occ.id); }}>
-                                      <Pin size={14} fill={pinnedIds.has(occ.id) ? "currentColor" : "none"} />
-                                      <Box as="span" ml={2}>{pinnedIds.has(occ.id) ? "Unpin" : "Pin"}</Box>
-                                    </Button>
-                                  </>
-                                )}
-                                {(() => {
-                                  // Editable through completion and unfinalized
-                                  // PENDING_PAYMENT; frozen once payment is
-                                  // requested/accepted (see occInEditableState).
-                                  const isActive = occInEditableState(occ);
-                                  const hasAnyPriv =
-                                    forAdmin ||
-                                    !!me?.privileges?.canPullInventory ||
-                                    !!me?.privileges?.canChargeBusinessExpenses;
-                                  // Admin/Super always pass — they can manage expenses on any job (e.g.
-// adding a custom expense on behalf of a contractor who lacks the
-// "Charge business expenses" privilege). Workers must be the claimer
-// AND have at least one expense-related privilege.
-const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
-                                  if (!canManage) return null;
-                                  return (
-                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
-                                      <CircleDollarSign size={14} />
-                                      <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
-                                    </Button>
-                                  );
-                                })()}
-                                <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
-                                  <Share2 size={14} />
-                                  <Box as="span" ml={2}>Share link</Box>
-                                </Button>
-                              </VStack>
-                            )}
-                          </Box>
+                          {moreActionsMenu}
                         </HStack>
                       </HStack>
+                      {/* Client confirmation banner — sits directly under
+                          the title row, above status badges. Same callout
+                          shape as before, just relocated. */}
+                      {needsConfirmation && (
+                        <Box px="4" py="3" my={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                          <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
+                        </Box>
+                      )}
                       {isLightEstimate && occ.estimateAddress && (
                         <Box fontSize="xs" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap"><MapLink address={occ.estimateAddress} /></Box>
                       )}
@@ -4169,7 +4253,30 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                     ) : (
                       /* ── EXPANDED HEADER: responsive — stacked on mobile, side-by-side on desktop ── */
                       <Box display="flex" flexDirection="column" gap="4px" w="full">
-                        <HStack justifyContent="space-between" alignItems="center">
+                        {/* Title row = the tap target. See compact branch
+                            for box-model rationale on the negative margins. */}
+                        <HStack
+                          justifyContent="space-between"
+                          alignItems="center"
+                          mx="-3"
+                          mt="-2"
+                          mb={1}
+                          px="3"
+                          py="2"
+                          bg="blackAlpha.100"
+                          cursor="pointer"
+                          userSelect="none"
+                          _hover={{ bg: "blackAlpha.200" }}
+                          onClick={(e: any) => {
+                            const el = e.target as HTMLElement;
+                            if (el?.closest?.("a, button")) return;
+                            toggleCard();
+                          }}
+                        >
+                          {/* Quick action icon — mirrors the compact title
+                              row so the primary affordance stays in the
+                              title bar regardless of density. */}
+                          {quickActionButton}
                           {likedIds.has(occ.id) && (
                             <Box flexShrink={0} display="flex" alignItems="center" title="Liked">
                               <Heart size={16} fill="var(--chakra-colors-red-500)" color="var(--chakra-colors-red-500)" />
@@ -4269,59 +4376,16 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                                 </Box>
                               );
                             })()}
-                            <Box position="relative">
-                              <Button variant="ghost" size="xs" px="1" minW="0" onClick={(e) => { e.stopPropagation(); setActionMenuOcc((v) => v === occ.id ? null : occ.id); }} title="More actions">
-                                <MoreHorizontal size={16} />
-                              </Button>
-                              {actionMenuOcc === occ.id && (
-                                <VStack
-                                  position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
-                                  ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`; } }}
-                                  onClick={(e: any) => e.stopPropagation()}
-                                >
-                                  {isWorkerView && (
-                                    <>
-                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void toggleLike(occ.id); }}>
-                                        <Heart size={14} fill={likedIds.has(occ.id) ? "var(--chakra-colors-red-500)" : "none"} color="var(--chakra-colors-red-500)" />
-                                        <Box as="span" ml={2}>{likedIds.has(occ.id) ? "Unlike" : "Like"}</Box>
-                                      </Button>
-                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); void togglePin(occ.id); }}>
-                                        <Pin size={14} fill={pinnedIds.has(occ.id) ? "currentColor" : "none"} />
-                                        <Box as="span" ml={2}>{pinnedIds.has(occ.id) ? "Unpin" : "Pin"}</Box>
-                                      </Button>
-                                    </>
-                                  )}
-                                  {(() => {
-                                    // Lock expense edits on JobsTab once
-                                    // payment is requested/accepted; admins
-                                    // do retroactive edits via Services.
-                                    const isActive = occInEditableState(occ);
-                                    const hasAnyPriv =
-                                      forAdmin ||
-                                      !!me?.privileges?.canPullInventory ||
-                                      !!me?.privileges?.canChargeBusinessExpenses;
-                                    // Admin/Super always pass — they can manage expenses on any job (e.g.
-// adding a custom expense on behalf of a contractor who lacks the
-// "Charge business expenses" privilege). Workers must be the claimer
-// AND have at least one expense-related privilege.
-const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
-                                    if (!canManage) return null;
-                                    return (
-                                      <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
-                                        <CircleDollarSign size={14} />
-                                        <Box as="span" ml={2}>{occ.expenses && occ.expenses.length > 0 ? "Manage expenses" : "Add expense"}</Box>
-                                      </Button>
-                                    );
-                                  })()}
-                                  <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); shareOccurrenceLink(occ.id, occ.startAt); }}>
-                                    <Share2 size={14} />
-                                    <Box as="span" ml={2}>Share link</Box>
-                                  </Button>
-                                </VStack>
-                              )}
-                            </Box>
+                            {moreActionsMenu}
                           </HStack>
                         </HStack>
+                        {/* Client confirmation banner — under the title row,
+                            above sub-title and status badges. */}
+                        {needsConfirmation && (
+                          <Box px="4" py="3" my={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+                            <Text fontSize="xs" fontWeight="semibold" color="orange.700">⚠ Client confirmation required before starting</Text>
+                          </Box>
+                        )}
                         {isEstimateOcc && occ.title && !isLightEstimate && (
                           <Text fontSize="sm" color="fg.muted">{occ.title}</Text>
                         )}
@@ -5501,7 +5565,36 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
 
                 {!isCardCompact && !isTrainee && (isUnassigned || isActiveAssignee || (forAdmin && (isAdmin || isSuper))) && !isTentative && (occ.status === "SCHEDULED" || occ.status === "IN_PROGRESS" || (occ.status as string) === "PAUSED" || occ.status === "PENDING_PAYMENT" || occ.status === "CLOSED" || occ.status === "PROPOSAL_SUBMITTED") && (
                   <Card.Footer py="2" px="3" pt="0">
-                    <VStack align="start" gap={2} mb="2">
+                    {/* HStack (not VStack) so Manage in Services lands on
+                        the same row as the per-status primary action
+                        (Claim / Confirm Client / Start Job / Complete /
+                        etc.). wrap="wrap" lets buttons flow onto a second
+                        line on narrow screens. */}
+                    <HStack align="start" gap={2} mb="2" wrap="wrap">
+                    {/* Admin-only Services shortcut — sits at the start of
+                        the action row so it reads as "manage this job"
+                        alongside the per-occurrence Claim/Start/etc.
+                        actions. */}
+                    {(isAdmin || isSuper) && !isTaskOrReminder && occ.jobId && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="blue"
+                        onClick={() =>
+                          openEventSearch(
+                            "jobsTabToServicesTabSearch",
+                            occ.job?.property?.displayName ?? "",
+                            true,
+                            `${occ.job?.id}:${occ.id}`,
+                          )
+                        }
+                      >
+                        Manage in Services
+                      </Button>
+                    )}
+                    {(isAdmin || isSuper) && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
+                      <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
+                    )}
                     {/* Confirm client — must happen before Start */}
                     {needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
                       <Button
@@ -6295,7 +6388,7 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                         </Button>
                       )}
                     </HStack>
-                    </VStack>
+                    </HStack>
                   </Card.Footer>
                 )}
 
