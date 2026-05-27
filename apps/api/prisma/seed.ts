@@ -1376,24 +1376,26 @@ async function seedDatabase() {
   // `type`. Used to exercise the Accounting Type filter, equity-only
   // badges, and the qb-equity.csv export. Category/equipmentId stay null
   // for these (they post to QB equity accounts, not Schedule C lines).
+  // No vendor on equity entries — they're between the owner and the
+  // business, there's no external party. Account-flow context (e.g.,
+  // "from personal checking") goes in notes when relevant.
   const equityEntryData: {
     ago: number;
     cost: number;
     desc: string;
     type: "CAPITAL_CONTRIBUTION" | "OWNER_DRAW";
-    vendor?: string;
     notes?: string;
     recurrence?: RecurrenceCadence;
   }[] = [
     // Recent owner draws — recurring monthly so the "Due to record" panel
     // surfaces the next one.
-    { ago: 2, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
-    { ago: 32, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
-    { ago: 62, cost: 2200.00, desc: "Monthly owner draw", type: "OWNER_DRAW", vendor: "Chase Business → Personal", recurrence: "MONTHLY" },
+    { ago: 2, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", recurrence: "MONTHLY" },
+    { ago: 32, cost: 2500.00, desc: "Monthly owner draw", type: "OWNER_DRAW", recurrence: "MONTHLY" },
+    { ago: 62, cost: 2200.00, desc: "Monthly owner draw", type: "OWNER_DRAW", recurrence: "MONTHLY" },
     // Capital contributions — one-offs, typical startup pattern (initial
     // seed + a top-up to cover a big equipment purchase).
-    { ago: 365, cost: 10000.00, desc: "Initial owner investment", type: "CAPITAL_CONTRIBUTION", vendor: "Personal → Chase Business", notes: "Seed capital to start operations" },
-    { ago: 95, cost: 3500.00, desc: "Cash injection for equipment purchase", type: "CAPITAL_CONTRIBUTION", vendor: "Personal → Chase Business", notes: "Covered down payment on commercial mower" },
+    { ago: 365, cost: 10000.00, desc: "Initial owner investment", type: "CAPITAL_CONTRIBUTION", notes: "Seed capital to start operations" },
+    { ago: 95, cost: 3500.00, desc: "Cash injection for equipment purchase", type: "CAPITAL_CONTRIBUTION", notes: "Covered down payment on commercial mower" },
   ];
 
   for (const e of equityEntryData) {
@@ -1404,7 +1406,6 @@ async function seedDatabase() {
         date: daysAgo(e.ago, 12),
         cost: e.cost,
         description: e.desc,
-        vendor: e.vendor ?? null,
         notes: e.notes ?? null,
         recurrence: e.recurrence ?? null,
       },

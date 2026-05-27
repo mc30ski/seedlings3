@@ -3566,6 +3566,29 @@ Respond ONLY with valid JSON in this exact format:
     return { count };
   });
 
+  // Estimate follow-up count for the title-bar alert. Surfaces estimates
+  // whose proposal was sent to the client but hasn't been ACCEPTED or
+  // REJECTED within 1–4 weeks of the visit date.
+  //   - workflow = ESTIMATE
+  //   - status   = PROPOSAL_SUBMITTED (visit done, client decision pending)
+  //   - startAt  ∈ [now − 28 days, now − 7 days]
+  // Older than 4 weeks the estimate has effectively lapsed and shouldn't
+  // keep nagging us forever; the alert helps us follow up while there's
+  // still a reasonable window, then lets it fall off.
+  app.get("/admin/estimates/stale-followup-count", adminGuard, async (_req: any) => {
+    const now = new Date();
+    const oneWeekAgo = new Date(now); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
+    const count = await prisma.jobOccurrence.count({
+      where: {
+        workflow: "ESTIMATE",
+        status: "PROPOSAL_SUBMITTED",
+        startAt: { gte: fourWeeksAgo, lte: oneWeekAgo },
+      },
+    });
+    return { count };
+  });
+
   // ── Business Expenses (super only) — backs the "Accounting" tab ──
   //
   // Route prefix kept as /business-expenses because the model is still named
@@ -3719,8 +3742,10 @@ Respond ONLY with valid JSON in this exact format:
         cost: Number(b.cost),
         date: parseUserDate(String(b.date)),
         category: type === "EXPENSE" ? trimmedCategory : null,
-        vendor: b.vendor ? String(b.vendor).trim() : null,
-        invoiceNumber: b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
+        // Vendor + invoice are expense-only — no external vendor/invoice
+        // exists for owner contributions or draws.
+        vendor: type === "EXPENSE" && b.vendor ? String(b.vendor).trim() : null,
+        invoiceNumber: type === "EXPENSE" && b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
         equipmentId: type === "EXPENSE" ? equipmentId : null,
         recurrence: recurrence as any,
@@ -3806,9 +3831,13 @@ Respond ONLY with valid JSON in this exact format:
       data.type = nextType;
       // Clearing fields that are meaningless on equity entries — avoid
       // misleading badges or stale category labels after a re-type.
+      // Vendor + invoiceNumber follow the same rule: no external party
+      // exists for owner contributions/draws.
       if (nextType !== "EXPENSE") {
         data.category = null;
         data.equipmentId = null;
+        data.vendor = null;
+        data.invoiceNumber = null;
       }
     }
     return prisma.$transaction(async (tx) => {
@@ -3867,27 +3896,33 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   /**
-   * Compare what the business "earns" (contractor platform fees + employee margins
-   * captured on payments) vs what the business spends (BusinessExpense rows),
-   * across the standard buckets. Net = earnings - expenses.
+   * Cash Flow — a period view of every dollar movement, grouped as:
+   *   Operating: platform fees + employee margins + equipment rentals
+   *              vs business expenses + processor fees (operating net)
+   *   Equity:    capital contributions in − owner draws out (equity net)
+   *   Net cash change = operating net + equity net
+   *
+   * NOT a tax surface (P&L). Equity entries don't affect operating net so
+   * the operating row still reads as profitability; the equity row + net
+   * cash change tell the operator whether the business grew cash.
+   * Endpoint name kept as `vs-revenue` for backward compatibility.
    */
   app.get("/admin/business-expenses/vs-revenue", superGuard, async (req: any) => {
-    // Scoped to the from/to range selected on the Expenses tab — same range
-    // that drives the summary, list, and export. No range = all time.
+    // Scoped to the from/to range selected on the Accounting tab — same
+    // range that drives the summary, list, and export. No range = all time.
     const q = (req.query || {}) as { from?: string; to?: string };
     const from = q.from ? new Date(q.from) : null;
     const to = q.to ? (() => { const t = new Date(q.to as string); t.setHours(23, 59, 59, 999); return t; })() : null;
     const inRange = (d: Date) => (!from || d >= from) && (!to || d <= to);
 
-    const [payments, expenses, rentals] = await Promise.all([
+    const [payments, allEntries, rentals] = await Promise.all([
       prisma.payment.findMany({
         select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
+      // One query covers all three EntryType buckets; split by `type`
+      // below. Saves a round-trip vs. separate queries.
       prisma.businessExpense.findMany({
-        // P&L is operating only — equity entries (contributions, draws) are
-        // balance-sheet movements and must not affect Net.
-        where: { type: "EXPENSE" },
-        select: { date: true, cost: true },
+        select: { type: true, date: true, cost: true },
       }),
       prisma.checkout.findMany({
         where: { rentalCost: { not: null }, releasedAt: { not: null } },
@@ -3896,6 +3931,7 @@ Respond ONLY with valid JSON in this exact format:
     ]);
 
     let platformFees = 0, businessMargin = 0, equipmentRentals = 0, expenseTotal = 0, processingFees = 0;
+    let capitalContributions = 0, ownerDraws = 0;
     for (const p of payments) {
       if (!inRange(p.createdAt)) continue;
       platformFees += p.platformFeeAmount ?? 0;
@@ -3906,17 +3942,21 @@ Respond ONLY with valid JSON in this exact format:
       if (!inRange(r.releasedAt!)) continue;
       equipmentRentals += r.rentalCost ?? 0;
     }
-    for (const e of expenses) {
+    for (const e of allEntries) {
       if (!inRange(e.date)) continue;
-      expenseTotal += e.cost;
+      if (e.type === "EXPENSE") expenseTotal += e.cost;
+      else if (e.type === "CAPITAL_CONTRIBUTION") capitalContributions += e.cost;
+      else if (e.type === "OWNER_DRAW") ownerDraws += e.cost;
     }
 
     const round = (n: number) => Math.round(n * 100) / 100;
     const earnings = platformFees + businessMargin + equipmentRentals;
-    // Processing fees deducted from Net alongside business expenses. They're
-    // NOT subtracted from Earnings because the earnings line is "what the
-    // business retained from the worker payout split" — processor fees come
-    // off the cash side, not the labor-cost side.
+    // Processing fees deducted from operating net alongside business
+    // expenses. They're NOT subtracted from Earnings because the earnings
+    // line is "what the business retained from the worker payout split" —
+    // processor fees come off the cash side, not the labor-cost side.
+    const operatingNet = earnings - expenseTotal - processingFees;
+    const equityNet = capitalContributions - ownerDraws;
     return {
       platformFees: round(platformFees),
       businessMargin: round(businessMargin),
@@ -3924,7 +3964,13 @@ Respond ONLY with valid JSON in this exact format:
       earnings: round(earnings),
       expenses: round(expenseTotal),
       processingFees: round(processingFees),
-      net: round(earnings - expenseTotal - processingFees),
+      // Legacy field name preserved for older clients — equals operating net.
+      net: round(operatingNet),
+      operatingNet: round(operatingNet),
+      capitalContributions: round(capitalContributions),
+      ownerDraws: round(ownerDraws),
+      equityNet: round(equityNet),
+      netCashChange: round(operatingNet + equityNet),
     };
   });
 

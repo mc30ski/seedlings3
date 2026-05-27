@@ -18,8 +18,10 @@
 //   2. Summary card — total / count / by-category for the filtered range.
 //      EXPENSE-only on the backend; hidden when the user is filtered to an
 //      equity-only view (the numbers would be misleading).
-//   3. Earnings vs Expenses — management P&L. EXPENSE-only on the backend;
-//      same hide rule as Summary.
+//   3. Cash Flow — management view of every dollar movement: Operating
+//      (earnings vs expenses, → operating net) + Equity (capital
+//      contributions vs owner draws, → equity net) = Net cash change.
+//      Hidden when filtered to equity-only (would double-show that bucket).
 //   4. Filters + paginated list. Type filter (All / Expenses / Capital
 //      contributions / Owner draws) sits next to Category. Type badge is
 //      rendered on equity entries only (expense cards stay visually clean).
@@ -174,7 +176,9 @@ type Summary = {
   count: number;
 };
 
-// Earnings vs Expenses for the selected timeframe (single range, not buckets).
+// Cash Flow for the selected timeframe (single range, not buckets). Operating
+// activity sums to operatingNet; equity activity (owner contributions / draws)
+// sums to equityNet; netCashChange is the period's actual cash delta.
 type Comparison = {
   platformFees: number;
   businessMargin: number;
@@ -182,7 +186,13 @@ type Comparison = {
   earnings: number;
   expenses: number;
   processingFees: number;
+  // Legacy field — equals operatingNet, kept for backward compat.
   net: number;
+  operatingNet: number;
+  capitalContributions: number;
+  ownerDraws: number;
+  equityNet: number;
+  netCashChange: number;
 };
 
 // Categories aligned to Schedule C (Form 1040). The label is what gets stored
@@ -337,7 +347,7 @@ export default function BusinessExpensesTab() {
       if (filterTo) sumQs.set("to", filterTo);
       const s = await apiGet<Summary>(`/api/admin/business-expenses/summary${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
       setSummary(s);
-      // Earnings vs Expenses — scoped to the same selected timeframe.
+      // Cash Flow — scoped to the same selected timeframe.
       try {
         const cmp = await apiGet<Comparison>(`/api/admin/business-expenses/vs-revenue${sumQs.toString() ? `?${sumQs.toString()}` : ""}`);
         setComparison(cmp);
@@ -472,11 +482,12 @@ export default function BusinessExpensesTab() {
         date: fDate,
         cost: parseFloat(fCost),
         description: fDescription.trim(),
-        // Category/equipment are expense-only — server ignores them on
-        // equity types, but blank them on the wire too for clarity.
+        // Category/equipment/vendor/invoice are expense-only — server
+        // ignores them on equity types, but blank them on the wire too
+        // for clarity.
         category: fType === "EXPENSE" ? (fCategory.trim() || null) : null,
-        vendor: fVendor.trim() || null,
-        invoiceNumber: fInvoiceNumber.trim() || null,
+        vendor: fType === "EXPENSE" ? (fVendor.trim() || null) : null,
+        invoiceNumber: fType === "EXPENSE" ? (fInvoiceNumber.trim() || null) : null,
         notes: fNotes.trim() || null,
         equipmentId: fType === "EXPENSE" ? (fEquipmentId || null) : null,
         recurrence: fRecurrence || null,
@@ -761,10 +772,9 @@ export default function BusinessExpensesTab() {
       )}
 
       {/* Summary */}
-      {/* Summary + Earnings vs Expenses are expense-only by design (P&L
-          surfaces). Hide them when the user is filtered to an equity-only
-          view — they'd be showing operating numbers that don't match the
-          list. */}
+      {/* Summary + Cash Flow are operating-side by design. Hide them when
+          the user is filtered to an equity-only view — they'd be showing
+          operating numbers that don't match the list. */}
       {summary && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (
         <Card.Root variant="outline" mb={3}>
           <Card.Body p={3}>
@@ -849,23 +859,34 @@ export default function BusinessExpensesTab() {
         </Text>
       </Box>
 
-      {/* Earnings vs Expenses — for the selected timeframe */}
+      {/* Cash Flow — operating activity + equity activity for the selected
+          timeframe. Operating net is unchanged from the prior "Earnings vs
+          Expenses" view; the equity block is new and shows contributions /
+          draws so the operator can see whether cash actually grew. */}
       {comparison && filterType !== "CAPITAL_CONTRIBUTION" && filterType !== "OWNER_DRAW" && (() => {
         const rangeLabel = expensePreset === "all"
           ? "All time"
           : EXPENSE_PRESETS.find((p) => p.key === expensePreset)?.label ?? "Custom range";
-        const net = comparison.net;
+        const operatingNet = comparison.operatingNet ?? comparison.net;
+        const equityNet = comparison.equityNet ?? 0;
+        const netCashChange = comparison.netCashChange ?? operatingNet;
+        const showEquity =
+          (comparison.capitalContributions ?? 0) > 0 ||
+          (comparison.ownerDraws ?? 0) > 0;
         return (
           <Card.Root variant="outline" mb={3}>
             <Card.Body p={3}>
               <HStack justify="space-between" mb={1}>
-                <Text fontSize="sm" fontWeight="semibold">Earnings vs Expenses</Text>
+                <Text fontSize="sm" fontWeight="semibold">Cash Flow</Text>
                 <Badge size="sm" colorPalette="blue" variant="subtle" borderRadius="full">{rangeLabel}</Badge>
               </HStack>
               <Text fontSize="xs" color="fg.muted" mb={2}>
-                Earnings = contractor platform fees + employee margin captured on payments + equipment rental charges (deducted from worker payouts). Net = earnings − business expenses − processing fees.
+                Operating = what the business kept from jobs minus what it spent. Equity = owner money in / out (not part of profitability). Net cash change = both combined.
               </Text>
               <VStack align="stretch" gap={0} fontSize="xs">
+                <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mt={1}>
+                  Operating
+                </Text>
                 <HStack justify="space-between" py={1.5}>
                   <Text color="fg.muted">Platform fees (contractors)</Text>
                   <Text>{fmtUSD(comparison.platformFees)}</Text>
@@ -892,26 +913,57 @@ export default function BusinessExpensesTab() {
                     <Text fontWeight="semibold" color="orange.700">−{fmtUSD(comparison.processingFees)}</Text>
                   </HStack>
                 )}
-                <HStack justify="space-between" py={1.5} borderTopWidth="2px" borderColor="gray.300">
-                  <Text fontWeight="bold">Net</Text>
-                  <Text fontWeight="bold" color={net >= 0 ? "green.700" : "red.600"}>
-                    {net < 0 ? "−" : ""}{fmtUSD(Math.abs(net))}
+                <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
+                  <Text fontWeight="semibold">Operating net</Text>
+                  <Text fontWeight="semibold" color={operatingNet >= 0 ? "green.700" : "red.600"}>
+                    {operatingNet < 0 ? "−" : ""}{fmtUSD(Math.abs(operatingNet))}
+                  </Text>
+                </HStack>
+
+                {showEquity && (
+                  <>
+                    <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mt={3}>
+                      Equity
+                    </Text>
+                    <HStack justify="space-between" py={1.5}>
+                      <Text color="fg.muted">Capital contributions</Text>
+                      <Text color="green.700">+{fmtUSD(comparison.capitalContributions ?? 0)}</Text>
+                    </HStack>
+                    <HStack justify="space-between" py={1.5}>
+                      <Text color="fg.muted">Owner draws</Text>
+                      <Text color="pink.600">−{fmtUSD(comparison.ownerDraws ?? 0)}</Text>
+                    </HStack>
+                    <HStack justify="space-between" py={1.5} borderTopWidth="1px" borderColor="gray.200">
+                      <Text fontWeight="semibold">Equity net</Text>
+                      <Text fontWeight="semibold" color={equityNet >= 0 ? "green.700" : "pink.600"}>
+                        {equityNet < 0 ? "−" : ""}{fmtUSD(Math.abs(equityNet))}
+                      </Text>
+                    </HStack>
+                  </>
+                )}
+
+                <HStack justify="space-between" py={2} mt={1} borderTopWidth="2px" borderColor="gray.300">
+                  <Text fontWeight="bold">Net cash change</Text>
+                  <Text fontWeight="bold" color={netCashChange >= 0 ? "green.700" : "red.600"}>
+                    {netCashChange < 0 ? "−" : ""}{fmtUSD(Math.abs(netCashChange))}
                   </Text>
                 </HStack>
               </VStack>
               <Text fontSize="xs" color="fg.muted" mt={2}>
-                Management view only. For tax reporting use QuickBooks exports + Gusto.
+                Management view only. For tax reporting use QuickBooks exports + Gusto. Equity entries don't affect profit; they explain why cash on hand changed.
               </Text>
             </Card.Body>
           </Card.Root>
         );
       })()}
 
-      {/* Filters */}
+      {/* Filters — Search, Type, Category share the row in equal thirds.
+          Clear button drops below when active so the trio's symmetry isn't
+          broken by its presence. */}
       <Card.Root variant="outline" mb={3}>
         <Card.Body p={3}>
-          <HStack gap={2} wrap="wrap">
-            <HStack gap={1} flex="1" minW="200px">
+          <HStack gap={2} align="stretch">
+            <HStack gap={1} flex="1" minW="0">
               <Search size={14} color="var(--chakra-colors-gray-500)" />
               <Input
                 size="sm"
@@ -920,34 +972,24 @@ export default function BusinessExpensesTab() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </HStack>
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value as "" | EntryType)}
-              title="Filter by entry type"
-              style={{
-                padding: "4px 8px",
-                fontSize: "13px",
-                border: "1px solid var(--chakra-colors-gray-200)",
-                borderRadius: "6px",
-                background: "white",
-              }}
-            >
-              <option value="">All types</option>
-              <option value="EXPENSE">Expenses</option>
-              <option value="CAPITAL_CONTRIBUTION">Capital contributions</option>
-              <option value="OWNER_DRAW">Owner draws</option>
-            </select>
-            <CategoryFilterSelect
-              value={filterCategory}
-              onChange={setFilterCategory}
-              categories={usedCategories}
-            />
-            {hasFilters && (
+            <Box flex="1" minW="0">
+              <TypeFilterSelect value={filterType} onChange={setFilterType} />
+            </Box>
+            <Box flex="1" minW="0">
+              <CategoryFilterSelect
+                value={filterCategory}
+                onChange={setFilterCategory}
+                categories={usedCategories}
+              />
+            </Box>
+          </HStack>
+          {hasFilters && (
+            <HStack justify="flex-end" mt={2}>
               <Button size="xs" variant="ghost" onClick={clearFilters}>
                 <X size={12} /> Clear
               </Button>
-            )}
-          </HStack>
+            </HStack>
+          )}
         </Card.Body>
       </Card.Root>
 
@@ -1208,10 +1250,9 @@ export default function BusinessExpensesTab() {
                         Schedule C label doesn't survive on an equity entry.
                         Type changes are blocked server-side on rows linked
                         to a job or supply purchase. */}
-                    <select
+                    <TypePickerSelect
                       value={fType}
-                      onChange={(e) => {
-                        const next = e.target.value as EntryType;
+                      onChange={(next) => {
                         setFType(next);
                         if (next !== "EXPENSE") {
                           setFCategory("");
@@ -1222,19 +1263,7 @@ export default function BusinessExpensesTab() {
                         !!editing &&
                         (!!editing.occurrenceId || !!editing.supplyPurchase)
                       }
-                      style={{
-                        padding: "6px 8px",
-                        fontSize: "14px",
-                        border: "1px solid var(--chakra-colors-gray-200)",
-                        borderRadius: "6px",
-                        width: "100%",
-                        background: "white",
-                      }}
-                    >
-                      <option value="EXPENSE">Expense (operating cash-out)</option>
-                      <option value="CAPITAL_CONTRIBUTION">Capital Contribution (owner → business)</option>
-                      <option value="OWNER_DRAW">Owner Draw (business → owner)</option>
-                    </select>
+                    />
                     {fType !== "EXPENSE" && (
                       <Text fontSize="xs" color="fg.muted" mt={1}>
                         Equity entries post to QuickBooks under{" "}
@@ -1324,41 +1353,29 @@ export default function BusinessExpensesTab() {
                       </Box>
                     </>
                   )}
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Vendor</Text>
-                    <Input size="sm" value={fVendor} onChange={(e) => setFVendor(e.target.value)} placeholder="e.g., State Farm" />
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" mb={1}>Invoice / Reference Number</Text>
-                    <Input size="sm" value={fInvoiceNumber} onChange={(e) => setFInvoiceNumber(e.target.value)} placeholder="e.g., INV-2026-0042" />
-                  </Box>
+                  {/* Vendor + invoice are expense-only — for capital
+                      contributions and owner draws there's no external
+                      vendor and no invoice. Context (e.g., which account
+                      the money moved between) can go in Notes below. */}
+                  {fType === "EXPENSE" && (
+                    <>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Vendor</Text>
+                        <Input size="sm" value={fVendor} onChange={(e) => setFVendor(e.target.value)} placeholder="e.g., State Farm" />
+                      </Box>
+                      <Box>
+                        <Text fontSize="sm" mb={1}>Invoice / Reference Number</Text>
+                        <Input size="sm" value={fInvoiceNumber} onChange={(e) => setFInvoiceNumber(e.target.value)} placeholder="e.g., INV-2026-0042" />
+                      </Box>
+                    </>
+                  )}
                   <Box>
                     <Text fontSize="sm" mb={1}>Notes</Text>
                     <Textarea size="sm" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Optional notes" rows={2} />
                   </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Repeats every</Text>
-                    {/* Native select for simplicity — same pattern as the
-                        date input. The UI is a free-standing tab; full
-                        Chakra Select.Root is overkill for 5 options. */}
-                    <select
-                      value={fRecurrence}
-                      onChange={(e) => setFRecurrence(e.target.value)}
-                      style={{
-                        padding: "6px 8px",
-                        fontSize: "14px",
-                        border: "1px solid var(--chakra-colors-gray-200)",
-                        borderRadius: "6px",
-                        width: "100%",
-                        background: "white",
-                      }}
-                    >
-                      <option value="">One-off (no recurrence)</option>
-                      <option value="WEEKLY">Weekly</option>
-                      <option value="MONTHLY">Monthly</option>
-                      <option value="QUARTERLY">Quarterly</option>
-                      <option value="ANNUALLY">Annually</option>
-                    </select>
+                    <RecurrenceSelect value={fRecurrence} onChange={setFRecurrence} />
                     <Text fontSize="xs" color="fg.muted" mt={1}>
                       Mark recurring spends (e.g., software subscriptions, insurance) so the system can suggest the next instance when it's due.
                     </Text>
@@ -1604,6 +1621,145 @@ function EquipmentDropdown(props: {
   );
 }
 
+// Type picker inside the Add/Edit dialog. Three EntryType values with
+// hint text in the label. Required field, so no "none" option.
+function TypePickerSelect(props: {
+  value: EntryType;
+  onChange: (v: EntryType) => void;
+  disabled?: boolean;
+}) {
+  const { value, onChange, disabled } = props;
+  const items = useMemo(
+    () => [
+      { label: "Expense (operating cash-out)", value: "EXPENSE" },
+      { label: "Capital Contribution (owner → business)", value: "CAPITAL_CONTRIBUTION" },
+      { label: "Owner Draw (business → owner)", value: "OWNER_DRAW" },
+    ],
+    [],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  return (
+    <Select.Root
+      collection={collection}
+      value={[value]}
+      onValueChange={(e) => {
+        const v = e.value?.[0];
+        if (v) onChange(v as EntryType);
+      }}
+      size="sm"
+      disabled={disabled}
+    >
+      <Select.Control>
+        <Select.Trigger w="full">
+          <Select.ValueText />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
+  );
+}
+
+// Recurrence picker inside the Add/Edit dialog. Same Chakra Select.Root
+// pattern as the filter dropdowns so the dialog form reads consistently
+// with the controls above it. "" = one-off.
+function RecurrenceSelect(props: { value: string; onChange: (v: string) => void }) {
+  const { value, onChange } = props;
+  const items = useMemo(
+    () => [
+      { label: "One-off (no recurrence)", value: "__NONE__" },
+      { label: "Weekly", value: "WEEKLY" },
+      { label: "Monthly", value: "MONTHLY" },
+      { label: "Quarterly", value: "QUARTERLY" },
+      { label: "Annually", value: "ANNUALLY" },
+    ],
+    [],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  const current = value === "" ? "__NONE__" : value;
+  return (
+    <Select.Root
+      collection={collection}
+      value={[current]}
+      onValueChange={(e) => {
+        const v = e.value?.[0] ?? "__NONE__";
+        onChange(v === "__NONE__" ? "" : v);
+      }}
+      size="sm"
+    >
+      <Select.Control>
+        <Select.Trigger w="full">
+          <Select.ValueText placeholder="One-off (no recurrence)" />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
+  );
+}
+
+// Filter dropdown for entry type. Matches the look of CategoryFilterSelect
+// (Chakra Select.Root) instead of the browser-native <select> so the filter
+// row reads as one consistent control strip.
+function TypeFilterSelect(props: { value: "" | EntryType; onChange: (v: "" | EntryType) => void }) {
+  const { value, onChange } = props;
+  const items = useMemo(
+    () => [
+      { label: "All types", value: "__ALL__" },
+      { label: "Expenses", value: "EXPENSE" },
+      { label: "Capital contributions", value: "CAPITAL_CONTRIBUTION" },
+      { label: "Owner draws", value: "OWNER_DRAW" },
+    ],
+    [],
+  );
+  const collection = useMemo(() => createListCollection({ items }), [items]);
+  const current = value === "" ? "__ALL__" : value;
+  return (
+    <Select.Root
+      collection={collection}
+      value={[current]}
+      onValueChange={(e) => {
+        const v = e.value?.[0] ?? "__ALL__";
+        onChange(v === "__ALL__" ? "" : (v as EntryType));
+      }}
+      size="sm"
+      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+      css={{ width: "100%" }}
+    >
+      <Select.Control>
+        {/* Fills its parent container; the filter row enforces the 1/3
+            width via a Box flex="1" wrapper. */}
+        <Select.Trigger w="full" px="2">
+          <Select.ValueText placeholder="All types" />
+        </Select.Trigger>
+      </Select.Control>
+      <Select.Positioner>
+        <Select.Content>
+          {items.map((it) => (
+            <Select.Item key={it.value} item={it.value}>
+              <Select.ItemText>{it.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
+  );
+}
+
 function CategoryFilterSelect(props: { value: string; onChange: (v: string) => void; categories: string[] }) {
   const { value, onChange, categories } = props;
   const items = useMemo(
@@ -1625,10 +1781,14 @@ function CategoryFilterSelect(props: { value: string; onChange: (v: string) => v
       }}
       size="sm"
       positioning={{ strategy: "fixed", hideWhenDetached: true }}
-      css={{ width: "auto", flex: "0 0 auto" }}
+      css={{ width: "100%" }}
     >
       <Select.Control>
-        <Select.Trigger w="auto" minW="0" px="2">
+        {/* Fills its parent container; the filter row enforces the 1/3
+            width via a Box flex="1" wrapper. Long Schedule C labels will
+            truncate inside the trigger when the parent is narrow — the
+            full label still renders in the dropdown menu. */}
+        <Select.Trigger w="full" px="2">
           <Select.ValueText placeholder="All categories" />
         </Select.Trigger>
       </Select.Control>

@@ -19,6 +19,67 @@ npm run dev
 
 ---
 
+## Third-Party Services
+
+Complete list of external services the app integrates with. Detailed setup for each (env vars, dashboard links, costs) lives in the sections below.
+
+### Identity / Auth
+
+- **Clerk** — user auth on both web (`@clerk/nextjs`) and API (`@clerk/clerk-sdk-node`).
+
+### Database
+
+- **Neon** — serverless Postgres (`@neondatabase/serverless`, `@prisma/adapter-neon`, `DATABASE_URL`).
+
+### Object Storage
+
+- **Cloudflare R2** — S3-compatible, accessed via `@aws-sdk/client-s3`. Five buckets via these env vars:
+  - `R2_BUCKET_NAME` — default app bucket (job-occurrence photos)
+  - `R2_DOCS_BUCKET_NAME` — documents
+  - `R2_PROPERTY_PHOTOS_BUCKET_NAME` — property photos
+  - `R2_EQUIPMENT_PHOTOS_BUCKET_NAME` — equipment photos
+  - `R2_RECEIPTS_BUCKET_NAME` — receipts
+
+### Hosting
+
+- **Vercel** — both `seedlings3-web` and `seedlings3-api` deploy here. `main` → Preview, `production` → Production (see [Environments & Deployment](#environments--deployment)).
+
+### Email
+
+- **Resend** — transactional email (`resend` SDK, `RESEND_API_KEY`).
+
+### SMS / Voice
+
+- **Twilio** — text + voice (`twilio` SDK, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`).
+
+### Maps / Geocoding
+
+- **Mapbox** — geocoding + driving distances at `api.mapbox.com` (`MAPBOX_ACCESS_TOKEN`, `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`).
+
+### Weather
+
+- **OpenWeather** — current weather + forecast at `api.openweathermap.org` (`OPENWEATHER_API_KEY`), called from `apps/api/src/routes/worker.ts`.
+
+### IP Geolocation
+
+- **ip-api.com** — keyless fallback for locating a worker if no GPS, called from `apps/api/src/routes/worker.ts`.
+
+### Barcode / UPC Lookup
+
+- **UPCitemDB** — public UPC → product lookup at `api.upcitemdb.com`, called from `apps/api/src/routes/admin.ts` (supplies barcode scan).
+
+### Push Notifications
+
+- **Web Push (VAPID)** — sent via the `web-push` library through whichever browser-vendor push service the user's browser uses (FCM for Chrome, Mozilla Autopush for Firefox, APNs for Safari). Env: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (and `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the web side).
+
+### AI
+
+- **Anthropic** — Claude via `@anthropic-ai/sdk`, `ANTHROPIC_API_KEY`. Used for AI-generated estimates and route suggestions (see [AI Features](#ai-features)).
+
+> **Not integrated:** no payment processor (Stripe/Square/etc.) — payments are recorded manually after the client pays. No third-party error/observability SaaS (Sentry, Datadog, PostHog).
+
+---
+
 ## Environments & Deployment
 
 We use **Vercel** for both **web** and **api**.  
