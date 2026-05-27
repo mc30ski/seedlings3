@@ -624,6 +624,14 @@ export type WorkerOccurrence = {
   startLng?: number | null;
   completeLat?: number | null;
   completeLng?: number | null;
+  /** Payroll-hours approval. Independent of payment status — a job can be
+   *  CLOSED with hoursApprovedAt still null. The Gusto W-2 export excludes
+   *  null rows. When the worker hits Complete, this is auto-set if actual
+   *  time falls within the variance threshold (see jobs.ts
+   *  evaluateHoursApproval); outside the threshold it stays null until an
+   *  admin/super approves via the Approve Hours button. */
+  hoursApprovedAt?: string | null;
+  hoursApprovedById?: string | null;
   /** Latest payment-rejection reason for this occurrence — surfaced on the
    *  PENDING_PAYMENT card so the claimer / admin can see why the most
    *  recent self-reported Payment was rejected. Cleared when a payment is

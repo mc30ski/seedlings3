@@ -3589,6 +3589,66 @@ Respond ONLY with valid JSON in this exact format:
     return { count };
   });
 
+  // ── Payroll hours approval ──
+  //
+  // Background:
+  //   On Complete, workers' logged hours are auto-approved if actual time
+  //   falls within the variance threshold of the estimate (see jobs.ts
+  //   evaluateHoursApproval — 30%, mirroring the visual warning on the
+  //   card). Outliers leave hoursApprovedAt = null and surface here for
+  //   review. Approval is independent of payment status — a job can be
+  //   CLOSED with unapproved hours. The Gusto W-2/contractors exports
+  //   filter on hoursApprovedAt IS NOT NULL so unapproved rows never go
+  //   to payroll until reviewed.
+
+  // Count of completed-but-unapproved-hours occurrences. Drives the
+  // title-bar alert badge. Scoped to STANDARD + ONE_OFF workflows since
+  // those are the only ones whose hours flow to payroll (estimates,
+  // tasks, reminders, etc. auto-approve on completion regardless of
+  // variance — see evaluateHoursApproval).
+  app.get("/admin/occurrences/unapproved-hours-count", adminGuard, async (_req: any) => {
+    const count = await prisma.jobOccurrence.count({
+      where: {
+        completedAt: { not: null },
+        hoursApprovedAt: null,
+        workflow: { in: ["STANDARD", "ONE_OFF"] },
+      },
+    });
+    return { count };
+  });
+
+  // Approve payroll hours on a single occurrence. Idempotent — calling
+  // when already approved is a no-op. Optional `note` is stored on the
+  // audit trail; the occurrence row only carries the timestamp + approver.
+  app.post("/admin/occurrences/:id/approve-hours", adminGuard, async (req: any) => {
+    const uid = await currentUserId(req);
+    const id = String(req.params.id);
+    const note = req.body?.note ? String(req.body.note).trim() : null;
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id },
+      select: { id: true, hoursApprovedAt: true, completedAt: true },
+    });
+    if (!occ) throw app.httpErrors.notFound("Occurrence not found.");
+    if (!occ.completedAt) {
+      throw app.httpErrors.badRequest("Cannot approve hours on an incomplete occurrence.");
+    }
+    if (occ.hoursApprovedAt) {
+      return { id: occ.id, hoursApprovedAt: occ.hoursApprovedAt };
+    }
+    const now = new Date();
+    const updated = await prisma.jobOccurrence.update({
+      where: { id },
+      data: { hoursApprovedAt: now, hoursApprovedById: uid },
+      select: { id: true, hoursApprovedAt: true, hoursApprovedById: true },
+    });
+    await writeAudit(prisma, AUDIT.JOB.OCCURRENCE_UPDATED, uid, {
+      occurrenceId: id,
+      hoursApproved: true,
+      note,
+    });
+    return updated;
+  });
+
   // ── Business Expenses (super only) — backs the "Accounting" tab ──
   //
   // Route prefix kept as /business-expenses because the model is still named

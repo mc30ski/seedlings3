@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
-import { Badge, Box, Button, Container, Dialog, HStack, Portal, Text, VStack } from "@chakra-ui/react";
+import { Badge, Box, Button, Container, Dialog, HStack, Portal, Spinner, Text, VStack } from "@chakra-ui/react";
 import { AlertTriangle, ArrowLeftCircle, Link2 } from "lucide-react";
 import { useOffline } from "@/src/lib/offline";
 import OfflineQueueDialog from "@/src/ui/dialogs/OfflineQueueDialog";
@@ -88,6 +88,7 @@ import {
   FiCalendar,
   FiBook,
   FiTag,
+  FiRefreshCw,
 } from "react-icons/fi";
 import { GrUserAdmin } from "react-icons/gr";
 import { AiOutlineTeam } from "react-icons/ai";
@@ -1331,7 +1332,7 @@ export default function HomePage() {
   const loadPending = useCallback(async () => {
     if (!isSuper) {
       setPending(0);
-      if (me) markAlertLoaded("pending");
+      markAlertLoaded("pending");
       return;
     }
     try {
@@ -1355,7 +1356,7 @@ export default function HomePage() {
   const loadPendingPayments = useCallback(async () => {
     if (!isSuper) {
       setPendingPayments(0);
-      if (me) markAlertLoaded("pendingPayments");
+      markAlertLoaded("pendingPayments");
       return;
     }
     try {
@@ -1383,7 +1384,7 @@ export default function HomePage() {
     if (!isSuper) {
       setAwaitingClientPaymentCount(0);
       setStaleRequestCount(0);
-      if (me) markAlertLoaded("awaitingClientPayment");
+      markAlertLoaded("awaitingClientPayment");
       return;
     }
     try {
@@ -1405,7 +1406,7 @@ export default function HomePage() {
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
-    if (!isAdmin) { setOverdueCount(0); if (me) markAlertLoaded("overdue"); return; }
+    if (!isAdmin) { setOverdueCount(0); markAlertLoaded("overdue"); return; }
     try {
       const today = bizDateKey(new Date());
       const yesterday = new Date();
@@ -1444,7 +1445,7 @@ export default function HomePage() {
   // request fires the same `jobs-changed` event we already listen to).
   const [changeRequestCount, setChangeRequestCount] = useState(0);
   const loadChangeRequestCount = useCallback(async () => {
-    if (!isAdmin) { setChangeRequestCount(0); if (me) markAlertLoaded("changeRequests"); return; }
+    if (!isAdmin) { setChangeRequestCount(0); markAlertLoaded("changeRequests"); return; }
     try {
       const result = await apiGet<{ count: number }>("/api/admin/change-requests/pending-count");
       setChangeRequestCount(result?.count ?? 0);
@@ -1466,7 +1467,14 @@ export default function HomePage() {
   // is open, then lets the alert fall off after 4 weeks.
   const [estimateFollowupCount, setEstimateFollowupCount] = useState(0);
   const loadEstimateFollowupCount = useCallback(async () => {
-    if (!isAdmin) { setEstimateFollowupCount(0); if (me) markAlertLoaded("estimateFollowups"); return; }
+    // Always mark loaded on early-exit — for non-admin users, isAdmin
+    // stays false and the [isAdmin] dep never triggers a re-fire, so
+    // gating on `if (me)` here can leave the badge stuck pulsating.
+    if (!isAdmin) {
+      setEstimateFollowupCount(0);
+      markAlertLoaded("estimateFollowups");
+      return;
+    }
     try {
       const result = await apiGet<{ count: number }>("/api/admin/estimates/stale-followup-count");
       setEstimateFollowupCount(result?.count ?? 0);
@@ -1481,6 +1489,47 @@ export default function HomePage() {
     window.addEventListener("seedlings3:jobs-changed", onRefresh);
     return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
   }, [loadEstimateFollowupCount]);
+
+  // Unapproved-hours count for the header badge. Completed STANDARD/ONE_OFF
+  // occurrences whose hours haven't been admin-approved — excluded from the
+  // Gusto W-2 export until reviewed. Sticky across job statuses (a CLOSED
+  // job can still have unapproved hours).
+  const [unapprovedHoursCount, setUnapprovedHoursCount] = useState(0);
+  const loadUnapprovedHoursCount = useCallback(async () => {
+    if (!isAdmin) {
+      setUnapprovedHoursCount(0);
+      markAlertLoaded("unapprovedHours");
+      return;
+    }
+    try {
+      const result = await apiGet<{ count: number }>("/api/admin/occurrences/unapproved-hours-count");
+      setUnapprovedHoursCount(result?.count ?? 0);
+    } catch {
+      setUnapprovedHoursCount(0);
+    }
+    markAlertLoaded("unapprovedHours");
+  }, [isAdmin]);
+  useEffect(() => {
+    void loadUnapprovedHoursCount();
+    const onRefresh = () => void loadUnapprovedHoursCount();
+    window.addEventListener("seedlings3:jobs-changed", onRefresh);
+    return () => window.removeEventListener("seedlings3:jobs-changed", onRefresh);
+  }, [loadUnapprovedHoursCount]);
+
+  // Navigate to admin Jobs tab filtered to unapproved-hours occurrences.
+  // Same handoff pattern as overdue / estimate-followups: localStorage flag
+  // for mount-time pickup + dispatched event for already-mounted case.
+  const goToUnapprovedHours = useCallback(() => {
+    try {
+      localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
+      localStorage.setItem("seedlings_adminjobs_workers", JSON.stringify([]));
+    } catch {}
+    setTopTab("admin");
+    setAdminInnerTab("admin-jobs");
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
+    }, 100);
+  }, []);
 
   // Navigate to admin Jobs tab with the estimate-followup filter applied.
   // Mirrors goToOverdue / goToUnclaimed: writes a flag to localStorage so
@@ -1501,7 +1550,7 @@ export default function HomePage() {
   // Unclaimed count for admin header badge
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const loadUnclaimed = useCallback(async () => {
-    if (!isAdmin) { setUnclaimedCount(0); if (me) markAlertLoaded("unclaimed"); return; }
+    if (!isAdmin) { setUnclaimedCount(0); markAlertLoaded("unclaimed"); return; }
     try {
       const d = computeDatesFromPreset("overdueAndNext3");
       const qs = new URLSearchParams();
@@ -1537,7 +1586,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -1698,6 +1747,37 @@ export default function HomePage() {
       window.removeEventListener("seedlings3:timeline-changed", onRefresh);
     };
   }, [loadTimelineCount]);
+
+  // Manual refresh of every alert-bar count. Surfaces as a small Refresh
+  // button at the top of the alert dropdown so the operator can force a
+  // recount after an action that may not have propagated through the
+  // existing event-based refresh paths.
+  const [alertsRefreshing, setAlertsRefreshing] = useState(false);
+  const refreshAllAlerts = useCallback(async () => {
+    setAlertsRefreshing(true);
+    try {
+      await Promise.all([
+        loadPending(),
+        loadPendingPayments(),
+        loadAwaitingClientPayment(),
+        loadOverdue(),
+        loadChangeRequestCount(),
+        loadEstimateFollowupCount(),
+        loadUnapprovedHoursCount(),
+        loadUnclaimed(),
+        loadAnnouncementCount(),
+        loadDashboardSummary(),
+        loadTimelineCount(),
+      ]);
+    } finally {
+      setAlertsRefreshing(false);
+    }
+  }, [
+    loadPending, loadPendingPayments, loadAwaitingClientPayment,
+    loadOverdue, loadChangeRequestCount, loadEstimateFollowupCount,
+    loadUnapprovedHoursCount, loadUnclaimed, loadAnnouncementCount,
+    loadDashboardSummary, loadTimelineCount,
+  ]);
 
   const goToTimeline = useCallback(() => {
     try { sessionStorage.setItem("pendingTimelineUrgencyFilter", "urgent"); } catch {}
@@ -2571,6 +2651,7 @@ export default function HomePage() {
               });
               if (isAdmin && changeRequestCount > 0) alerts.push({ label: "Client requests", count: changeRequestCount, bg: "#FFEDD5", color: "#9A3412", dotColor: "#F97316", onClick: goToClientRequests });
               if (isAdmin && estimateFollowupCount > 0) alerts.push({ label: "Estimate follow-ups", count: estimateFollowupCount, bg: "#FCE7F3", color: "#9D174D", dotColor: "#EC4899", onClick: goToEstimateFollowups });
+              if (isAdmin && unapprovedHoursCount > 0) alerts.push({ label: "Hours awaiting review", count: unapprovedHoursCount, bg: "#FEF3C7", color: "#92400E", dotColor: "#F59E0B", onClick: goToUnapprovedHours });
               if (isAdmin && unclaimedCount > 0) alerts.push({ label: "Unclaimed", count: unclaimedCount, bg: "#FEF9C3", color: "#713F12", dotColor: "#FACC15", onClick: goToUnclaimed });
               if (planningCount > 0) alerts.push({ label: "Planning", count: planningCount, bg: "#CFFAFE", color: "#155E75", dotColor: "#06B6D4", onClick: goToPlanning });
               if (announcementCount > 0) alerts.push({ label: "Announcements", count: announcementCount, bg: "#EDE9FE", color: "#4C1D95", dotColor: "#6D28D9", onClick: goToAnnouncements });
@@ -2643,6 +2724,31 @@ export default function HomePage() {
                           <Text flex="1" textAlign="left">{a.label}</Text>
                         </Button>
                       ))}
+                      {/* Manual refresh — re-fires every alert count so the
+                          dropdown stays accurate after actions whose event
+                          plumbing might not have reached every listener. */}
+                      <Box w="full" h="1px" bg="gray.300" my={1} />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        w="full"
+                        justifyContent="start"
+                        gap={2}
+                        color="fg.muted"
+                        disabled={alertsRefreshing}
+                        onClick={(e) => { e.stopPropagation(); void refreshAllAlerts(); }}
+                      >
+                        {/* Same 22px slot as the count-dot above so the
+                            label text aligns under the alert labels. */}
+                        <Box
+                          w="22px" h="22px" minW="22px"
+                          display="flex" alignItems="center" justifyContent="center"
+                          flexShrink={0}
+                        >
+                          {alertsRefreshing ? <Spinner size="xs" /> : <FiRefreshCw size={14} />}
+                        </Box>
+                        <Text flex="1" textAlign="left">Refresh</Text>
+                      </Button>
                     </VStack>
                   )}
                 </Box>

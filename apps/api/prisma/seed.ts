@@ -136,6 +136,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYMENT_METHODS: "payments",
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
+  HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
@@ -941,6 +942,15 @@ async function seedDatabase() {
   type Assignee = { userId: string; role?: string };
 
   async function occ(data: any, assignees?: Assignee[]) {
+    // Default-stamp hoursApprovedAt to completedAt for any occurrence that
+    // has a completion time — mirrors the auto-approve path that runs at
+    // runtime when actual hours fall within the variance threshold. Lets
+    // seeded "happy path" rows pass through without flooding the
+    // unapproved-hours alert queue. Outlier rows opt out by passing
+    // `hoursApprovedAt: null` explicitly.
+    if (data.completedAt && data.hoursApprovedAt === undefined) {
+      data = { ...data, hoursApprovedAt: data.completedAt };
+    }
     const o = await prisma.jobOccurrence.create({ data });
     if (assignees?.length) {
       for (const a of assignees) {
@@ -1018,6 +1028,55 @@ async function seedDatabase() {
   );
   const cKim14 = await occ(
     { jobId: kimMow.id, kind: "SINGLE_ADDRESS", startAt: daysAgo(14, 10), endAt: addMinutes(daysAgo(14, 10), 30), status: "CLOSED", workflow: "STANDARD", jobTags: '["MOW"]', price: 50.0, estimatedMinutes: 30, startedAt: daysAgo(14, 10), completedAt: addMinutes(daysAgo(14, 10), 28) },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+
+  // ─── HOURS-APPROVAL OUTLIERS ──────────────────────────────────────────────
+  // Explicit hoursApprovedAt: null marks these rows as "needs review" —
+  // they exercise the title-bar alert badge, the orange chip on the card,
+  // the Approve Hours button, and the W-2 export pre-download warning.
+  // Each has an actual time deliberately outside the 30% variance window.
+  const cMartinezOutlier = await occ(
+    {
+      jobId: martinezBiweekly.id, kind: "SINGLE_ADDRESS",
+      startAt: daysAgo(7, 9), endAt: addMinutes(daysAgo(7, 9), 40),
+      status: "CLOSED", workflow: "STANDARD",
+      jobTags: '["MOW","TRIM","EDGE","BLOW"]',
+      price: 55.0, estimatedMinutes: 40,
+      startedAt: daysAgo(7, 9),
+      // 40-min estimate, 1 worker, actual 70 min → 75% over → unapproved
+      completedAt: addMinutes(daysAgo(7, 9), 70),
+      hoursApprovedAt: null,
+    },
+    [{ userId: EMPLOYEE_ID, role: "primary" }],
+  );
+  const cChurchOutlier = await occ(
+    {
+      jobId: churchWeekly.id, kind: "ENTIRE_SITE",
+      startAt: daysAgo(12, 14), endAt: addMinutes(daysAgo(12, 14), 90),
+      status: "CLOSED", workflow: "STANDARD",
+      jobTags: '["MOW","TRIM","BLOW"]',
+      price: 200.0, estimatedMinutes: 90,
+      startedAt: daysAgo(12, 14),
+      // 90-min estimate, 1 worker, actual 145 min → 61% over → unapproved
+      completedAt: addMinutes(daysAgo(12, 14), 145),
+      hoursApprovedAt: null,
+    },
+    [{ userId: CONTRACTOR_ID, role: "primary" }],
+  );
+  // Under-estimate outlier: worker finished much faster than expected.
+  const cKimOutlier = await occ(
+    {
+      jobId: kimMow.id, kind: "SINGLE_ADDRESS",
+      startAt: daysAgo(2, 10), endAt: addMinutes(daysAgo(2, 10), 30),
+      status: "PENDING_PAYMENT", workflow: "STANDARD",
+      jobTags: '["MOW"]',
+      price: 50.0, estimatedMinutes: 30,
+      startedAt: daysAgo(2, 10),
+      // 30-min estimate, 1 worker, actual 12 min → 60% under → unapproved
+      completedAt: addMinutes(daysAgo(2, 10), 12),
+      hoursApprovedAt: null,
+    },
     [{ userId: EMPLOYEE_ID, role: "primary" }],
   );
 
@@ -1741,6 +1800,7 @@ async function seedDatabase() {
     { key: "CONTRACTOR_PLATFORM_FEE_PERCENT", value: "20", description: "Platform fee percentage charged on contractor (1099) payment splits" },
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
+    { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
     {
@@ -2359,7 +2419,9 @@ async function seedDatabase() {
     data: { propertyId: sunriseCommon.id, kind: "ENTIRE_SITE", status: "ACCEPTED", frequencyDays: 7, defaultPrice: 180.0, estimatedMinutes: 90, notes: "Weekly common area mow — next occurrence should have been auto-created" },
   });
   await prisma.jobOccurrence.create({
-    data: { jobId: orphanJob.id, kind: "ENTIRE_SITE", startAt: daysAgo(10, 8), completedAt: daysAgo(10, 10), status: "CLOSED", source: "GENERATED", workflow: "STANDARD" } as any,
+    // hoursApprovedAt stamped explicitly because this row bypasses the
+    // occ() helper. Orphan-scenario row, irrelevant to payroll testing.
+    data: { jobId: orphanJob.id, kind: "ENTIRE_SITE", startAt: daysAgo(10, 8), completedAt: daysAgo(10, 10), hoursApprovedAt: daysAgo(10, 10), status: "CLOSED", source: "GENERATED", workflow: "STANDARD" } as any,
   });
   // Intentionally NO scheduled occurrence for this job — simulates a failed auto-create
 
