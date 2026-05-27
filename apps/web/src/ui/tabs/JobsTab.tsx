@@ -382,6 +382,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [calFeedLoading, setCalFeedLoading] = useState(false);
   const [overdueCount, setOverdueCount] = useState(0);
   const [highValueThreshold, setHighValueThreshold] = useState(200);
+  // Decimal form (0.3 = 30%). Drives both the visual "⚠ X% over estimate"
+  // warning below and gates the payroll-approval API. Loaded from Setting
+  // HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT (stored as a whole number).
+  const [hoursVarianceThreshold, setHoursVarianceThreshold] = useState(0.3);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
   const [requestPaymentEnabled, setRequestPaymentEnabled] = useState(false);
@@ -741,6 +745,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setDateFrom(overdueFrom);
     setDateTo(overdueTo);
     setOverdueActive(true);
+    setUnapprovedHoursActive(false);
     void load(true, { from: overdueFrom, to: overdueTo });
   }, []);
 
@@ -774,6 +779,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setShowArchived(false);
     setDatePreset(null);
     setOverdueActive(false);
+    setUnapprovedHoursActive(false);
     const now = new Date();
     const oneWeekAgo = new Date(now); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     const fourWeeksAgo = new Date(now); fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
@@ -798,12 +804,57 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("adminJobs:showEstimateFollowups", onShow);
   }, [forAdmin, applyEstimateFollowups]);
 
+  // "Hours awaiting approval" title-bar alert → wide date range (last 90
+  // days) + unapprovedHoursActive flag. Window is generous so admins can
+  // catch late-arriving outliers; the flag-based filter is what actually
+  // narrows the view.
+  const applyUnapprovedHours = useCallback(() => {
+    setQ("");
+    setHighlightOccId(null);
+    setFilterJobId(null);
+    setKind(["ALL"]);
+    setStatusFilter(["ALL"]);
+    setTypeFilter(["ALL"]);
+    setVipOnly(false);
+    setLikedOnly(false);
+    setShowCanceled(false);
+    setShowArchived(false);
+    setDatePreset(null);
+    setOverdueActive(false);
+    const now = new Date();
+    const ninetyAgo = new Date(now); ninetyAgo.setDate(ninetyAgo.getDate() - 90);
+    const from = localDate(ninetyAgo);
+    const to = localDate(now);
+    setDateFrom(from);
+    setDateTo(to);
+    setUnapprovedHoursActive(true);
+    void load(true, { from, to });
+  }, []);
+
+  useEffect(() => {
+    if (!forAdmin) return;
+    try {
+      const flag = localStorage.getItem("seedlings_adminJobs_showUnapprovedHours");
+      if (flag) {
+        localStorage.removeItem("seedlings_adminJobs_showUnapprovedHours");
+        applyUnapprovedHours();
+      }
+    } catch {}
+    const onShow = () => applyUnapprovedHours();
+    window.addEventListener("adminJobs:showUnapprovedHours", onShow);
+    return () => window.removeEventListener("adminJobs:showUnapprovedHours", onShow);
+  }, [forAdmin, applyUnapprovedHours]);
+
   const [datePreset, setDatePreset] = usePersistedState<DatePreset>(`${pfx}_datePreset`, "now");
   const presetDates = useMemo(() => computeDatesFromPreset(datePreset), [datePreset]);
   const [dateFrom, setDateFrom] = usePersistedState(`${pfx}_dateFrom`, presetDates.from);
   const [dateTo, setDateTo] = usePersistedState(`${pfx}_dateTo`, presetDates.to);
   const [quickDate, setQuickDate] = useState<string[]>([]);
   const [overdueActive, setOverdueActive] = useState(false);
+  // "Hours awaiting approval" focused mode — entered via the title-bar
+  // alert. Narrows visible rows to completed STANDARD/ONE_OFF occurrences
+  // whose hoursApprovedAt is null. Reset by Clear / preset / overdue toggle.
+  const [unapprovedHoursActive, setUnapprovedHoursActive] = useState(false);
 
   // Listen for external filter requests (e.g., from HomeTab tiles).
   // Semantics: clear all filters first, then apply only the values present in the event.
@@ -933,8 +984,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [contactMenuOcc, setContactMenuOcc] = useState<string | null>(null);
   const [actionMenuOcc, setActionMenuOcc] = useState<string | null>(null);
   const [quickActionMenuOcc, setQuickActionMenuOcc] = useState<string | null>(null);
+  // Open id for the "Hours awaiting review" chip dropdown — null when closed.
+  const [hoursMenuOcc, setHoursMenuOcc] = useState<string | null>(null);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
   const [editTimeOcc, setEditTimeOcc] = useState<WorkerOccurrence | null>(null);
+  // Open occurrence id for the Review-hours dialog. Cleared on Cancel /
+  // Approve / Done. Stays set across an intermediate Edit-time dialog
+  // open — the review dialog stays mounted underneath (stacked via the
+  // Chakra Portal). Each render reads the latest occurrence from `items`,
+  // so when edit-time saves and closes, the visible review reflects the
+  // new times / approval state.
+  const [reviewHoursOccId, setReviewHoursOccId] = useState<string | null>(null);
   const [editTimeForm, setEditTimeForm] = useState<{ startedAt: string; completedAt: string; offHours: string; offMinutes: string }>({ startedAt: "", completedAt: "", offHours: "0", offMinutes: "0" });
   useEffect(() => {
     if (!editTimeOcc) return;
@@ -1034,6 +1094,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [actionMenuOcc]);
 
   useEffect(() => {
+    if (!hoursMenuOcc) return;
+    const close = () => setHoursMenuOcc(null);
+    const timer = setTimeout(() => document.addEventListener("click", close), 50);
+    return () => { clearTimeout(timer); document.removeEventListener("click", close); };
+  }, [hoursMenuOcc]);
+
+  useEffect(() => {
     if (!quickDateMenuOpen) return;
     const close = () => setQuickDateMenuOpen(false);
     const timer = setTimeout(() => document.addEventListener("click", close), 50);
@@ -1043,6 +1110,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     message: string;
+    /** Optional richer JSX body — replaces `message` text when set. */
+    messageNode?: React.ReactNode;
     confirmLabel: string;
     colorPalette: string;
     onConfirm: ((inputValue: string, amountValue?: string) => void) | (() => void);
@@ -1321,6 +1390,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (!Array.isArray(list)) return;
         const s = list.find((r: any) => r.key === "HIGH_VALUE_JOB_THRESHOLD");
         if (s?.value) setHighValueThreshold(Number(s.value));
+        const hv = list.find((r: any) => r.key === "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT");
+        if (hv?.value) {
+          const pct = Number(hv.value);
+          if (Number.isFinite(pct) && pct >= 0) setHoursVarianceThreshold(pct / 100);
+        }
         const c = list.find((r: any) => r.key === "CONTRACTOR_PLATFORM_FEE_PERCENT");
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
@@ -1766,6 +1840,46 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     setBusyOccId(null);
   }
 
+  // Shared approve-hours handler. Returns after the server confirms the
+  // mutation and the local items array has been patched with the response.
+  // Callers should await this before closing any dialog so the user doesn't
+  // see a flash of stale "needs review" state on the card after click.
+  async function approveHoursAction(occ: WorkerOccurrence) {
+    setBusyOccId(occ.id);
+    try {
+      // Pull hoursApprovedAt/hoursApprovedById from the server response —
+      // optimistically using `new Date()` would drift from the DB and
+      // could even fail to clear the chip if a re-fetch interleaved.
+      const updated = await apiPost<{ id: string; hoursApprovedAt?: string; hoursApprovedById?: string }>(
+        `/api/admin/occurrences/${occ.id}/approve-hours`,
+        {},
+      );
+      setItems((prev) => prev.map((o) =>
+        o.id === occ.id
+          ? {
+              ...o,
+              hoursApprovedAt: updated?.hoursApprovedAt ?? new Date().toISOString(),
+              hoursApprovedById: updated?.hoursApprovedById ?? null,
+            } as any
+          : o,
+      ));
+      window.dispatchEvent(new CustomEvent("seedlings3:jobs-changed"));
+      publishInlineMessage({ type: "SUCCESS", text: "Hours approved for payroll." });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to approve hours.", err) });
+      throw err;
+    } finally {
+      setBusyOccId(null);
+    }
+  }
+
+  // Opens the Review-hours dialog. The dialog itself reads the latest
+  // occurrence from `items` each render, so an intermediate edit-time save
+  // is reflected automatically when the user returns to it.
+  function openApproveHoursDialog(occ: WorkerOccurrence) {
+    setReviewHoursOccId(occ.id);
+  }
+
   async function resumeJob(occ: WorkerOccurrence) {
     setBusyOccId(occ.id);
     if (isOffline) {
@@ -1923,6 +2037,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         occ.startAt && bizDateKey(occ.startAt) < todayKey
       );
     }
+    if (unapprovedHoursActive) {
+      rows = rows.filter((occ) =>
+        (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
+        !!occ.completedAt &&
+        !(occ as any).hoursApprovedAt
+      );
+    }
     if (vipOnly) {
       rows = rows.filter((occ) => !!(occ.job?.property?.client as any)?.isVip);
     }
@@ -1982,7 +2103,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     // `_foreignKind` marker to render a distinct (read-only) card. Activities
     // slot at their nextDueDate; doc expirations only appear on their exact
     // expiry date (no overdue carryover).
-    if (forAdmin && foreignRows.length > 0) {
+    // Foreign rows (Timeline activities + doc expirations) are irrelevant
+    // to the hours-approval review flow — skip them when that focused mode
+    // is on so the feed stays scoped to actual unapproved job occurrences.
+    if (forAdmin && foreignRows.length > 0 && !unapprovedHoursActive) {
       const tf = typeFilter[0];
       const showActivities = tf === "ALL" || tf === "ACTIVITY";
       const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
@@ -2020,7 +2144,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     }
 
     return rows;
-  }, [items, q, kind, statusFilter, typeFilter, overdueActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, forAdmin, foreignRows]);
+  }, [items, q, kind, statusFilter, typeFilter, overdueActive, unapprovedHoursActive, vipOnly, likedOnly, likedIds, isTrainee, highlightOccId, filterJobId, pinnedIds, isWorkerView, dateFrom, dateTo, showCanceled, showArchived, forAdmin, foreignRows]);
 
   const dayGroups = useMemo(() => {
     const groups: { key: string; label: string; items: WorkerOccurrence[] }[] = [];
@@ -2399,7 +2523,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           message: "This will load all occurrences for all time. This may be slow. Are you sure?",
                           confirmLabel: "Load All",
                           colorPalette: "orange",
-                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); },
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); setUnapprovedHoursActive(false); },
                         });
                         return;
                       }
@@ -2457,6 +2581,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
+                setUnapprovedHoursActive(false);
                 setVipOnly(false);
                 setLikedOnly(false);
                 setShowCanceled(false);
@@ -2796,7 +2921,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           message: "This will load all occurrences for all time. This may be slow. Are you sure?",
                           confirmLabel: "Load All",
                           colorPalette: "orange",
-                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); },
+                          onConfirm: () => { setDatePreset("all"); setOverdueActive(false); setUnapprovedHoursActive(false); },
                         });
                         return;
                       }
@@ -2879,6 +3004,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 setStatusFilter(["ALL"]);
                 setTypeFilter(["ALL"]);
                 setOverdueActive(false);
+                setUnapprovedHoursActive(false);
                 setVipOnly(false);
                 setLikedOnly(false);
                 setShowCanceled(false);
@@ -3063,8 +3189,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     css={{ borderLeft: `4px solid var(--chakra-colors-${isOverdue ? "red" : "purple"}-500)` }}
                   >
                     <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
-                      <Badge size="xs" colorPalette="purple" variant="solid" px="1.5" borderRadius="full" flexShrink={0}>
-                        Activity
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>
+                        Timeline
                       </Badge>
                       <Text fontWeight="semibold" lineClamp={1} flex="1" minW={0}>
                         {p.title}
@@ -3083,7 +3209,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       <VStack align="start" gap={0.5} flex="1" minW={0}>
                         <HStack gap={1.5} wrap="nowrap" align="center" minW={0}>
                           <Badge size="sm" colorPalette="purple" variant="solid" px="2" borderRadius="full" flexShrink={0}>
-                            Activity
+                            Timeline
                           </Badge>
                           <Text fontSize="sm" fontWeight="semibold" lineClamp={2} minW={0}>
                             {p.title}
@@ -3156,7 +3282,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     css={{ borderLeft: "4px solid var(--chakra-colors-red-500)" }}
                   >
                     <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
-                      <Badge size="xs" colorPalette="red" variant="solid" px="1.5" borderRadius="full" flexShrink={0}>
+                      <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>
                         Doc expires
                       </Badge>
                       <Text fontWeight="semibold" lineClamp={1} flex="1" minW={0}>
@@ -3813,7 +3939,8 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       // adding a custom expense on behalf of a contractor who lacks the
                       // "Charge business expenses" privilege). Workers must be the claimer
                       // AND have at least one expense-related privilege.
-                      const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
+                      // Followups are coordination items, not billable jobs — no expenses.
+                      const canManage = isActive && !isFollowup && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
                       if (!canManage) return null;
                       return (
                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setActionMenuOcc(null); setExpenseDialogOccId(occ.id); }}>
@@ -4187,6 +4314,56 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
                             <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
                           )}
+                          {/* Payroll-hours review chip — completed STANDARD/ONE_OFF
+                              jobs whose hours haven't been admin-reviewed yet.
+                              Sticky across status changes (including CLOSED) so
+                              it doesn't get forgotten between payroll runs. For
+                              admin/super the chip is a dropdown trigger (chevron
+                              inside) that opens a one-item menu — Review Hours —
+                              which surfaces the confirm dialog with Edit/Approve
+                              choices. Workers see the chip as a passive label. */}
+                          {(occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
+                            occ.completedAt && !occ.hoursApprovedAt && (
+                            (isAdmin || isSuper) ? (
+                              <Box position="relative" display="inline-flex">
+                                <Box
+                                  as="button"
+                                  display="inline-flex"
+                                  alignItems="center"
+                                  gap="1"
+                                  px="2"
+                                  py="0.5"
+                                  borderRadius="full"
+                                  bg="orange.100"
+                                  color="orange.800"
+                                  fontSize="xs"
+                                  fontWeight="medium"
+                                  cursor="pointer"
+                                  _hover={{ bg: "orange.200" }}
+                                  onClick={(e: any) => {
+                                    e.stopPropagation();
+                                    setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
+                                  }}
+                                >
+                                  Hours awaiting review
+                                  <ChevronDown size={12} />
+                                </Box>
+                                {hoursMenuOcc === occ.id && (
+                                  <VStack
+                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                    ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                    onClick={(e: any) => e.stopPropagation()}
+                                  >
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setHoursMenuOcc(null); openApproveHoursDialog(occ); }}>
+                                      Review Hours
+                                    </Button>
+                                  </VStack>
+                                )}
+                              </Box>
+                            ) : (
+                              <StatusBadge status="Hours awaiting review" palette="orange" variant="subtle" />
+                            )
+                          )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
                           {isTask && <StatusBadge status="Task" palette="blue" variant="solid" />}
@@ -4496,6 +4673,56 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           )}
                           {occ.status === "PENDING_PAYMENT" && !occ.payment && !!occ.paymentRequestSentAt && (
                             <StatusBadge status="Awaiting client payment" palette="purple" variant="solid" />
+                          )}
+                          {/* Payroll-hours review chip — completed STANDARD/ONE_OFF
+                              jobs whose hours haven't been admin-reviewed yet.
+                              Sticky across status changes (including CLOSED) so
+                              it doesn't get forgotten between payroll runs. For
+                              admin/super the chip is a dropdown trigger (chevron
+                              inside) that opens a one-item menu — Review Hours —
+                              which surfaces the confirm dialog with Edit/Approve
+                              choices. Workers see the chip as a passive label. */}
+                          {(occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
+                            occ.completedAt && !occ.hoursApprovedAt && (
+                            (isAdmin || isSuper) ? (
+                              <Box position="relative" display="inline-flex">
+                                <Box
+                                  as="button"
+                                  display="inline-flex"
+                                  alignItems="center"
+                                  gap="1"
+                                  px="2"
+                                  py="0.5"
+                                  borderRadius="full"
+                                  bg="orange.100"
+                                  color="orange.800"
+                                  fontSize="xs"
+                                  fontWeight="medium"
+                                  cursor="pointer"
+                                  _hover={{ bg: "orange.200" }}
+                                  onClick={(e: any) => {
+                                    e.stopPropagation();
+                                    setHoursMenuOcc((v) => v === occ.id ? null : occ.id);
+                                  }}
+                                >
+                                  Hours awaiting review
+                                  <ChevronDown size={12} />
+                                </Box>
+                                {hoursMenuOcc === occ.id && (
+                                  <VStack
+                                    position="fixed" bg="white" borderWidth="1px" borderColor="gray.200" rounded="md" shadow="lg" zIndex={10000} p={1} gap={0} minW="140px" align="stretch"
+                                    ref={(el: HTMLDivElement | null) => { if (el && el.parentElement) { const rect = el.parentElement.getBoundingClientRect(); el.style.top = `${rect.bottom + 4}px`; el.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - el.offsetWidth - 8))}px`; } }}
+                                    onClick={(e: any) => e.stopPropagation()}
+                                  >
+                                    <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setHoursMenuOcc(null); openApproveHoursDialog(occ); }}>
+                                      Review Hours
+                                    </Button>
+                                  </VStack>
+                                )}
+                              </Box>
+                            ) : (
+                              <StatusBadge status="Hours awaiting review" palette="orange" variant="subtle" />
+                            )
                           )}
                           {isReminder && <StatusBadge status="Reminder" palette="purple" variant="solid" />}
                           {isHighPriority && <StatusBadge status="High Priority" palette="red" variant="solid" />}
@@ -5009,13 +5236,13 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                 </Text>
                               )}
                             </HStack>
-                            {occ.completedAt && actual != null && estDiscrepancy > 0.3 && adjEst && (
+                            {occ.completedAt && actual != null && estDiscrepancy > hoursVarianceThreshold && adjEst && (
                               <Text color="orange.600" fontWeight="medium">
                                 ⚠ {Math.round(estDiscrepancy * 100)}% {actual > adjEst ? "over" : "under"} estimate —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
                               </Text>
                             )}
-                            {occ.completedAt && actual != null && avgDiscrepancy > 0.3 && median && !( estDiscrepancy > 0.3 && adjEst) && (
+                            {occ.completedAt && actual != null && avgDiscrepancy > hoursVarianceThreshold && median && !( estDiscrepancy > hoursVarianceThreshold && adjEst) && (
                               <Text color="orange.600" fontWeight="medium">
                                 ⚠ {Math.round(avgDiscrepancy * 100)}% {actual > median ? "above" : "below"} average —{" "}
                                 <Box as="span" textDecoration="underline" cursor="pointer" onClick={(e: any) => { e.stopPropagation(); setEditTimeOcc(occ); }}>Edit time</Box>
@@ -5594,6 +5821,26 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {(isAdmin || isSuper) && !isTaskOrReminder && !occ.jobId && isEstimateOcc && (
                       <Text fontSize="xs" color="orange.600">Stand-alone estimate — not yet linked to a Job Service</Text>
+                    )}
+                    {/* Approve payroll hours — admin/super only, surfaces when
+                        an outlier completion left hoursApprovedAt = null. Opens
+                        a confirm dialog with an "Edit time first" secondary
+                        action so the admin can adjust before approving. */}
+                    {(isAdmin || isSuper) &&
+                      (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
+                      occ.completedAt && !occ.hoursApprovedAt && (
+                      <Button
+                        size="sm"
+                        variant="solid"
+                        colorPalette="orange"
+                        disabled={busyOccId === occ.id}
+                        onClick={(e: any) => {
+                          e.stopPropagation();
+                          openApproveHoursDialog(occ);
+                        }}
+                      >
+                        Review Hours
+                      </Button>
                     )}
                     {/* Confirm client — must happen before Start */}
                     {needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
@@ -6294,10 +6541,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           !!me?.privileges?.canPullInventory ||
                           !!me?.privileges?.canChargeBusinessExpenses;
                         // Admin/Super always pass — they can manage expenses on any job (e.g.
-// adding a custom expense on behalf of a contractor who lacks the
-// "Charge business expenses" privilege). Workers must be the claimer
-// AND have at least one expense-related privilege.
-const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
+                        // adding a custom expense on behalf of a contractor who lacks the
+                        // "Charge business expenses" privilege). Workers must be the claimer
+                        // AND have at least one expense-related privilege.
+                        // Followups are coordination items, not billable jobs — no expenses.
+                        const canManage = isActive && !isFollowup && (forAdmin || isAdmin || isSuper || (isClaimer && hasAnyPriv));
                         if (!canManage) return null;
                         const hasExpenses = (occ.expenses?.length ?? 0) > 0;
                         return (
@@ -6472,12 +6720,21 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                     </HStack>
                   </Card.Footer>
                 )}
-                {/* Guidance + Instructions — collapsed: inline wrapping row, expanded: full-width banner */}
+                {/* Guidance + Instructions — collapsed: inline wrapping row, expanded: full-width banner.
+                    On the semi card we render the full OccurrenceInstructions
+                    component (defaultExpanded={false}) so the Guidance pill is
+                    clickable and reveals the photos + description inline —
+                    same flow as the fully-expanded card, just starts collapsed. */}
                 {isCardCompact ? (
                   ((occ.propertyPhotos ?? []).length > 0 || ((occ as any).instructions ?? []).length > 0) && (
                     <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
                       {(occ.propertyPhotos ?? []).length > 0 && (
-                        <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
+                        <OccurrenceInstructions
+                          occurrenceId={occ.id}
+                          count={(occ.propertyPhotos ?? []).length}
+                          guidanceNote={(occ as any).guidanceNote ?? null}
+                          defaultExpanded={false}
+                        />
                       )}
                       {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
                         <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
@@ -6702,10 +6959,113 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
         editEstimate={editingLightEstimate}
         jobTagsConfig={serviceTypes}
       />
+      {/* Review hours for payroll. Stays mounted while the edit-time
+          dialog is open (Chakra's portal handles z-index stacking) so we
+          don't have to worry about onCancel firing on unmount — when
+          edit-time saves and closes, this dialog is already in place and
+          re-renders against the freshly-updated `items` row. */}
+      {reviewHoursOccId && (() => {
+        const occ = items.find((o) => o.id === reviewHoursOccId);
+        if (!occ) return null;
+        const approved = !!(occ as any).hoursApprovedAt;
+        const workerCount = Math.max(1, (occ.assignees ?? []).filter((a: any) => a.role !== "observer").length);
+        const adjEst = occ.estimatedMinutes && workerCount > 1
+          ? Math.round(occ.estimatedMinutes / workerCount)
+          : occ.estimatedMinutes;
+        const actual = effectiveMinutes(occ);
+        const fmt = (m: number | null | undefined) => {
+          if (m == null) return "—";
+          const h = Math.floor(m / 60);
+          const mm = Math.round(m % 60);
+          return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
+        };
+        const variance = (actual != null && adjEst)
+          ? Math.round(Math.abs(actual - adjEst) / adjEst * 100)
+          : null;
+        const isOver = (actual != null && adjEst != null) ? actual > adjEst : false;
+        const property = occ.job?.property?.displayName ?? "(no property)";
+        const messageNode = (
+          <VStack align="stretch" gap={3}>
+            <Text fontSize="sm" color="fg.muted">{property}</Text>
+            {approved ? (
+              <Box p={3} bg="green.50" borderWidth="2px" borderColor="green.400" rounded="md">
+                <Text fontSize="sm" fontWeight="semibold" color="green.800" mb={1}>
+                  ✓ Hours within variance — auto-approved
+                </Text>
+                {actual != null && adjEst != null && (
+                  <Text fontSize="xs" color="green.700">
+                    Actual: {fmt(actual)} · Estimate: {fmt(adjEst)}{workerCount > 1 ? ` (per worker · ${workerCount} workers)` : ""}
+                    {variance != null ? ` · ${variance}% ${isOver ? "over" : "under"}` : ""}
+                  </Text>
+                )}
+              </Box>
+            ) : variance != null && actual != null && adjEst != null ? (
+              <Box p={3} bg="orange.50" borderWidth="2px" borderColor="orange.400" rounded="md">
+                <Text fontSize="sm" fontWeight="semibold" color="orange.800" mb={1}>
+                  ⚠ Time discrepancy: {variance}% {isOver ? "over" : "under"} estimate
+                </Text>
+                <Text fontSize="xs" color="orange.700">
+                  Actual: {fmt(actual)} · Estimate: {fmt(adjEst)}{workerCount > 1 ? ` (per worker · ${workerCount} workers)` : ""}
+                </Text>
+              </Box>
+            ) : (
+              <Box p={3} bg="gray.50" borderWidth="1px" borderColor="gray.300" rounded="md">
+                <Text fontSize="xs" color="fg.muted">
+                  No estimate baseline — hours require explicit review before payroll.
+                </Text>
+                {actual != null && (
+                  <Text fontSize="sm" fontWeight="semibold" color="fg.default" mt={1}>
+                    Actual: {fmt(actual)}{workerCount > 1 ? ` (${workerCount} workers)` : ""}
+                  </Text>
+                )}
+              </Box>
+            )}
+            <Text fontSize="xs" color="fg.muted">
+              {approved
+                ? "These hours will be included in the next W-2 payroll export."
+                : "Approved hours will go to the next W-2 payroll export. If they look wrong, edit time first — the row auto-approves when the corrected time falls within the variance threshold."}
+            </Text>
+          </VStack>
+        );
+        return (
+          <ConfirmDialog
+            open={true}
+            title="Review hours for payroll"
+            message=""
+            messageNode={messageNode}
+            confirmLabel={approved ? "Done" : "Approve Hours"}
+            confirmColorPalette={approved ? "green" : "orange"}
+            cancelLabel={approved ? "Close" : "Edit time first"}
+            onConfirm={() => {
+              if (approved) {
+                setReviewHoursOccId(null);
+                return;
+              }
+              // Fire-and-await: don't close until the server confirms and
+              // the items array is patched with the new hoursApprovedAt.
+              // approveHoursAction re-throws on failure, in which case the
+              // dialog stays open so the user can retry.
+              void (async () => {
+                try {
+                  await approveHoursAction(occ);
+                  setReviewHoursOccId(null);
+                } catch {
+                  // Toast already raised inside approveHoursAction.
+                }
+              })();
+            }}
+            onCancel={() => setReviewHoursOccId(null)}
+            onCancelAction={approved ? undefined : () => { setEditTimeOcc(occ); }}
+            secondaryActionFirst={!approved}
+            keepOpenOnCancelAction
+          />
+        );
+      })()}
       <ConfirmDialog
         open={!!confirmAction}
         title={confirmAction?.title ?? ""}
         message={confirmAction?.message ?? ""}
+        messageNode={confirmAction?.messageNode}
         confirmLabel={confirmAction?.confirmLabel}
         confirmColorPalette={confirmAction?.colorPalette}
         inputPlaceholder={confirmAction?.inputPlaceholder}
@@ -7534,12 +7894,23 @@ const canManage = isActive && (forAdmin || isAdmin || isSuper || (isClaimer && h
                       const offM = parseInt(editTimeForm.offMinutes || "0", 10) || 0;
                       const totalPausedMs = (offH * 60 + offM) * 60000;
                       try {
-                        await apiPatch(`/api/occurrences/${editTimeOcc!.id}/time`, {
+                        // Capture the server response so we can pull through
+                        // hoursApprovedAt — the /time route re-evaluates the
+                        // variance approval, and the Review dialog reads
+                        // this field to decide between "Done" and "Approve".
+                        const updated = await apiPatch<any>(`/api/occurrences/${editTimeOcc!.id}/time`, {
                           startedAt: startedAtIso,
                           completedAt: completedAtIso,
                           totalPausedMs,
                         });
-                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? { ...o, startedAt: startedAtIso ?? undefined, completedAt: completedAtIso ?? undefined, totalPausedMs } as any : o));
+                        setItems((prev) => prev.map((o) => o.id === editTimeOcc!.id ? {
+                          ...o,
+                          startedAt: startedAtIso ?? undefined,
+                          completedAt: completedAtIso ?? undefined,
+                          totalPausedMs,
+                          hoursApprovedAt: updated?.hoursApprovedAt ?? null,
+                          hoursApprovedById: updated?.hoursApprovedById ?? null,
+                        } as any : o));
                         publishInlineMessage({ type: "SUCCESS", text: "Time updated." });
                       } catch (err) { publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed.", err) }); }
                       setEditTimeOcc(null);

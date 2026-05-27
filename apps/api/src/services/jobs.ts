@@ -128,6 +128,75 @@ function isValidAdminTransition(workflow: string, from: string, to: string): boo
   return ADMIN_TRANSITIONS[workflow]?.[from]?.includes(to) ?? false;
 }
 
+// Default for the hours-variance threshold when no Setting row is present.
+// The Setting key is HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT, stored as a
+// whole number (e.g. "30" = 30%). Both the payroll-approval logic below and
+// the visual "⚠ X% over estimate" warning on the JobsTab card read the
+// same value so they can't drift.
+const DEFAULT_HOURS_APPROVAL_VARIANCE_THRESHOLD = 0.3;
+
+/** Load the variance threshold as a decimal (e.g. 0.3 for 30%). */
+export async function loadHoursApprovalVarianceThreshold(): Promise<number> {
+  const row = await prisma.setting.findUnique({
+    where: { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT" },
+  });
+  if (!row?.value) return DEFAULT_HOURS_APPROVAL_VARIANCE_THRESHOLD;
+  const pct = Number(row.value);
+  if (!Number.isFinite(pct) || pct < 0) return DEFAULT_HOURS_APPROVAL_VARIANCE_THRESHOLD;
+  return pct / 100;
+}
+
+/**
+ * Decide whether to auto-approve payroll hours when an occurrence transitions
+ * into a completed state. The two outputs are the values to patch onto
+ * JobOccurrence: a Date+userId (auto-approved) or null+null (needs review).
+ *
+ * Rules:
+ *   - Only STANDARD / ONE_OFF workflows carry payroll-relevant hours. Other
+ *     workflows (ESTIMATE, TASK, REMINDER, EVENT, FOLLOWUP, ANNOUNCEMENT)
+ *     get auto-approved unconditionally — they don't appear in payroll.
+ *   - Without an estimatedMinutes baseline we have no variance to compare
+ *     against, so we require explicit approval.
+ *   - Otherwise compare actual minutes vs adjusted estimate (divided by
+ *     active worker count). Within threshold → auto-approve. Outside → review.
+ *
+ * Threshold is passed in from the caller (read once per request via
+ * loadHoursApprovalVarianceThreshold) so the database isn't hit per-row.
+ */
+export function evaluateHoursApproval(args: {
+  workflow: string;
+  estimatedMinutes: number | null;
+  startedAt: Date | null;
+  completedAt: Date;
+  totalPausedMs: number;
+  workerCount: number;
+  currentUserId: string;
+  varianceThreshold: number;
+}): { hoursApprovedAt: Date | null; hoursApprovedById: string | null } {
+  const { workflow, estimatedMinutes, startedAt, completedAt, totalPausedMs, workerCount, currentUserId, varianceThreshold } = args;
+  // Non-payroll workflows: stamp on completion so they never surface in the
+  // unapproved-hours queue.
+  if (workflow !== "STANDARD" && workflow !== "ONE_OFF") {
+    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId };
+  }
+  if (!estimatedMinutes || !startedAt) {
+    return { hoursApprovedAt: null, hoursApprovedById: null };
+  }
+  const adjustedEstimate = workerCount > 1 ? estimatedMinutes / workerCount : estimatedMinutes;
+  if (!adjustedEstimate) {
+    return { hoursApprovedAt: null, hoursApprovedById: null };
+  }
+  const actualMinutes = Math.max(
+    0,
+    (completedAt.getTime() - new Date(startedAt).getTime() - (totalPausedMs ?? 0)) / 60000,
+  );
+  const variance = Math.abs(actualMinutes - adjustedEstimate) / adjustedEstimate;
+  if (variance <= varianceThreshold) {
+    return { hoursApprovedAt: completedAt, hoursApprovedById: currentUserId };
+  }
+  return { hoursApprovedAt: null, hoursApprovedById: null };
+}
+
 // Forward states that imply "someone is working on this occurrence." A
 // transition into any of these must have a real worker (non-observer
 // assignee) on the occurrence, otherwise downstream payment/payout logic
@@ -2161,6 +2230,10 @@ export const jobs: ServicesJobs = {
           data.totalPausedMs = (occ.totalPausedMs ?? 0) + (Date.now() - new Date(occ.completedAt).getTime());
           data.completedAt = null;
         }
+        // Clear hours approval — re-completion will re-evaluate from
+        // the new completedAt against the variance threshold.
+        data.hoursApprovedAt = null;
+        data.hoursApprovedById = null;
       }
 
       // Completing from paused: finalize last pause segment
@@ -2181,6 +2254,51 @@ export const jobs: ServicesJobs = {
         !occ.completedAt
       ) {
         data.completedAt = timestamps?.completedAt ? new Date(timestamps.completedAt) : new Date();
+      }
+
+      // Payroll-hours approval on completion. Auto-approves jobs whose actual
+      // time falls within the variance threshold; jobs outside the threshold
+      // get hoursApprovedAt = null and surface in the title-bar alert + a
+      // Jobs filter until an admin/super reviews. Reverts (clearing
+      // completedAt) drop the approval below in the SCHEDULED/IN_PROGRESS
+      // branches so a re-completion gets re-evaluated.
+      if (
+        (finalStatus === JobOccurrenceStatus.PENDING_PAYMENT ||
+         finalStatus === JobOccurrenceStatus.CLOSED) &&
+        !occ.hoursApprovedAt
+      ) {
+        const effectiveCompletedAt: Date | null =
+          data.completedAt instanceof Date
+            ? data.completedAt
+            : (occ.completedAt ?? null);
+        const effectiveStartedAt: Date | null =
+          data.startedAt instanceof Date
+            ? data.startedAt
+            : (occ.startedAt ?? null);
+        const effectivePausedMs: number =
+          typeof data.totalPausedMs === "number"
+            ? data.totalPausedMs
+            : (occ.totalPausedMs ?? 0);
+        if (effectiveCompletedAt) {
+          const activeAssignees = await tx.jobOccurrenceAssignee.count({
+            where: { occurrenceId, NOT: { role: "observer" } },
+          });
+          const varianceThreshold = await loadHoursApprovalVarianceThreshold();
+          const approval = evaluateHoursApproval({
+            workflow,
+            estimatedMinutes: occ.estimatedMinutes,
+            startedAt: effectiveStartedAt,
+            completedAt: effectiveCompletedAt,
+            totalPausedMs: effectivePausedMs,
+            workerCount: Math.max(1, activeAssignees),
+            currentUserId,
+            varianceThreshold,
+          });
+          if (approval.hoursApprovedAt) {
+            data.hoursApprovedAt = approval.hoursApprovedAt;
+            data.hoursApprovedById = approval.hoursApprovedById;
+          }
+        }
       }
       // Splits + promised-payout snapshot are NOT set here anymore. They're
       // deferred to the Take Payment stage (services/payments.ts +
@@ -2222,6 +2340,10 @@ export const jobs: ServicesJobs = {
         data.lastPaymentRejectedAt = null;
         data.lastPaymentRevertReason = null;
         data.lastPaymentRevertedAt = null;
+        // Payroll hours approval also clears — the next completion will
+        // re-evaluate from a fresh timestamp.
+        data.hoursApprovedAt = null;
+        data.hoursApprovedById = null;
         // Delete payment and splits if they exist
         const existingPayment = await tx.payment.findFirst({ where: { occurrenceId } });
         if (existingPayment) {

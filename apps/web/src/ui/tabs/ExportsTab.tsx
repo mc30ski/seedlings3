@@ -9,7 +9,15 @@ import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/Inlin
 type Cadence = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
 
 type Preview = {
-  gustoW2: { workers: number; hours: number; gross: number };
+  gustoW2: {
+    workers: number;
+    hours: number;
+    gross: number;
+    // Count of occurrences in the window whose hours haven't been admin-
+    // approved and were therefore excluded from the W-2 export. Surfaces as
+    // a pre-download warning with a deep-link into the Jobs filter.
+    unapprovedOccurrences: number;
+  };
   gustoContractors: { workers: number; gross: number };
   qbIncome: { rows: number; total: number };
   qbExpenses: {
@@ -350,6 +358,40 @@ export default function ExportsTab() {
           <Text fontSize="sm" fontWeight="medium" mb={2}>
             Gusto
           </Text>
+          {/* Pre-download warning: occurrences in the selected range whose
+              hours haven't been admin-approved are excluded from the W-2
+              export. The banner only renders when there's something to flag;
+              the deep-link jumps into the Jobs tab filtered to those rows. */}
+          {preview && preview.gustoW2.unapprovedOccurrences > 0 && (
+            <Box mb={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+              <HStack justify="space-between" gap={2} wrap="wrap">
+                <Text fontSize="xs" color="orange.800">
+                  <Text as="span" fontWeight="semibold">
+                    {preview.gustoW2.unapprovedOccurrences} occurrence
+                    {preview.gustoW2.unapprovedOccurrences === 1 ? "" : "s"}
+                  </Text>
+                  {" "}with unapproved hours
+                  {" "}will be excluded from the W-2 CSV.
+                </Text>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="orange"
+                  onClick={() => {
+                    try {
+                      localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
+                    } catch {}
+                    window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "admin-jobs", remount: true } }));
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
+                    }, 100);
+                  }}
+                >
+                  Review now
+                </Button>
+              </HStack>
+            </Box>
+          )}
           <VStack align="stretch" gap={2}>
             <Button
               variant="outline"

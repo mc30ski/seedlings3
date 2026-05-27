@@ -11,6 +11,10 @@ type Props = {
   open: boolean;
   title: string;
   message: string;
+  /** Optional JSX body — replaces the plain `message` Text when set. Use
+   *  when the dialog needs a richer summary (callout boxes, side-by-side
+   *  stats, etc.) than plain text can convey. */
+  messageNode?: React.ReactNode;
   confirmLabel?: string;
   confirmColorPalette?: string;
   onConfirm: ((inputValue: string, amountValue?: string) => void) | (() => void);
@@ -44,6 +48,11 @@ type Props = {
    *  (cancel-action) button ABOVE the primary confirm button. Use when the
    *  cancel-action is actually the recommended next step. */
   secondaryActionFirst?: boolean;
+  /** When true, clicking the secondary action button only fires
+   *  `onCancelAction` — `onCancel` is NOT called. Use for nested-modal
+   *  flows where the secondary opens a sub-dialog and the parent must
+   *  stay in state so it can reappear after the sub-dialog closes. */
+  keepOpenOnCancelAction?: boolean;
 };
 
 type PricingHint = {
@@ -55,6 +64,7 @@ export default function ConfirmDialog({
   open,
   title,
   message,
+  messageNode,
   confirmLabel = "Confirm",
   confirmColorPalette = "green",
   onConfirm,
@@ -72,6 +82,7 @@ export default function ConfirmDialog({
   onCancelAction,
   warning,
   secondaryActionFirst,
+  keepOpenOnCancelAction,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -142,7 +153,7 @@ export default function ConfirmDialog({
               <Dialog.Title>{title}</Dialog.Title>
             </Dialog.Header>
             <Dialog.Body>
-              {message && <Text>{message}</Text>}
+              {messageNode ? messageNode : (message && <Text>{message}</Text>)}
               {warning && (
                 <Box
                   mt={3}
@@ -256,7 +267,7 @@ export default function ConfirmDialog({
                       w="full"
                       variant="outline"
                       colorPalette="gray"
-                      onClick={() => { onCancelAction(); onCancel(); }}
+                      onClick={() => { onCancelAction(); if (!keepOpenOnCancelAction) onCancel(); }}
                     >
                       {cancelLabel}
                     </Button>
@@ -275,7 +286,7 @@ export default function ConfirmDialog({
                       w="full"
                       variant="outline"
                       colorPalette="gray"
-                      onClick={() => { onCancelAction(); onCancel(); }}
+                      onClick={() => { onCancelAction(); if (!keepOpenOnCancelAction) onCancel(); }}
                     >
                       {cancelLabel}
                     </Button>

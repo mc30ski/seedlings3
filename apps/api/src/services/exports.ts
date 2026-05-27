@@ -41,19 +41,42 @@ function splitName(displayName: string | null | undefined): { first: string; las
   return { first: parts[0], last: parts.slice(1).join(" ") };
 }
 
-// Hours worked on an occurrence, in decimal hours, divided across active
-// (non-observer) workers. Returns 0 if the job isn't timed.
-function hoursPerWorker(occ: {
+// Wall-clock hours each worker spent on an occurrence. Use this for
+// payroll exports: every active worker on a job clocked in for the full
+// wall-clock duration, so they each get reported the same number of hours.
+// Returns 0 if the job isn't timed.
+//
+// Example: 2 workers on a job that ran 20 wall-clock minutes →
+// wallClockHoursPerWorker = 0.333 → each W-2 worker reports 20 minutes,
+// total W-2 labor on this job = 40 person-minutes.
+function wallClockHoursPerWorker(occ: {
+  startedAt: Date | null;
+  completedAt: Date | null;
+  totalPausedMs: number | null;
+}): number {
+  if (!occ.startedAt || !occ.completedAt) return 0;
+  const elapsedMs = occ.completedAt.getTime() - occ.startedAt.getTime() - (occ.totalPausedMs ?? 0);
+  if (elapsedMs <= 0) return 0;
+  return elapsedMs / 1000 / 3600;
+}
+
+// Labor effort split across active workers — wall-clock hours DIVIDED by
+// the crew size. Use this for cost-allocation views (e.g. "share of job
+// duration per worker"), NOT for payroll. For the same 2-worker / 20-min
+// example, this returns 0.167h per worker (10 min). Currently has no
+// callers; kept for future cost-allocation reports so the math intent
+// stays explicit (don't reach for `wallClockHoursPerWorker` for this
+// purpose by mistake).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function laborSplitHoursPerWorker(occ: {
   startedAt: Date | null;
   completedAt: Date | null;
   totalPausedMs: number | null;
   assigneeCount: number;
 }): number {
-  if (!occ.startedAt || !occ.completedAt) return 0;
-  const elapsedMs = occ.completedAt.getTime() - occ.startedAt.getTime() - (occ.totalPausedMs ?? 0);
-  if (elapsedMs <= 0) return 0;
-  const workers = Math.max(1, occ.assigneeCount);
-  return elapsedMs / 1000 / 3600 / workers;
+  const wall = wallClockHoursPerWorker(occ);
+  if (wall === 0) return 0;
+  return wall / Math.max(1, occ.assigneeCount);
 }
 
 // Common loader: confirmed payments in [start, end] with everything we need.
@@ -148,12 +171,17 @@ async function loadEmployeeMarginPercent(): Promise<number> {
 }
 
 // Completed STANDARD/ONE_OFF occurrences in the window — the W-2 wage events.
+// hoursApprovedAt filter is the payroll-integrity gate: occurrences whose
+// hours haven't been admin-approved are excluded from the export. They
+// surface in the title-bar alert and the Exports tab pre-download warning
+// until reviewed (or hours edited back within tolerance to auto-approve).
 async function loadCompletedOccurrences(start: Date, end: Date) {
   return prisma.jobOccurrence.findMany({
     where: {
       completedAt: { gte: start, lte: end },
       status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
       workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+      hoursApprovedAt: { not: null },
     },
     select: {
       id: true,
@@ -193,11 +221,13 @@ async function computeW2Earnings(start: Date, end: Date): Promise<W2Agg[]> {
   for (const occ of occs) {
     const active = occ.assignees.filter((a) => a.role !== "observer");
     if (active.length === 0) continue;
-    const occHours = hoursPerWorker({
+    // Each active worker is paid for the full wall-clock duration they
+    // clocked in for — NOT a divided share of it. Total W-2 labor hours
+    // logged for the job = wallClockHours × workerCount.
+    const occHours = wallClockHoursPerWorker({
       startedAt: occ.startedAt,
       completedAt: occ.completedAt,
       totalPausedMs: occ.totalPausedMs,
-      assigneeCount: active.length,
     });
     const priceTotal =
       (occ.price ?? occ.proposalAmount ?? 0) +
@@ -638,7 +668,15 @@ export async function qbEquityCsv(start: Date, end: Date): Promise<string> {
 // for each of the four files). Avoids the user having to download just to peek.
 // ─────────────────────────────────────────────────────────────────────────────
 export type ExportPreview = {
-  gustoW2: { workers: number; hours: number; gross: number };
+  gustoW2: {
+    workers: number;
+    hours: number;
+    gross: number;
+    // Count of completed STANDARD/ONE_OFF occurrences in the window whose
+    // hours haven't been admin-approved. Excluded from the export — surfaced
+    // as a pre-download warning so the operator can review first.
+    unapprovedOccurrences: number;
+  };
   gustoContractors: { workers: number; gross: number };
   qbIncome: { rows: number; total: number };
   qbExpenses: {
@@ -662,6 +700,17 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
   const w2Rows = await computeW2Earnings(start, end);
   const w2Hours = w2Rows.reduce((s, r) => s + r.hours, 0);
   const w2Gross = w2Rows.reduce((s, r) => s + r.gross, 0);
+  // Count of W-2-relevant occurrences in the window whose hours haven't
+  // been approved yet — they were excluded from w2Rows above. The Exports
+  // tab surfaces this as a pre-download warning.
+  const unapprovedW2Occurrences = await prisma.jobOccurrence.count({
+    where: {
+      completedAt: { gte: start, lte: end },
+      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+      hoursApprovedAt: null,
+    },
+  });
 
   // Contractors stay payment-anchored — sum their splits on confirmed payments.
   const contractorWorkers = new Set<string>();
@@ -709,6 +758,7 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
       workers: w2Rows.length,
       hours: round2(w2Hours),
       gross: round2(w2Gross),
+      unapprovedOccurrences: unapprovedW2Occurrences,
     },
     gustoContractors: {
       workers: contractorWorkers.size,

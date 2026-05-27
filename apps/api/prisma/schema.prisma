@@ -168,6 +168,7 @@ model User {
   businessExpenses        BusinessExpense[]
   changeRequestsCreated   OccurrenceChangeRequest[] @relation("ChangeRequestRequester")
   changeRequestsResolved  OccurrenceChangeRequest[] @relation("ChangeRequestResolver")
+  hoursApproved           JobOccurrence[]           @relation("HoursApprover")
   pushSubscriptions       PushSubscription[]
 
   suppliesCreated          Supply[]
@@ -766,6 +767,21 @@ model JobOccurrence {
   pausedAt      DateTime?
   totalPausedMs Int       @default(0)
 
+  // Payroll-hours approval. Independent of the payment-flow status — a job
+  // can be CLOSED (client paid) while hoursApprovedAt is still null. The
+  // Gusto W-2 / contractors exports filter on `hoursApprovedAt IS NOT NULL`,
+  // so unapproved rows are excluded from payroll until reviewed.
+  //
+  // Auto-approve rule: when a worker hits Complete, if the variance between
+  // actual hours and adjusted estimate is within the warning threshold
+  // (currently 30%, matching the visual warning on the card), hoursApprovedAt
+  // is stamped immediately. Outside the threshold, it stays null and the
+  // occurrence shows an "Hours awaiting approval" chip until an admin/super
+  // explicitly approves (or adjusts startedAt/completedAt back into range).
+  hoursApprovedAt    DateTime?
+  hoursApprovedById  String?
+  hoursApprovedBy    User?     @relation("HoursApprover", fields: [hoursApprovedById], references: [id], onDelete: SetNull)
+
   startLat    Float?
   startLng    Float?
   completeLat Float?
@@ -809,6 +825,7 @@ model JobOccurrence {
   @@index([jobId, status])
   @@index([startAt])
   @@index([kind])
+  @@index([hoursApprovedAt])
 }
 
 model JobOccurrencePhoto {

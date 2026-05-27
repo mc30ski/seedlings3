@@ -7,6 +7,7 @@ import { Role as RoleVal, JobOccurrenceStatus } from "@prisma/client";
 import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
+import { evaluateHoursApproval, loadHoursApprovalVarianceThreshold } from "../services/jobs";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -1546,6 +1547,28 @@ export default async function workerRoutes(app: FastifyInstance) {
       const span = new Date(newEnd).getTime() - new Date(newStart).getTime();
       if (span < 0) throw new ServiceError("INVALID_RANGE", "End time cannot be before start time.", 400);
       if (newPaused > span) throw new ServiceError("INVALID_RANGE", "Off-the-clock time cannot exceed total span.", 400);
+    }
+
+    // Re-evaluate payroll hours approval against the new time values. If the
+    // updated span is within the variance threshold of the estimate, stamp
+    // it as approved automatically. Otherwise clear any prior approval so
+    // it surfaces in the unapproved-hours queue. Only applies when the
+    // occurrence has a completedAt (otherwise approval isn't meaningful yet).
+    if (newEnd) {
+      const activeAssignees = (occ.assignees ?? []).filter((a: any) => a.role !== "observer").length;
+      const varianceThreshold = await loadHoursApprovalVarianceThreshold();
+      const approval = evaluateHoursApproval({
+        workflow: occ.workflow ?? "STANDARD",
+        estimatedMinutes: occ.estimatedMinutes,
+        startedAt: newStart ?? null,
+        completedAt: new Date(newEnd),
+        totalPausedMs: newPaused,
+        workerCount: Math.max(1, activeAssignees),
+        currentUserId: uid,
+        varianceThreshold,
+      });
+      data.hoursApprovedAt = approval.hoursApprovedAt;
+      data.hoursApprovedById = approval.hoursApprovedById;
     }
 
     return prisma.jobOccurrence.update({ where: { id: occId }, data });
