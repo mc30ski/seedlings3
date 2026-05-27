@@ -1349,11 +1349,11 @@ async function seedDatabase() {
   // Each per-job expense also writes a paired BusinessExpense so the
   // tax ledger reflects everything the company spent (matching MVP-2 model).
   const expenseData: { occId: string; userId: string; cost: number; desc: string; category: string; vendor?: string }[] = [
-    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Car and truck expenses", vendor: "Shell" },
-    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Car and truck expenses", vendor: "Shell" },
+    { occId: cWillowbrook7.id, userId: ADMIN_WORKER_ID, cost: 25.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
+    { occId: cWillowbrook14.id, userId: ADMIN_WORKER_ID, cost: 28.0, desc: "Fuel for mowers", category: "Fuel", vendor: "Shell" },
     { occId: cMartinez14.id, userId: EMPLOYEE_ID, cost: 12.5, desc: "Trimmer line replacement", category: "Supplies", vendor: "Stihl Pro Dealer" },
     { occId: cHarrington7.id, userId: EMPLOYEE_ID, cost: 8.0, desc: "Edger blade", category: "Supplies", vendor: "Pro Lawn Supply" },
-    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Car and truck expenses", vendor: "Shell" },
+    { occId: cSunrise7.id, userId: ADMIN_WORKER_ID, cost: 35.0, desc: "Fuel and 2-cycle oil", category: "Fuel", vendor: "Shell" },
     { occId: cRiverBend7.id, userId: CONTRACTOR_ID, cost: 18.0, desc: "Mulch bags (2)", category: "Supplies", vendor: "Lowes" },
     { occId: cThompson7.id, userId: CONTRACTOR_ID, cost: 15.0, desc: "Hedge trimmer fuel mix", category: "Supplies", vendor: "Pro Lawn Supply" },
     { occId: cObrien7.id, userId: EMPLOYEE_ID, cost: 6.0, desc: "Trash bags for debris", category: "Supplies", vendor: "Home Depot" },
@@ -1394,11 +1394,17 @@ async function seedDatabase() {
   //   State Farm liability (quarterly) — last 95d ago → next ~5d overdue
   //   Annual business license — last ~358d ago → next due in ~7d
   const businessExpenseData: { ago: number; cost: number; desc: string; category: string; vendor?: string; notes?: string; recurrence?: RecurrenceCadence }[] = [
+    // Capital purchases on/after 2026-05-28 → land in qb-fixed-assets.csv,
+    // excluded from qb-expenses.csv. The negative `ago` values date these
+    // a few days into the future relative to seed-time "today", so the
+    // threshold (cost ≥ $500 AND date ≥ 2026-05-28) catches them.
+    { ago: -2, cost: 4250.00, desc: "Commercial zero-turn mower (Ferris IS 3200Z 61\")", category: "Depreciation", vendor: "Ferris Dealer", notes: "5-yr useful life; place in service immediately." },
+    { ago: -1, cost: 875.00, desc: "Trailer ramp gate replacement", category: "Repairs and maintenance", vendor: "Big Tex", notes: "Threshold capital purchase — depreciate." },
     // Today / this week
-    { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Car and truck expenses", vendor: "Shell" },
+    { ago: 0, cost: 64.27, desc: "Diesel for trailer truck", category: "Fuel", vendor: "Shell" },
     { ago: 3, cost: 142.50, desc: "Trimmer line bulk pack", category: "Supplies", vendor: "Stihl Pro Dealer" },
     // This month, prior weeks
-    { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Car and truck expenses", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
+    { ago: 14, cost: 89.43, desc: "Truck oil change & inspection", category: "Vehicle Maintenance", vendor: "Jiffy Lube", notes: "Receipt in glovebox" },
     { ago: 18, cost: 47.21, desc: "Office supplies (paper, pens, toner)", category: "Office expense", vendor: "Staples" },
     { ago: 33, cost: 125.00, desc: "Facebook Ads — neighborhood targeting", category: "Advertising", vendor: "Meta", recurrence: "MONTHLY" },
     { ago: 35, cost: 18.99, desc: "QuickBooks Online — monthly", category: "Office expense", vendor: "Intuit", recurrence: "MONTHLY" },
@@ -1555,10 +1561,10 @@ async function seedDatabase() {
       key: "FUEL_2CYC",
       name: "Premixed 2-cycle fuel",
       unit: "can",
-      category: "Car and truck expenses",
+      category: "Fuel",
       businessCost: 24.0,
       jobPayoutCost: 24.0,
-      description: "TruFuel 50:1 quart cans. Categorized as Car and truck expenses (not Supplies).",
+      description: "TruFuel 50:1 quart cans. Categorized as Fuel (not Supplies).",
       purchases: [
         { ago: 4, quantity: 12, unitCost: 24.0, vendor: "Pro Lawn Supply" },
       ],
@@ -1857,26 +1863,32 @@ async function seedDatabase() {
     {
       key: "EXPENSE_CATEGORIES",
       value: JSON.stringify([
-        { label: "Advertising", scheduleCLine: "8", selectable: true },
-        { label: "Car and truck expenses", scheduleCLine: "9", selectable: true },
-        { label: "Contract labor", scheduleCLine: "11", selectable: true },
-        { label: "Depreciation", scheduleCLine: "13", selectable: true },
-        { label: "Insurance", scheduleCLine: "15", selectable: true },
-        { label: "Legal and professional services", scheduleCLine: "17", selectable: true },
-        { label: "Office expense", scheduleCLine: "18", selectable: true },
-        { label: "Rent or lease — vehicles/equipment", scheduleCLine: "20a", selectable: true },
-        { label: "Rent or lease — other business property", scheduleCLine: "20b", selectable: true },
-        { label: "Repairs and maintenance", scheduleCLine: "21", selectable: true },
-        { label: "Supplies", scheduleCLine: "22", selectable: true },
-        { label: "Taxes and licenses", scheduleCLine: "23", selectable: true },
-        { label: "Travel", scheduleCLine: "24a", selectable: true },
-        { label: "Meals", scheduleCLine: "24b", selectable: true },
-        { label: "Utilities", scheduleCLine: "25", selectable: true },
+        { label: "Advertising", scheduleCLine: "8", qbAccount: "Advertising & marketing", selectable: true },
+        // "Car and truck expenses" was a single category; split into Fuel +
+        // Vehicle Maintenance to match the QB chart of accounts which
+        // tracks them separately under the Vehicle & Auto parent.
+        { label: "Fuel", scheduleCLine: "9", qbAccount: "Fuel", selectable: true },
+        { label: "Vehicle Maintenance", scheduleCLine: "9", qbAccount: "Vehicle Maintenance & Repairs", selectable: true },
+        { label: "Contract labor", scheduleCLine: "11", qbAccount: "Contract Labor", selectable: true },
+        { label: "Depreciation", scheduleCLine: "13", qbAccount: null, selectable: true },
+        { label: "Insurance", scheduleCLine: "15", qbAccount: "Insurance", selectable: true },
+        { label: "Legal and professional services", scheduleCLine: "17", qbAccount: "Legal & Professional Fees", selectable: true },
+        { label: "Office expense", scheduleCLine: "18", qbAccount: "Software & Subscriptions", selectable: true },
+        { label: "Rent or lease — vehicles/equipment", scheduleCLine: "20a", qbAccount: null, selectable: true },
+        { label: "Rent or lease — other business property", scheduleCLine: "20b", qbAccount: null, selectable: true },
+        { label: "Repairs and maintenance", scheduleCLine: "21", qbAccount: "Vehicle Maintenance & Repairs", selectable: true },
+        { label: "Supplies", scheduleCLine: "22", qbAccount: "Direct Supplies and Materials", selectable: true },
+        { label: "Taxes and licenses", scheduleCLine: "23", qbAccount: "Taxes & Licenses", selectable: true },
+        { label: "Travel", scheduleCLine: "24a", qbAccount: null, selectable: true },
+        { label: "Meals", scheduleCLine: "24b", qbAccount: null, selectable: true },
+        { label: "Utilities", scheduleCLine: "25", qbAccount: null, selectable: true },
         // Synthetic, export-only — sourced from Payment rows, never hand-logged.
-        { label: "Payment Processing Fees", scheduleCLine: "10", selectable: false },
-        { label: "Other", scheduleCLine: "27a", selectable: true },
+        { label: "Payment Processing Fees", scheduleCLine: "10", qbAccount: "Payment Processing Fees", selectable: false },
+        // Catch-all. qbAccount = null routes rows to "Unmapped" in the QB CSV
+        // so the operator re-categorizes in QB after import.
+        { label: "Other", scheduleCLine: "27a", qbAccount: null, selectable: true },
       ]),
-      description: "Expense-category taxonomy. Each entry maps a category to its Schedule C line; drives both the expense-category pickers and the QuickBooks export. Editing here needs no code change.",
+      description: "Expense-category taxonomy. Each entry maps a category to (a) its Schedule C line for the CPA-facing CSV and (b) its QuickBooks chart-of-accounts name for the QB import CSV. Editing here needs no code change. Account names must match QB exactly (capitalization + spacing).",
     },
   ];
   for (const s of feeSettings) {
@@ -2923,7 +2935,7 @@ async function seedPaymentsBase() {
     { name: "Mulch — hardwood",        unit: "bag",   category: "Supplies",                businessCost: 4.00,  jobPayoutCost: 5.00,  description: "2 cu ft bagged hardwood mulch.", quantity: 30 },
     { name: "Trimmer line 0.095",      unit: "spool", category: "Supplies",                businessCost: 18.00, jobPayoutCost: 18.00, description: "3 lb spool, 0.095\" gauge.",       quantity: 8 },
     { name: "Heavy-duty trash bags",   unit: "bag",   category: "Supplies",                businessCost: 0.60,  jobPayoutCost: 0.75,  description: "55-gal contractor bags, 3 mil.", quantity: 50 },
-    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Car and truck expenses",  businessCost: 24.00, jobPayoutCost: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
+    { name: "Premixed 2-cycle fuel",   unit: "can",   category: "Fuel",                    businessCost: 24.00, jobPayoutCost: 24.00, description: "TruFuel 50:1 quart cans.",        quantity: 12 },
   ];
   for (const s of paymentsSupplyCatalog) {
     const totalCost = Math.round(s.quantity * s.businessCost * 100) / 100;

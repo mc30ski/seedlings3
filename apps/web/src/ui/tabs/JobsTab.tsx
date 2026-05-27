@@ -5824,7 +5824,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     )}
                     {/* Approve payroll hours — admin/super only, surfaces when
                         an outlier completion left hoursApprovedAt = null. Opens
-                        a confirm dialog with an "Edit time first" secondary
+                        a confirm dialog with an "Edit Time" secondary
                         action so the admin can adjust before approving. */}
                     {(isAdmin || isSuper) &&
                       (occ.workflow === "STANDARD" || occ.workflow === "ONE_OFF") &&
@@ -7033,9 +7033,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             title="Review hours for payroll"
             message=""
             messageNode={messageNode}
-            confirmLabel={approved ? "Done" : "Approve Hours"}
+            confirmLabel={approved ? "Done" : "Approve Time"}
             confirmColorPalette={approved ? "green" : "orange"}
-            cancelLabel={approved ? "Close" : "Edit time first"}
+            cancelLabel={approved ? "Close" : "Edit Time"}
             onConfirm={() => {
               if (approved) {
                 setReviewHoursOccId(null);

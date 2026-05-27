@@ -10,13 +10,18 @@ export type ExpenseCategoryConfig = {
   label: string;
   /** Schedule C (Form 1040) line number, e.g. "10", "22", "27a". */
   scheduleCLine: string;
+  /** QuickBooks chart-of-accounts name this category posts to on import.
+   *  Null or empty → row lands in "Unmapped" in the QB CSV so the operator
+   *  re-categorizes after import. Must match QB exactly (capitalization /
+   *  spacing). */
+  qbAccount: string | null;
   /** Selectable in expense-logging pickers. false = export-only synthetic
    *  category (e.g. "Payment Processing Fees", which is sourced from Payment
    *  rows, never hand-logged). */
   selectable: boolean;
 };
 
-const ALLOWED_KEYS = new Set(["label", "scheduleCLine", "selectable"]);
+const ALLOWED_KEYS = new Set(["label", "scheduleCLine", "qbAccount", "selectable"]);
 
 /**
  * Parse the raw JSON value of the EXPENSE_CATEGORIES setting into a typed
@@ -48,9 +53,21 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
     if (typeof row.scheduleCLine !== "string" || !row.scheduleCLine.trim()) {
       throw new Error(`EXPENSE_CATEGORIES[${idx}].scheduleCLine is required.`);
     }
+    // qbAccount is optional in storage to preserve back-compat with older
+    // taxonomies that predate the QB-account migration. Empty string is
+    // normalized to null (= "Unmapped" in the QB export).
+    let qbAccount: string | null = null;
+    if (row.qbAccount != null) {
+      if (typeof row.qbAccount !== "string") {
+        throw new Error(`EXPENSE_CATEGORIES[${idx}].qbAccount must be a string or null.`);
+      }
+      const trimmed = row.qbAccount.trim();
+      qbAccount = trimmed === "" ? null : trimmed;
+    }
     return {
       label: row.label,
       scheduleCLine: row.scheduleCLine,
+      qbAccount,
       selectable: row.selectable !== false, // default true if omitted
     };
   });
@@ -94,6 +111,19 @@ export async function loadScheduleCLineMap(
   const cats = await loadExpenseCategories(client);
   const map: Record<string, string> = {};
   for (const c of cats) map[c.label] = c.scheduleCLine;
+  return map;
+}
+
+/** Map of category label → QuickBooks chart-of-accounts name. Labels missing
+ *  a mapping are simply absent — callers should fall back to "Unmapped". */
+export async function loadQbAccountMap(
+  client: typeof prisma | any = prisma,
+): Promise<Record<string, string>> {
+  const cats = await loadExpenseCategories(client);
+  const map: Record<string, string> = {};
+  for (const c of cats) {
+    if (c.qbAccount) map[c.label] = c.qbAccount;
+  }
   return map;
 }
 

@@ -57,7 +57,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { Download, Eye, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -298,6 +298,14 @@ export default function BusinessExpensesTab() {
   // user-controlled (persisted) so the choice survives reloads. page resets
   // to 1 whenever a filter changes.
   const [pageSize, setPageSize] = usePersistedState<number>("be_pageSize", 20);
+  // Collapsible "When to capitalize vs expense" reference panel. Default
+  // closed so the tab opens clean; opens once per user-preference (persisted
+  // localStorage) for operators who want it visible while logging.
+  const [assetRuleOpen, setAssetRuleOpen] = usePersistedState<boolean>("be_assetRuleOpen", false);
+  // Same pattern for the equipment-rental CPA reminder. Temporary by intent
+  // (delete the whole block once a CPA has confirmed the treatment) but in
+  // the meantime, collapsed by default so it doesn't dominate the tab.
+  const [equipmentRentalNoteOpen, setEquipmentRentalNoteOpen] = usePersistedState<boolean>("be_equipmentRentalNoteOpen", false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -704,6 +712,71 @@ export default function BusinessExpensesTab() {
         </HStack>
       </HStack>
 
+      {/* TEMP — CPA-review reminder. Remove the entire block once a CPA
+          has confirmed equipment-rental treatment. Red palette signals
+          "open item" rather than reference material; sits at the very top
+          of the tab so it can't be missed. */}
+      <CollapsibleNote
+        open={equipmentRentalNoteOpen}
+        onToggle={() => setEquipmentRentalNoteOpen(!equipmentRentalNoteOpen)}
+        palette="red"
+        label="Review equipment-rental with CPA"
+      >
+        <Text fontSize="xs" color="red.900" textAlign="left">
+          Equipment rental charges are internal — they reduce a worker's take-home and the business
+          recovers them; they don't flow into any tax export (Gusto / QuickBooks).{" "}
+          <b>Contractors (1099):</b> a business-to-business charge — confirm with a CPA how it nets
+          against reported income.{" "}
+          <b>Employees (W-2):</b> charging an employee for equipment is a wage deduction
+          (payroll / labor-law regulated) — review with a CPA and payroll before charging real W-2
+          staff. Owner charges are a wash.
+        </Text>
+        <Text fontSize="xs" color="red.700" mt={2} fontStyle="italic" textAlign="left">
+          Remove this note once reviewed with a CPA.
+        </Text>
+      </CollapsibleNote>
+
+      {/* Capitalize-vs-expense reference. Collapsed by default so the tab
+          doesn't lead with rules; admin can expand once and the open state
+          persists. The $500 cutoff and item examples come from the
+          operator's standing tax-policy notes — adjust here if the rule
+          changes. NOT a substitute for CPA review on edge cases. */}
+      <CollapsibleNote
+        open={assetRuleOpen}
+        onToggle={() => setAssetRuleOpen(!assetRuleOpen)}
+        palette="blue"
+        label="When to capitalize vs expense"
+      >
+        <Text fontSize="sm" color="blue.900" mb={2} textAlign="left">
+          <Text as="span" fontWeight="semibold">Rule of thumb:</Text>{" "}
+          record anything over <Text as="span" fontWeight="semibold">$500</Text> as a fixed asset when purchased — your CPA decides at tax time whether to depreciate over multiple years or take the full Section 179 deduction (usually 179 for small businesses).
+        </Text>
+        <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="white" overflow="hidden">
+          <Box as="table" w="full" fontSize="xs">
+            <Box as="thead" bg="blue.100">
+              <Box as="tr">
+                <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">Item</Box>
+                <Box as="th" textAlign="left" px="2" py="1.5" color="blue.900" fontWeight="semibold">How to record</Box>
+              </Box>
+            </Box>
+            <Box as="tbody">
+              {[
+                { item: "Commercial mower $2,000+", how: "Fixed asset — depreciate or Section 179" },
+                { item: "Trailer $1,500+", how: "Fixed asset — depreciate or Section 179" },
+                { item: "Trimmer $300", how: "Expense immediately — Equipment & Tools" },
+                { item: "Blower $250", how: "Expense immediately — Equipment & Tools" },
+                { item: "Shovel $30", how: "Expense immediately — Supplies & Materials" },
+              ].map((row, i) => (
+                <Box as="tr" key={i} borderTopWidth={i === 0 ? "0" : "1px"} borderTopColor="blue.100">
+                  <Box as="td" px="2" py="1.5" color="fg.default">{row.item}</Box>
+                  <Box as="td" px="2" py="1.5" color="fg.default">{row.how}</Box>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        </Box>
+      </CollapsibleNote>
+
       {/* Due to record — recurring expenses whose next expected instance
           has arrived (or is within the lead window). Hidden when nothing
           is due so the panel doesn't nag with empty state. */}
@@ -840,24 +913,6 @@ export default function BusinessExpensesTab() {
         </Card.Root>
       )}
 
-      {/* TEMP — CPA-review reminder. Remove after reviewing equipment-rental treatment. */}
-      <Box bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md" p={3} mb={3}>
-        <Text fontSize="sm" fontWeight="bold" color="red.700" mb={1}>
-          Reminder — review equipment-rental treatment with a CPA
-        </Text>
-        <Text fontSize="xs" color="red.700">
-          Equipment rental charges are internal — they reduce a worker's take-home and the business
-          recovers them; they don't flow into any tax export (Gusto / QuickBooks).{" "}
-          <b>Contractors (1099):</b> a business-to-business charge — confirm with a CPA how it nets
-          against reported income.{" "}
-          <b>Employees (W-2):</b> charging an employee for equipment is a wage deduction
-          (payroll / labor-law regulated) — review with a CPA and payroll before charging real W-2
-          staff. Owner charges are a wash.
-        </Text>
-        <Text fontSize="xs" color="red.600" mt={1} fontStyle="italic">
-          Remove this note once reviewed with a CPA.
-        </Text>
-      </Box>
 
       {/* Cash Flow — operating activity + equity activity for the selected
           timeframe. Operating net is unchanged from the prior "Earnings vs
@@ -1709,6 +1764,58 @@ function RecurrenceSelect(props: { value: string; onChange: (v: string) => void 
         </Select.Content>
       </Select.Positioner>
     </Select.Root>
+  );
+}
+
+// Single-source-of-truth collapsible info card. Used for the equipment-
+// rental CPA reminder and the capitalize-vs-expense rule so they render
+// pixel-identically — only the colors differ.
+function CollapsibleNote(props: {
+  open: boolean;
+  onToggle: () => void;
+  /** Chakra palette name — "red" / "blue" / etc. Drives border/bg/icon/text colors. */
+  palette: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  const { open, onToggle, palette, label, children } = props;
+  const iconColor = `var(--chakra-colors-${palette}-700)`;
+  return (
+    <Card.Root variant="outline" mb={3} borderColor={`${palette}.300`} bg={`${palette}.50`}>
+      <Box
+        as="button"
+        w="full"
+        px="3"
+        py="2"
+        textAlign="left"
+        display="flex"
+        alignItems="center"
+        justifyContent="space-between"
+        gap="2"
+        cursor="pointer"
+        onClick={onToggle}
+        _hover={{ bg: `${palette}.100` }}
+      >
+        <HStack gap={2} flex="1" minW="0" alignItems="center">
+          <Box flexShrink={0} display="inline-flex" alignItems="center" justifyContent="center">
+            <Info size={14} color={iconColor} />
+          </Box>
+          <Text fontSize="sm" fontWeight="semibold" color={`${palette}.800`} textAlign="left">
+            {label}
+          </Text>
+        </HStack>
+        <Box flexShrink={0} display="inline-flex" alignItems="center" justifyContent="center">
+          {open
+            ? <ChevronUp size={14} color={iconColor} />
+            : <ChevronDown size={14} color={iconColor} />}
+        </Box>
+      </Box>
+      {open && (
+        <Box px="3" pb="3" pt="0">
+          {children}
+        </Box>
+      )}
+    </Card.Root>
   );
 }
 

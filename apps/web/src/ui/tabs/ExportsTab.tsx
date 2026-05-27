@@ -1,12 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, HStack, Heading, Input, Spinner, Text, VStack } from "@chakra-ui/react";
 import { FiDownload } from "react-icons/fi";
 import { apiGet, apiDownload } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 type Cadence = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
+
+type UnmappedRow = {
+  ref: string;
+  date: string;
+  description: string;
+  category: string;
+  amount: number;
+};
 
 type Preview = {
   gustoW2: {
@@ -25,12 +33,48 @@ type Preview = {
     total: number;
     businessExpenseTotal: number;
     processorFeeTotal: number;
+    contractLaborTotal: number;
+    // Non-empty when one or more rows have no QB account mapping in
+    // EXPENSE_CATEGORIES. Their presence BLOCKS qb-expenses + qb-bundle
+    // downloads — the operator must fix the taxonomy in Settings first.
+    unmappedRows: UnmappedRow[];
   };
   qbEquity: {
     rows: number;
     contributionTotal: number;
     drawTotal: number;
   };
+  qbFixedAssets: { rows: number; total: number };
+};
+
+type HistoryRow = {
+  id: string;
+  createdAt: string;
+  kind:
+    | "GUSTO_W2"
+    | "GUSTO_CONTRACTORS"
+    | "QB_INCOME"
+    | "QB_EXPENSES"
+    | "QB_EQUITY"
+    | "QB_FIXED_ASSETS"
+    | "QB_BUNDLE";
+  rangeStart: string;
+  rangeEnd: string;
+  rowCount: number;
+  totalAmount: number;
+  fileName: string;
+  contentType: string;
+  createdBy: { id: string; displayName: string | null; email: string | null };
+};
+
+const KIND_LABELS: Record<HistoryRow["kind"], string> = {
+  GUSTO_W2: "Gusto W-2",
+  GUSTO_CONTRACTORS: "Gusto 1099",
+  QB_INCOME: "QB Income",
+  QB_EXPENSES: "QB Expenses",
+  QB_EQUITY: "QB Equity",
+  QB_FIXED_ASSETS: "QB Fixed Assets",
+  QB_BUNDLE: "QB Bundle (zip)",
 };
 
 function pad(n: number): string {
@@ -100,6 +144,25 @@ export default function ExportsTab() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [showUnmappedDetails, setShowUnmappedDetails] = useState(false);
+  const [history, setHistory] = useState<HistoryRow[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const rows = await apiGet<HistoryRow[]>("/api/admin/exports/history?limit=50");
+      setHistory(Array.isArray(rows) ? rows : []);
+    } catch {
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   // Pull cadence setting on mount; if it changes the user can override via the
   // preset buttons. Default range stays whatever was set on first render.
@@ -157,22 +220,39 @@ export default function ExportsTab() {
     [cadence],
   );
 
-  async function download(slug: string, label: string) {
+  async function download(slug: string, label: string, ext: "csv" | "zip" = "csv") {
     if (!start || !end || end < start) {
       publishInlineMessage({ type: "WARNING", text: "Pick a valid date range first." });
       return;
     }
-    const fn = `${slug}-${start}_${end}.csv`;
+    const fn = `${slug}-${start}_${end}.${ext}`;
     setBusyKey(slug);
     try {
-      await apiDownload(`/api/admin/exports/${slug}.csv?start=${start}&end=${end}`, fn);
+      await apiDownload(`/api/admin/exports/${slug}.${ext}?start=${start}&end=${end}`, fn);
       publishInlineMessage({ type: "SUCCESS", text: `${label} downloaded.` });
+      // Re-fetch so the new row shows up at the top of the history table.
+      refreshHistory();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage(`${label} download failed.`, err) });
     } finally {
       setBusyKey(null);
     }
   }
+
+  async function downloadHistoric(row: HistoryRow) {
+    setBusyKey(`history-${row.id}`);
+    try {
+      await apiDownload(`/api/admin/exports/history/${row.id}/download`, row.fileName);
+      publishInlineMessage({ type: "SUCCESS", text: `${row.fileName} downloaded.` });
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Download failed.", err) });
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  const unmapped = preview?.qbExpenses.unmappedRows ?? [];
+  const qbBlocked = unmapped.length > 0;
 
   return (
     <VStack align="stretch" gap={4} p={4} maxW="900px" mx="auto">
@@ -301,7 +381,7 @@ export default function ExportsTab() {
                 </Text>
               </HStack>
               <HStack justify="space-between">
-                <Text color="fg.muted">QB Expenses (BusinessExpense + fees):</Text>
+                <Text color="fg.muted">QB Expenses (BusinessExpense + fees + contractors):</Text>
                 <Text>
                   {preview.qbExpenses.rows} row{preview.qbExpenses.rows === 1 ? "" : "s"}{" · "}
                   <b>${preview.qbExpenses.total.toFixed(2)}</b>
@@ -312,6 +392,23 @@ export default function ExportsTab() {
                   <Text color="fg.muted">↳ Payment Processing Fees:</Text>
                   <Text color="fg.muted">
                     <b>${preview.qbExpenses.processorFeeTotal.toFixed(2)}</b>
+                  </Text>
+                </HStack>
+              )}
+              {preview.qbExpenses.contractLaborTotal > 0 && (
+                <HStack justify="space-between" pl={4} fontSize="xs">
+                  <Text color="fg.muted">↳ Contract Labor:</Text>
+                  <Text color="fg.muted">
+                    <b>${preview.qbExpenses.contractLaborTotal.toFixed(2)}</b>
+                  </Text>
+                </HStack>
+              )}
+              {preview.qbFixedAssets.rows > 0 && (
+                <HStack justify="space-between">
+                  <Text color="fg.muted">QB Fixed Assets (capital purchases ≥ $500):</Text>
+                  <Text>
+                    {preview.qbFixedAssets.rows} asset{preview.qbFixedAssets.rows === 1 ? "" : "s"}{" · "}
+                    <b>${preview.qbFixedAssets.total.toFixed(2)}</b>
                   </Text>
                 </HStack>
               )}
@@ -420,7 +517,72 @@ export default function ExportsTab() {
           <Text fontSize="sm" fontWeight="medium" mb={2}>
             QuickBooks
           </Text>
+          {qbBlocked && (
+            <Box
+              mb={3}
+              p={2}
+              bg="red.50"
+              borderWidth="1px"
+              borderColor="red.300"
+              borderRadius="md"
+            >
+              <HStack justify="space-between" gap={2} wrap="wrap">
+                <Text fontSize="xs" color="red.800">
+                  <Text as="span" fontWeight="semibold">
+                    {unmapped.length} expense row
+                    {unmapped.length === 1 ? "" : "s"} with no QB account mapping
+                  </Text>
+                  {" — "}
+                  the Expenses CSV and Bundle are blocked. Map the categories
+                  in Settings → EXPENSE_CATEGORIES (set <code>qbAccount</code>),
+                  then reload.
+                </Text>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="red"
+                  onClick={() => setShowUnmappedDetails((v) => !v)}
+                >
+                  {showUnmappedDetails ? "Hide details" : "Show details"}
+                </Button>
+              </HStack>
+              {showUnmappedDetails && (
+                <Box mt={2} maxH="240px" overflowY="auto" borderTopWidth="1px" borderColor="red.200" pt={2}>
+                  <VStack align="stretch" gap={1}>
+                    {unmapped.map((r) => (
+                      <HStack key={r.ref} fontSize="xs" gap={2} wrap="wrap">
+                        <Text color="red.700" fontFamily="mono">
+                          {r.ref}
+                        </Text>
+                        <Text color="fg.muted">{r.date}</Text>
+                        <Text color="red.800" fontWeight="semibold">
+                          {r.category}
+                        </Text>
+                        <Text color="fg.muted" truncate>
+                          {r.description}
+                        </Text>
+                        <Text color="fg.muted" ml="auto">
+                          ${r.amount.toFixed(2)}
+                        </Text>
+                      </HStack>
+                    ))}
+                  </VStack>
+                </Box>
+              )}
+            </Box>
+          )}
           <VStack align="stretch" gap={2}>
+            <Button
+              variant="solid"
+              colorPalette="green"
+              size="sm"
+              loading={busyKey === "qb-bundle"}
+              disabled={qbBlocked}
+              onClick={() => download("qb-bundle", "QB Bundle (zip)", "zip")}
+              title={qbBlocked ? "Fix unmapped rows before downloading the bundle" : "Income + Expenses + Equity in a single zip"}
+            >
+              <FiDownload /> Download QB Bundle (zip)
+            </Button>
             <Button
               variant="outline"
               colorPalette="green"
@@ -435,7 +597,9 @@ export default function ExportsTab() {
               colorPalette="green"
               size="sm"
               loading={busyKey === "qb-expenses"}
+              disabled={qbBlocked}
               onClick={() => download("qb-expenses", "QB Expenses CSV")}
+              title={qbBlocked ? "Fix unmapped rows before downloading expenses" : undefined}
             >
               <FiDownload /> Download Expenses CSV
             </Button>
@@ -449,7 +613,77 @@ export default function ExportsTab() {
             >
               <FiDownload /> Download Equity CSV
             </Button>
+            <Button
+              variant="outline"
+              colorPalette="green"
+              size="sm"
+              loading={busyKey === "qb-fixed-assets"}
+              onClick={() => download("qb-fixed-assets", "QB Fixed Assets CSV")}
+              title="Capital purchases ≥ $500 on/after the policy start date — imported into QB Fixed Asset accounts, not P&L"
+            >
+              <FiDownload /> Download Fixed Assets CSV
+            </Button>
           </VStack>
+        </Card.Body>
+      </Card.Root>
+
+      <Card.Root>
+        <Card.Body>
+          <HStack justify="space-between" mb={2}>
+            <Text fontSize="sm" fontWeight="medium">
+              Export history
+            </Text>
+            <HStack gap={2}>
+              {historyLoading && <Spinner size="sm" />}
+              <Button size="xs" variant="ghost" onClick={refreshHistory}>
+                Refresh
+              </Button>
+            </HStack>
+          </HStack>
+          {!history || history.length === 0 ? (
+            <Text fontSize="sm" color="fg.muted">
+              No exports yet. Downloads will appear here for re-download.
+            </Text>
+          ) : (
+            <VStack align="stretch" gap={1}>
+              {history.map((row) => {
+                const created = new Date(row.createdAt);
+                const rs = row.rangeStart.slice(0, 10);
+                const re = row.rangeEnd.slice(0, 10);
+                return (
+                  <HStack
+                    key={row.id}
+                    justify="space-between"
+                    gap={2}
+                    fontSize="xs"
+                    py={1}
+                    borderBottomWidth="1px"
+                    borderColor="border.subtle"
+                  >
+                    <VStack align="start" gap={0} flex="1" minW={0}>
+                      <Text fontWeight="semibold">
+                        {KIND_LABELS[row.kind]} · {rs} → {re}
+                      </Text>
+                      <Text color="fg.muted" truncate>
+                        {created.toLocaleString()} ·{" "}
+                        {row.createdBy.displayName || row.createdBy.email || "—"} ·{" "}
+                        {row.rowCount} row{row.rowCount === 1 ? "" : "s"} · $
+                        {row.totalAmount.toFixed(2)}
+                      </Text>
+                    </VStack>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      loading={busyKey === `history-${row.id}`}
+                      onClick={() => downloadHistoric(row)}
+                    >
+                      <FiDownload /> Re-download
+                    </Button>
+                  </HStack>
+                );
+              })}
+            </VStack>
+          )}
         </Card.Body>
       </Card.Root>
 
