@@ -629,7 +629,7 @@ export type WorkerOccurrence = {
    *  null rows. When the worker hits Complete, this is auto-set if actual
    *  time falls within the variance threshold (see jobs.ts
    *  evaluateHoursApproval); outside the threshold it stays null until an
-   *  admin/super approves via the Approve Hours button. */
+   *  admin/super approves via the Approve Time button. */
   hoursApprovedAt?: string | null;
   hoursApprovedById?: string | null;
   /** Latest payment-rejection reason for this occurrence — surfaced on the

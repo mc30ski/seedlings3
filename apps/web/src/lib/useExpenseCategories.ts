@@ -11,6 +11,7 @@ import { apiGet } from "@/src/lib/api";
 export type ExpenseCategoryConfig = {
   label: string;
   scheduleCLine: string;
+  qbAccount: string | null;
   selectable: boolean;
 };
 
@@ -18,9 +19,15 @@ let cached: ExpenseCategoryConfig[] | null = null;
 let inflight: Promise<ExpenseCategoryConfig[]> | null = null;
 
 function normalize(raw: any): ExpenseCategoryConfig {
+  let qbAccount: string | null = null;
+  if (raw?.qbAccount != null && typeof raw.qbAccount === "string") {
+    const trimmed = raw.qbAccount.trim();
+    qbAccount = trimmed === "" ? null : trimmed;
+  }
   return {
     label: String(raw?.label ?? ""),
     scheduleCLine: String(raw?.scheduleCLine ?? ""),
+    qbAccount,
     selectable: raw?.selectable !== false,
   };
 }
@@ -78,5 +85,11 @@ export function useExpenseCategories() {
     return categories.find((c) => c.label === label)?.scheduleCLine ?? "";
   }
 
-  return { categories, selectableCategories, lineFor, loaded: categories.length > 0 };
+  /** QuickBooks chart-of-accounts name for a category label; null if unmapped. */
+  function qbAccountFor(label: string | null | undefined): string | null {
+    if (!label) return null;
+    return categories.find((c) => c.label === label)?.qbAccount ?? null;
+  }
+
+  return { categories, selectableCategories, lineFor, qbAccountFor, loaded: categories.length > 0 };
 }

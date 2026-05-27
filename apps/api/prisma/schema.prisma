@@ -184,6 +184,7 @@ model User {
   bannersCreated     BannerNotification[] @relation("BannerCreator")
   bannerRecipients   BannerRecipient[]
   bannerDismissals   BannerDismissal[]
+  exportRuns         ExportRun[]
 }
 
 model NotificationTemplate {
@@ -1852,4 +1853,53 @@ model BannerDismissal {
 
   @@unique([bannerId, userId])
   @@index([userId])
+}
+
+// Discriminates an ExportRun row by which CSV/zip was produced. The string
+// values match the URL slugs used by /admin/exports/* so the route layer
+// can derive the kind from the slug and vice-versa.
+enum ExportKind {
+  GUSTO_W2
+  GUSTO_CONTRACTORS
+  QB_INCOME
+  QB_EXPENSES
+  QB_EQUITY
+  QB_FIXED_ASSETS
+  QB_BUNDLE
+}
+
+// Audit row + content snapshot for every export download (super-admin only).
+// Persists the exact bytes the operator received so historical exports can
+// be re-downloaded later for CPA review without re-running the query (and
+// therefore without exposure to later mutations of the underlying data).
+model ExportRun {
+  id           String     @id @default(cuid())
+  createdAt    DateTime   @default(now())
+
+  createdById  String
+  createdBy    User       @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  kind         ExportKind
+  // Date range the export covered, end-inclusive. Stored as DateTime so the
+  // list view can render in the user's timezone; the original input was
+  // YYYY-MM-DD at ET-midnight / ET-end-of-day.
+  rangeStart   DateTime
+  rangeEnd     DateTime
+
+  // Row count and dollar total — pulled from the same TOTALS line the CSV
+  // ends with, so the history table eyeballs against the CSV without
+  // re-parsing the bytes. For QB_BUNDLE these aggregate across the 3 CSVs.
+  rowCount     Int
+  totalAmount  Float
+
+  // The downloaded file, byte-for-byte. CSVs are UTF-8 encoded text; the QB
+  // bundle is a zip archive — contentType + fileName distinguish them at
+  // re-download time.
+  fileName     String
+  contentType  String
+  bytes        Bytes
+
+  @@index([createdAt])
+  @@index([createdById])
+  @@index([kind])
 }

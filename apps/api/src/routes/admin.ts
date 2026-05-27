@@ -5268,8 +5268,20 @@ Respond ONLY with valid JSON in this exact format:
   // CSV downloads for verifying payroll/bookkeeping data before Gusto/QB
   // subscriptions go live. All routes anchor on Payment.confirmedAt (cash-
   // basis) except qb-expenses which uses BusinessExpense.date.
-  const { gustoW2Csv, gustoContractorsCsv, qbIncomeCsv, qbExpensesCsv, qbEquityCsv, exportPreview } =
-    await import("../services/exports");
+  //
+  // Every download is persisted as an ExportRun row (bytes + metadata) so
+  // the history view can re-serve the exact file later for CPA review.
+  const {
+    gustoW2Csv,
+    gustoContractorsCsv,
+    qbIncomeCsv,
+    qbExpensesCsv,
+    qbEquityCsv,
+    qbFixedAssetsCsv,
+    exportPreview,
+    findUnmappedExpenseRows,
+  } = await import("../services/exports");
+  const JSZip = (await import("jszip")).default;
 
   function readDateRange(req: any): { start: Date; end: Date } {
     const startStr = String(req.query?.start ?? "");
@@ -5283,10 +5295,53 @@ Respond ONLY with valid JSON in this exact format:
     return { start, end };
   }
 
-  function sendCsv(reply: FastifyReply, filename: string, body: string) {
+  // Persist + serve a single CSV. Stores the exact bytes the operator
+  // received so a re-download from history is byte-identical.
+  async function deliverCsv(
+    reply: FastifyReply,
+    userId: string,
+    kind:
+      | "GUSTO_W2"
+      | "GUSTO_CONTRACTORS"
+      | "QB_INCOME"
+      | "QB_EXPENSES"
+      | "QB_EQUITY"
+      | "QB_FIXED_ASSETS",
+    range: { start: Date; end: Date; startStr: string; endStr: string },
+    fileSlug: string,
+    result: { csv: string; rowCount: number; total: number },
+  ) {
+    const fn = `${fileSlug}-${range.startStr}_${range.endStr}.csv`;
+    const bytes = Buffer.from(result.csv, "utf-8");
+    await prisma.exportRun.create({
+      data: {
+        createdById: userId,
+        kind,
+        rangeStart: range.start,
+        rangeEnd: range.end,
+        rowCount: result.rowCount,
+        totalAmount: result.total,
+        fileName: fn,
+        contentType: "text/csv; charset=utf-8",
+        bytes,
+      },
+    });
     reply.header("Content-Type", "text/csv; charset=utf-8");
-    reply.header("Content-Disposition", `attachment; filename="${filename}"`);
-    return reply.send(body);
+    reply.header("Content-Disposition", `attachment; filename="${fn}"`);
+    return reply.send(bytes);
+  }
+
+  // qb-expenses (and the zip that contains it) is blocked when any row in
+  // the window has no qbAccount mapping — the operator must fix the
+  // EXPENSE_CATEGORIES taxonomy first. 409 Conflict is the canonical "the
+  // request is well-formed but the resource state forbids it" code.
+  async function assertNoUnmappedExpenseRows(start: Date, end: Date) {
+    const unmapped = await findUnmappedExpenseRows(start, end);
+    if (unmapped.length > 0) {
+      throw app.httpErrors.conflict(
+        `${unmapped.length} expense row(s) have no QB account mapping. Fix the EXPENSE_CATEGORIES setting before exporting.`,
+      );
+    }
   }
 
   app.get("/admin/exports/preview", superGuard, async (req: any) => {
@@ -5296,30 +5351,35 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/exports/gusto-w2.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    const csv = await gustoW2Csv(start, end);
-    const fn = `gusto-w2-${String(req.query.start)}_${String(req.query.end)}.csv`;
-    return sendCsv(reply, fn, csv);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await gustoW2Csv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start, end, startStr, endStr }, "gusto-w2", result);
   });
 
   app.get("/admin/exports/gusto-contractors.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    const csv = await gustoContractorsCsv(start, end);
-    const fn = `gusto-contractors-${String(req.query.start)}_${String(req.query.end)}.csv`;
-    return sendCsv(reply, fn, csv);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await gustoContractorsCsv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_CONTRACTORS", { start, end, startStr, endStr }, "gusto-contractors", result);
   });
 
   app.get("/admin/exports/qb-income.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    const csv = await qbIncomeCsv(start, end);
-    const fn = `qb-income-${String(req.query.start)}_${String(req.query.end)}.csv`;
-    return sendCsv(reply, fn, csv);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await qbIncomeCsv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start, end, startStr, endStr }, "qb-income", result);
   });
 
   app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    const csv = await qbExpensesCsv(start, end);
-    const fn = `qb-expenses-${String(req.query.start)}_${String(req.query.end)}.csv`;
-    return sendCsv(reply, fn, csv);
+    await assertNoUnmappedExpenseRows(start, end);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await qbExpensesCsv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start, end, startStr, endStr }, "qb-expenses", result);
   });
 
   // Equity export — capital contributions + owner draws. Separate file from
@@ -5327,8 +5387,94 @@ Respond ONLY with valid JSON in this exact format:
   // not P&L expense lines. Mixing would mis-categorize on import.
   app.get("/admin/exports/qb-equity.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    const csv = await qbEquityCsv(start, end);
-    const fn = `qb-equity-${String(req.query.start)}_${String(req.query.end)}.csv`;
-    return sendCsv(reply, fn, csv);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await qbEquityCsv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start, end, startStr, endStr }, "qb-equity", result);
+  });
+
+  // Fixed Assets export — capital purchases (≥ $500 on/after the policy
+  // start date). Excluded from qb-expenses.csv so the P&L doesn't show
+  // them as period costs; they're depreciated over the asset's life
+  // through regular Depreciation expense entries instead.
+  app.get("/admin/exports/qb-fixed-assets.csv", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const result = await qbFixedAssetsCsv(start, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start, end, startStr, endStr }, "qb-fixed-assets", result);
+  });
+
+  // QB bundle — income + expenses + equity + fixed assets in one zip so the
+  // operator can hand one file to QuickBooks Import. Blocked by the same
+  // unmapped check qb-expenses.csv uses (the zip would include those rows).
+  app.get("/admin/exports/qb-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    await assertNoUnmappedExpenseRows(start, end);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const [income, expenses, equity, fixedAssets] = await Promise.all([
+      qbIncomeCsv(start, end),
+      qbExpensesCsv(start, end),
+      qbEquityCsv(start, end),
+      qbFixedAssetsCsv(start, end),
+    ]);
+    const zip = new JSZip();
+    zip.file(`qb-income-${startStr}_${endStr}.csv`, income.csv);
+    zip.file(`qb-expenses-${startStr}_${endStr}.csv`, expenses.csv);
+    zip.file(`qb-equity-${startStr}_${endStr}.csv`, equity.csv);
+    zip.file(`qb-fixed-assets-${startStr}_${endStr}.csv`, fixedAssets.csv);
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    const fn = `qb-bundle-${startStr}_${endStr}.zip`;
+    await prisma.exportRun.create({
+      data: {
+        createdById: await currentUserId(req),
+        kind: "QB_BUNDLE",
+        rangeStart: start,
+        rangeEnd: end,
+        rowCount: income.rowCount + expenses.rowCount + equity.rowCount + fixedAssets.rowCount,
+        totalAmount: income.total + expenses.total + equity.total + fixedAssets.total,
+        fileName: fn,
+        contentType: "application/zip",
+        bytes,
+      },
+    });
+    reply.header("Content-Type", "application/zip");
+    reply.header("Content-Disposition", `attachment; filename="${fn}"`);
+    return reply.send(bytes);
+  });
+
+  // History — list previous downloads (most recent first). Bytes are NOT
+  // returned here; the re-download route below streams them.
+  app.get("/admin/exports/history", superGuard, async (req: any) => {
+    const limitRaw = Number(req.query?.limit ?? 50);
+    const limit = Math.min(200, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 50));
+    const rows = await prisma.exportRun.findMany({
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        kind: true,
+        rangeStart: true,
+        rangeEnd: true,
+        rowCount: true,
+        totalAmount: true,
+        fileName: true,
+        contentType: true,
+        createdBy: { select: { id: true, displayName: true, email: true } },
+      },
+    });
+    return rows;
+  });
+
+  // Re-download a historical export, byte-identical to the original.
+  app.get("/admin/exports/history/:id/download", superGuard, async (req: any, reply: FastifyReply) => {
+    const id = String(req.params.id);
+    const row = await prisma.exportRun.findUnique({ where: { id } });
+    if (!row) throw app.httpErrors.notFound("Export run not found.");
+    reply.header("Content-Type", row.contentType);
+    reply.header("Content-Disposition", `attachment; filename="${row.fileName}"`);
+    return reply.send(Buffer.from(row.bytes));
   });
 }
