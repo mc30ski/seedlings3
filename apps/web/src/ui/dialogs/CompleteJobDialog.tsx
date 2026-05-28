@@ -50,8 +50,6 @@ type Props = {
   onCompleted: (completedAt?: string, startedAt?: string, totalPausedMs?: number, completionSplits?: Array<{ userId: string; percent: number }>) => void;
 };
 
-const PAYING_WORKFLOWS = new Set(["STANDARD", "ONE_OFF", "ESTIMATE"]);
-
 export default function CompleteJobDialog({
   open,
   onOpenChange,
@@ -64,8 +62,8 @@ export default function CompleteJobDialog({
   existingCompletedAt,
   workerCount,
   assignees,
-  workflow,
-  pointOfContact,
+  workflow: _workflow,
+  pointOfContact: _pointOfContact,
   onCompleted,
 }: Props) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -79,7 +77,6 @@ export default function CompleteJobDialog({
   const [splits, setSplits] = useState<Record<string, string>>({});
 
   const nonObserverAssignees = (assignees ?? []).filter((a) => a.role !== "observer");
-  const isPayingWorkflow = !workflow || PAYING_WORKFLOWS.has(workflow);
   // Splits are no longer set at completion — they're set in the Take Payment
   // dialog along with the actual collected amount. Keep the variables (used
   // by the existing onCompleted callback signature) but render nothing and
@@ -87,7 +84,6 @@ export default function CompleteJobDialog({
   const showSplits = false;
   const splitsSum = Object.values(splits).reduce((s, v) => s + (Number(v) || 0), 0);
   const splitsValid = true;
-  const contactMissing = isPayingWorkflow && !pointOfContact?.phone && !pointOfContact?.email;
 
   const toLocalInput = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -301,16 +297,13 @@ export default function CompleteJobDialog({
                   </Box>
                 )}
 
-                {contactMissing && (
-                  <Box p={3} bg="red.50" borderWidth="2px" borderColor="red.400" rounded="md">
-                    <Text fontSize="sm" fontWeight="semibold" color="red.800" mb={1}>
-                      Missing client contact info
-                    </Text>
-                    <Text fontSize="xs" color="red.700">
-                      This client has no phone or email on file. They need at least one so they can receive the payment request. Add a phone or email on the client&apos;s page before completing this job.
-                    </Text>
-                  </Box>
-                )}
+                {/* Contact-info gate removed: it was checking the property's
+                    `pointOfContact` field (a single optional linked contact),
+                    which is independent of the client's actual contacts list.
+                    The server's payment-request sender uses the client's
+                    primary contacts and surfaces a clear 409
+                    NO_PRIMARY_CONTACT error if none are reachable — that
+                    check fires at send time, when it actually matters. */}
 
                 {showSplits && (
                   <Box>
@@ -403,7 +396,6 @@ export default function CompleteJobDialog({
                     !completedAtTime ||
                     endBeforeStart ||
                     offTooLarge ||
-                    contactMissing ||
                     !splitsValid ||
                     (showDiscrepancyWarning && !acknowledgedDiscrepancy)
                   }
