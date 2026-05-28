@@ -2106,10 +2106,17 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     // `_foreignKind` marker to render a distinct (read-only) card. Activities
     // slot at their nextDueDate; doc expirations only appear on their exact
     // expiry date (no overdue carryover).
-    // Foreign rows (Timeline activities + doc expirations) are irrelevant
-    // to the hours-approval review flow — skip them when that focused mode
-    // is on so the feed stays scoped to actual unapproved job occurrences.
-    if (forAdmin && foreignRows.length > 0 && !unapprovedHoursActive) {
+    //
+    // Foreign rows are skipped when:
+    //  - The hours-approval review flow is active (focused on unapproved job
+    //    occurrences only).
+    //  - A status filter is in effect that excludes "ALL". Foreign rows have
+    //    no JobOccurrence status (they aren't job occurrences), so any
+    //    restricted status filter — e.g. "UNCLAIMED" from the title-bar
+    //    Unclaimed alert — should not be polluted with Timeline cards.
+    const statusFilterIsRestricted =
+      statusFilter.length > 0 && !statusFilter.includes("ALL");
+    if (forAdmin && foreignRows.length > 0 && !unapprovedHoursActive && !statusFilterIsRestricted) {
       const tf = typeFilter[0];
       const showActivities = tf === "ALL" || tf === "ACTIVITY";
       const showDocs = tf === "ALL" || tf === "DOC_EXPIRATION";
