@@ -137,6 +137,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
   HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
+  FIXED_ASSET_MIN_COST: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
@@ -1807,6 +1808,7 @@ async function seedDatabase() {
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
     { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
+    { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
     {

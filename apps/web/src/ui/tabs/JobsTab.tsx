@@ -3693,7 +3693,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // Pause-Complete menu / Resume / Accept Payment / Claim / etc.)
             // Renders the same circular button used in the semi-card header,
             // and the ultra row reuses it in place of the status dot.
-            const quickActionButton = (!isTrainee && !isTentative) ? (() => {
+            //
+            // Confirm Client is checked BEFORE the isTentative gate — a
+            // tentative job that needs client confirmation still has to
+            // surface that affordance on collapsed/ultra cards (parity with
+            // the expanded-card action row).
+            const quickActionButton = isTrainee ? null : (() => {
               if (needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
@@ -3702,6 +3707,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   }}><CheckCircle2 size={12} /></Box>
                 );
               }
+              if (isTentative) return null;
               if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
@@ -3897,7 +3903,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 );
               }
               return null;
-            })() : null;
+            })();
 
             // "More actions" dropdown — extracted into a JSX variable so the
             // ultra, semi, and expanded title rows all render the same button
@@ -4011,11 +4017,21 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     // Group-claimed: show just the group name + crew size. Workers
                     // can expand the card to see who's on it.
                     const ultraGroup = (occ as any).assignedGroup as { name: string } | null | undefined;
+                    // Lead name shrunk to first-initial + last-name on the
+                    // ultra row to claw back horizontal space ("Mike Wanderski"
+                    // → "M. Wanderski"). Single-word names and email fallbacks
+                    // pass through unchanged.
+                    const leadDisplay = (() => {
+                      const raw = lead?.user?.displayName ?? lead?.user?.email ?? "";
+                      const parts = raw.trim().split(/\s+/).filter(Boolean);
+                      if (parts.length < 2) return raw;
+                      return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
+                    })();
                     const assigneeText = ultraGroup
                       ? `${ultraGroup.name} (${activeAssignees.length})`
                       : !lead
                         ? "Unassigned"
-                        : `${lead.user?.displayName ?? lead.user?.email ?? ""}${others > 0 ? ` +${others}` : ""}`;
+                        : `${leadDisplay}${others > 0 ? ` +${others}` : ""}`;
                     // Date/time intentionally omitted: the surrounding group
                     // header already shows the date (via fmtDateWeekday) and
                     // no other per-card view in this tab carries a time.
@@ -4094,6 +4110,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           minW={0}
                           truncate
                           color="fg"
+                          fontSize="2xs"
                           fontWeight={isHighPriority ? "semibold" : "normal"}
                         >
                           {titleText}
@@ -4101,14 +4118,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {total != null && (
                           <Box
                             flexShrink={0}
-                            px="1.5"
-                            py="0.5"
+                            px="1"
+                            py="0"
                             borderRadius="md"
                             bg="green.100"
                             color="green.800"
-                            fontSize="xs"
+                            fontSize="2xs"
                             fontWeight="bold"
-                            lineHeight="1.2"
+                            lineHeight="1.3"
                           >
                             ${Math.round(total).toLocaleString()}
                           </Box>

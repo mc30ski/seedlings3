@@ -527,15 +527,29 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
 // Expense and SupplyPurchase has a paired BusinessExpense row already, so
 // pulling only BE gives the canonical, deduped set.
 // ─────────────────────────────────────────────────────────────────────────────
-// Capitalization threshold: any BusinessExpense purchase ≥ this cost,
-// dated on/after FIXED_ASSET_START_DATE, is treated as a Fixed Asset —
-// excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv
-// instead. Numbers match the operator's de minimis policy.
-const FIXED_ASSET_MIN_COST = 500;
+// Capitalization policy. The start date is fixed in code — it anchors when
+// the business adopted Fixed Asset accounting. The dollar threshold is
+// operator-editable via the FIXED_ASSET_MIN_COST setting so the de minimis
+// limit can be raised (e.g. to $2,500 to match the IRS safe harbor) without
+// a redeploy.
 const FIXED_ASSET_START_DATE = new Date("2026-05-28T00:00:00.000Z");
+const FIXED_ASSET_MIN_COST_DEFAULT = 500;
 
-function isFixedAsset(be: { cost: number; date: Date }): boolean {
-  return be.cost >= FIXED_ASSET_MIN_COST && be.date.getTime() >= FIXED_ASSET_START_DATE.getTime();
+/**
+ * Load the configured FIXED_ASSET_MIN_COST. Returns the default if the
+ * setting is missing, blank, non-numeric, or non-positive — a malformed
+ * value should not silently disable the capitalization split.
+ */
+async function loadFixedAssetMinCost(
+  client: typeof prisma | any = prisma,
+): Promise<number> {
+  const row = await client.setting.findUnique({ where: { key: "FIXED_ASSET_MIN_COST" } });
+  const n = Number(row?.value);
+  return Number.isFinite(n) && n > 0 ? n : FIXED_ASSET_MIN_COST_DEFAULT;
+}
+
+function isFixedAsset(be: { cost: number; date: Date }, minCost: number): boolean {
+  return be.cost >= minCost && be.date.getTime() >= FIXED_ASSET_START_DATE.getTime();
 }
 
 // Synthetic category for processor-fee rows — sourced from Payment records,
@@ -629,9 +643,10 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
   // EXPENSE_CATEGORIES taxonomy — the single source of truth, editable in
   // Settings with no code change. A category whose qbAccount is null lands
   // as "Unmapped" so the operator re-categorizes inside QB after import.
-  const [lineMap, qbAccountMap] = await Promise.all([
+  const [lineMap, qbAccountMap, fixedAssetMinCost] = await Promise.all([
     loadScheduleCLineMap(),
     loadQbAccountMap(),
+    loadFixedAssetMinCost(),
   ]);
 
   // Column shape (7 core spec columns + trailing extras QB ignores):
@@ -658,10 +673,10 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
   ];
   const lines: string[] = [csvRow(header)];
   let total = 0;
-  // Fixed-asset purchases (≥ $500 on/after the policy start date) are
-  // skipped here and emitted in qb-fixed-assets.csv instead — they hit a
-  // Fixed Asset account on the balance sheet, not the P&L.
-  const expenseRows = rows.filter((r) => !isFixedAsset(r));
+  // Fixed-asset purchases (cost ≥ FIXED_ASSET_MIN_COST setting, on/after the
+  // policy start date) are skipped here and emitted in qb-fixed-assets.csv
+  // instead — they hit a Fixed Asset account on the balance sheet, not the P&L.
+  const expenseRows = rows.filter((r) => !isFixedAsset(r, fixedAssetMinCost));
   for (const r of expenseRows) {
     const category = r.category ?? "Other";
     const account = qbAccountMap[category] ?? "Unmapped";
@@ -884,6 +899,7 @@ export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResul
   // we don't pull the whole expense table just to filter in JS. If the
   // window ends before the policy start date, there can be no fixed-asset
   // rows in range — skip the query entirely.
+  const fixedAssetMinCost = await loadFixedAssetMinCost();
   const effectiveStart = start < FIXED_ASSET_START_DATE ? FIXED_ASSET_START_DATE : start;
   const rows =
     end < FIXED_ASSET_START_DATE
@@ -892,7 +908,7 @@ export async function qbFixedAssetsCsv(start: Date, end: Date): Promise<CsvResul
           where: {
             type: "EXPENSE",
             date: { gte: effectiveStart, lte: end },
-            cost: { gte: FIXED_ASSET_MIN_COST },
+            cost: { gte: fixedAssetMinCost },
           },
           include: {
             equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
@@ -1028,13 +1044,14 @@ export async function findUnmappedExpenseRows(
     loadConfirmedPayments(start, end),
     loadQbAccountMap(),
   ]);
+  const fixedAssetMinCost = await loadFixedAssetMinCost();
 
   const unmapped: UnmappedExpenseRow[] = [];
 
   for (const r of businessExpenses) {
     // Fixed-asset rows never appear in qb-expenses.csv, so their category
     // never needs a qbAccount mapping — skip the unmapped check for them.
-    if (isFixedAsset(r)) continue;
+    if (isFixedAsset(r, fixedAssetMinCost)) continue;
     const category = r.category ?? "Other";
     if (!qbAccountMap[category]) {
       unmapped.push({
@@ -1114,11 +1131,12 @@ export type ExportPreview = {
     contributionTotal: number;
     drawTotal: number;
   };
-  // Fixed-asset purchases (≥ $500 on/after the policy start date) — pulled
-  // OUT of qbExpenses since they hit a balance-sheet Fixed Asset account
-  // rather than a P&L expense line. Counted separately here so the
-  // preview totals reconcile against the per-file TOTALS rows.
-  qbFixedAssets: { rows: number; total: number };
+  // Fixed-asset purchases (cost ≥ FIXED_ASSET_MIN_COST setting, on/after the
+  // policy start date) — pulled OUT of qbExpenses since they hit a
+  // balance-sheet Fixed Asset account rather than a P&L expense line.
+  // `threshold` is the live configured cutoff so UI hint text stays in sync
+  // with the setting.
+  qbFixedAssets: { rows: number; total: number; threshold: number };
 };
 
 export async function exportPreview(start: Date, end: Date): Promise<ExportPreview> {
@@ -1168,8 +1186,9 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
     where: { type: "EXPENSE", date: { gte: start, lte: end } },
     select: { cost: true, date: true },
   });
-  const fixedAssetExpenses = expenses.filter(isFixedAsset);
-  const operatingExpenses = expenses.filter((e) => !isFixedAsset(e));
+  const fixedAssetMinCost = await loadFixedAssetMinCost();
+  const fixedAssetExpenses = expenses.filter((e) => isFixedAsset(e, fixedAssetMinCost));
+  const operatingExpenses = expenses.filter((e) => !isFixedAsset(e, fixedAssetMinCost));
   const businessExpenseTotal = operatingExpenses.reduce((s, e) => s + e.cost, 0);
   const fixedAssetTotal = fixedAssetExpenses.reduce((s, e) => s + e.cost, 0);
   const processorFeeTotal = payments.reduce((s, p) => s + (p.processorFeeAmount ?? 0), 0);
@@ -1226,6 +1245,7 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
     qbFixedAssets: {
       rows: fixedAssetExpenses.length,
       total: round2(fixedAssetTotal),
+      threshold: fixedAssetMinCost,
     },
   };
 }
