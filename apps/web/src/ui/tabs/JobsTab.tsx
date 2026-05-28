@@ -122,13 +122,19 @@ function assigneeSortOrder(a: { assignedById?: string | null; userId: string; ro
 function getQuickMessage(occ: any, contactName: string | null): { label: string; body: string } | null {
   const name = contactName ?? "there";
   const dateStr = occ.startAt ? new Date(occ.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "your upcoming appointment";
+  // Property address joined into "street, city, state" form. Empty string
+  // when no address is on file so the message just omits the location clause
+  // instead of rendering an awkward "at ." segment.
+  const prop = occ.job?.property;
+  const addressStr = [prop?.street1, prop?.city, prop?.state].filter(Boolean).join(", ");
+  const atAddress = addressStr ? ` at ${addressStr}` : "";
 
   // Unconfirmed — needs client confirmation (only if claimed)
   const isClaimed = (occ.assignees ?? []).length > 0;
   if (occ.status === "SCHEDULED" && occ.jobId && !(occ as any).isClientConfirmed && isClaimed) {
     return {
       label: "Request Confirmation",
-      body: `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}. Could you please confirm this works for you? Or let us know if you need to reschedule.`,
+      body: `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}${atAddress}. Could you please confirm this works for you? Or let us know if you need to reschedule.`,
     };
   }
 
@@ -138,7 +144,7 @@ function getQuickMessage(occ: any, contactName: string | null): { label: string;
     const amountStr = amount != null ? ` of $${amount.toFixed(2)}` : "";
     return {
       label: "Request Payment",
-      body: `Hi ${name}, this is Seedlings Lawn Care. Your lawn service on ${dateStr} has been completed. A payment${amountStr} is due at your earliest convenience. Please let us know if you have any questions. Thank you!`,
+      body: `Hi ${name}, this is Seedlings Lawn Care. Your lawn service on ${dateStr}${atAddress} has been completed. A payment${amountStr} is due at your earliest convenience. Please let us know if you have any questions. Thank you!`,
     };
   }
 

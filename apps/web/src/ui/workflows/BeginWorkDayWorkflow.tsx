@@ -428,7 +428,12 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                           ? new Date(current.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
                           : "your upcoming appointment";
                         const name = contactName || "there";
-                        const body = `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}. Could you please confirm this works for you? Or let us know if you need to reschedule.`;
+                        // `address` is already computed above for the card
+                        // header — reuse so the message body matches the
+                        // location the worker sees and matches the wording
+                        // produced by getQuickMessage() in JobsTab.
+                        const atAddress = address ? ` at ${address}` : "";
+                        const body = `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}${atAddress}. Could you please confirm this works for you? Or let us know if you need to reschedule.`;
                         return (
                           <Button
                             size="sm"

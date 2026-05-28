@@ -70,12 +70,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     const lookbackStart = new Date(todayMidnight);
     lookbackStart.setMonth(lookbackStart.getMonth() - 1);
 
-    // Rolling 7-day window in Eastern Time, ending at today (inclusive). Used by
-    // `actualWeekEarnings` (the "Earnings for the last 7 days" tile).
+    // 7 full days BEFORE today (today is excluded — today's in-progress
+    // numbers belong to the title-bar optimistic projection, not the "last
+    // 7 days" history tiles). Used as the LOWER bound for both the Hours
+    // tile (`minutesThisWeek` / `thisWeekJobs`) and the Earnings tile
+    // (`actualWeekEarnings`); the queries pair it with `lt: todayMidnight`
+    // so the two tiles always cover the same job set.
     const todayEtParts = etToday().split("-").map(Number);
     const todayUtcNoon = new Date(Date.UTC(todayEtParts[0], todayEtParts[1] - 1, todayEtParts[2], 12));
     const sevenDaysAgoUtc = new Date(todayUtcNoon);
-    sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 6);
+    sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 7);
     const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
 
     // Sunday-of-this-week in Eastern Time. Used as the anchor for the weekly trend chart
@@ -237,17 +241,20 @@ export default async function workerRoutes(app: FastifyInstance) {
           startAt: { lt: tomorrowMidnight },
         },
       }),
-      // Jobs the user worked & completed in the last 7 days. Drives BOTH the Hours tile
-      // (sum wall-clock minutes) and the Earnings tile (sum the user's payout share),
-      // so the two tiles always refer to the same set of jobs. Observer-only assignments
-      // are excluded — observers don't work the job and don't earn a payout share.
+      // Jobs the user worked & completed in the last 7 days (today excluded).
+      // Drives the Hours tile (`minutesThisWeek` — wall-clock minutes summed).
+      // Window MUST match the Earnings tile's window below or the two tiles
+      // can disagree on whether a job from N days ago is "in the last 7";
+      // the bug that prompted this alignment was Hours showing 0m while
+      // Earnings showed $X for the same job. Observer-only assignments are
+      // excluded — observers don't work the job and don't earn a payout share.
       prisma.jobOccurrence.findMany({
         where: {
           id: { in: myWorkingOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
           startedAt: { not: null },
-          completedAt: { gte: sevenDaysAgo, not: null },
+          completedAt: { gte: sevenDaysAgo, lt: todayMidnight, not: null },
         },
         select: {
           startedAt: true,
@@ -551,7 +558,10 @@ export default async function workerRoutes(app: FastifyInstance) {
     const tomorrowMidnight = etMidnight(tomorrowStr);
     const tomorrowEnd = etEndOfDay(tomorrowStr);
     const lookbackStart = new Date(todayMidnight); lookbackStart.setMonth(lookbackStart.getMonth() - 1);
-    const sevenDaysAgoUtc = new Date(todayMidnight); sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 6);
+    // 7 full days BEFORE today (today excluded) — same window the per-worker
+    // path uses for the Hours and Earnings tiles. See the matching block at
+    // the top of the per-worker route for the rationale.
+    const sevenDaysAgoUtc = new Date(todayMidnight); sevenDaysAgoUtc.setUTCDate(sevenDaysAgoUtc.getUTCDate() - 7);
     const sevenDaysAgo = etMidnight(sevenDaysAgoUtc.toISOString().slice(0, 10));
     const startOfWeek = (() => {
       const d = new Date(todayMidnight);
@@ -730,7 +740,9 @@ export default async function workerRoutes(app: FastifyInstance) {
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
           startedAt: { not: null },
-          completedAt: { gte: sevenDaysAgo, not: null },
+          // Today excluded — see the per-worker route's matching query for
+          // the rationale (Hours/Earnings tiles must cover the same window).
+          completedAt: { gte: sevenDaysAgo, lt: todayMidnight, not: null },
           ...assigneeSubsetFilter,
         },
         select: {

@@ -18,7 +18,7 @@ import { MapLink } from "@/src/ui/helpers/Link";
 import { type Me } from "@/src/lib/types";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import { openEventSearch } from "@/src/lib/bus";
-import { fmtDate, bizDateKey } from "@/src/lib/lib";
+import { fmtDate, fmtDateTime, bizDateKey } from "@/src/lib/lib";
 import AddressAutocomplete from "@/src/ui/components/AddressAutocomplete";
 
 type RouteJob = {
@@ -106,6 +106,11 @@ type Props = {
 };
 
 const STORAGE_KEY_PREFIX = "preview_routeResults";
+// Sibling localStorage key that holds the ISO timestamp of the last
+// successful analysis. Stored separately from the result blob so old
+// pre-timestamp caches still parse — they just render the banner as if
+// the analysis time is unknown until the next run.
+const TIMESTAMP_KEY_PREFIX = "preview_routeResults_at";
 
 function loadCachedResults(userId?: string): Response | null {
   try {
@@ -123,8 +128,24 @@ function saveCachedResults(data: Response | null, userId?: string) {
   } catch {}
 }
 
+function loadCachedTimestamp(userId?: string): string | null {
+  try {
+    const key = userId ? `${TIMESTAMP_KEY_PREFIX}_${userId}` : TIMESTAMP_KEY_PREFIX;
+    return localStorage.getItem(key);
+  } catch { return null; }
+}
+
+function saveCachedTimestamp(ts: string | null, userId?: string) {
+  try {
+    const key = userId ? `${TIMESTAMP_KEY_PREFIX}_${userId}` : TIMESTAMP_KEY_PREFIX;
+    if (ts) localStorage.setItem(key, ts);
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
 export default function PreviewRoutesTab({ userId }: Props = {}) {
   const [data, setData] = useState<Response | null>(() => loadCachedResults(userId));
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(() => loadCachedTimestamp(userId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -252,13 +273,18 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         (mode === "suggest" ? `&lookAhead=${lookAhead}&availableHours=${availableHours}` : "") +
         userParam + startParam;
       const res = await apiGet<Response>(`/api/preview/route-suggestions?${params}`);
+      const now = new Date().toISOString();
       setData(res);
       saveCachedResults(res, userId);
+      setLastUpdatedAt(now);
+      saveCachedTimestamp(now, userId);
     } catch (err: any) {
       console.error("Route suggestions failed:", err);
       setError(err?.message || "Failed to load suggestions");
       setData(null);
       saveCachedResults(null, userId);
+      setLastUpdatedAt(null);
+      saveCachedTimestamp(null, userId);
     }
     setLoading(false);
   }
@@ -266,6 +292,8 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   function clearResults() {
     setData(null);
     saveCachedResults(null, userId);
+    setLastUpdatedAt(null);
+    saveCachedTimestamp(null, userId);
     setClaimedIds(new Set());
     setTargetDate(tomorrowStr);
   }
@@ -394,6 +422,17 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
         <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
         <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>
       </Box>
+      {/* "Last analyzed" stamp — the route results are cached in localStorage
+          across sessions (loadCachedResults), so without this banner the
+          stale numbers look freshly computed. Only shown when a cached
+          analysis exists; hidden until the user runs their first analysis. */}
+      {lastUpdatedAt && (
+        <Box mb={3} px={3} py={2} bg="blue.50" borderWidth="1px" borderColor="blue.200" rounded="md">
+          <Text fontSize="xs" color="blue.700">
+            Last analyzed {fmtDateTime(lastUpdatedAt)} · re-run to refresh.
+          </Text>
+        </Box>
+      )}
 
       {/* Home base */}
       <Box mb={3} p={3} bg="gray.50" rounded="md" borderWidth="1px">
