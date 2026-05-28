@@ -7,6 +7,7 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { ServiceError } from "../lib/errors";
 import { resolvePrivileges } from "../lib/privileges";
+import { resolveImpersonation } from "../lib/impersonation";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -225,7 +226,7 @@ export const users: ServicesUsers = {
   // Implements a GET /me endpoint that authenticates with Clerk (via header or cookie),
   // ensures there’s a matching user in your Prisma DB, optionally bootstraps ADMIN/WORKER roles based on an env list,
   // then returns a normalized “me” object.
-  async me(token: string) {
+  async me(token: string, impersonateHeader?: string | string[] | null) {
     // Verify token with Clerk
     let clerkUserId: string;
     try {
@@ -357,18 +358,50 @@ export const users: ServicesUsers = {
     // Respond
     const now = new Date();
     const isInsuranceValid = !!(user!.insuranceCertR2Key && user!.insuranceExpiresAt && user!.insuranceExpiresAt > now);
-    const priv = resolvePrivileges(user!);
+
+    // Real, unmodified identity values from the DB. The "effective" values
+    // below may diverge from these when a Super has the View-as-another-role
+    // mode active. The frontend uses realRoles/realWorkerType to keep the
+    // impersonation menu visible so Super can always exit back to default.
+    const realRolesArr = (user!.roles ?? []).map((r) => r.role) as Role[];
+    const realWorkerType = user!.workerType ?? null;
+    const realIsOwner = !!user!.isOwner;
+
+    // Apply impersonation only when the underlying user really is SUPER and
+    // the header parsed cleanly. Non-Super requests with this header silently
+    // fall through with no impersonation applied.
+    const impersonation = resolveImpersonation(realRolesArr, impersonateHeader ?? null);
+
+    const effectiveRoles: Role[] = impersonation ? (impersonation.roles as Role[]) : realRolesArr;
+    const effectiveWorkerType = impersonation ? impersonation.workerType : realWorkerType;
+    const effectiveIsOwner = impersonation ? false : realIsOwner;
+
+    // Privileges must be re-resolved against the EFFECTIVE roles/workerType.
+    // resolvePrivileges short-circuits to all-true for ADMIN/SUPER, so if we
+    // passed the real user row when impersonating a Trainee, the response
+    // would still grant inventory/business-expense rights — defeating the
+    // purpose. Build a synthetic shape with the swapped values.
+    const privInput = impersonation
+      ? {
+          workerType: effectiveWorkerType ?? null,
+          canPullInventory: user!.canPullInventory ?? null,
+          canChargeBusinessExpenses: user!.canChargeBusinessExpenses ?? null,
+          roles: effectiveRoles.map((r) => ({ role: r })),
+        }
+      : user!;
+    const priv = resolvePrivileges(privInput as any);
+
     const me = {
       id: user!.id,
       isApproved: !!user!.isApproved,
-      roles: (user!.roles ?? []).map((r) => r.role) as Role[],
+      roles: effectiveRoles,
       email: user!.email ?? null,
       phone: user!.phone ?? null,
       firstName: user!.firstName ?? null,
       lastName: user!.lastName ?? null,
       displayName: user!.displayName ?? null,
-      workerType: user!.workerType ?? null,
-      isOwner: !!user!.isOwner,
+      workerType: effectiveWorkerType,
+      isOwner: effectiveIsOwner,
       homeBaseAddress: user!.homeBaseAddress ?? null,
       availableDays: user!.availableDays ? JSON.parse(user!.availableDays) : [],
       availableHoursPerDay: user!.availableHoursPerDay ?? 4,
@@ -380,11 +413,20 @@ export const users: ServicesUsers = {
       // Override columns (for the user-edit UI to show explicit grants/denies)
       canPullInventoryOverride: user!.canPullInventory ?? null,
       canChargeBusinessExpensesOverride: user!.canChargeBusinessExpenses ?? null,
-      // Resolved values (admin/super wins, otherwise override-or-default)
+      // Resolved values (admin/super wins, otherwise override-or-default).
+      // Computed against the effective roles above so impersonating a Trainee
+      // correctly returns canPullInventory:false, canChargeBusinessExpenses:false.
       privileges: {
         canPullInventory: priv.canPullInventory,
         canChargeBusinessExpenses: priv.canChargeBusinessExpenses,
       },
+      // Real (unimpersonated) identity values. Present even when no
+      // impersonation is active so the frontend can unconditionally read
+      // them — the View-as menu reads realRoles to decide whether to show
+      // itself. When impersonation is OFF, real* === the regular fields.
+      realRoles: realRolesArr,
+      realWorkerType,
+      isImpersonating: !!impersonation,
     };
 
     return me;

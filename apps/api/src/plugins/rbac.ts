@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { services } from "../services";
 import { Role } from "../types/services";
+import { IMPERSONATE_HEADER, resolveImpersonation } from "../lib/impersonation";
 import "@fastify/sensible";
 
 // RBAC helper plugin for Fastify.
@@ -24,9 +25,20 @@ export default fp(async (app: FastifyInstance) => {
     // This should upsert on first visit (keep the upsert in services.users.me)
     const me = await services.currentUser.me(clerkUserId);
 
+    // Super-only "View as another role" override. resolveImpersonation gates
+    // on the underlying roles array, so a header sent by a non-Super is
+    // silently ignored — no 4xx that would leak the feature's existence.
+    // Identity fields (id, email, displayName) are NEVER swapped; only the
+    // roles array used by requireRole(...) is. This is what makes /admin
+    // routes return real 403s to an impersonating Super.
+    const impersonation = resolveImpersonation(me.roles, req.headers[IMPERSONATE_HEADER]);
+    const effective = impersonation
+      ? { ...me, roles: impersonation.roles as Role[] }
+      : me;
+
     // Attach for downstream usage
-    (req as any).user = me;
-    if (!me.isApproved) {
+    (req as any).user = effective;
+    if (!effective.isApproved) {
       throw app.httpErrors.forbidden("NOT_APPROVED");
     }
   });

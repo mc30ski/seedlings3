@@ -48,6 +48,7 @@ import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
+import ImpersonationBanner from "@/src/ui/components/ImpersonationBanner";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
 import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
@@ -860,6 +861,7 @@ export default function HomePage() {
             active={activeWorkflow === "begin-workday"}
             onDone={() => setActiveWorkflow(null)}
             myId={me?.id}
+            myWorkerType={me?.workerType ?? null}
           />
           {pausedWorkflow && workerInnerTab !== "tasks" && (
             <Box
@@ -2452,6 +2454,10 @@ export default function HomePage() {
   const isDev = process.env.NEXT_PUBLIC_VERCEL_ENV !== "production" && process.env.NODE_ENV !== "production";
 
   return (
+    <>
+      {/* Super-only impersonation banner — sits above the Container so it
+          spans the full viewport width and sticks to the top of every page. */}
+      <ImpersonationBanner me={me} />
     <Container maxW="5xl" pt={4} pb={8}>
       {isDev && (
         <Box
@@ -2664,13 +2670,12 @@ export default function HomePage() {
                   <Box
                     as="button"
                     data-alert-badge
-                    aria-label={`${total} alert${total !== 1 ? "s" : ""}`}
+                    aria-label={alertsRefreshing ? "Refreshing alerts" : `${total} alert${total !== 1 ? "s" : ""}`}
                     onClick={() => setAlertDropdownOpen((p: boolean) => !p)}
                     width="24px"
                     height="24px"
                     minW="24px"
                     borderRadius="9999px"
-                    style={{ background: "#EF4444", color: "#fff" }}
                     fontSize="12px"
                     fontWeight="bold"
                     display="flex"
@@ -2678,8 +2683,22 @@ export default function HomePage() {
                     justifyContent="center"
                     _hover={{ opacity: 0.9 }}
                     _active={{ transform: "translateY(1px)" }}
+                    // While the dropdown's Refresh action is in-flight, the
+                    // bell badge reverts to the same pulsing-white-dot look
+                    // used for the initial !alertsReady state. Same red bg,
+                    // same alert-pulse keyframe — so the user can immediately
+                    // tell the count is stale and being re-fetched.
+                    style={{
+                      background: "#EF4444",
+                      color: "#fff",
+                      animation: alertsRefreshing ? "alert-pulse 1.2s ease-in-out infinite" : undefined,
+                    }}
                   >
-                    {total}
+                    {alertsRefreshing ? (
+                      <Box w="6px" h="6px" borderRadius="full" bg="white" />
+                    ) : (
+                      total
+                    )}
                   </Box>
                   {alertDropdownOpen && (
                     <VStack
@@ -2710,6 +2729,12 @@ export default function HomePage() {
                           w="full"
                           justifyContent="start"
                           gap={2}
+                          // Dim + disable each entry while a refresh is
+                          // in-flight so the operator sees the dropdown is
+                          // stale and can't click into a count that may be
+                          // about to change.
+                          opacity={alertsRefreshing ? 0.45 : 1}
+                          disabled={alertsRefreshing}
                           onClick={() => { setAlertDropdownOpen(false); a.onClick(); }}
                         >
                           <Box
@@ -3040,5 +3065,6 @@ export default function HomePage() {
         onCancel={() => setConfirmAction(null)}
       />
     </Container>
+    </>
   );
 }
