@@ -12,7 +12,7 @@
 // screen instead. If selfReported but not yet confirmed, shows "We've got your
 // note — admin is verifying" so the client doesn't think nothing happened.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
@@ -25,7 +25,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, Check, CheckCircle, ExternalLink, Loader } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle, ChevronLeft, ChevronRight, ExternalLink, Loader, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -124,6 +124,10 @@ function PaymentPageInner() {
   // warning instead of the submit UI. Anonymous visitors (the actual
   // client) see the normal page.
   const [isWorkerSession, setIsWorkerSession] = useState(false);
+  // Lightbox index for the property-photo grid. null = closed. Tapping any
+  // thumbnail opens at that index; the overlay supports left/right arrow
+  // keys, swipe, and a close button — same UX as OccurrencePhotos.
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -293,7 +297,7 @@ function PaymentPageInner() {
       (data.paymentMethods ?? []).find((m) => m.key === reportedKey)?.label ?? reportedKey ?? null;
     return (
       <PageShell>
-        <SelfReportedView data={data} method={reportedKey} methodLabel={reportedLabel} />
+        <SelfReportedView data={data} method={reportedKey} methodLabel={reportedLabel} onOpenPhoto={setLightboxIdx} />
       </PageShell>
     );
   }
@@ -330,6 +334,7 @@ function PaymentPageInner() {
                 key={i}
                 src={p.url}
                 alt=""
+                onClick={() => setLightboxIdx(i)}
                 style={{
                   flexShrink: 0,
                   width: "84px",
@@ -337,6 +342,7 @@ function PaymentPageInner() {
                   objectFit: "cover",
                   borderRadius: "6px",
                   border: "1px solid var(--chakra-colors-gray-200)",
+                  cursor: "pointer",
                 }}
               />
             ))}
@@ -374,7 +380,7 @@ function PaymentPageInner() {
           <Box>
             <Text fontSize="sm" fontWeight="semibold" mb={1}>How would you like to pay?</Text>
             <Text fontSize="xs" color="fg.muted" mb={2}>
-              Pick a method, send your payment, then tap the button below to let us know. We&apos;ll confirm with receipt.
+              Pick a method, send your payment, then tap the button below to let us know so we can confirm the payment. Sign up for a client account to download your receipt.
             </Text>
             <VStack gap={2} align="stretch">
               {orderedMethods.length === 0 ? (
@@ -410,11 +416,146 @@ function PaymentPageInner() {
           </Box>
         )}
       </VStack>
+      {/* Photo lightbox — same UX (overlay, swipe, arrow keys, close on
+          backdrop) used by OccurrencePhotos elsewhere in the app. Mounts
+          via portal so it overlays everything regardless of where the
+          PaymentPage sits in the tree. */}
+      {lightboxIdx != null && data && (
+        <PhotoLightbox
+          photos={data.photos}
+          index={lightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+          onPrev={() => setLightboxIdx((i) => (i != null && i > 0 ? i - 1 : i))}
+          onNext={() => setLightboxIdx((i) => (i != null && data && i < data.photos.length - 1 ? i + 1 : i))}
+        />
+      )}
     </PageShell>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────
+
+/** Fullscreen photo viewer for the public payment page. Matches the
+ *  OccurrencePhotos PhotoViewer behavior — keyboard arrows, swipe gestures,
+ *  click-backdrop-to-close — without the worker-only delete/uploadedBy bits. */
+function PhotoLightbox({
+  photos,
+  index,
+  onClose,
+  onPrev,
+  onNext,
+}: {
+  photos: { url: string }[];
+  index: number;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const touchXRef = useRef<number | null>(null);
+  const hasPrev = index > 0;
+  const hasNext = index < photos.length - 1;
+  const current = photos[index];
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "ArrowLeft") { e.preventDefault(); onPrev(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); onNext(); }
+      else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onPrev, onNext, onClose]);
+
+  if (!current) return null;
+
+  return (
+    <Box
+      position="fixed"
+      inset="0"
+      zIndex="9999"
+      bg="blackAlpha.800"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onTouchStart={(e) => { touchXRef.current = e.touches[0].clientX; }}
+      onTouchEnd={(e) => {
+        if (touchXRef.current === null) return;
+        const dx = e.changedTouches[0].clientX - touchXRef.current;
+        touchXRef.current = null;
+        if (Math.abs(dx) > 50) {
+          if (dx < 0) onNext();
+          else onPrev();
+        }
+      }}
+    >
+      {hasPrev && (
+        <Box
+          position="absolute"
+          left="3"
+          top="50%"
+          transform="translateY(-50%)"
+          color="white"
+          cursor="pointer"
+          p={2}
+          zIndex={1}
+          onClick={(e) => { e.stopPropagation(); onPrev(); }}
+          userSelect="none"
+        >
+          <ChevronLeft size={28} />
+        </Box>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={current.url}
+        alt=""
+        style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: "8px" }}
+        onClick={(e) => e.stopPropagation()}
+      />
+      {hasNext && (
+        <Box
+          position="absolute"
+          right="3"
+          top="50%"
+          transform="translateY(-50%)"
+          color="white"
+          cursor="pointer"
+          p={2}
+          zIndex={1}
+          onClick={(e) => { e.stopPropagation(); onNext(); }}
+          userSelect="none"
+        >
+          <ChevronRight size={28} />
+        </Box>
+      )}
+      <Box
+        position="absolute"
+        top="3"
+        right="3"
+        color="white"
+        cursor="pointer"
+        p={2}
+        zIndex={1}
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        userSelect="none"
+        aria-label="Close"
+      >
+        <X size={24} />
+      </Box>
+      <Text
+        position="absolute"
+        bottom="4"
+        left="0"
+        right="0"
+        textAlign="center"
+        color="whiteAlpha.700"
+        fontSize="sm"
+      >
+        {index + 1} / {photos.length}
+      </Text>
+    </Box>
+  );
+}
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
@@ -533,7 +674,7 @@ function PaymentMethodCard({
 }
 
 
-function SelfReportedView({ data, method, methodLabel }: { data: ResolveResponse; method: MethodKey | null; methodLabel: string | null }) {
+function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: ResolveResponse; method: MethodKey | null; methodLabel: string | null; onOpenPhoto: (idx: number) => void }) {
   return (
     <Card.Root variant="outline">
       <Card.Body p={4}>
@@ -555,6 +696,7 @@ function SelfReportedView({ data, method, methodLabel }: { data: ResolveResponse
                   key={i}
                   src={p.url}
                   alt=""
+                  onClick={() => onOpenPhoto(i)}
                   style={{
                     flexShrink: 0,
                     width: "72px",
@@ -562,6 +704,7 @@ function SelfReportedView({ data, method, methodLabel }: { data: ResolveResponse
                     objectFit: "cover",
                     borderRadius: "6px",
                     border: "1px solid var(--chakra-colors-gray-200)",
+                    cursor: "pointer",
                   }}
                 />
               ))}
