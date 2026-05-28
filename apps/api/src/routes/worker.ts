@@ -98,6 +98,10 @@ export default async function workerRoutes(app: FastifyInstance) {
     });
     const myOccIds = myAssignments.map((a) => a.occurrenceId);
     const myWorkingOccIds = myAssignments.filter((a) => a.role !== "observer").map((a) => a.occurrenceId);
+    // Observer-only assignments. Counted separately so the Home greeting can
+    // call out how many of today's remaining jobs the user is just observing
+    // ("You have X jobs left today (Y as observer)").
+    const myObserverOccIds = myAssignments.filter((a) => a.role === "observer").map((a) => a.occurrenceId);
 
     if (myOccIds.length === 0) {
       const [equipmentCheckedOut, equipmentReserved, allRemindersPending] = await Promise.all([
@@ -108,7 +112,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       return {
         overdue: 0, today: 0, tomorrow: 0, pendingPayment: 0, estimatesReady: 0,
         followUps: 0, planning: 0,
-        activeWork: 0, todayRemaining: 0, todayPotentialAmount: 0, todayEarnedAmount: 0,
+        activeWork: 0, todayRemaining: 0, todayObserverRemaining: 0, todayPotentialAmount: 0, todayEarnedAmount: 0,
         tomorrowUnclaimedCount: 0, tomorrowUnclaimedPotential: 0,
         tomorrowUnconfirmedClientCount: 0,
         equipmentCheckedOut, equipmentReserved,
@@ -130,7 +134,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     const [
       overdue, todayCount, tomorrowCount, pendingPayment, estimatesReady, reminders,
       activeWork, todayJobs, equipmentCheckedOut, equipmentReserved, allRemindersPending, noticesByWorkflow,
-      tasksDue, thisWeekJobs, weekSplits, todayRemaining, todayCompletedJobs, tomorrowUnclaimedJobs, trendJobs,
+      tasksDue, thisWeekJobs, weekSplits, todayRemaining, todayObserverRemaining, todayCompletedJobs, tomorrowUnclaimedJobs, trendJobs,
       tomorrowUnconfirmedJobs,
     ] = await Promise.all([
       prisma.jobOccurrence.count({
@@ -264,6 +268,18 @@ export default async function workerRoutes(app: FastifyInstance) {
       prisma.jobOccurrence.count({
         where: {
           id: { in: myOccIds },
+          startAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
+          workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
+        },
+      }),
+      // Subset of the above where the user's assignment role is observer.
+      // Powers the "(Y as observer)" callout in the Home greeting so users
+      // can tell at a glance how many of their remaining items they're just
+      // watching vs. actually working.
+      prisma.jobOccurrence.count({
+        where: {
+          id: { in: myObserverOccIds },
           startAt: { gte: todayMidnight, lt: tomorrowMidnight },
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF", "ESTIMATE"] as any },
@@ -484,6 +500,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       followUps: reminders, planning,
       activeWork,
       todayRemaining,
+      todayObserverRemaining,
       todayPotentialAmount: Math.round(todayPotentialAmount * 100) / 100,
       todayEarnedAmount: Math.round(todayEarnedAmount * 100) / 100,
       tomorrowUnclaimedCount,
@@ -865,6 +882,8 @@ export default async function workerRoutes(app: FastifyInstance) {
       followUps: remindersDueOccs.length,
       activeWork,
       todayRemaining,
+      // Observer count is per-worker semantic; aggregate view doesn't expose it.
+      todayObserverRemaining: 0,
       todayPotentialAmount: Math.round(todayPotentialAmount * 100) / 100,
       todayEarnedAmount: Math.round(todayEarnedAmount * 100) / 100,
       tomorrowUnclaimedCount,

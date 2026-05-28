@@ -45,6 +45,11 @@ type Summary = {
   followUps: number;
   activeWork: number;
   todayRemaining: number;
+  // Subset of todayRemaining where the user is an observer (not a working
+  // assignee). Surfaced in the greeting as "... (Y as observer)" so the user
+  // can tell at a glance how many of their remaining jobs they're just
+  // watching rather than working. 0 in aggregate (multi-worker) views.
+  todayObserverRemaining: number;
   todayPotentialAmount: number;
   todayEarnedAmount: number;
   tomorrowUnclaimedCount: number;
@@ -427,7 +432,7 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
     : isLateEvening && s.todayRemaining === 0
       ? "Wrapped up for the day."
       : s.todayRemaining > 0
-        ? `You have ${s.todayRemaining} job${s.todayRemaining === 1 ? "" : "s"} left today.`
+        ? `You have ${s.todayRemaining} job${s.todayRemaining === 1 ? "" : "s"} left today${(s.todayObserverRemaining ?? 0) > 0 ? ` (${s.todayObserverRemaining} as observer)` : ""}.`
         : s.tomorrow > 0
           ? `Nothing left today — ${s.tomorrow} tomorrow.`
           : "You're caught up. Nothing on your plate.";
@@ -745,12 +750,17 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                     <Text fontSize="md" fontWeight="bold" color="green.800">
                       {heroMode === "begin" ? "Begin work day" : "Finish remaining jobs"}
                     </Text>
-                    <Text fontSize="sm" color="green.700">
-                      {s.todayRemaining} job{s.todayRemaining === 1 ? "" : "s"} left today
-                      {(s.todayEarnedAmount ?? 0) + (s.todayPotentialAmount ?? 0) > 0
-                        ? ` · ${fmtMoney(s.todayEarnedAmount ?? 0)} earned with ${fmtMoney(s.todayPotentialAmount ?? 0)} remaining potential`
-                        : ""}
-                    </Text>
+                    {/* Subline only carries the dollar breakdown — the
+                        "X jobs left today" count is already in the greeting
+                        subtitle directly above this card, so repeating it
+                        here was redundant. When there's no earned/potential
+                        money to show (e.g. unpriced jobs only), the subline
+                        is omitted entirely. */}
+                    {(s.todayEarnedAmount ?? 0) + (s.todayPotentialAmount ?? 0) > 0 && (
+                      <Text fontSize="sm" color="green.700">
+                        {fmtMoney(s.todayEarnedAmount ?? 0)} earned · {fmtMoney(s.todayPotentialAmount ?? 0)} remaining potential
+                      </Text>
+                    )}
                   </VStack>
                   {!isViewingOther && <Text fontSize="2xl" color="green.600">→</Text>}
                 </HStack>
