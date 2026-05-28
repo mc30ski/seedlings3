@@ -4115,6 +4115,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             />
                           </Box>
                         )}
+                        {isObserver && (
+                          <Box flexShrink={0} display="inline-flex" alignItems="center" title="You're an observer">
+                            <Eye size={14} color="var(--chakra-colors-blue-500)" />
+                          </Box>
+                        )}
                         <Text
                           flex="1"
                           minW={0}
