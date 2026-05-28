@@ -76,12 +76,10 @@ type Props = {
   /** Occurrence id — required for the Request Payment footer action
    *  (the dialog fetches /comms-handoff to build the SMS/mailto link). */
   occurrenceId?: string;
-  /** Whether Request Payment is enabled org-wide. When false, the button still
-   *  renders so workers know the path exists, but it's disabled unless the
-   *  viewer is super admin (who bypasses the gate for testing). */
-  requestPaymentEnabled?: boolean;
-  /** Whether the viewer has SUPER role. Lets super admins use Request Payment
-   *  even when the org-wide setting is off (controlled rollout). */
+  /** Whether the viewer has SUPER role. Currently unused by this dialog —
+   *  Request Payment was previously gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED
+   *  with a SUPER bypass; that flag has since been removed and the feature
+   *  is always on. Kept on the prop list so callers don't need to change. */
   isSuper?: boolean;
   /** True only when opened from the Admin Jobs tab. Adds a "Client paid
    *  another way?" link that expands the method picker from on-site methods
@@ -113,12 +111,10 @@ export default function AcceptPaymentDialog({
   assignees,
   completionSplits,
   occurrenceId,
-  requestPaymentEnabled = false,
-  isSuper = false,
+  isSuper: _isSuper = false,
   allowAllMethods = false,
   onAccepted,
 }: Props) {
-  const requestPaymentAllowed = requestPaymentEnabled || isSuper;
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
@@ -930,7 +926,6 @@ export default function AcceptPaymentDialog({
                     onClick={() => setView("confirm-request")}
                     loading={requestBusy}
                     disabled={
-                      !requestPaymentAllowed ||
                       busy ||
                       !handoff ||
                       !splitsValid ||
@@ -940,7 +935,6 @@ export default function AcceptPaymentDialog({
                         return isNaN(amt) || amt <= 0;
                       })()
                     }
-                    title={!requestPaymentAllowed ? "Request Payment is currently disabled by an admin." : undefined}
                     size="sm"
                   >
                     Request Payment

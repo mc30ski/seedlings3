@@ -141,7 +141,6 @@ const SETTING_SECTIONS: Record<string, string> = {
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
   DEFAULT_PAYMENT_COMMUNICATIONS_MODE: "client_requests",
-  REQUEST_PAYMENT_FROM_CLIENT_ENABLED: "client_requests",
   PAYMENT_REQUEST_BASE_URL: "client_requests",
   PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS: "client_requests",
   PAYMENT_REQUEST_STALE_DAYS: "client_requests",
@@ -1810,7 +1809,6 @@ async function seedDatabase() {
     { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
     { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
-    { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
     {
       key: "PAYMENT_METHODS",
       value: JSON.stringify([
@@ -2732,10 +2730,11 @@ async function seedPaymentsBase() {
     create: { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab.", updatedById: MICHAEL_ID },
     update: { description: "How often you run payroll. Sets the default date range on the Exports tab." },
   });
-  await prisma.setting.upsert({
+  // Stale REQUEST_PAYMENT_FROM_CLIENT_ENABLED setting is best-effort
+  // cleaned up so it doesn't linger in the Settings tab after the gate was
+  // removed. deleteMany is safe — never throws if the row's already gone.
+  await prisma.setting.deleteMany({
     where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
-    create: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED", value: "false", description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting.", updatedById: MICHAEL_ID },
-    update: { description: "Allow workers to send clients a Request Payment link from the Initiate Payment dialog. Super admins can always use it regardless of this setting." },
   });
   const paymentMethodsDefault = JSON.stringify([
     { key: "VENMO", label: "Venmo", feePercent: 1.9, feeFixed: 0.10, supportsClientRequest: true, supportsOnSite: true, deepLinkTemplate: "venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}", instructions: "Send {{amount}} to @{VENMO_BUSINESS_HANDLE} on Venmo", active: true },

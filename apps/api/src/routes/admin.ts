@@ -5245,22 +5245,9 @@ Respond ONLY with valid JSON in this exact format:
   // Resend payment request for an occurrence already in PENDING_PAYMENT.
   // Reuses the existing token by default; passing `regenerate=true` rotates
   // it (use when a previous link was shared publicly or otherwise blown).
-  // Gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED — super admins bypass for
-  // controlled rollout.
   app.post("/admin/occurrences/:id/resend-payment-request", adminGuard, async (req: any) => {
     const uid = await currentUserId(req);
     const regenerate = !!req.body?.regenerate;
-    const featureSetting = await prisma.setting.findUnique({
-      where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
-    });
-    const featureOn = featureSetting?.value === "true";
-    if (!featureOn) {
-      const actor = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
-      const isSuper = !!actor?.roles?.some((r: any) => r.role === "SUPER");
-      if (!isSuper) {
-        throw app.httpErrors.forbidden("Request Payment is currently disabled by an admin.");
-      }
-    }
     return services.paymentRequests.sendForOccurrence(uid, String(req.params.id), { regenerateToken: regenerate });
   });
 
