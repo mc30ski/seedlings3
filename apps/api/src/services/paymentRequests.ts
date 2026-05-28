@@ -65,6 +65,8 @@ async function getContactsForOccurrence(occurrenceId: string) {
   const occ = await prisma.jobOccurrence.findUnique({
     where: { id: occurrenceId },
     select: {
+      completedAt: true,
+      startAt: true,
       job: {
         select: {
           property: {
@@ -89,29 +91,49 @@ async function getContactsForOccurrence(occurrenceId: string) {
   });
   const contacts = occ?.job?.property?.client?.contacts ?? [];
   const property = occ?.job?.property ?? null;
-  return { contacts, property };
+  // Service date for the payment-request message body. Prefer completedAt
+  // (when the work was finished) over startAt (when it was scheduled). Both
+  // can be null on partial occurrences — caller decides the fallback.
+  const serviceDate = occ?.completedAt ?? occ?.startAt ?? null;
+  return { contacts, property, serviceDate };
 }
 
+// Property label for client-facing payment messages — prefers the full
+// street address so the message identifies the location concretely, falls
+// back to the friendly displayName only when no address is on file. This
+// matches the formatting used by JobsTab's getQuickMessage() so the
+// "Confirm Client" and "Request Payment" wordings stay in lockstep.
 function propertyLabel(p: { displayName: string | null; street1: string | null; city: string | null; state: string | null } | null): string {
   if (!p) return "your property";
+  const addr = [p.street1, p.city, p.state].filter(Boolean).join(", ");
+  if (addr) return addr;
   if (p.displayName) return p.displayName;
-  const parts = [p.street1, p.city, p.state].filter(Boolean);
-  return parts.join(", ") || "your property";
+  return "your property";
 }
 
-function buildSmsBody(firstName: string, propLabel: string, dollarAmount: string, url: string): string {
-  return `Hi ${firstName} — your Seedlings lawn care at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`;
+// "Thursday, May 28" — same format as the Confirm Client message body.
+function formatServiceDate(d: Date | null): string {
+  if (!d) return "your recent appointment";
+  return new Date(d).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function buildSmsBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
+  return `Hi ${firstName} — your Seedlings lawn care on ${dateStr} at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`;
 }
 
 function buildEmailSubject(dollarAmount: string): string {
   return `Your Seedlings service is complete — ${dollarAmount} due`;
 }
 
-function buildEmailBody(firstName: string, propLabel: string, dollarAmount: string, url: string): string {
+function buildEmailBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
   return [
     `Hi ${firstName},`,
     ``,
-    `Your Seedlings Lawn Care service at ${propLabel} is complete.`,
+    `Your Seedlings Lawn Care service on ${dateStr} at ${propLabel} is complete.`,
     ``,
     `Total due: ${dollarAmount}`,
     ``,
@@ -191,8 +213,9 @@ export const paymentRequests = {
 
     const url = await buildPaymentUrl(token);
     const amountDue = await computeAmountDue(occurrenceId);
-    const { contacts, property } = await getContactsForOccurrence(occurrenceId);
+    const { contacts, property, serviceDate } = await getContactsForOccurrence(occurrenceId);
     const propLabel = propertyLabel(property);
+    const dateStr = formatServiceDate(serviceDate);
     const dollarAmount = `$${amountDue.toFixed(2)}`;
 
     // Use the first reachable contact's first name as the SMS/email greeting.
@@ -202,9 +225,9 @@ export const paymentRequests = {
     const greetingTarget = contacts.find((c) => c.firstName) ?? contacts[0];
     const firstName = greetingTarget?.firstName || "there";
 
-    const smsBody = buildSmsBody(firstName, propLabel, dollarAmount, url);
+    const smsBody = buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url);
     const emailSubject = buildEmailSubject(dollarAmount);
-    const emailBody = buildEmailBody(firstName, propLabel, dollarAmount, url);
+    const emailBody = buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url);
 
     return { token, url, amountDue, propertyLabel: propLabel, smsBody, emailSubject, emailBody, contacts };
   },
@@ -229,6 +252,13 @@ export const paymentRequests = {
   }> {
     const prepared = await this.generateTokenForOccurrence(occurrenceId, opts);
     const { token, url, amountDue, propertyLabel: propLabel, contacts } = prepared;
+    // Re-fetch the occurrence's service date for per-contact body building.
+    // generateTokenForOccurrence already loaded it via getContactsForOccurrence,
+    // but didn't surface it on the return shape — pull it here so each
+    // contact's SMS/email carries the same dateStr the claimer-handoff path
+    // returned in `prepared.smsBody`.
+    const { serviceDate } = await getContactsForOccurrence(occurrenceId);
+    const dateStr = formatServiceDate(serviceDate);
 
     if (contacts.length === 0) {
       const err: any = new Error(
@@ -260,7 +290,7 @@ export const paymentRequests = {
       const firstName = c.firstName || "there";
 
       if (c.phone || c.normalizedPhone) {
-        const smsBody = buildSmsBody(firstName, propLabel, dollarAmount, url);
+        const smsBody = buildSmsBody(firstName, propLabel, dateStr, dollarAmount, url);
         const phone = c.normalizedPhone ?? c.phone!;
         const result = await sendSMS(phone.startsWith("+") ? phone : `+1${phone.replace(/[^\d]/g, "")}`, smsBody);
         if (result.ok) smsSent++;
@@ -269,7 +299,7 @@ export const paymentRequests = {
         const result = await sendEmail(
           c.email,
           buildEmailSubject(dollarAmount),
-          buildEmailBody(firstName, propLabel, dollarAmount, url),
+          buildEmailBody(firstName, propLabel, dateStr, dollarAmount, url),
         );
         if (result.ok) emailSent++;
         else failed++;

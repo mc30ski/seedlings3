@@ -25,9 +25,11 @@
 //   4. Filters + paginated list. Type filter (All / Expenses / Capital
 //      contributions / Owner draws) sits next to Category. Type badge is
 //      rendered on equity entries only (expense cards stay visually clean).
-//   5. CSV export ("Export" button) — Schedule C-aligned; hard-pinned to
-//      type=EXPENSE regardless of on-screen filter. Equity export lives on
-//      the Exports tab as qb-equity.csv.
+//
+// CSV exports live exclusively on the Exports tab (qb-expenses.csv +
+// qb-equity.csv + qb-fixed-assets.csv + the QB bundle zip). This tab is
+// for managing the BusinessExpense table — not for producing tax /
+// accounting handoffs.
 //
 // Three creation paths into BusinessExpense (always EXPENSE except #1):
 //   - Freestanding — admin types into Add Entry (any type).
@@ -57,7 +59,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { ChevronDown, ChevronUp, Download, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, Info, Paperclip, Pencil, Plus, Repeat, Search, Trash2, X } from "lucide-react";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import {
   publishInlineMessage,
@@ -600,107 +602,6 @@ export default function BusinessExpensesTab() {
     setExpensePreset("last30");
   }
 
-  // Schedule C-aligned CSV export. Columns chosen for compatibility with tax
-  // software import (TurboTax / QuickBooks / FreshBooks all accept this shape)
-  // and for handing directly to a CPA. Includes the explicit Schedule C line
-  // number so the categorization is unambiguous even if the importer doesn't
-  // recognize the label by name.
-  async function exportCsv() {
-    // Re-fetch with all=true so the export contains every row matching
-    // the current filters, not just the page on screen.
-    const params = new URLSearchParams();
-    if (filterFrom) params.set("from", filterFrom);
-    if (filterTo) params.set("to", filterTo);
-    if (filterCategory) params.set("category", filterCategory);
-    if (q.trim()) params.set("q", q.trim());
-    // Schedule C CSV is tax-shaped — columns are expense-specific. Hard-pin
-    // to EXPENSE regardless of the on-screen Type filter so the file is
-    // always meaningful. Equity entries export from the Exports tab.
-    params.set("type", "EXPENSE");
-    params.set("all", "true");
-    let allRows: BusinessExpense[] = [];
-    try {
-      const resp = await apiGet<{ rows: BusinessExpense[]; total: number }>(
-        `/api/admin/business-expenses?${params.toString()}`,
-      );
-      allRows = Array.isArray(resp?.rows) ? resp.rows : [];
-    } catch (err) {
-      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Export failed.", err) });
-      return;
-    }
-    if (allRows.length === 0) return;
-
-    const lineByCategory: Record<string, string> = {};
-    for (const c of categories) lineByCategory[c.label] = c.scheduleCLine;
-
-    const csvEscape = (v: unknown): string => {
-      if (v == null) return "";
-      const s = String(v);
-      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-
-    const headers = [
-      "Date",
-      "Amount",
-      "Category",
-      "Schedule C Line",
-      "Vendor",
-      "Description",
-      "Invoice Number",
-      "Linked Equipment",
-      "Linked Job",
-      "Linked Supply",
-      "Recurrence",
-      "Notes",
-    ];
-
-    const rows: string[] = [headers.join(",")];
-    // Stable order: by date (most recent first), matching what's on screen.
-    const sorted = [...allRows].sort((a, b) => b.date.localeCompare(a.date));
-    for (const e of sorted) {
-      const eq = e.equipment;
-      const eqLabel = eq
-        ? [
-            eq.shortDesc || [eq.brand, eq.model].filter(Boolean).join(" "),
-            eq.qrSlug ? `(${eq.qrSlug})` : "",
-          ].filter(Boolean).join(" ")
-        : "";
-      const job = e.occurrence?.job;
-      const jobLabel = job?.property?.displayName
-        ? `${job.property.displayName}${job.property.client?.displayName ? ` — ${job.property.client.displayName}` : ""}${e.occurrence?.startAt ? ` (${new Date(e.occurrence.startAt).toLocaleDateString()})` : ""}`
-        : "";
-      const sp = e.supplyPurchase;
-      const supplyLabel = sp
-        ? `${sp.supply.name} × ${sp.quantity} ${sp.supply.unit} @ $${sp.unitCost.toFixed(2)}`
-        : "";
-      rows.push([
-        csvEscape(e.date.slice(0, 10)),
-        csvEscape(e.cost.toFixed(2)),
-        csvEscape(e.category ?? ""),
-        csvEscape(e.category ? (lineByCategory[e.category] ?? "") : ""),
-        csvEscape(e.vendor ?? ""),
-        csvEscape(e.description),
-        csvEscape(e.invoiceNumber ?? ""),
-        csvEscape(eqLabel),
-        csvEscape(jobLabel),
-        csvEscape(supplyLabel),
-        csvEscape(e.recurrence ? RECURRENCE_LABELS[e.recurrence] ?? e.recurrence : ""),
-        csvEscape(e.notes ?? ""),
-      ].join(","));
-    }
-
-    // BOM so Excel opens UTF-8 correctly without mangling em-dashes etc.
-    const blob = new Blob(["﻿" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const fromStr = filterFrom || "all";
-    const toStr = filterTo || "all";
-    a.download = `business-expenses-${fromStr}-to-${toStr}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   const hasFilters = !!(q || filterFrom || filterTo || filterCategory || filterType);
 
   return (
@@ -717,9 +618,6 @@ export default function BusinessExpensesTab() {
       <HStack justify="space-between" mb={3} wrap="wrap" gap={2}>
         <Text fontWeight="bold" fontSize="lg">Accounting</Text>
         <HStack gap={2}>
-          <Button size="sm" variant="outline" onClick={() => void exportCsv()} disabled={total === 0} title="Download CSV for tax software / CPA">
-            <Download size={14} /> Export
-          </Button>
           <Button size="sm" colorPalette="blue" onClick={openCreate}>
             <Plus size={14} /> Add Entry
           </Button>
