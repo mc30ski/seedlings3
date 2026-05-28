@@ -44,7 +44,7 @@ type Preview = {
     contributionTotal: number;
     drawTotal: number;
   };
-  qbFixedAssets: { rows: number; total: number };
+  qbFixedAssets: { rows: number; total: number; threshold: number };
 };
 
 type HistoryRow = {
@@ -405,7 +405,9 @@ export default function ExportsTab() {
               )}
               {preview.qbFixedAssets.rows > 0 && (
                 <HStack justify="space-between">
-                  <Text color="fg.muted">QB Fixed Assets (capital purchases ≥ $500):</Text>
+                  <Text color="fg.muted">
+                    QB Fixed Assets (capital purchases ≥ ${preview.qbFixedAssets.threshold}):
+                  </Text>
                   <Text>
                     {preview.qbFixedAssets.rows} asset{preview.qbFixedAssets.rows === 1 ? "" : "s"}{" · "}
                     <b>${preview.qbFixedAssets.total.toFixed(2)}</b>
@@ -619,7 +621,7 @@ export default function ExportsTab() {
               size="sm"
               loading={busyKey === "qb-fixed-assets"}
               onClick={() => download("qb-fixed-assets", "QB Fixed Assets CSV")}
-              title="Capital purchases ≥ $500 on/after the policy start date — imported into QB Fixed Asset accounts, not P&L"
+              title={`Capital purchases ≥ $${preview?.qbFixedAssets.threshold ?? 500} on/after the policy start date — imported into QB Fixed Asset accounts, not P&L`}
             >
               <FiDownload /> Download Fixed Assets CSV
             </Button>

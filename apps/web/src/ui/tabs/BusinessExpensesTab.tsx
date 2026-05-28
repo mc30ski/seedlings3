@@ -313,6 +313,10 @@ export default function BusinessExpensesTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessExpense | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BusinessExpense | null>(null);
+  // Capitalization threshold from FIXED_ASSET_MIN_COST setting — drives the
+  // "$X" reference in the capitalize-vs-expense rule-of-thumb note below.
+  // Falls back to 500 if the setting hasn't loaded yet or is missing.
+  const [fixedAssetThreshold, setFixedAssetThreshold] = useState<number>(500);
 
   // Form
   const [fType, setFType] = useState<EntryType>("EXPENSE");
@@ -378,6 +382,16 @@ export default function BusinessExpensesTab() {
     apiGet<EquipmentLite[]>("/api/equipment/all")
       .then((list) => setEquipmentList(Array.isArray(list) ? list : []))
       .catch(() => setEquipmentList([]));
+    apiGet<Array<{ key: string; value: string }>>("/api/settings")
+      .then((rows) => {
+        if (!Array.isArray(rows)) return;
+        const row = rows.find((r) => r.key === "FIXED_ASSET_MIN_COST");
+        const n = Number(row?.value);
+        if (Number.isFinite(n) && n > 0) setFixedAssetThreshold(n);
+      })
+      .catch(() => {
+        /* keep default */
+      });
   }, []);
 
   // Filter changes always reset to page 1 — otherwise you could be on
@@ -738,8 +752,9 @@ export default function BusinessExpensesTab() {
 
       {/* Capitalize-vs-expense reference. Collapsed by default so the tab
           doesn't lead with rules; admin can expand once and the open state
-          persists. The $500 cutoff and item examples come from the
-          operator's standing tax-policy notes — adjust here if the rule
+          persists. The dollar cutoff reads from the FIXED_ASSET_MIN_COST
+          setting; item examples come from the operator's standing tax-
+          policy notes — adjust the setting (or this list) if the rule
           changes. NOT a substitute for CPA review on edge cases. */}
       <CollapsibleNote
         open={assetRuleOpen}
@@ -749,7 +764,7 @@ export default function BusinessExpensesTab() {
       >
         <Text fontSize="sm" color="blue.900" mb={2} textAlign="left">
           <Text as="span" fontWeight="semibold">Rule of thumb:</Text>{" "}
-          record anything over <Text as="span" fontWeight="semibold">$500</Text> as a fixed asset when purchased — your CPA decides at tax time whether to depreciate over multiple years or take the full Section 179 deduction (usually 179 for small businesses).
+          record anything over <Text as="span" fontWeight="semibold">${fixedAssetThreshold}</Text> as a fixed asset when purchased — your CPA decides at tax time whether to depreciate over multiple years or take the full Section 179 deduction (usually 179 for small businesses).
         </Text>
         <Box borderWidth="1px" borderColor="blue.200" borderRadius="md" bg="white" overflow="hidden">
           <Box as="table" w="full" fontSize="xs">
