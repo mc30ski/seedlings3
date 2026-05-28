@@ -394,7 +394,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [hoursVarianceThreshold, setHoursVarianceThreshold] = useState(0.3);
   const [commissionPercent, setCommissionPercent] = useState(0);
   const [marginPercent, setMarginPercent] = useState(0);
-  const [requestPaymentEnabled, setRequestPaymentEnabled] = useState(false);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeConfig[]>(DEFAULT_SERVICE_TYPES);
   const [equipmentKinds, setEquipmentKinds] = useState<EquipmentKindConfig[]>([]);
   // Equipment collections — for surfacing the job's "recommended kits" on
@@ -1405,8 +1404,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         if (c?.value) setCommissionPercent(Number(c.value));
         const m = list.find((r: any) => r.key === "EMPLOYEE_BUSINESS_MARGIN_PERCENT");
         if (m?.value) setMarginPercent(Number(m.value));
-        const rp = list.find((r: any) => r.key === "REQUEST_PAYMENT_FROM_CLIENT_ENABLED");
-        setRequestPaymentEnabled(rp?.value === "true");
         const st = list.find((r: any) => r.key === "SERVICE_TYPES");
         if (st?.value) { const parsed = parseServiceTypesConfig(st.value); if (parsed) setServiceTypes(parsed); }
         const ek = list.find((r: any) => r.key === "EQUIPMENT_KINDS");
@@ -7560,7 +7557,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           totalExpenses={(acceptPaymentOcc.expenses ?? []).reduce((s, e) => s + e.cost, 0)}
           commissionPercent={commissionPercent}
           marginPercent={marginPercent}
-          requestPaymentEnabled={requestPaymentEnabled}
           isSuper={isSuper}
           allowAllMethods={forAdmin}
           assignees={(acceptPaymentOcc.assignees ?? []).filter((a) => a.role !== "observer").map((a) => ({

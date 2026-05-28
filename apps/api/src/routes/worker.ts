@@ -1364,40 +1364,26 @@ export default async function workerRoutes(app: FastifyInstance) {
     //   - When CLAIMER: mint the token synchronously so the JobsTab card can
     //     immediately render the Text/Email icons. No outbound send — the
     //     claimer dispatches from their own device.
-    //
-    // Gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED: when off, skip both paths
-    // unless the actor is super admin (controlled rollout — see Settings).
     if (isJobWorkflow) {
-      const featureSetting = await prisma.setting.findUnique({
-        where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
+      const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
+        where: { occurrenceId, NOT: { role: "observer" } },
+        orderBy: { assignedAt: "asc" },
+        select: { userId: true },
       });
-      const featureOn = featureSetting?.value === "true";
-      const actorUser = await prisma.user.findUnique({
-        where: { id: uid },
-        include: { roles: true },
-      });
-      const actorIsSuper = !!actorUser?.roles?.some((r: any) => r.role === "SUPER");
-      if (featureOn || actorIsSuper) {
-        const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
-          where: { occurrenceId, NOT: { role: "observer" } },
-          orderBy: { assignedAt: "asc" },
-          select: { userId: true },
-        });
-        const claimerUserId = claimerAssignee?.userId ?? null;
-        const mode = await services.paymentRequests.resolveCommsMode(claimerUserId);
+      const claimerUserId = claimerAssignee?.userId ?? null;
+      const mode = await services.paymentRequests.resolveCommsMode(claimerUserId);
 
-        if (mode === "SERVER") {
-          services.paymentRequests
-            .sendForOccurrence(uid, occurrenceId)
-            .catch((err) => {
-              console.warn(`Payment request send failed for ${occurrenceId}:`, err?.message);
-            });
-        } else {
-          try {
-            await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
-          } catch (err: any) {
-            console.warn(`Payment token generation failed for ${occurrenceId}:`, err?.message);
-          }
+      if (mode === "SERVER") {
+        services.paymentRequests
+          .sendForOccurrence(uid, occurrenceId)
+          .catch((err) => {
+            console.warn(`Payment request send failed for ${occurrenceId}:`, err?.message);
+          });
+      } else {
+        try {
+          await services.paymentRequests.generateTokenForOccurrence(occurrenceId);
+        } catch (err: any) {
+          console.warn(`Payment token generation failed for ${occurrenceId}:`, err?.message);
         }
       }
     }
@@ -1456,18 +1442,6 @@ export default async function workerRoutes(app: FastifyInstance) {
     const channel = body.channel;
     if (channel !== "sms" && channel !== "email") {
       throw app.httpErrors.badRequest('channel must be "sms" or "email"');
-    }
-    // Gate by REQUEST_PAYMENT_FROM_CLIENT_ENABLED (super bypasses).
-    const featureSetting = await prisma.setting.findUnique({
-      where: { key: "REQUEST_PAYMENT_FROM_CLIENT_ENABLED" },
-    });
-    const featureOn = featureSetting?.value === "true";
-    if (!featureOn) {
-      const actor = await prisma.user.findUnique({ where: { id: uid }, include: { roles: true } });
-      const isSuper = !!actor?.roles?.some((r: any) => r.role === "SUPER");
-      if (!isSuper) {
-        throw app.httpErrors.forbidden("Request Payment is currently disabled by an admin.");
-      }
     }
     const splits = Array.isArray(body.completionSplits) ? body.completionSplits : undefined;
     await services.paymentRequests.recordClaimerHandoff(uid, occurrenceId, channel, splits);

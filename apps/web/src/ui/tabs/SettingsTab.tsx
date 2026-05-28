@@ -97,7 +97,6 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
  *  setting so admins can't save it as free text. */
 const BOOLEAN_SETTINGS = new Set([
   "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
-  "REQUEST_PAYMENT_FROM_CLIENT_ENABLED",
 ]);
 
 function validateNumericSetting(key: string, value: string): { ok: boolean; error?: string } {
@@ -388,8 +387,25 @@ type JsonArrayItem = {
   description?: string;
 };
 /** Dedicated editor for the EXPENSE_CATEGORIES taxonomy — label, Schedule C
- *  line, and the selectable flag (off = export-only synthetic category). */
-type ExpenseCategoryRow = { label: string; scheduleCLine: string; selectable: boolean };
+ *  line, QuickBooks chart-of-accounts mapping, and the selectable flag
+ *  (off = export-only synthetic category). qbAccount is stored as
+ *  string | null: null means "Unmapped" — rows in that category land in
+ *  the QB Expenses CSV's "Unmapped" account so the operator re-categorizes
+ *  on the QB side after import. The editor treats an empty input as null
+ *  so the user never has to type the word "null". */
+type ExpenseCategoryRow = {
+  label: string;
+  scheduleCLine: string;
+  qbAccount: string | null;
+  selectable: boolean;
+};
+
+// Empty input → null. Whitespace also collapses to null so a stray space
+// in the field doesn't accidentally produce an unfindable QB account name.
+function normalizeQbAccount(raw: string): string | null {
+  const trimmed = raw.trim();
+  return trimmed === "" ? null : trimmed;
+}
 
 function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
@@ -403,11 +419,21 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
   try {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed)) throw new Error("must be an array");
-    items = parsed.map((r: any) => ({
-      label: String(r.label ?? ""),
-      scheduleCLine: String(r.scheduleCLine ?? ""),
-      selectable: r.selectable !== false,
-    }));
+    // Round-trip qbAccount with the same null-vs-string contract the seed
+    // and the backend parser use. Earlier versions of this editor silently
+    // dropped qbAccount on parse — re-saving wiped every mapping. Fixed.
+    items = parsed.map((r: any) => {
+      let qbAccount: string | null = null;
+      if (typeof r.qbAccount === "string") {
+        qbAccount = normalizeQbAccount(r.qbAccount);
+      }
+      return {
+        label: String(r.label ?? ""),
+        scheduleCLine: String(r.scheduleCLine ?? ""),
+        qbAccount,
+        selectable: r.selectable !== false,
+      };
+    });
   } catch (e: any) {
     parseError = e?.message ?? "invalid JSON";
   }
@@ -419,7 +445,9 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
     onChange(JSON.stringify(items.filter((_, i) => i !== idx)));
   }
   function add() {
-    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", selectable: true }]));
+    // New rows default to qbAccount: null — operator picks a QB account
+    // before this category can land cleanly in qb-expenses.csv.
+    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true }]));
   }
 
   if (parseError) {
@@ -434,20 +462,38 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
   return (
     <VStack align="stretch" gap={2} w="full">
       <Text fontSize="2xs" color="fg.muted">
-        Maps each expense category to its Schedule C line. Uncheck "Selectable" for export-only
-        categories (e.g. Payment Processing Fees) — they stay in the export but are hidden from
-        the expense-logging pickers.
+        Maps each expense category to its Schedule C line and its QuickBooks
+        chart-of-accounts name. <Text as="span" fontWeight="semibold">QB Account</Text> must match
+        the account name in QuickBooks exactly (capitalization + spacing) — leave it blank to land
+        rows in this category as "Unmapped" in the QB Expenses CSV (the operator re-categorizes
+        them inside QB after import). Uncheck "Selectable" for export-only synthetic categories
+        (e.g. Payment Processing Fees) — they stay in the export but are hidden from the
+        expense-logging pickers.
       </Text>
       <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium" px={1}>
         <Text flex="1">Category label</Text>
-        <Text w="90px" textAlign="center">Sch. C line</Text>
+        <Text w="80px" textAlign="center">Sch. C line</Text>
+        <Text flex="1">QB Account</Text>
         <Text w="70px" textAlign="center">Selectable</Text>
         <Box w="32px" />
       </HStack>
       {items.map((row, idx) => (
         <HStack key={idx} gap={2}>
           <Input size="sm" flex="1" value={row.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Advertising" />
-          <Input size="sm" w="90px" textAlign="center" value={row.scheduleCLine} onChange={(e) => update(idx, { scheduleCLine: e.target.value })} placeholder="8" />
+          <Input size="sm" w="80px" textAlign="center" value={row.scheduleCLine} onChange={(e) => update(idx, { scheduleCLine: e.target.value })} placeholder="8" />
+          <Input
+            size="sm"
+            flex="1"
+            value={row.qbAccount ?? ""}
+            // Pass the raw input value through during editing so trailing
+            // spaces don't get stripped mid-word ("Vehicle " → "Vehicle"
+            // would block the user from typing the next word). Empty /
+            // whitespace-only values still resolve to null on the server
+            // via parseExpenseCategoriesSetting, so the "Unmapped" semantic
+            // is preserved without per-keystroke normalization.
+            onChange={(e) => update(idx, { qbAccount: e.target.value })}
+            placeholder="Unmapped"
+          />
           <Box w="70px" textAlign="center">
             <input type="checkbox" checked={row.selectable} onChange={(e) => update(idx, { selectable: e.target.checked })} />
           </Box>
