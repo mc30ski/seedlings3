@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { services } from "../services";
 import { createClerkClient } from "@clerk/backend";
 import { prisma } from "../db/prisma";
+import { IMPERSONATE_HEADER } from "../lib/impersonation";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -37,7 +38,10 @@ export default async function meRoutes(app: FastifyInstance) {
         message: "Missing token (header/cookie)",
       });
     } else {
-      return services.users.me(token);
+      // Super-only impersonation header — services.users.me ignores it unless
+      // the underlying user is actually SUPER (silent fallback), so no extra
+      // gating needed here.
+      return services.users.me(token, req.headers[IMPERSONATE_HEADER]);
     }
   });
 

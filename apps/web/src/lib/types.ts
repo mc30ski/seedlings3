@@ -98,6 +98,14 @@ export type Me = {
   };
   // Payment-request delivery channel override. null = use org default.
   paymentCommsMode?: "SERVER" | "CLAIMER" | null;
+  // Super-only "View as another role" support. realRoles / realWorkerType
+  // are the unmodified DB values — present even when no impersonation is
+  // active (in which case they mirror roles / workerType). The View-as
+  // picker is gated on realRoles?.includes("SUPER") so it stays visible
+  // even after Super swaps their effective role to Worker/Trainee/etc.
+  realRoles?: Role[];
+  realWorkerType?: WorkerType | null;
+  isImpersonating?: boolean;
 };
 
 export type TabPropsType = {

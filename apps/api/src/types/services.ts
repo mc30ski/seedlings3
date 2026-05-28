@@ -267,7 +267,7 @@ export type ServicesUsers = {
 
   pendingApprovalCount(): Promise<{ pending: number }>;
 
-  me(token: string): Promise<{
+  me(token: string, impersonateHeader?: string | string[] | null): Promise<{
     id: string;
     isApproved: boolean;
     roles: Role[];
@@ -279,6 +279,12 @@ export type ServicesUsers = {
     insuranceExpiresAt?: string | null;
     contractorAgreedAt?: string | null;
     w9Collected?: boolean;
+    // Super-only impersonation echo fields — always present so the UI can
+    // unconditionally check realRoles to decide whether to render the View-as
+    // menu. When impersonation isn't active they mirror the regular fields.
+    realRoles?: Role[];
+    realWorkerType?: string | null;
+    isImpersonating?: boolean;
   }>;
 
   setWorkerType(currentUserId: string, userId: string, workerType: string | null): Promise<User>;

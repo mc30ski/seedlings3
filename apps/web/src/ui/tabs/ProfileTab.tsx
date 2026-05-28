@@ -25,6 +25,13 @@ import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
 import { getSeasonOverride, setSeasonOverride, getNaturalSeason, type SeasonOverride } from "@/src/lib/season";
+import {
+  getImpersonation,
+  setImpersonation,
+  IMPERSONATION_LABELS,
+  IMPERSONATION_OPTIONS,
+  type ImpersonationValue,
+} from "@/src/lib/impersonation";
 
 type Worker = { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 
@@ -695,6 +702,10 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
           {isSelf && <CalendarFeedsSection />}
           {isSelf && <OfflineSection />}
           {isSelf && me?.roles?.includes("ADMIN") && <SeasonSection />}
+          {/* View-as picker is gated on REAL Super — must be visible even
+              while impersonating so Super can switch back without having
+              to use the persistent banner. */}
+          {isSelf && me?.realRoles?.includes("SUPER") && <ImpersonationSection />}
         </VStack>
       )}
     </Box>
@@ -1087,6 +1098,134 @@ function OfflineSection() {
             >
               Clear
             </Button>
+          </HStack>
+        </VStack>
+      </Card.Body>
+    </Card.Root>
+  );
+}
+
+// Super-only "View as another role" section. Gated at the call site on
+// me.realRoles.includes("SUPER") so it stays visible even while
+// impersonation is active. Reads the current selection from localStorage
+// (NOT from `me`) so the picker reflects the active token even if the
+// page hasn't reloaded yet. Toggling reloads the page and purges the SW
+// cache via setImpersonation().
+function ImpersonationSection() {
+  const [current, setCurrent] = useState<ImpersonationValue | null>(() => getImpersonation());
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  function pick(next: ImpersonationValue | null) {
+    setCurrent(next);
+    void setImpersonation(next); // reloads page
+  }
+
+  return (
+    <Card.Root variant="outline" mt={4} borderColor="red.300">
+      <Card.Header py="2" px="3" pb="0">
+        <Text fontWeight="semibold">🛡 View as another role (Super only)</Text>
+      </Card.Header>
+      <Card.Body py="2" px="3">
+        <VStack align="stretch" gap={3}>
+          <Text fontSize="sm" color="fg.muted">
+            Temporarily change your effective role so your UI and the backend's
+            authorization both act like you're a different role. Use this to
+            catch role-conditioning bugs before they hit real users.
+          </Text>
+          <Box>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => setDetailsOpen((v) => !v)}
+            >
+              {detailsOpen ? "Hide details ↑" : "Show details ↓"}
+            </Button>
+          </Box>
+          {detailsOpen && (
+            <Box
+              p={3}
+              bg="blue.50"
+              borderWidth="1px"
+              borderColor="blue.300"
+              borderLeftWidth="4px"
+              borderLeftColor="blue.500"
+              rounded="md"
+            >
+              <VStack align="stretch" gap={3} fontSize="sm" color="blue.900">
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>What changes</Text>
+                  <Text>When you pick a role here, the following behave as if you had only that role:</Text>
+                  <VStack as="ul" align="stretch" gap={1} pl={4} mt={1}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">UI conditionals</Text> — every gate that branches on role / workerType (Confirm Client, Start Job, observer eye, Admin tab visibility, claim flow, tile visibility, etc.) renders the impersonated view.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Backend authorization</Text> — <Text as="code" fontFamily="mono">requireRole(...)</Text> on every protected route checks the impersonated role. Admin-only endpoints return real 403s to you, exactly like they would to an actual worker. "Looks fine on my screen" no longer differs from "actually works for them".
+                    </Text>
+                  </VStack>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>What stays the same</Text>
+                  <VStack as="ul" align="stretch" gap={1} pl={4}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Your identity.</Text> User ID, name, email, and Clerk session are unchanged.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Your data.</Text> "My jobs / my expenses / my assignments" still return your records, just rendered through the impersonated role's UI. You are NOT "logging in as Bob" — you are "seeing your own world as if your role were different".
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Audit log attribution.</Text> Any mutation you perform while impersonating is recorded as Super performing it. The database is never confused about who really acted.
+                    </Text>
+                  </VStack>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Things to be careful about</Text>
+                  <VStack as="ul" align="stretch" gap={1} pl={4}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mutations are real.</Text> If the impersonated UI shows a button and you tap it, the server runs the action. Reduced UI ≠ reduced consequences. Be especially careful with delete / archive / payment actions.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Bugs that depend on a specific user's data shape won't surface.</Text> Example: "what does a worker with zero assignments see?" — you'll see your assignments through their role lens, not the empty state they hit. For those, use a real test login.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Toggling reloads the page</Text> to flush in-flight requests and the Service Worker cache. Close any open dialogs first so you don't lose typed-in input.
+                    </Text>
+                  </VStack>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>How to exit</Text>
+                  <VStack as="ul" align="stretch" gap={1} pl={4}>
+                    <Text as="li">
+                      A red banner at the top of every page has an <Text as="span" fontWeight="semibold">Exit impersonation</Text> button — always visible while a role override is active.
+                    </Text>
+                    <Text as="li">
+                      Or return here and pick <Text as="span" fontWeight="semibold">Super (default)</Text>.
+                    </Text>
+                  </VStack>
+                </Box>
+              </VStack>
+            </Box>
+          )}
+          <HStack gap={2} wrap="wrap">
+            <Button
+              size="sm"
+              variant={current === null ? "solid" : "outline"}
+              colorPalette="gray"
+              onClick={() => pick(null)}
+            >
+              Super (default)
+            </Button>
+            {IMPERSONATION_OPTIONS.map((opt) => (
+              <Button
+                key={opt}
+                size="sm"
+                variant={current === opt ? "solid" : "outline"}
+                colorPalette="red"
+                onClick={() => pick(opt)}
+              >
+                {IMPERSONATION_LABELS[opt]}
+              </Button>
+            ))}
           </HStack>
         </VStack>
       </Card.Body>

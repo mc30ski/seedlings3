@@ -31,6 +31,22 @@ async function authHeaders(h: Headers) {
   }
 }
 
+// Super-only "View as another role" header. Read on every API call so a
+// toggle from the View-as menu takes effect immediately for subsequent
+// requests. The backend silently ignores the header unless the underlying
+// user is actually SUPER, so a non-Super browser sending a forged value is
+// a no-op — but we still only emit it when we have a value stored locally.
+const IMPERSONATE_STORAGE_KEY = "seedlings_impersonateAs";
+function attachImpersonateHeader(h: Headers) {
+  if (!IS_BROWSER) return;
+  try {
+    const val = localStorage.getItem(IMPERSONATE_STORAGE_KEY);
+    if (val) h.set("X-Impersonate-As", val);
+  } catch {
+    // localStorage can throw in private mode / disabled storage; just skip.
+  }
+}
+
 // Bypass is used to avoid the blocking (401) of Preview requests.
 // Vercel’s preview deployments require a valid _vercel_jwt cookie or the x-vercel-protection-bypass header on every request.
 
@@ -62,6 +78,7 @@ export async function request<T>(
 
   const headers = new Headers();
   await authHeaders(headers); // your existing auth (e.g., Authorization)
+  attachImpersonateHeader(headers);
 
   // Build the absolute URL we’ll call
   const url = makeAbsolute(`${API_BASE}${path}`);
@@ -140,6 +157,7 @@ export const apiDelete = <T>(p: string) => request<T>("DELETE", p);
 export async function apiDownload(path: string, filename: string): Promise<void> {
   const headers = new Headers();
   await authHeaders(headers);
+  attachImpersonateHeader(headers);
   const url = makeAbsolute(`${API_BASE}${path}`);
   const cross = isCrossOrigin(url);
   if (IS_BROWSER && IS_PREVIEW && BYPASS) {

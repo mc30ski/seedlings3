@@ -34,9 +34,13 @@ type Props = {
   active: boolean;
   onDone: () => void;
   myId?: string;
+  // Worker type drives a few cost-display gates — only contractors actually
+  // pay equipment daily-rate costs; employees and trainees see equipment as
+  // a no-charge company resource.
+  myWorkerType?: string | null;
 };
 
-export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
+export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerType }: Props) {
   const today = bizDateKey(new Date());
 
   const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "ready" | "no-jobs">("idle");
@@ -573,7 +577,10 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                                 <Text fontSize="xs" color="red.600">In maintenance{eq.issues ? `: ${eq.issues}` : ""}</Text>
                               )}
                             </VStack>
-                            {eq.dailyRate != null && (
+                            {/* Daily-rate cost is contractor-only — employees
+                                and trainees use company equipment at no
+                                charge, so showing a cost there is misleading. */}
+                            {eq.dailyRate != null && myWorkerType === "CONTRACTOR" && (
                               <Text fontSize="xs" fontWeight="medium" color="orange.700" flexShrink={0}>${eq.dailyRate.toFixed(2)}/day</Text>
                             )}
                           </HStack>
