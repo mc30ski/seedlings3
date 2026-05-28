@@ -379,7 +379,17 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   const dateChangeCount = data?.suggestions?.dateChangeCount ?? 0;
 
   return (
-    <Box w="full" pb={8}>
+    <Box w="full" pb={8} position="relative">
+      {/* Loading overlay — same pattern as HomeTab / ServicesTab / etc.
+          Semi-transparent veil over the tab content + a viewport-centered
+          spinner. Replaces the inline "Analyzing available jobs..." block
+          that used to occupy in-flow space mid-tab. */}
+      {loading && (
+        <>
+          <Box position="absolute" inset="0" bg="bg/80" zIndex="1" />
+          <Spinner size="lg" position="fixed" top="50%" left="50%" zIndex="2" />
+        </>
+      )}
       <Box mb={3} p={3} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
         <Text fontSize="sm" fontWeight="medium" color="yellow.700">AI + Mapping Feature</Text>
         <Text fontSize="xs" color="yellow.600">Routes are optimized using real driving distances from a mapping provider and refined by AI. Results should be used as a starting point, not a final plan.</Text>
@@ -583,13 +593,6 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           )}
         </HStack>
       </HStack>
-
-      {loading && !data && (
-        <Box textAlign="center" py={10}>
-          <Spinner size="lg" />
-          <Text fontSize="sm" color="fg.muted" mt={2}>Analyzing available jobs...</Text>
-        </Box>
-      )}
 
       {error && <Text color="red.500" fontSize="sm" mb={4}>{error}</Text>}
 

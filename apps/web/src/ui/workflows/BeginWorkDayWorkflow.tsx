@@ -13,7 +13,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertCircle, CheckCircle, MapPin, Wrench } from "lucide-react";
+import { AlertCircle, CheckCircle, Eye, MapPin, Wrench } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
@@ -143,6 +143,15 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "routes", autoAnalyze: true } }));
     } else if (tab === "equipment") {
       window.dispatchEvent(new CustomEvent("navigate:workerTab", { detail: { tab: "equipment" } }));
+      // EquipmentTab persists its filters across visits; pre-day prep wants
+      // a fresh "show me everything" view, not whatever filter was last left
+      // applied (commonly "claimed", which hides the items they need to grab).
+      // Fire an empty applyFilter so the tab's handler resets status/kind/likedOnly/query.
+      // setTimeout defers until after the tab swap so the freshly-mounted
+      // EquipmentTab's listener catches the event.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("equipment:applyFilter", { detail: {} }));
+      }, 100);
     } else if (tab === "jobs") {
       // Set date filter to today
       try { localStorage.setItem("seedlings_beginWorkday_jobsDate", today); } catch {}
@@ -230,20 +239,34 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                       {occurrences.map((occ) => {
                         const isOverdue = occ.startAt && bizDateKey(occ.startAt) < today;
                         const isInProgress = occ.status === "IN_PROGRESS";
+                        // True when the user's own assignment role on this
+                        // occurrence is "observer" — they're watching, not
+                        // working it. Visual cue mirrors the Eye icon used
+                        // on JobsTab cards so observer status reads the
+                        // same wherever an occurrence shows up.
+                        const isObserverHere = (occ.assignees ?? []).some((a) => a.userId === myId && a.role === "observer");
                         return (
                           <Card.Root key={occ.id} variant="outline" borderColor={isOverdue ? "red.200" : isInProgress ? "blue.200" : "gray.200"} bg={isOverdue ? "red.50" : isInProgress ? "blue.50" : undefined}>
                             <Card.Body py="2" px="3">
                               <HStack justify="space-between" align="start" gap={2}>
                                 <VStack align="start" gap={0.5} flex="1" minW={0}>
-                                  <Text fontSize="sm" fontWeight="medium">
-                                    {occ.job?.property?.displayName}
-                                    {occ.job?.property?.client?.displayName && (
-                                      <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                                  <HStack gap={1.5} align="center" minW={0} w="full">
+                                    {isObserverHere && (
+                                      <Box flexShrink={0} display="inline-flex" alignItems="center" title="You're an observer">
+                                        <Eye size={14} color="var(--chakra-colors-blue-500)" />
+                                      </Box>
                                     )}
-                                  </Text>
+                                    <Text fontSize="sm" fontWeight="medium" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                                      {occ.job?.property?.displayName}
+                                      {occ.job?.property?.client?.displayName && (
+                                        <Text as="span" color="fg.muted" fontWeight="normal"> — {clientLabel(occ.job.property.client.displayName)}</Text>
+                                      )}
+                                    </Text>
+                                  </HStack>
                                   <HStack gap={2} fontSize="xs" wrap="wrap">
                                     {isOverdue && <StatusBadge status="Overdue" palette="red" variant="solid" />}
                                     {isInProgress && <StatusBadge status="In Progress" palette="blue" variant="solid" />}
+                                    {isObserverHere && <StatusBadge status="Observer" palette="blue" variant="subtle" />}
                                     {(occ as any).jobType && (
                                       <Text color="fg.muted">{jobTypeLabel((occ as any).jobType)}</Text>
                                     )}
@@ -375,11 +398,55 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId }: Props) {
                       <Text fontSize="sm" color="fg.muted">
                         Have you contacted the client to confirm this job?
                       </Text>
-                      {poc?.phone && (
-                        <Button size="sm" variant="outline" colorPalette="green" onClick={() => window.open(`tel:${poc.phone}`, "_self")}>
-                          Call {contactName || poc.phone}
-                        </Button>
-                      )}
+                      {/* Same advisory as the JobsTab Confirm Client dialog so
+                          the warning copy and visual treatment match the
+                          ConfirmDialog component's `warning` slot exactly. */}
+                      <Box
+                        p={3}
+                        bg="blue.50"
+                        borderWidth="1px"
+                        borderColor="blue.300"
+                        borderLeftWidth="4px"
+                        borderLeftColor="blue.500"
+                        rounded="md"
+                      >
+                        <Text fontSize="sm" color="blue.900">
+                          Only confirm if client has approved the appointment. Otherwise tap "Request Confirmation" to send them a message — a job that starts without the client's go-ahead can cause issues.
+                        </Text>
+                      </Box>
+                      {/* Request Confirmation — mirrors the openConfirmClientDialog
+                          flow in JobsTab: send the same canned wording via SMS
+                          (preferred) or email, depending on which contact channel
+                          the point-of-contact has. No assumption that the worker
+                          will phone-call; the operator can do that separately if
+                          they want to. */}
+                      {(() => {
+                        const pocPhone: string | null = poc?.phone ?? null;
+                        const pocEmail: string | null = poc?.email ?? null;
+                        if (!pocPhone && !pocEmail) return null;
+                        const dateStr = current.startAt
+                          ? new Date(current.startAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+                          : "your upcoming appointment";
+                        const name = contactName || "there";
+                        const body = `Hi ${name}, this is Seedlings Lawn Care. We have your lawn service scheduled for ${dateStr}. Could you please confirm this works for you? Or let us know if you need to reschedule.`;
+                        return (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            colorPalette="blue"
+                            onClick={() => {
+                              const encoded = encodeURIComponent(body);
+                              if (pocPhone) {
+                                window.open(`sms:${pocPhone}?body=${encoded}`, "_self");
+                              } else if (pocEmail) {
+                                window.open(`mailto:${pocEmail}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                              }
+                            }}
+                          >
+                            Request Confirmation
+                          </Button>
+                        );
+                      })()}
                     </VStack>
                   </Dialog.Body>
                   <Dialog.Footer>
