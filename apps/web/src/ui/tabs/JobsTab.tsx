@@ -3699,7 +3699,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
             // surface that affordance on collapsed/ultra cards (parity with
             // the expanded-card action row).
             const quickActionButton = isTrainee ? null : (() => {
-              if (needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+              if (needsConfirmation && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.400" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.500" }} title="Confirm Client" onClick={(e: any) => {
                     e.stopPropagation();
@@ -3708,7 +3708,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                 );
               }
               if (isTentative) return null;
-              if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+              if (!isTaskOrReminder && occ.status === "SCHEDULED" && !needsConfirmation && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title={isEstimateOcc ? "Start Estimate" : "Start Job"} onClick={(e: any) => {
                     e.stopPropagation();
@@ -3716,7 +3716,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   }}><Play size={12} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || (forAdmin && (isAdmin || isSuper))) && !isEstimateOcc) {
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && (isClaimer || forAdmin) && !isEstimateOcc) {
                 return (
                   <Box position="relative" flexShrink={0}>
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="blue.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "blue.600" }} title="Pause / Complete" onClick={(e: any) => {
@@ -3747,7 +3747,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+              if (!isTaskOrReminder && occ.status === "IN_PROGRESS" && isEstimateOcc && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="purple.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "purple.600" }} title="Complete Estimate" onClick={(e: any) => {
                     e.stopPropagation();
@@ -3769,7 +3769,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   }}><CheckCircle2 size={12} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || isActiveAssignee || (forAdmin && (isAdmin || isSuper)))) {
+              if (!isTaskOrReminder && occ.status === "PROPOSAL_SUBMITTED" && isEstimateOcc && (isClaimer || forAdmin)) {
                 return (
                   <Box position="relative" flexShrink={0}>
                     <Box as="button" w="22px" h="22px" minW="22px" borderRadius="full" bg="green.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "green.600" }} title="Accept / Reject Estimate" onClick={(e: any) => {
@@ -3861,7 +3861,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   </Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+              if (!isTaskOrReminder && occ.status === "PAUSED" && (isClaimer || forAdmin)) {
                 return (
                   <Box as="button" flexShrink={0} w="22px" h="22px" minW="22px" borderRadius="full" bg="orange.500" color="white" display="flex" alignItems="center" justifyContent="center" _hover={{ bg: "orange.600" }} title="Resume Job" onClick={(e: any) => {
                     e.stopPropagation();
@@ -3869,7 +3869,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   }}><Play size={12} /></Box>
                 );
               }
-              if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || (forAdmin && (isAdmin || isSuper)))) {
+              if (!isTaskOrReminder && occ.status === "PENDING_PAYMENT" && !isEstimateOcc && (isClaimer || forAdmin)) {
                 // Mirror the three-state logic of the full-width button block
                 // below (open / requestInFlight / pendingPayment). Only show
                 // the shortcut icon in the "open" state — once a Payment row
@@ -5860,7 +5860,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Button>
                     )}
                     {/* Confirm client — must happen before Start */}
-                    {needsConfirmation && (isClaimer || (forAdmin && (isAdmin || isSuper))) && (
+                    {needsConfirmation && (isClaimer || forAdmin) && (
                       <Button
                         size="sm"
                         variant="solid"
