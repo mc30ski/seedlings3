@@ -3409,6 +3409,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Card.Root
                     key={`ghost-${occ.id}-${occIdx}`}
                     variant="outline"
+                    overflow="hidden"
                     borderColor={ghostBorderColor}
                     borderWidth={ghostHighPriority ? "2px" : "1px"}
                     bg={ghostBg}
@@ -3416,20 +3417,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     onClick={toggleCard}
                     css={ghostCss}
                   >
-                    <Card.Body py="1.5" px="3">
-                      <HStack gap={2} align="center">
-                        <Bell size={13} style={{ color: "var(--chakra-colors-purple-600)", flexShrink: 0 }} />
-                        <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Reminder</Badge>
-                        {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>!</Badge>}
-                        <Text fontSize="xs" fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-                          {ghostProp}
-                          {occ.reminder?.note ? ` · ${occ.reminder.note}` : ""}
-                        </Text>
-                        {occ.reminder?.remindAt && (
-                          <Text fontSize="xs" color="purple.600" flexShrink={0}>{fmtDate(occ.reminder.remindAt)}</Text>
-                        )}
-                      </HStack>
-                    </Card.Body>
+                    {/* Same row shape used by Timeline / Doc-expiration / Job
+                        ultra rows so every density-ultra card lands at the
+                        same vertical height (32px). HStack lives directly
+                        inside Card.Root — no Card.Body — to avoid the extra
+                        body padding the other ultra paths skip. */}
+                    <HStack px="3" py="1" gap={2} minH="32px" align="center" fontSize="xs">
+                      <Bell size={13} style={{ color: "var(--chakra-colors-purple-600)", flexShrink: 0 }} />
+                      <Badge colorPalette="purple" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>Reminder</Badge>
+                      {ghostHighPriority && <Badge colorPalette="red" variant="solid" fontSize="xs" px="1.5" borderRadius="full" flexShrink={0}>!</Badge>}
+                      <Text fontWeight="medium" flex="1" minW={0} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                        {ghostProp}
+                        {occ.reminder?.note ? ` · ${occ.reminder.note}` : ""}
+                      </Text>
+                      {occ.reminder?.remindAt && (
+                        <Text color="purple.600" flexShrink={0}>{fmtDate(occ.reminder.remindAt)}</Text>
+                      )}
+                    </HStack>
                   </Card.Root>
                 );
               }
