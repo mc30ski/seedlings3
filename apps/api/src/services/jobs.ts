@@ -2267,18 +2267,33 @@ export const jobs: ServicesJobs = {
          finalStatus === JobOccurrenceStatus.CLOSED) &&
         !occ.hoursApprovedAt
       ) {
+        // Read every effective value as the LATEST of: this request's
+        // `timestamps` payload override, an in-flight `data.*` set earlier
+        // in this same transaction, or the pre-update DB value. Without the
+        // `timestamps` branch here, the variance check ran against the
+        // pre-edit DB values while the post-edit values were applied
+        // later (lines below) — a worker submitting off-the-clock time on
+        // completion could land within variance after save but still be
+        // flagged "Hours awaiting review" because the calc used the old
+        // (smaller) totalPausedMs.
         const effectiveCompletedAt: Date | null =
-          data.completedAt instanceof Date
-            ? data.completedAt
-            : (occ.completedAt ?? null);
+          timestamps?.completedAt
+            ? new Date(timestamps.completedAt)
+            : data.completedAt instanceof Date
+              ? data.completedAt
+              : (occ.completedAt ?? null);
         const effectiveStartedAt: Date | null =
-          data.startedAt instanceof Date
-            ? data.startedAt
-            : (occ.startedAt ?? null);
+          timestamps?.startedAt
+            ? new Date(timestamps.startedAt)
+            : data.startedAt instanceof Date
+              ? data.startedAt
+              : (occ.startedAt ?? null);
         const effectivePausedMs: number =
-          typeof data.totalPausedMs === "number"
-            ? data.totalPausedMs
-            : (occ.totalPausedMs ?? 0);
+          timestamps?.totalPausedMs != null
+            ? Math.max(0, Math.round(timestamps.totalPausedMs))
+            : typeof data.totalPausedMs === "number"
+              ? data.totalPausedMs
+              : (occ.totalPausedMs ?? 0);
         if (effectiveCompletedAt) {
           const activeAssignees = await tx.jobOccurrenceAssignee.count({
             where: { occurrenceId, NOT: { role: "observer" } },
