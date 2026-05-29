@@ -2683,6 +2683,7 @@ export default function ServicesTab({
             workerType: a.user?.workerType,
             isClaimer: a.assignedById === a.userId,
           }))}
+          isSuper={isSuper}
           onAccepted={(result) => {
             const jobId = acceptPaymentJobId;
             if (jobId) void loadDetail(jobId, true);

@@ -15,6 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { AlertCircle, CheckCircle, Eye, MapPin, Wrench } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
@@ -42,6 +43,7 @@ type Props = {
 
 export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerType }: Props) {
   const today = bizDateKey(new Date());
+  const commsCc = useCommsCc();
 
   const [step, setStep] = useState<"idle" | "loading" | "overview" | "confirm" | "route" | "equipment" | "ready" | "no-jobs">("idle");
   const [occurrences, setOccurrences] = useState<WorkerOccurrence[]>([]);
@@ -444,11 +446,10 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                             variant="outline"
                             colorPalette="blue"
                             onClick={() => {
-                              const encoded = encodeURIComponent(body);
                               if (pocPhone) {
-                                window.open(`sms:${pocPhone}?body=${encoded}`, "_self");
+                                window.open(buildSmsHref({ to: pocPhone, body, ccPhones: commsCc.phones }), "_self");
                               } else if (pocEmail) {
-                                window.open(`mailto:${pocEmail}?subject=Seedlings Lawn Care&body=${encoded}`, "_self");
+                                window.open(buildMailtoHref({ to: pocEmail, subject: "Seedlings Lawn Care", body, ccEmails: commsCc.emails }), "_self");
                               }
                             }}
                           >

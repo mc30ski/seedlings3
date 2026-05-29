@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
 import { Button, HStack, Text } from "@chakra-ui/react";
 import { MessageCircle, RotateCw, Send, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -67,6 +68,7 @@ export default function PaymentCommsButtons({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const commsCc = useCommsCc();
 
   useEffect(() => {
     let cancelled = false;
@@ -124,8 +126,8 @@ export default function PaymentCommsButtons({
   // wins; email is the fallback.
   const useSms = !!phoneContact?.phone;
   const href = useSms
-    ? `sms:${phoneContact!.phone}?&body=${encodeURIComponent(data.smsBody)}`
-    : `mailto:${emailContact!.email}?subject=${encodeURIComponent(data.emailSubject)}&body=${encodeURIComponent(data.emailBody)}`;
+    ? buildSmsHref({ to: phoneContact!.phone!, body: data.smsBody, ccPhones: commsCc.phones })
+    : buildMailtoHref({ to: emailContact!.email!, subject: data.emailSubject, body: data.emailBody, ccEmails: commsCc.emails });
 
   function commitRequest() {
     // Open the device's SMS/mailto handler and audit the channel tap.

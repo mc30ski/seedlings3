@@ -13,6 +13,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -104,6 +105,7 @@ type Props = {
 export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, trainee }: Props) {
   const today = bizDateKey(new Date());
   const tomorrow = bizDateKey(new Date(Date.now() + 86400000));
+  const commsCc = useCommsCc();
 
   const [step, setStep] = useState<"idle" | "choose-date" | "routes" | "loading" | "confirm-jobs" | "no-jobs" | "equipment" | "summary" | "done">("idle");
   const [targetDate, setTargetDate] = useState(defaultTargetDate ?? tomorrow);
@@ -349,7 +351,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
     const clientId = occ.job?.property?.client?.id;
     const contact = clientId ? contactMap.get(clientId) : null;
     const msg = customMessage || generateMessage(occ);
-    const encoded = encodeURIComponent(msg);
 
     if (contact?.phone) {
       // Clean phone number — keep digits and leading +
@@ -357,7 +358,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       return {
         method: "sms" as const,
         label: `Text ${contact.firstName || "client"}`,
-        url: `sms:${phone}${/iPhone|iPad|iPod/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "") ? "&" : "?"}body=${encoded}`,
+        url: buildSmsHref({ to: phone, body: msg, ccPhones: commsCc.phones }),
         available: true,
       };
     }
@@ -365,7 +366,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       return {
         method: "email" as const,
         label: `Email ${contact.firstName || "client"}`,
-        url: `mailto:${contact.email}?subject=${encodeURIComponent("Seedlings Lawn Care — Confirmation")}&body=${encoded}`,
+        url: buildMailtoHref({ to: contact.email, subject: "Seedlings Lawn Care — Confirmation", body: msg, ccEmails: commsCc.emails }),
         available: true,
       };
     }
