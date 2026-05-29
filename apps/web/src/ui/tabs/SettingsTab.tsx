@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
+import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
 import { determineRoles, fmtDateTime } from "@/src/lib/lib";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -97,6 +98,7 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
  *  setting so admins can't save it as free text. */
 const BOOLEAN_SETTINGS = new Set([
   "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
+  "REQUEST_PAYMENT_FROM_CLIENT_ENABLED",
 ]);
 
 function validateNumericSetting(key: string, value: string): { ok: boolean; error?: string } {
@@ -122,6 +124,160 @@ function prettySettingName(key: string): string {
 }
 
 /** Inline editor for JSON key-value map settings */
+/** Dedicated editor for OUTGOING_COMMS_CC. The shape is two independent
+ *  string-arrays ({emails, phones}) so the generic JsonMapEditor (which
+ *  treats every top-level key as a single value) would mangle it. Renders
+ *  two add/remove lists with light format validation. */
+function CommsCcEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  originalValue: string;
+}) {
+  let parsed: { emails: string[]; phones: string[] } = { emails: [], phones: [] };
+  try {
+    const p = JSON.parse(value);
+    parsed = {
+      emails: Array.isArray(p?.emails) ? p.emails.filter((s: any) => typeof s === "string") : [],
+      phones: Array.isArray(p?.phones) ? p.phones.filter((s: any) => typeof s === "string") : [],
+    };
+  } catch { /* keep empty default */ }
+
+  const [newEmail, setNewEmail] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+
+  function emit(next: { emails: string[]; phones: string[] }) {
+    onChange(JSON.stringify(next));
+  }
+  function updateEmail(idx: number, v: string) {
+    const emails = [...parsed.emails]; emails[idx] = v; emit({ ...parsed, emails });
+  }
+  function removeEmail(idx: number) {
+    emit({ ...parsed, emails: parsed.emails.filter((_, i) => i !== idx) });
+  }
+  // Match logic shared with the send-time helper so a worker's number in
+  // both lists is collapsed identically by the editor and by buildSmsHref.
+  const emailExists = (v: string) => {
+    const k = emailKey(v);
+    return k.length > 0 && parsed.emails.some((e) => emailKey(e) === k);
+  };
+  const phoneExists = (v: string) => {
+    const k = phoneKey(v);
+    return k.length > 0 && parsed.phones.some((p) => phoneKey(p) === k);
+  };
+  function addEmail() {
+    const v = newEmail.trim();
+    if (!v || emailExists(v)) return;
+    emit({ ...parsed, emails: [...parsed.emails, v] });
+    setNewEmail("");
+  }
+  function updatePhone(idx: number, v: string) {
+    const phones = [...parsed.phones]; phones[idx] = v; emit({ ...parsed, phones });
+  }
+  function removePhone(idx: number) {
+    emit({ ...parsed, phones: parsed.phones.filter((_, i) => i !== idx) });
+  }
+  function addPhone() {
+    const v = newPhone.trim();
+    if (!v || phoneExists(v)) return;
+    emit({ ...parsed, phones: [...parsed.phones, v] });
+    setNewPhone("");
+  }
+
+  const emailLooksValid = (s: string) => /.+@.+\..+/.test(s.trim());
+  const phoneLooksValid = (s: string) => /^[+0-9 ()\-]{7,}$/.test(s.trim());
+  const newEmailIsDupe = newEmail.trim().length > 0 && emailExists(newEmail);
+  const newPhoneIsDupe = newPhone.trim().length > 0 && phoneExists(newPhone);
+
+  return (
+    <VStack align="stretch" gap={3} w="full">
+      <Box>
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>Email CC</Text>
+        <VStack align="stretch" gap={1}>
+          {parsed.emails.map((e, idx) => (
+            <HStack key={idx} gap={2}>
+              <Input
+                size="sm"
+                value={e}
+                onChange={(ev) => updateEmail(idx, ev.target.value)}
+                placeholder="someone@example.com"
+                borderColor={emailLooksValid(e) ? undefined : "orange.400"}
+                flex="1"
+              />
+              <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removeEmail(idx)}>
+                <Trash2 size={12} />
+              </Button>
+            </HStack>
+          ))}
+          <HStack gap={2} borderTopWidth={parsed.emails.length ? "1px" : "0"} borderColor="gray.200" pt={parsed.emails.length ? 2 : 0}>
+            <Input
+              size="sm"
+              value={newEmail}
+              onChange={(ev) => setNewEmail(ev.target.value)}
+              placeholder="Add email…"
+              flex="1"
+              borderColor={newEmailIsDupe ? "orange.400" : undefined}
+            />
+            <Button size="xs" variant="outline" onClick={addEmail} disabled={!newEmail.trim() || newEmailIsDupe}>
+              <Plus size={12} />
+            </Button>
+          </HStack>
+          {newEmailIsDupe && (
+            <Text fontSize="xs" color="orange.700">Already on the list.</Text>
+          )}
+        </VStack>
+      </Box>
+
+      <Box>
+        <Text fontSize="xs" fontWeight="semibold" color="fg.muted" mb={1}>Phone CC</Text>
+        <Text fontSize="xs" color="orange.700" mb={1}>
+          Phones are added as additional SMS recipients — the client sees a group thread.
+        </Text>
+        <VStack align="stretch" gap={1}>
+          {parsed.phones.map((p, idx) => (
+            <HStack key={idx} gap={2}>
+              <Input
+                size="sm"
+                value={p}
+                onChange={(ev) => updatePhone(idx, ev.target.value)}
+                placeholder="+15555551234"
+                borderColor={phoneLooksValid(p) ? undefined : "orange.400"}
+                flex="1"
+              />
+              <Button size="xs" variant="ghost" colorPalette="red" px="1" minW="0" onClick={() => removePhone(idx)}>
+                <Trash2 size={12} />
+              </Button>
+            </HStack>
+          ))}
+          <HStack gap={2} borderTopWidth={parsed.phones.length ? "1px" : "0"} borderColor="gray.200" pt={parsed.phones.length ? 2 : 0}>
+            <Input
+              size="sm"
+              value={newPhone}
+              onChange={(ev) => setNewPhone(ev.target.value)}
+              placeholder="Add phone…"
+              flex="1"
+              borderColor={newPhoneIsDupe ? "orange.400" : undefined}
+            />
+            <Button size="xs" variant="outline" onClick={addPhone} disabled={!newPhone.trim() || newPhoneIsDupe}>
+              <Plus size={12} />
+            </Button>
+          </HStack>
+          {newPhoneIsDupe && (
+            <Text fontSize="xs" color="orange.700">Already on the list.</Text>
+          )}
+        </VStack>
+      </Box>
+
+      <HStack gap={2}>
+        <Button size="sm" onClick={onSave} loading={saving} disabled={value === originalValue}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
+      </HStack>
+    </VStack>
+  );
+}
+
 function JsonMapEditor({ value, onChange, onSave, onCancel, saving, originalValue }: {
   value: string;
   onChange: (v: string) => void;
@@ -1016,6 +1172,11 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         if (s.key === "EXPENSE_CATEGORIES") {
                           return <ExpenseCategoriesEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} />;
                         }
+                        // Dedicated editor for OUTGOING_COMMS_CC — two
+                        // independent email/phone lists.
+                        if (s.key === "OUTGOING_COMMS_CC") {
+                          return <CommsCcEditor value={editValue} onChange={setEditValue} onSave={() => handleSave(s.key)} onCancel={() => setEditingKey(null)} saving={saving} originalValue={s.value} />;
+                        }
                         // Detect JSON format and use appropriate editor
                         try {
                           const parsed = JSON.parse(s.value);
@@ -1040,6 +1201,33 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                       })()
                     ) : (
                       (() => {
+                        // OUTGOING_COMMS_CC has a {emails,phones} shape and
+                        // would render as "emails → [...]" in the generic
+                        // path. Render emails + phones explicitly.
+                        if (s.key === "OUTGOING_COMMS_CC") {
+                          try {
+                            const cc = JSON.parse(s.value || "{}");
+                            const emails: string[] = Array.isArray(cc.emails) ? cc.emails : [];
+                            const phones: string[] = Array.isArray(cc.phones) ? cc.phones : [];
+                            if (emails.length === 0 && phones.length === 0) {
+                              return <Text fontSize="xs" color="fg.muted" fontStyle="italic">Nobody CC'd</Text>;
+                            }
+                            return (
+                              <Box display="flex" gap="4px" flexWrap="wrap">
+                                {emails.map((e) => (
+                                  <Badge key={`e:${e}`} size="sm" variant="solid" colorPalette="blue" px="2" borderRadius="full" fontSize="xs">
+                                    ✉ {e}
+                                  </Badge>
+                                ))}
+                                {phones.map((p) => (
+                                  <Badge key={`p:${p}`} size="sm" variant="solid" colorPalette="orange" px="2" borderRadius="full" fontSize="xs">
+                                    ☎ {p}
+                                  </Badge>
+                                ))}
+                              </Box>
+                            );
+                          } catch {}
+                        }
                         // EXPENSE_CATEGORIES items are keyed on `label`, not
                         // `key`, so render them explicitly as badges instead
                         // of falling through to the raw-JSON display.

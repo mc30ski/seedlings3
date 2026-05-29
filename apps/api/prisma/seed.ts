@@ -146,6 +146,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYMENT_REQUEST_STALE_DAYS: "client_requests",
   NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL: "client_requests",
   NOTIFY_CHANGE_REQUEST_VIA_SMS_EMAIL: "client_requests",
+  OUTGOING_COMMS_CC: "client_requests",
   VENMO_BUSINESS_HANDLE: "client_requests",
   ZELLE_ADDRESS: "client_requests",
   // Catalogs & Taxonomies
@@ -1973,6 +1974,7 @@ async function seedDatabase() {
     { key: "PHOTO_MAX_EDGE_PX", value: "1200", description: "Longest edge in pixels for uploaded photos. Photos are resized down to this size before upload to save bandwidth. Only applies to new uploads — already-stored photos keep their original size." },
     { key: "PHOTO_JPEG_QUALITY", value: "0.8", description: "JPEG quality for uploaded photos (0.1 = smaller files, lower quality; 1.0 = largest files, best quality). 0.8 is the recommended balance. Only applies to new uploads." },
     { key: "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL", value: "false", description: "When a client reports they sent a payment, push notifications to admins always fire (free). Turn this on to also send a paid SMS (Twilio) or email (Resend) on top of the push. Default is off to keep notification costs at zero." },
+    { key: "OUTGOING_COMMS_CC", value: '{"emails":[],"phones":[]}', description: "Recipients automatically CC'd on client SMS/email comms opened from the app (the owner and any supervisors). Email addresses are added as visible cc=; phone numbers join the SMS as additional recipients, which on iOS/Android creates a group thread the client can see. Org policy is full transparency — no silent BCC. Only applies to templated comms (invoices, reschedules, reminders, work-day confirms). Plain contact-menu opens stay 1:1." },
   ];
   for (const s of paymentSettings) {
     await prisma.setting.upsert({

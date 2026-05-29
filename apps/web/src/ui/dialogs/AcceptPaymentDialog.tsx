@@ -15,6 +15,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
+import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
 import { prettyStatus } from "@/src/lib/lib";
 
 // PAYMENT_METHODS taxonomy row shape. Mirrors the server-side type.
@@ -76,10 +77,10 @@ type Props = {
   /** Occurrence id — required for the Request Payment footer action
    *  (the dialog fetches /comms-handoff to build the SMS/mailto link). */
   occurrenceId?: string;
-  /** Whether the viewer has SUPER role. Currently unused by this dialog —
-   *  Request Payment was previously gated by REQUEST_PAYMENT_FROM_CLIENT_ENABLED
-   *  with a SUPER bypass; that flag has since been removed and the feature
-   *  is always on. Kept on the prop list so callers don't need to change. */
+  /** Whether the viewer has SUPER role. Used to bypass the
+   *  REQUEST_PAYMENT_FROM_CLIENT_ENABLED gate — when that flag is "false",
+   *  the Request Payment button is hidden for workers but always available
+   *  to Super so the kill-switch can be tested. */
   isSuper?: boolean;
   /** True only when opened from the Admin Jobs tab. Adds a "Client paid
    *  another way?" link that expands the method picker from on-site methods
@@ -111,7 +112,7 @@ export default function AcceptPaymentDialog({
   assignees,
   completionSplits,
   occurrenceId,
-  isSuper: _isSuper = false,
+  isSuper = false,
   allowAllMethods = false,
   onAccepted,
 }: Props) {
@@ -127,6 +128,21 @@ export default function AcceptPaymentDialog({
   // ones. Only togglable when `allowAllMethods` is set (Admin Jobs tab) —
   // used to record a payment the client made through a remote channel.
   const [showAllMethods, setShowAllMethods] = useState(false);
+  const commsCc = useCommsCc();
+  // Kill-switch for the Request Payment button. Workers see the button only
+  // when this is "true"; Super always sees it so the toggle can be tested
+  // without losing access. Defaults to enabled on missing/unparseable rows.
+  const [requestPaymentEnabled, setRequestPaymentEnabled] = useState(true);
+  useEffect(() => {
+    apiGet<Array<{ key: string; value: string }>>("/api/settings")
+      .then((rows) => {
+        if (!Array.isArray(rows)) return;
+        const row = rows.find((r) => r.key === "REQUEST_PAYMENT_FROM_CLIENT_ENABLED");
+        if (row) setRequestPaymentEnabled(row.value === "true");
+      })
+      .catch(() => { /* keep default */ });
+  }, []);
+  const canRequestPayment = requestPaymentEnabled || isSuper;
 
   // Amount Paid is intentionally locked to the invoice total inside the
   // main view. The override path lives in the "confirm" step (same dialog,
@@ -399,8 +415,8 @@ export default function AcceptPaymentDialog({
     }
     const useSms = !!phoneContact?.phone;
     const href = useSms
-      ? `sms:${phoneContact!.phone}?&body=${encodeURIComponent(handoff.smsBody)}`
-      : `mailto:${emailContact!.email}?subject=${encodeURIComponent(handoff.emailSubject)}&body=${encodeURIComponent(handoff.emailBody)}`;
+      ? buildSmsHref({ to: phoneContact!.phone!, body: handoff.smsBody, ccPhones: commsCc.phones })
+      : buildMailtoHref({ to: emailContact!.email!, subject: handoff.emailSubject, body: handoff.emailBody, ccEmails: commsCc.emails });
     // Open the device handler in the user gesture, then audit + close.
     window.location.href = href;
     setRequestBusy(true);
@@ -919,7 +935,7 @@ export default function AcceptPaymentDialog({
                 >
                   Cancel
                 </Button>
-                {occurrenceId && (
+                {occurrenceId && canRequestPayment && (
                   <Button
                     variant="solid"
                     colorPalette="green"

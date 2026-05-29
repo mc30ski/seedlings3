@@ -33,6 +33,7 @@ import {
 } from "@chakra-ui/react";
 import { Calendar, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
+import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -156,6 +157,7 @@ function buildOutreachMessage(row: ChangeRequestRow): string {
 export default function ClientRequestsSection() {
   const [rows, setRows] = useState<ChangeRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const commsCc = useCommsCc();
   // Reschedule combines "edit the occurrence date" and "mark the
   // request resolved" into one action — the admin already worked out
   // the new date with the client over phone/text/email before opening
@@ -284,13 +286,16 @@ export default function ClientRequestsSection() {
           const outreach = buildOutreachMessage(row);
           const phoneDigits = (contact?.normalizedPhone ?? contact?.phone ?? "").replace(/[^\d+]/g, "");
           const smsHref = phoneDigits
-            ? `sms:${phoneDigits}?&body=${encodeURIComponent(outreach)}`
+            ? buildSmsHref({ to: phoneDigits, body: outreach, ccPhones: commsCc.phones })
             : null;
           const telHref = phoneDigits ? `tel:${phoneDigits}` : null;
           const mailHref = contact?.email
-            ? `mailto:${contact.email}?subject=${encodeURIComponent(
-                row.kind === "RESCHEDULE" ? "Rescheduling your service" : "About your skip request"
-              )}&body=${encodeURIComponent(outreach)}`
+            ? buildMailtoHref({
+                to: contact.email,
+                subject: row.kind === "RESCHEDULE" ? "Rescheduling your service" : "About your skip request",
+                body: outreach,
+                ccEmails: commsCc.emails,
+              })
             : null;
           return (
             <Card.Root
