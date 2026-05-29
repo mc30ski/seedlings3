@@ -339,8 +339,8 @@ export default function OutstandingRequestsSection() {
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Amount paid ($)</Text>
                     <Input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={markPaidAmount}
                       onChange={(e) => changeAmount(e.target.value)}
                       placeholder="0.00"
@@ -395,10 +395,8 @@ export default function OutstandingRequestsSection() {
                               size="sm"
                               w="100px"
                               textAlign="right"
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              max={Number.isFinite(gross) ? gross : undefined}
+                              type="text"
+                              inputMode="decimal"
                               value={markPaidFee}
                               onChange={(e) => setMarkPaidFee(e.target.value)}
                               borderColor={feeValid ? undefined : "red.400"}
