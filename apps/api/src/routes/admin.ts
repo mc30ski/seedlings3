@@ -1609,6 +1609,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!method) {
       throw app.httpErrors.badRequest("method is required");
     }
+    let processorFeeAmount: number | undefined;
+    if (body.processorFeeAmount !== undefined && body.processorFeeAmount !== null) {
+      processorFeeAmount = Number(body.processorFeeAmount);
+      if (!Number.isFinite(processorFeeAmount) || processorFeeAmount < 0 || processorFeeAmount > amountPaid) {
+        throw app.httpErrors.badRequest("processorFeeAmount must be between 0 and amountPaid");
+      }
+    }
     return services.payments.adminMarkInvoicePaid(
       await currentUserId(req),
       String(req.params.occurrenceId),
@@ -1616,6 +1623,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         amountPaid,
         method,
         note: body.note != null ? String(body.note) : null,
+        processorFeeAmount,
       },
     );
   });

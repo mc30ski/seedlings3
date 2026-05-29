@@ -67,6 +67,10 @@ export default function OutstandingRequestsSection() {
   const [markPaidAmount, setMarkPaidAmount] = useState("");
   const [markPaidMethod, setMarkPaidMethod] = useState("");
   const [markPaidNote, setMarkPaidNote] = useState("");
+  // Processor-fee field is a string so the user can clear/edit freely. It's
+  // re-seeded with the computed estimate when method or amount changes; the
+  // user can then nudge it to match the actual fee on the processor statement.
+  const [markPaidFee, setMarkPaidFee] = useState("");
   const [markPaidBusy, setMarkPaidBusy] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodConfig[]>([]);
 
@@ -102,11 +106,23 @@ export default function OutstandingRequestsSection() {
       .catch(() => { /* methods stay empty */ });
   }, []);
 
+  // Estimate the processor fee from the method's percent + fixed config.
+  // Matches computeProcessorFee on the server (rounded to 2 decimals).
+  function estimateFee(amount: number, methodKey: string): number {
+    const cfg = paymentMethods.find((m) => m.key === methodKey);
+    if (!cfg) return 0;
+    if (!cfg.feePercent && !cfg.feeFixed) return 0;
+    const raw = amount * (cfg.feePercent / 100) + cfg.feeFixed;
+    return Math.round(raw * 100) / 100;
+  }
+
   function openMarkPaid(row: OutstandingRow) {
     setMarkPaidRow(row);
     setMarkPaidAmount(row.amount.toFixed(2));
-    setMarkPaidMethod(paymentMethods[0]?.key ?? "");
+    const firstMethod = paymentMethods[0]?.key ?? "";
+    setMarkPaidMethod(firstMethod);
     setMarkPaidNote("");
+    setMarkPaidFee(estimateFee(row.amount, firstMethod).toFixed(2));
   }
 
   function closeMarkPaid() {
@@ -114,6 +130,25 @@ export default function OutstandingRequestsSection() {
     setMarkPaidAmount("");
     setMarkPaidMethod("");
     setMarkPaidNote("");
+    setMarkPaidFee("");
+  }
+
+  // Re-seed the fee field whenever the method or amount changes — admin can
+  // then override the resulting estimate to match the processor statement.
+  function changeMethod(key: string) {
+    setMarkPaidMethod(key);
+    const amt = Number(markPaidAmount);
+    if (Number.isFinite(amt) && amt >= 0) {
+      setMarkPaidFee(estimateFee(amt, key).toFixed(2));
+    }
+  }
+
+  function changeAmount(next: string) {
+    setMarkPaidAmount(next);
+    const amt = Number(next);
+    if (Number.isFinite(amt) && amt >= 0) {
+      setMarkPaidFee(estimateFee(amt, markPaidMethod).toFixed(2));
+    }
   }
 
   async function submitMarkPaid() {
@@ -127,12 +162,30 @@ export default function OutstandingRequestsSection() {
       publishInlineMessage({ type: "WARNING", text: "Pick a payment method." });
       return;
     }
+    // Only send a fee override when the admin changed it from the computed
+    // estimate. Sending the estimate back would be a no-op but flagging the
+    // payment as "manually adjusted" — keep the audit trail honest.
+    const cfg = paymentMethods.find((m) => m.key === markPaidMethod);
+    const hasFee = cfg ? (cfg.feePercent > 0 || cfg.feeFixed > 0) : false;
+    let processorFeeAmount: number | undefined;
+    if (hasFee) {
+      const fee = Number(markPaidFee);
+      if (!Number.isFinite(fee) || fee < 0 || fee > amount) {
+        publishInlineMessage({ type: "WARNING", text: "Processor fee must be between 0 and the amount paid." });
+        return;
+      }
+      const computed = estimateFee(amount, markPaidMethod);
+      if (Math.abs(fee - computed) >= 0.005) {
+        processorFeeAmount = Math.round(fee * 100) / 100;
+      }
+    }
     setMarkPaidBusy(true);
     try {
       await apiPost(`/api/admin/occurrences/${markPaidRow.occurrenceId}/admin-mark-paid`, {
         amountPaid: amount,
         method: markPaidMethod,
         note: markPaidNote.trim() || null,
+        ...(processorFeeAmount !== undefined ? { processorFeeAmount } : {}),
       });
       publishInlineMessage({
         type: "SUCCESS",
@@ -289,7 +342,7 @@ export default function OutstandingRequestsSection() {
                       type="number"
                       step="0.01"
                       value={markPaidAmount}
-                      onChange={(e) => setMarkPaidAmount(e.target.value)}
+                      onChange={(e) => changeAmount(e.target.value)}
                       placeholder="0.00"
                     />
                   </Box>
@@ -307,7 +360,7 @@ export default function OutstandingRequestsSection() {
                             size="sm"
                             variant={markPaidMethod === m.key ? "solid" : "outline"}
                             colorPalette={markPaidMethod === m.key ? "blue" : "gray"}
-                            onClick={() => setMarkPaidMethod(m.key)}
+                            onClick={() => changeMethod(m.key)}
                           >
                             {m.label}
                           </Button>
@@ -315,6 +368,59 @@ export default function OutstandingRequestsSection() {
                       </HStack>
                     )}
                   </Box>
+                  {/* Fee + Net breakdown — mirrors ApprovePaymentDialog. Only
+                      surfaces for methods with a non-zero fee config. The fee
+                      is editable so the admin can match the actual amount
+                      from the Venmo/Stripe statement. */}
+                  {(() => {
+                    const cfg = paymentMethods.find((m) => m.key === markPaidMethod);
+                    const hasFee = cfg ? (cfg.feePercent > 0 || cfg.feeFixed > 0) : false;
+                    if (!hasFee) return null;
+                    const gross = Number(markPaidAmount);
+                    const fee = Number(markPaidFee);
+                    const feeValid = Number.isFinite(fee) && fee >= 0 && Number.isFinite(gross) && fee <= gross;
+                    const net = feeValid ? Math.round((gross - fee) * 100) / 100 : null;
+                    return (
+                      <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={3}>
+                        <VStack align="stretch" gap={2}>
+                          <HStack justify="space-between">
+                            <Text fontSize="sm" color="fg.muted">Gross charged</Text>
+                            <Text fontSize="sm" fontWeight="medium">
+                              ${Number.isFinite(gross) ? gross.toFixed(2) : "0.00"}
+                            </Text>
+                          </HStack>
+                          <HStack justify="space-between" align="center">
+                            <Text fontSize="sm" color="fg.muted">− Processor fee</Text>
+                            <Input
+                              size="sm"
+                              w="100px"
+                              textAlign="right"
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              max={Number.isFinite(gross) ? gross : undefined}
+                              value={markPaidFee}
+                              onChange={(e) => setMarkPaidFee(e.target.value)}
+                              borderColor={feeValid ? undefined : "red.400"}
+                            />
+                          </HStack>
+                          <Box borderTopWidth="1px" borderColor="gray.200" pt={2}>
+                            <HStack justify="space-between">
+                              <Text fontSize="sm" fontWeight="semibold">Net received</Text>
+                              <Text fontSize="md" fontWeight="bold" color={feeValid ? "green.600" : "red.500"}>
+                                {net != null ? `$${net.toFixed(2)}` : "—"}
+                              </Text>
+                            </HStack>
+                          </Box>
+                          <Text fontSize="xs" color="fg.muted">
+                            The fee is an estimate ({cfg!.feePercent}%{cfg!.feeFixed ? ` + $${cfg!.feeFixed.toFixed(2)}` : ""}) —
+                            adjust it until Net received matches what actually landed in your {cfg!.label} account.
+                            The business absorbs this fee; it never changes worker payouts.
+                          </Text>
+                        </VStack>
+                      </Box>
+                    );
+                  })()}
                   <Box>
                     <Text fontSize="xs" fontWeight="medium" mb={1}>Note (optional)</Text>
                     <Textarea
@@ -341,7 +447,15 @@ export default function OutstandingRequestsSection() {
                     colorPalette="green"
                     onClick={() => void submitMarkPaid()}
                     loading={markPaidBusy}
-                    disabled={!markPaidMethod || markPaidAmount === ""}
+                    disabled={(() => {
+                      if (!markPaidMethod || markPaidAmount === "") return true;
+                      const cfg = paymentMethods.find((m) => m.key === markPaidMethod);
+                      const hasFee = cfg ? (cfg.feePercent > 0 || cfg.feeFixed > 0) : false;
+                      if (!hasFee) return false;
+                      const gross = Number(markPaidAmount);
+                      const fee = Number(markPaidFee);
+                      return !(Number.isFinite(fee) && fee >= 0 && Number.isFinite(gross) && fee <= gross);
+                    })()}
                   >
                     Mark Paid
                   </Button>
