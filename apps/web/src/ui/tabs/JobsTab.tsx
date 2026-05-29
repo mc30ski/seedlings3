@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, RotateCcw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { getLocation } from "@/src/lib/geo";
@@ -3762,6 +3762,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
                           <CheckCircle2 size={12} /> Complete
                         </Button>
+                        {forAdmin && (isAdmin || isSuper) && (
+                          <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="red" onClick={() => { setQuickActionMenuOcc(null); setResetJobOcc(occ); }}>
+                            <RotateCcw size={12} /> Reset Job
+                          </Button>
+                        )}
                       </VStack>
                     )}
                   </Box>
@@ -4810,17 +4815,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                 </Card.Header>
-
-                {/* Property photo guidance — read-only on Jobs tab */}
-                {!isCardCompact && ((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
-                  <Box mx="4" mt="2" mb="0">
-                    <OccurrenceInstructions
-                      occurrenceId={occ.id}
-                      count={(occ.propertyPhotos ?? []).length}
-                      guidanceNote={(occ as any).guidanceNote ?? null}
-                    />
-                  </Box>
-                )}
 
                 {/* Resolved client-request note — visible to workers
                  *  and admins so they know the latest exchange with the
@@ -5910,6 +5904,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         {isEstimateOcc ? "Start Estimate" : "Start Job"}
                       </Button>
                     )}
+                    {/* Stale-time cleanup — when an admin previously flipped
+                     *  status back without going through Reset Job, the
+                     *  startedAt/completedAt fields can linger on a SCHEDULED
+                     *  card. Surface Reset Job so the admin can clear it. */}
+                    {forAdmin && (isAdmin || isSuper) && occ.status === "SCHEDULED" && (occ.startedAt || occ.completedAt) && (
+                      <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
+                        Reset Job
+                      </Button>
+                    )}
                     {(isClaimer || forAdmin) && occ.status === "IN_PROGRESS" && (occ.workflow !== "ESTIMATE" && !occ.isEstimate) && (
                       <HStack gap={2} wrap="wrap">
                         <Button size="sm" variant="solid" colorPalette="blue" disabled={busyOccId === occ.id} onClick={() => setCompleteDialogOcc(occ)}>
@@ -6061,6 +6064,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </HStack>
                         );
                       })()}
+                      {/* Admin-only "Reset Job" — covers the accidentally-
+                       *  completed case. Only shown when there's no Payment
+                       *  row yet (paid jobs go through Revert Payment). */}
+                      {forAdmin && (isAdmin || isSuper) && !occ.payment && (
+                        <Button size="sm" variant="outline" colorPalette="red" disabled={busyOccId === occ.id} onClick={() => setResetJobOcc(occ)}>
+                          Reset Job
+                        </Button>
+                      )}
                     </>)}
                     {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
                       <HStack gap={2}>
@@ -6769,38 +6780,52 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                     same flow as the fully-expanded card, just starts collapsed. */}
                 {isCardCompact ? (
                   ((occ.propertyPhotos ?? []).length > 0 || ((occ as any).instructions ?? []).length > 0) && (
-                    <Box mx="3" mb="2" mt="0" display="flex" flexWrap="wrap" gap="1">
+                    <VStack mx="3" mb="2" mt="0" align="stretch" gap="1">
                       {(occ.propertyPhotos ?? []).length > 0 && (
+                        <Box>
+                          <OccurrenceInstructions
+                            occurrenceId={occ.id}
+                            count={(occ.propertyPhotos ?? []).length}
+                            guidanceNote={(occ as any).guidanceNote ?? null}
+                            defaultExpanded={false}
+                          />
+                        </Box>
+                      )}
+                      {((occ as any).instructions ?? []).length > 0 && (
+                        <Box px="3" py="1.5" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
+                          <VStack align="stretch" gap="0.5">
+                            {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
+                              <HStack key={inst.id} gap="1.5" align="center">
+                                <AlertCircle
+                                  size={18}
+                                  color="var(--chakra-colors-yellow-900)"
+                                  fill="var(--chakra-colors-yellow-400)"
+                                  strokeWidth={2.5}
+                                />
+                                <Text fontSize="xs" fontWeight="semibold" color="yellow.700" flex="1">
+                                  {inst.text}
+                                </Text>
+                                {inst.repeats && (
+                                  <Box display="inline-flex" alignItems="center" title="Carries forward">
+                                    <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
+                                  </Box>
+                                )}
+                              </HStack>
+                            ))}
+                          </VStack>
+                        </Box>
+                      )}
+                    </VStack>
+                  )
+                ) : (
+                  <>
+                    {((occ.propertyPhotos ?? []).length > 0 || (occ as any).guidanceNote) && (
+                      <Box mx="3" mb="2" mt="0">
                         <OccurrenceInstructions
                           occurrenceId={occ.id}
                           count={(occ.propertyPhotos ?? []).length}
                           guidanceNote={(occ as any).guidanceNote ?? null}
-                          defaultExpanded={false}
                         />
-                      )}
-                      {((occ as any).instructions as { id: string; text: string; repeats: boolean }[]).map((inst) => (
-                        <HStack key={inst.id} gap="1.5" px="2" py="1" bg="yellow.100" borderWidth="1px" borderColor="yellow.400" borderRadius="md">
-                          <AlertCircle
-                            size={18}
-                            color="var(--chakra-colors-yellow-900)"
-                            fill="var(--chakra-colors-yellow-400)"
-                            strokeWidth={2.5}
-                          />
-                          <Text fontSize="xs" fontWeight="semibold" color="yellow.700">{inst.text}</Text>
-                          {inst.repeats && (
-                            <Box display="inline-flex" alignItems="center" title="Carries forward">
-                              <Repeat size={12} color="var(--chakra-colors-yellow-700)" />
-                            </Box>
-                          )}
-                        </HStack>
-                      ))}
-                    </Box>
-                  )
-                ) : (
-                  <>
-                    {(occ.propertyPhotos ?? []).length > 0 && (
-                      <Box mx="3" mb="2" mt="0">
-                        <InstructionsBadge count={(occ.propertyPhotos ?? []).length} />
                       </Box>
                     )}
                     {((occ as any).instructions ?? []).length > 0 && (

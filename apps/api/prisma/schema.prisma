@@ -1861,6 +1861,7 @@ model BannerDismissal {
 enum ExportKind {
   GUSTO_W2
   GUSTO_CONTRACTORS
+  GUSTO_BUNDLE
   QB_INCOME
   QB_EXPENSES
   QB_EQUITY

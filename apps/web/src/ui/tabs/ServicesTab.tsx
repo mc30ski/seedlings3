@@ -1373,7 +1373,7 @@ export default function ServicesTab({
                       id="job-default-guidance"
                       itemId={job.id}
                       label="Default Guidance"
-                      onClick={async () => setDefaultGuidanceJob({ jobId: job.id, propertyId: job.propertyId, guidanceNote: (job as any).guidanceNote ?? null })}
+                      onClick={async () => setDefaultGuidanceJob({ jobId: job.id, propertyId: job.propertyId, guidanceNote: (detail as any)?.guidanceNote ?? (job as any).guidanceNote ?? null })}
                       variant="outline"
                       busyId={statusButtonBusyId}
                       setBusyId={setStatusButtonBusyId}
@@ -2864,7 +2864,7 @@ export default function ServicesTab({
           jobId={defaultGuidanceJob.jobId}
           propertyId={defaultGuidanceJob.propertyId}
           guidanceNote={defaultGuidanceJob.guidanceNote}
-          onSaved={() => { void loadDetail(defaultGuidanceJob.jobId, true); }}
+          onSaved={() => { void loadDetail(defaultGuidanceJob.jobId, true); void load(false); }}
         />
       )}
 

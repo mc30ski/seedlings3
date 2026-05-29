@@ -49,6 +49,8 @@ import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
 import HomeTab from "@/src/ui/tabs/HomeTab";
 import ImpersonationBanner from "@/src/ui/components/ImpersonationBanner";
+import MulchJobTool from "@/src/ui/tools/MulchJobTool";
+import MowingJobTool from "@/src/ui/tools/MowingJobTool";
 import AdminNotifyTab from "@/src/ui/tabs/AdminNotifyTab";
 import AdminCollectionsTab from "@/src/ui/tabs/AdminCollectionsTab";
 import WorkerCollectionsTab from "@/src/ui/tabs/WorkerCollectionsTab";
@@ -1040,6 +1042,29 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<ExportsTab />),
           category: "Money",
           categoryIcon: TfiMoney,
+        },
+        {
+          // ── Tools ──
+          // Read-only calculators and estimating helpers. Each tool is its
+          // own third-level tab under the shared "Tools" category — add
+          // additional tools by appending sibling entries with the same
+          // category. The tool components live in apps/web/src/ui/tools/
+          // and are self-contained from the rest of the app (pull existing
+          // settings but never mutate).
+          value: "tools-mowing",
+          label: "Mowing",
+          icon: FiTool,
+          content: wrapWithInlineMessage(<MowingJobTool />),
+          category: "Tools",
+          categoryIcon: FiTool,
+        },
+        {
+          value: "tools-mulch",
+          label: "Mulch",
+          icon: FiTool,
+          content: wrapWithInlineMessage(<MulchJobTool />),
+          category: "Tools",
+          categoryIcon: FiTool,
         },
         {
           // ── Records ──

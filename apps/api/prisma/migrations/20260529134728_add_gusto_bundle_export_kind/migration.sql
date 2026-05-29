@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "ExportKind" ADD VALUE 'GUSTO_BUNDLE';
