@@ -12,7 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { Bell, Check, CheckCircle2, Circle, Copy, ListChecks, Mail, MessageCircle, Megaphone, Navigation, Play, Repeat } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { openEventSearch } from "@/src/lib/bus";
 import { type Me, type WorkerOccurrence } from "@/src/lib/types";
 import { bizDateKey, clientLabel } from "@/src/lib/lib";
@@ -562,7 +562,6 @@ function ChecklistItem({
   const propertyName = occ.job?.property?.displayName ?? occ.title ?? "Job";
   const clientName = occ.job?.property?.client?.displayName;
   const team = assigneeSummary(occ.assignees);
-  const commsCc = useCommsCc();
 
   return (
     <HStack
@@ -619,7 +618,10 @@ function ChecklistItem({
                   colorPalette="green"
                   px="1"
                   minW="0"
-                  onClick={() => window.open(buildSmsHref({ to: contact.phone!, body: msg, ccPhones: commsCc.phones }), "_self")}
+                  onClick={async () => {
+                    const cc = await fetchCommsCc();
+                    window.open(buildSmsHref({ to: contact.phone!, body: msg, ccPhones: cc.phones }), "_self");
+                  }}
                   title={`Text ${contact.phone}`}
                 >
                   <MessageCircle size={12} />
@@ -631,7 +633,10 @@ function ChecklistItem({
                   colorPalette="blue"
                   px="1"
                   minW="0"
-                  onClick={() => window.open(buildMailtoHref({ to: contact.email!, subject: "Seedlings Lawn Care — Service Confirmation", body: msg, ccEmails: commsCc.emails }), "_self")}
+                  onClick={async () => {
+                    const cc = await fetchCommsCc();
+                    window.open(buildMailtoHref({ to: contact.email!, subject: "Seedlings Lawn Care — Service Confirmation", body: msg, ccEmails: cc.emails }), "_self");
+                  }}
                   title={`Email ${contact.email}`}
                 >
                   <Mail size={12} />

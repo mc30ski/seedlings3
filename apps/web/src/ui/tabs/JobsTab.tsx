@@ -20,7 +20,7 @@ import {
 import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, RotateCcw, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
@@ -231,7 +231,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // truth — edit in Super → Settings, no code change here).
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const { businessName } = useBranding();
-  const commsCc = useCommsCc();
 
   function shareOccurrenceLink(occId: string, startAt?: string | null) {
     // Embed the occurrence's startAt so the recipient's JobsTab can anchor its
@@ -1785,11 +1784,12 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       ...(canRequest
         ? {
             cancelLabel: "Request Confirmation",
-            onCancelAction: () => {
+            onCancelAction: async () => {
+              const cc = await fetchCommsCc();
               if (pocPhone) {
-                window.open(buildSmsHref({ to: pocPhone, body: quick!.body, ccPhones: commsCc.phones }), "_self");
+                window.open(buildSmsHref({ to: pocPhone, body: quick!.body, ccPhones: cc.phones }), "_self");
               } else if (pocEmail) {
-                window.open(buildMailtoHref({ to: pocEmail, subject: "Seedlings Lawn Care", body: quick!.body, ccEmails: commsCc.emails }), "_self");
+                window.open(buildMailtoHref({ to: pocEmail, subject: "Seedlings Lawn Care", body: quick!.body, ccEmails: cc.emails }), "_self");
               }
             },
             secondaryActionFirst: true,
@@ -4302,13 +4302,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                       const emailSubject = useHandoff ? dropdownPayMsg.emailSubject : "Seedlings Lawn Care";
                                       const emailBody = useHandoff ? dropdownPayMsg.emailBody : msg.body;
                                       return (
-                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
+                                        <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={async () => {
                                             setContactMenuOcc(null);
+                                            const cc = await fetchCommsCc();
                                             if (phone) {
-                                              window.open(buildSmsHref({ to: phone, body: smsBody, ccPhones: commsCc.phones }), "_self");
+                                              window.open(buildSmsHref({ to: phone, body: smsBody, ccPhones: cc.phones }), "_self");
                                               if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "sms" }).catch(() => {});
                                             } else if (email) {
-                                              window.open(buildMailtoHref({ to: email, subject: emailSubject, body: emailBody, ccEmails: commsCc.emails }), "_self");
+                                              window.open(buildMailtoHref({ to: email, subject: emailSubject, body: emailBody, ccEmails: cc.emails }), "_self");
                                               if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "email" }).catch(() => {});
                                             }
                                           }}>
@@ -4582,13 +4583,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                                         const emailSubject = useHandoff ? dropdownPayMsg.emailSubject : "Seedlings Lawn Care";
                                         const emailBody = useHandoff ? dropdownPayMsg.emailBody : msg.body;
                                         return (
-                                            <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={() => {
+                                            <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="blue" mt="1" pt="1.5" style={{ borderTop: "1px solid #cbd5e0" }} onClick={async () => {
                                               setContactMenuOcc(null);
+                                              const cc = await fetchCommsCc();
                                               if (phone) {
-                                                window.open(buildSmsHref({ to: phone, body: smsBody, ccPhones: commsCc.phones }), "_self");
+                                                window.open(buildSmsHref({ to: phone, body: smsBody, ccPhones: cc.phones }), "_self");
                                                 if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "sms" }).catch(() => {});
                                               } else if (email) {
-                                                window.open(buildMailtoHref({ to: email, subject: emailSubject, body: emailBody, ccEmails: commsCc.emails }), "_self");
+                                                window.open(buildMailtoHref({ to: email, subject: emailSubject, body: emailBody, ccEmails: cc.emails }), "_self");
                                                 if (useHandoff) apiPost(`/api/occurrences/${occ.id}/comms-handoff`, { channel: "email" }).catch(() => {});
                                               }
                                             }}>
@@ -7467,8 +7469,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         variant="outline"
                         colorPalette="green"
                         overflow="hidden"
-                        onClick={() => {
-                          window.open(buildSmsHref({ to: rescheduleNotify!.phone!, body: rescheduleNotify!.message, ccPhones: commsCc.phones }), "_self");
+                        onClick={async () => {
+                          const cc = await fetchCommsCc();
+                          window.open(buildSmsHref({ to: rescheduleNotify!.phone!, body: rescheduleNotify!.message, ccPhones: cc.phones }), "_self");
                         }}
                       >
                         <MessageCircle size={14} style={{ flexShrink: 0 }} /> <Text lineClamp={1}>Text to {rescheduleNotify.phone}</Text>
@@ -7480,8 +7483,9 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         variant="outline"
                         colorPalette="blue"
                         overflow="hidden"
-                        onClick={() => {
-                          window.open(buildMailtoHref({ to: rescheduleNotify!.email!, subject: "Schedule Change — Seedlings Lawn Care", body: rescheduleNotify!.message, ccEmails: commsCc.emails }), "_self");
+                        onClick={async () => {
+                          const cc = await fetchCommsCc();
+                          window.open(buildMailtoHref({ to: rescheduleNotify!.email!, subject: "Schedule Change — Seedlings Lawn Care", body: rescheduleNotify!.message, ccEmails: cc.emails }), "_self");
                         }}
                       >
                         <Mail size={14} style={{ flexShrink: 0 }} /> <Text lineClamp={1}>Email to {rescheduleNotify.email}</Text>

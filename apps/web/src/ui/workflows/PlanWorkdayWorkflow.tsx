@@ -13,7 +13,7 @@ import {
   Spinner,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel } from "@/src/lib/lib";
 import { MapLink } from "@/src/ui/helpers/Link";
@@ -105,7 +105,6 @@ type Props = {
 export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTargetDate, trainee }: Props) {
   const today = bizDateKey(new Date());
   const tomorrow = bizDateKey(new Date(Date.now() + 86400000));
-  const commsCc = useCommsCc();
 
   const [step, setStep] = useState<"idle" | "choose-date" | "routes" | "loading" | "confirm-jobs" | "no-jobs" | "equipment" | "summary" | "done">("idle");
   const [targetDate, setTargetDate] = useState(defaultTargetDate ?? tomorrow);
@@ -358,7 +357,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       return {
         method: "sms" as const,
         label: `Text ${contact.firstName || "client"}`,
-        url: buildSmsHref({ to: phone, body: msg, ccPhones: commsCc.phones }),
+        open: async () => {
+          const cc = await fetchCommsCc();
+          window.open(buildSmsHref({ to: phone, body: msg, ccPhones: cc.phones }), "_self");
+        },
         available: true,
       };
     }
@@ -366,14 +368,17 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
       return {
         method: "email" as const,
         label: `Email ${contact.firstName || "client"}`,
-        url: buildMailtoHref({ to: contact.email, subject: "Seedlings Lawn Care — Confirmation", body: msg, ccEmails: commsCc.emails }),
+        open: async () => {
+          const cc = await fetchCommsCc();
+          window.open(buildMailtoHref({ to: contact.email!, subject: "Seedlings Lawn Care — Confirmation", body: msg, ccEmails: cc.emails }), "_self");
+        },
         available: true,
       };
     }
     return {
-      method: null,
+      method: null as null | "sms" | "email",
       label: "No contact info",
-      url: "",
+      open: null as null | (() => Promise<void>),
       available: false,
     };
   }
@@ -1161,9 +1166,10 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                   {(() => {
                     const send = getSendInfo(occ, editableMessage);
                     return (
-                      <a
-                        href={send.available ? send.url : undefined}
-                        onClick={(e) => { if (!send.available) e.preventDefault(); }}
+                      <button
+                        type="button"
+                        disabled={!send.available}
+                        onClick={() => { if (send.open) void send.open(); }}
                         style={{
                           fontSize: "13px",
                           color: send.available ? "#ffffff" : "#a0aec0",
@@ -1175,7 +1181,6 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                           cursor: send.available ? "pointer" : "default",
                           padding: "5px 12px",
                           fontWeight: 600,
-                          textDecoration: "none",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: "4px",
@@ -1183,7 +1188,7 @@ export default function PlanWorkdayWorkflow({ active, onDone, myId, defaultTarge
                       >
                         {send.method === "sms" ? "💬 " : send.method === "email" ? "✉️ " : ""}
                         {send.available ? send.label : "No contact info"}
-                      </a>
+                      </button>
                     );
                   })()}
                 </HStack>

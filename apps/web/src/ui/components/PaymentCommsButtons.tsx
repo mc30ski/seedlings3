@@ -21,7 +21,7 @@ import { useEffect, useState } from "react";
 import { Button, HStack, Text } from "@chakra-ui/react";
 import { MessageCircle, RotateCw, Send, X } from "lucide-react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
@@ -68,7 +68,6 @@ export default function PaymentCommsButtons({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const commsCc = useCommsCc();
 
   useEffect(() => {
     let cancelled = false;
@@ -125,14 +124,14 @@ export default function PaymentCommsButtons({
   // The channel is determined by what contact info is on file — phone
   // wins; email is the fallback.
   const useSms = !!phoneContact?.phone;
-  const href = useSms
-    ? buildSmsHref({ to: phoneContact!.phone!, body: data.smsBody, ccPhones: commsCc.phones })
-    : buildMailtoHref({ to: emailContact!.email!, subject: data.emailSubject, body: data.emailBody, ccEmails: commsCc.emails });
 
-  function commitRequest() {
-    // Open the device's SMS/mailto handler and audit the channel tap.
-    // Doing both in the same synchronous click handler keeps iOS Safari
-    // happy (window.open / location-changing must be in a user gesture).
+  async function commitRequest() {
+    // Fetch the OUTGOING_COMMS_CC setting fresh at click time so the URL
+    // can't be stale relative to whatever the admin most recently saved.
+    const cc = await fetchCommsCc();
+    const href = useSms
+      ? buildSmsHref({ to: phoneContact!.phone!, body: data!.smsBody, ccPhones: cc.phones })
+      : buildMailtoHref({ to: emailContact!.email!, subject: data!.emailSubject, body: data!.emailBody, ccEmails: cc.emails });
     window.location.href = href;
     apiPost(`/api/occurrences/${occurrenceId}/comms-handoff`, {
       channel: useSms ? "sms" : "email",
@@ -197,7 +196,7 @@ export default function PaymentCommsButtons({
         confirmColorPalette="orange"
         onConfirm={() => {
           setConfirmOpen(false);
-          commitRequest();
+          void commitRequest();
         }}
         onCancel={() => setConfirmOpen(false)}
       />

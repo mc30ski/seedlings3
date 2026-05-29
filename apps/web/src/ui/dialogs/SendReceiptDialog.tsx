@@ -12,7 +12,7 @@ import {
 } from "@chakra-ui/react";
 import { Download, Mail, MessageCircle } from "lucide-react";
 import { type ReceiptData, downloadReceipt } from "@/src/lib/receipt";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
 
 type Props = {
@@ -27,7 +27,6 @@ type PendingSend = { target: "text" | "email" } | null;
 
 export default function SendReceiptDialog({ open, onOpenChange, data, contactPhone, contactEmail }: Props) {
   const [pendingSend, setPendingSend] = useState<PendingSend>(null);
-  const commsCc = useCommsCc();
 
   if (!data) return null;
 
@@ -37,15 +36,17 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
     publishInlineMessage({ type: "SUCCESS", text: "Receipt downloaded." });
   }
 
-  function openMessagingApp(target: "text" | "email") {
+  async function openMessagingApp(target: "text" | "email") {
     if (!data) return;
+    // Fetch OUTGOING_COMMS_CC fresh right before opening the device handler.
+    const cc = await fetchCommsCc();
     if (target === "text" && contactPhone) {
       const msg = `Hi ${data.clientName}, here is your receipt from ${data.businessName} for service on ${data.serviceDate}. Amount paid: $${data.amount.toFixed(2)}. Receipt #${data.receiptId}.`;
-      window.open(buildSmsHref({ to: contactPhone, body: msg, ccPhones: commsCc.phones }), "_self");
+      window.open(buildSmsHref({ to: contactPhone, body: msg, ccPhones: cc.phones }), "_self");
     } else if (target === "email" && contactEmail) {
       const subject = `Receipt from ${data.businessName} — ${data.serviceDate}`;
       const body = `Hi ${data.clientName},\n\nPlease find your receipt details below.\n\nReceipt #: ${data.receiptId}\nAmount: $${data.amount.toFixed(2)}\nService Date: ${data.serviceDate}\nProperty: ${data.propertyAddress}\n\nThank you,\n${data.businessName}`;
-      window.open(buildMailtoHref({ to: contactEmail, subject, body, ccEmails: commsCc.emails }), "_self");
+      window.open(buildMailtoHref({ to: contactEmail, subject, body, ccEmails: cc.emails }), "_self");
     }
   }
 
@@ -58,14 +59,14 @@ export default function SendReceiptDialog({ open, onOpenChange, data, contactPho
     downloadReceipt(data);
     publishInlineMessage({ type: "INFO", text: "PDF saved — attach it to your message." });
     setTimeout(() => {
-      openMessagingApp(pendingSend.target);
+      void openMessagingApp(pendingSend.target);
       setPendingSend(null);
     }, 500);
   }
 
   function handleSendWithoutPDF() {
     if (!pendingSend) return;
-    openMessagingApp(pendingSend.target);
+    void openMessagingApp(pendingSend.target);
     setPendingSend(null);
   }
 

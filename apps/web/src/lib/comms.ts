@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { apiGet } from "@/src/lib/api";
 
 const SETTING_KEY = "OUTGOING_COMMS_CC";
@@ -11,12 +10,6 @@ export type CommsCc = {
 };
 
 const EMPTY_CC: CommsCc = { emails: [], phones: [] };
-
-declare global {
-  interface Window {
-    __seedlings_comms_cc?: CommsCc;
-  }
-}
 
 export function parseCommsCc(raw: string | null | undefined): CommsCc {
   if (!raw) return EMPTY_CC;
@@ -39,30 +32,24 @@ export function parseCommsCc(raw: string | null | undefined): CommsCc {
 }
 
 /**
- * Loads the OUTGOING_COMMS_CC setting and returns the parsed lists. Cached
- * on the window across re-mounts so we don't refetch on every comms button
- * render. All sms:/mailto: call sites that ship a templated body should run
- * their values through buildSmsHref / buildMailtoHref with the lists here.
+ * Fetches the current OUTGOING_COMMS_CC setting fresh from the API. Call
+ * this inside the click handler that is about to open an sms:/mailto: link
+ * — no caching, no hooks, no event bus to keep in sync. The cost is one
+ * lightweight GET right before the user's tap fires the device handler;
+ * on failure we silently fall back to empty so the comm still goes out
+ * (just without CCs) instead of blocking the user.
  *
  * Org policy is no silent BCC — both lists are added as visible recipients.
  */
-export function useCommsCc(): CommsCc {
-  const [cc, setCc] = useState<CommsCc>(() => {
-    if (typeof window === "undefined") return EMPTY_CC;
-    return window.__seedlings_comms_cc ?? EMPTY_CC;
-  });
-  useEffect(() => {
-    apiGet<Array<{ key: string; value: string }>>("/api/settings")
-      .then((rows) => {
-        if (!Array.isArray(rows)) return;
-        const row = rows.find((r) => r.key === SETTING_KEY);
-        const parsed = parseCommsCc(row?.value ?? null);
-        if (typeof window !== "undefined") window.__seedlings_comms_cc = parsed;
-        setCc(parsed);
-      })
-      .catch(() => { /* stays empty */ });
-  }, []);
-  return cc;
+export async function fetchCommsCc(): Promise<CommsCc> {
+  try {
+    const rows = await apiGet<Array<{ key: string; value: string }>>("/api/settings");
+    if (!Array.isArray(rows)) return EMPTY_CC;
+    const row = rows.find((r) => r.key === SETTING_KEY);
+    return parseCommsCc(row?.value ?? null);
+  } catch {
+    return EMPTY_CC;
+  }
 }
 
 function isIOS(): boolean {
