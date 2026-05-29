@@ -1595,6 +1595,31 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.payments.recalculateSplits(String(req.params.occurrenceId));
   });
 
+  // Admin "Mark Invoice Paid" — closes out a PENDING_PAYMENT occurrence
+  // when an invoice was sent but the client paid offline and never
+  // self-reported. Creates a confirmed Payment row + runs the standard
+  // approval downstream (next-occurrence creation for repeating jobs).
+  app.post("/admin/occurrences/:occurrenceId/admin-mark-paid", adminGuard, async (req: any) => {
+    const body = req.body || {};
+    const amountPaid = Number(body.amountPaid);
+    if (!Number.isFinite(amountPaid) || amountPaid < 0) {
+      throw app.httpErrors.badRequest("amountPaid must be a non-negative number");
+    }
+    const method = String(body.method || "").trim();
+    if (!method) {
+      throw app.httpErrors.badRequest("method is required");
+    }
+    return services.payments.adminMarkInvoicePaid(
+      await currentUserId(req),
+      String(req.params.occurrenceId),
+      {
+        amountPaid,
+        method,
+        note: body.note != null ? String(body.note) : null,
+      },
+    );
+  });
+
   // Force-create next occurrence (admin) — bypasses duplicate guard
   app.post("/admin/occurrences/:occurrenceId/force-next", adminGuard, async (req: any) => {
     return services.payments.forceCreateNextOccurrence(

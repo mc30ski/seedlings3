@@ -662,6 +662,11 @@ export type ServicesPayments = {
 
   recalculateSplits(occurrenceId: string): Promise<any>;
   forceCreateNextOccurrence(currentUserId: string, occurrenceId: string): Promise<any>;
+  adminMarkInvoicePaid(
+    currentUserId: string,
+    occurrenceId: string,
+    input: { amountPaid: number; method: string; note?: string | null },
+  ): Promise<any>;
 
   /**
    * Client-or-worker self-reported payment. Creates an unconfirmed Payment
