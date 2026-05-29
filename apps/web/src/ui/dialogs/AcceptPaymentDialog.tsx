@@ -15,7 +15,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { prettyStatus } from "@/src/lib/lib";
 
 // PAYMENT_METHODS taxonomy row shape. Mirrors the server-side type.
@@ -128,7 +128,6 @@ export default function AcceptPaymentDialog({
   // ones. Only togglable when `allowAllMethods` is set (Admin Jobs tab) —
   // used to record a payment the client made through a remote channel.
   const [showAllMethods, setShowAllMethods] = useState(false);
-  const commsCc = useCommsCc();
   // Kill-switch for the Request Payment button. Workers see the button only
   // when this is "true"; Super always sees it so the toggle can be tested
   // without losing access. Defaults to enabled on missing/unparseable rows.
@@ -360,7 +359,7 @@ export default function AcceptPaymentDialog({
   // ready. In SERVER mode the server already sent the request when the
   // job hit PENDING_PAYMENT; we still update splits and close. In CLAIMER
   // mode we open the device SMS/mailto handler in the user gesture.
-  function handleRequestPayment() {
+  async function handleRequestPayment() {
     if (!handoff || !occurrenceId) {
       publishInlineMessage({ type: "WARNING", text: "Couldn't load contact info — refresh and try again." });
       return;
@@ -414,9 +413,12 @@ export default function AcceptPaymentDialog({
       return;
     }
     const useSms = !!phoneContact?.phone;
+    // Pull the current OUTGOING_COMMS_CC setting at click time so the URL
+    // can't be stale relative to whatever the admin most recently saved.
+    const cc = await fetchCommsCc();
     const href = useSms
-      ? buildSmsHref({ to: phoneContact!.phone!, body: handoff.smsBody, ccPhones: commsCc.phones })
-      : buildMailtoHref({ to: emailContact!.email!, subject: handoff.emailSubject, body: handoff.emailBody, ccEmails: commsCc.emails });
+      ? buildSmsHref({ to: phoneContact!.phone!, body: handoff.smsBody, ccPhones: cc.phones })
+      : buildMailtoHref({ to: emailContact!.email!, subject: handoff.emailSubject, body: handoff.emailBody, ccEmails: cc.emails });
     // Open the device handler in the user gesture, then audit + close.
     window.location.href = href;
     setRequestBusy(true);
@@ -730,7 +732,7 @@ export default function AcceptPaymentDialog({
                     <Button
                       variant="solid"
                       colorPalette="green"
-                      onClick={handleRequestPayment}
+                      onClick={() => void handleRequestPayment()}
                       loading={requestBusy}
                       disabled={
                         !handoff ||

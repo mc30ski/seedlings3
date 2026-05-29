@@ -33,7 +33,7 @@ import {
 } from "@chakra-ui/react";
 import { Calendar, Mail, Phone, RefreshCw, SkipForward, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
-import { buildMailtoHref, buildSmsHref, useCommsCc } from "@/src/lib/comms";
+import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -157,7 +157,6 @@ function buildOutreachMessage(row: ChangeRequestRow): string {
 export default function ClientRequestsSection() {
   const [rows, setRows] = useState<ChangeRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const commsCc = useCommsCc();
   // Reschedule combines "edit the occurrence date" and "mark the
   // request resolved" into one action — the admin already worked out
   // the new date with the client over phone/text/email before opening
@@ -285,17 +284,22 @@ export default function ClientRequestsSection() {
           const cadence = cadenceText(row);
           const outreach = buildOutreachMessage(row);
           const phoneDigits = (contact?.normalizedPhone ?? contact?.phone ?? "").replace(/[^\d+]/g, "");
-          const smsHref = phoneDigits
-            ? buildSmsHref({ to: phoneDigits, body: outreach, ccPhones: commsCc.phones })
-            : null;
           const telHref = phoneDigits ? `tel:${phoneDigits}` : null;
-          const mailHref = contact?.email
-            ? buildMailtoHref({
-                to: contact.email,
-                subject: row.kind === "RESCHEDULE" ? "Rescheduling your service" : "About your skip request",
-                body: outreach,
-                ccEmails: commsCc.emails,
-              })
+          const mailSubject = row.kind === "RESCHEDULE" ? "Rescheduling your service" : "About your skip request";
+          // SMS / mail hrefs are built inside the click handler so the
+          // OUTGOING_COMMS_CC setting is read fresh — no stale-render risk
+          // and no cache to keep in sync.
+          const openSms = phoneDigits
+            ? async () => {
+                const cc = await fetchCommsCc();
+                window.open(buildSmsHref({ to: phoneDigits, body: outreach, ccPhones: cc.phones }), "_self");
+              }
+            : null;
+          const openMail = contact?.email
+            ? async () => {
+                const cc = await fetchCommsCc();
+                window.open(buildMailtoHref({ to: contact.email!, subject: mailSubject, body: outreach, ccEmails: cc.emails }), "_self");
+              }
             : null;
           return (
             <Card.Root
@@ -355,15 +359,13 @@ export default function ClientRequestsSection() {
                   )}
 
                   {/* Reach out */}
-                  {(smsHref || telHref || mailHref) && (
+                  {(openSms || telHref || openMail) && (
                     <Box>
                       <Text fontSize="xs" color="fg.muted" mb={1}>Reach out to {contact?.firstName ?? "client"}:</Text>
                       <HStack gap={1.5} wrap="wrap">
-                        {smsHref && (
-                          <Button size="xs" variant="outline" colorPalette="teal" asChild>
-                            <a href={smsHref}>
-                              <Mail size={12} /> Text
-                            </a>
+                        {openSms && (
+                          <Button size="xs" variant="outline" colorPalette="teal" onClick={() => void openSms()}>
+                            <Mail size={12} /> Text
                           </Button>
                         )}
                         {telHref && (
@@ -373,17 +375,15 @@ export default function ClientRequestsSection() {
                             </a>
                           </Button>
                         )}
-                        {mailHref && (
-                          <Button size="xs" variant="outline" colorPalette="teal" asChild>
-                            <a href={mailHref}>
-                              <Mail size={12} /> Email
-                            </a>
+                        {openMail && (
+                          <Button size="xs" variant="outline" colorPalette="teal" onClick={() => void openMail()}>
+                            <Mail size={12} /> Email
                           </Button>
                         )}
                       </HStack>
                     </Box>
                   )}
-                  {!smsHref && !telHref && !mailHref && (
+                  {!openSms && !telHref && !openMail && (
                     <Text fontSize="xs" color="red.700">
                       No phone or email on the primary contact. Set one before reaching out.
                     </Text>

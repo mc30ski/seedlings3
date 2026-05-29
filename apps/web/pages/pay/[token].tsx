@@ -117,6 +117,13 @@ function PaymentPageInner() {
   const [selectedMethod, setSelectedMethod] = useState<MethodKey | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [reportedJustNow, setReportedJustNow] = useState(false);
+  // Two-stage confirm. Tapping the bottom "I've sent the …" button opens
+  // this modal first; the modal's Yes button is what actually fires
+  // selfReport(). Older clients tap-and-go too easily without this gate.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Ref on the currently-selected method card so "Not yet — show me how"
+  // can scroll back to the inline steps panel.
+  const selectedCardRef = useRef<HTMLDivElement | null>(null);
   // A signed-in worker (or admin/super) opening their own invoice link
   // should not be able to "pay" on behalf of the client — that would
   // shortcut the actual payment received and queue an unverified
@@ -209,6 +216,14 @@ function PaymentPageInner() {
     () => orderedMethods.find((m) => m.key === selectedMethod)?.label ?? null,
     [orderedMethods, selectedMethod],
   );
+
+  // Single source of truth for the "I've sent the …" button label, used
+  // both on the bottom CTA and in the inline step 2 callout so the wording
+  // matches verbatim. Falls back to a generic phrase when no method is
+  // picked yet (which also disables the button).
+  const confirmButtonLabel = selectedLabel
+    ? `I've sent the ${selectedLabel.toLowerCase()} payment`
+    : "Pick a method above first";
 
   async function selfReport(method: MethodKey) {
     if (!token || submitting) return;
@@ -396,26 +411,35 @@ function PaymentPageInner() {
                     usedLastTime={data.preferredMethod === m.key}
                     selected={selectedMethod === m.key}
                     onSelect={() => setSelectedMethod(m.key)}
+                    amountDue={data.amountDue}
+                    confirmButtonLabel={confirmButtonLabel}
+                    cardRef={selectedMethod === m.key ? selectedCardRef : undefined}
+                    submitting={submitting}
+                    onSent={() => setConfirmOpen(true)}
                   />
                 ))
               )}
             </VStack>
-            <Button
-              mt={3}
-              w="full"
-              colorPalette="teal"
-              loading={submitting}
-              disabled={!selectedMethod}
-              onClick={() => selectedMethod && selfReport(selectedMethod)}
-            >
-              <Check size={14} />
-              {selectedLabel
-                ? `I've sent the ${selectedLabel.toLowerCase()} payment`
-                : "Pick a method above first"}
-            </Button>
           </Box>
         )}
       </VStack>
+      {confirmOpen && selectedMethod && (
+        <SentConfirmModal
+          methodLabel={selectedLabel ?? selectedMethod}
+          amountDue={data.amountDue}
+          submitting={submitting}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            void selfReport(selectedMethod);
+          }}
+          onCancel={() => {
+            setConfirmOpen(false);
+            // Scroll the selected card's inline steps back into view so the
+            // client can re-read what they need to do outside this page.
+            selectedCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+        />
+      )}
       {/* Photo lightbox — same UX (overlay, swipe, arrow keys, close on
           backdrop) used by OccurrencePhotos elsewhere in the app. Mounts
           via portal so it overlays everything regardless of where the
@@ -588,6 +612,11 @@ function PaymentMethodCard({
   usedLastTime,
   selected,
   onSelect,
+  amountDue,
+  confirmButtonLabel,
+  cardRef,
+  submitting,
+  onSent,
 }: {
   config: ResolvedPaymentMethod;
   /** Business-flagged preferred method — shows the "Preferred" badge. */
@@ -596,18 +625,24 @@ function PaymentMethodCard({
   usedLastTime: boolean;
   selected: boolean;
   onSelect: () => void;
+  /** Invoice total — fed into the fallback step-1 copy when neither
+   *  `instructions` nor `deepLink` is configured on the method. */
+  amountDue: number;
+  /** Exact label of the in-card CTA shown when the card is selected. */
+  confirmButtonLabel: string;
+  /** Optional ref forwarded to the outer card so the parent can scroll it
+   *  back into view from the "Not yet — show me how" path. */
+  cardRef?: React.Ref<HTMLDivElement>;
+  /** Loading flag while the self-report request is in flight. */
+  submitting: boolean;
+  /** Fires when the client taps the "I've sent the …" button — opens the
+   *  parent's confirm modal. */
+  onSent: () => void;
 }) {
-  // Deep-link buttons typically use mobile-only schemes (e.g. venmo://). On
-  // desktop those open nothing, so we fall back to a hint to use the phone.
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    if (typeof navigator === "undefined") return;
-    setIsMobile(/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  }, []);
-
   return (
     <Card.Root
       variant="outline"
+      ref={cardRef}
       onClick={onSelect}
       cursor="pointer"
       borderColor={selected ? "teal.500" : usedLastTime ? "teal.300" : undefined}
@@ -632,44 +667,168 @@ function PaymentMethodCard({
             </HStack>
             <HStack gap={1}>
               {preferred && (
-                <Badge size="xs" colorPalette="green" variant="solid" px="2" borderRadius="full">
+                <Badge size="xs" colorPalette="green" variant="solid" px="2" py="0.5" borderRadius="full" fontSize="xs" lineHeight="1.2">
                   Preferred
                 </Badge>
               )}
               {usedLastTime && (
-                <Badge size="xs" colorPalette="teal" variant="subtle" px="2" borderRadius="full">
+                <Badge size="xs" colorPalette="teal" variant="subtle" px="2" py="0.5" borderRadius="full" fontSize="xs" lineHeight="1.2">
                   Used last time
                 </Badge>
               )}
             </HStack>
           </HStack>
 
-          {config.instructions && (
-            <Text fontSize="xs" color="fg.muted">{config.instructions}</Text>
+          {/* Instructions text — taxonomy-driven, always shown so the client
+              can compare methods before committing. Falls back to a generic
+              hint when the method has none configured. */}
+          <Text fontSize="xs" color="fg.muted">
+            {config.instructions ?? `Pay $${amountDue.toFixed(2)} via ${config.label}.`}
+          </Text>
+
+          {/* Deep-link button — always rendered when the method has one
+              configured. We used to gate on a UA sniff for mobile, but it
+              misfired on iPadOS desktop-mode Safari and devtools emulators,
+              hiding the button for clients who could actually use it. On a
+              real desktop browser tapping a venmo:// link is a no-op (or
+              the browser asks once); harmless. Better to always offer the
+              tap-through than gate it behind brittle device detection. */}
+          {config.deepLink && (
+            <Button
+              size="md"
+              variant={selected ? "solid" : "outline"}
+              colorPalette="teal"
+              w="full"
+              h="11"
+              fontSize="md"
+              fontWeight="bold"
+              boxShadow={selected ? "md" : undefined}
+              bg={selected ? "#F97316" : undefined}
+              color={selected ? "white" : undefined}
+              _hover={selected ? { bg: "#EA580C" } : undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!selected) onSelect();
+                window.location.href = config.deepLink!;
+              }}
+            >
+              <ExternalLink size={18} /> Open {config.label}
+            </Button>
           )}
 
-          {config.deepLink && (
-            isMobile ? (
-              <Button
-                size="xs"
-                variant="outline"
-                colorPalette="teal"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.location.href = config.deepLink!;
-                }}
-              >
-                <ExternalLink size={12} /> Open {config.label}
-              </Button>
-            ) : (
-              <Text fontSize="2xs" color="fg.muted">
-                Open {config.label} on your phone to send.
+          {/* Step-2 reminder — only when selected. The deep-link button +
+              instructions above ARE step 1; this callout pins down the
+              second step (return + confirm) that older clients miss. */}
+          {selected && (
+            <Box
+              mt={1}
+              p={2}
+              bg="white"
+              borderWidth="1px"
+              borderColor="teal.200"
+              borderRadius="md"
+            >
+              <Text fontSize="xs" fontWeight="bold" color="teal.700" mb={0.5}>
+                Don&apos;t forget — once you&apos;ve sent it:
               </Text>
-            )
+              <Text fontSize="xs" color="fg.default">
+                Come back here and tap the button below so we know to mark it received.
+              </Text>
+            </Box>
+          )}
+
+          {/* In-card confirm CTA — only on the selected card. Tapping opens
+              the parent's "Have you sent $X via {method}?" confirm modal. */}
+          {selected && (
+            <Button
+              mt={1}
+              w="full"
+              colorPalette="teal"
+              loading={submitting}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSent();
+              }}
+            >
+              <Check size={14} />
+              {confirmButtonLabel}
+            </Button>
           )}
         </VStack>
       </Card.Body>
     </Card.Root>
+  );
+}
+
+/**
+ * Two-stage confirm before submitting the self-report. Older clients tap
+ * the bottom CTA expecting it's part of "picking" the method; this gate
+ * forces them to confirm they actually sent money outside the page. "Not
+ * yet — show me how" scrolls the selected card back into view so they can
+ * re-read the steps.
+ */
+function SentConfirmModal({
+  methodLabel,
+  amountDue,
+  submitting,
+  onConfirm,
+  onCancel,
+}: {
+  methodLabel: string;
+  amountDue: number;
+  submitting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Box
+      position="fixed"
+      inset="0"
+      bg="blackAlpha.700"
+      zIndex={10000}
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
+      px={4}
+      onClick={onCancel}
+    >
+      <Box
+        bg="white"
+        borderRadius="lg"
+        maxW="sm"
+        w="full"
+        p={5}
+        boxShadow="2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <VStack align="stretch" gap={3}>
+          <Text fontSize="md" fontWeight="bold">
+            Have you sent ${amountDue.toFixed(2)} via {methodLabel}?
+          </Text>
+          <Text fontSize="xs" color="fg.muted">
+            Tapping a payment method on this page doesn&apos;t send the money — you have
+            to send it through {methodLabel} first, then come back here and confirm.
+          </Text>
+          <VStack align="stretch" gap={2} mt={1}>
+            <Button
+              colorPalette="teal"
+              loading={submitting}
+              onClick={onConfirm}
+            >
+              <Check size={14} /> Yes — mark it sent
+            </Button>
+            <Button
+              variant="outline"
+              colorPalette="gray"
+              onClick={onCancel}
+              disabled={submitting}
+            >
+              Not yet
+            </Button>
+          </VStack>
+        </VStack>
+      </Box>
+    </Box>
   );
 }
 
