@@ -97,10 +97,15 @@ export default function PropertyDialog({
     if (parts.length >= 3) {
       setStreet1(parts[0] ?? "");
       setCity(parts[1] ?? "");
-      const stateZip = (parts[2] ?? "").split(/\s+/);
-      setStateValue(stateZip[0] ?? "");
-      const zip = stateZip[stateZip.length - 1] ?? "";
-      if (/^\d{4,}/.test(zip)) setPostalCode(zip);
+      // The state-and-zip segment looks like "Texas 78701", "North Carolina
+      // 27514", or "NC". Pull off a trailing ZIP (5 digits or 5+4) and treat
+      // everything before it as the state — naive whitespace-split treats
+      // multi-word state names like "North Carolina" as "North" only.
+      const stateZip = (parts[2] ?? "").trim();
+      const zipMatch = stateZip.match(/\s*(\d{5}(?:-\d{4})?)\s*$/);
+      const stateStr = zipMatch ? stateZip.slice(0, zipMatch.index).trim() : stateZip;
+      setStateValue(stateStr);
+      if (zipMatch) setPostalCode(zipMatch[1]);
       if (parts[3]) setCountry(parts[3]);
     } else if (parts.length === 2) {
       setStreet1(parts[0] ?? "");

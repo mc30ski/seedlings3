@@ -1183,7 +1183,15 @@ export const jobs: ServicesJobs = {
           JobOccurrenceStatus.CLOSED,
           JobOccurrenceStatus.PROPOSAL_SUBMITTED,
         ]);
-        if (downstream.has(original.status)) {
+        // Also treat SCHEDULED-with-stale-time as "needs cleanup": some
+        // historical rows have status=SCHEDULED but lingering startedAt/
+        // completedAt because the admin reset via a status-only flip
+        // before the symmetric auto-clear branch existed. Clicking Reset
+        // Job on such a row should null out the whole run-time block.
+        const staleScheduled =
+          original.status === JobOccurrenceStatus.SCHEDULED &&
+          (original.startedAt != null || original.completedAt != null);
+        if (downstream.has(original.status) || staleScheduled) {
           data.status = JobOccurrenceStatus.SCHEDULED;
           // A job that "was never started" can't have any of these.
           data.completedAt = null;
@@ -1193,6 +1201,8 @@ export const jobs: ServicesJobs = {
           data.startLng = null;
           data.completeLat = null;
           data.completeLng = null;
+          data.hoursApprovedAt = null;
+          data.hoursApprovedById = null;
           data.lastPaymentRejectionReason = null;
           data.lastPaymentRejectedAt = null;
           data.lastPaymentRevertReason = null;
@@ -1211,6 +1221,40 @@ export const jobs: ServicesJobs = {
           data.status = JobOccurrenceStatus.IN_PROGRESS;
           data.completeLat = null;
           data.completeLng = null;
+          data.lastPaymentRejectionReason = null;
+          data.lastPaymentRejectedAt = null;
+          data.lastPaymentRevertReason = null;
+          data.lastPaymentRevertedAt = null;
+        }
+      }
+
+      // Symmetric to the auto-clear above: if the caller explicitly sets
+      // status back to SCHEDULED from any "started"/"completed" state, the
+      // occurrence semantically "never happened" — so clear all run-time
+      // artifacts (timestamps, GPS, hours-approval, payment rejection
+      // metadata). Without this, admins who reset via a status edit are
+      // left with an internally inconsistent row (SCHEDULED + startedAt
+      // populated). Patch wins over auto-clear: any explicit values the
+      // caller sent in `data` for the same fields stay as-is.
+      if (callerSetStatus && patch.status === JobOccurrenceStatus.SCHEDULED) {
+        const startedStatuses = new Set<string>([
+          JobOccurrenceStatus.IN_PROGRESS,
+          JobOccurrenceStatus.PAUSED,
+          JobOccurrenceStatus.PENDING_PAYMENT,
+          JobOccurrenceStatus.CLOSED,
+          JobOccurrenceStatus.PROPOSAL_SUBMITTED,
+        ]);
+        if (startedStatuses.has(original.status)) {
+          if (!("startedAt" in patch)) data.startedAt = null;
+          if (!("completedAt" in patch)) data.completedAt = null;
+          if (!("totalPausedMs" in patch)) data.totalPausedMs = 0;
+          data.pausedAt = null;
+          data.startLat = null;
+          data.startLng = null;
+          data.completeLat = null;
+          data.completeLng = null;
+          data.hoursApprovedAt = null;
+          data.hoursApprovedById = null;
           data.lastPaymentRejectionReason = null;
           data.lastPaymentRejectedAt = null;
           data.lastPaymentRevertReason = null;

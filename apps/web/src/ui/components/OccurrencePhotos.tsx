@@ -18,6 +18,7 @@ import { apiGet, apiPost, apiDelete } from "@/src/lib/api";
 import { type OccurrencePhoto } from "@/src/lib/types";
 import { fmtDateTime } from "@/src/lib/lib";
 import { compressOnly } from "@/src/lib/imageRedact";
+import { useFileUpload } from "@/src/lib/useFileUpload";
 import PhotoUploadDialog from "@/src/ui/components/PhotoUploadDialog";
 import {
   publishInlineMessage,
@@ -36,40 +37,6 @@ type Props = {
   photoCount?: number;
 };
 
-
-/**
- * Persistent file input that lives at document.body level.
- * Prevents unmounting when a parent card collapses.
- */
-function useFileUpload(onFiles: (files: FileList) => void) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.multiple = true;
-    input.style.display = "none";
-    input.addEventListener("change", () => {
-      if (input.files && input.files.length > 0) {
-        onFiles(input.files);
-      }
-      input.value = "";
-    });
-    document.body.appendChild(input);
-    inputRef.current = input;
-    return () => {
-      document.body.removeChild(input);
-      inputRef.current = null;
-    };
-  }, [onFiles]);
-
-  const openPicker = useCallback(() => {
-    inputRef.current?.click();
-  }, []);
-
-  return openPicker;
-}
 
 export default function OccurrencePhotos({ occurrenceId, isAdmin, canUpload, photoCount }: Props) {
   const { isOffline } = useOffline();

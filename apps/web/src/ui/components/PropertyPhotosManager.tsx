@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Box, Button, HStack, Input, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
+import { useCallback, useEffect, useState } from "react";
+import { Box, Button, HStack, Spinner, Text, Textarea, VStack } from "@chakra-ui/react";
 import { Camera, ChevronDown, ChevronUp, Pencil, Trash2, Upload } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { compressOnly } from "@/src/lib/imageRedact";
+import { useFileUpload } from "@/src/lib/useFileUpload";
+import PhotoUploadDialog from "@/src/ui/components/PhotoUploadDialog";
 
 type PropertyPhoto = {
   id: string;
@@ -44,8 +46,10 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
     void load();
   }, [propertyId]);
 
-  async function uploadOne(file: File) {
-    // Compress without redacting (property photos need visible text/numbers)
+  // Single-file upload — compress, get a signed R2 URL, PUT, then confirm
+  // the row on the API. Throws on failure so PhotoUploadDialog can mark the
+  // tile failed and offer retry.
+  const uploadOneFile = useCallback(async (file: File) => {
     const compressed = await compressOnly(file);
     const contentType = "image/jpeg";
     const { uploadUrl, key } = await apiPost<{ uploadUrl: string; key: string }>(
@@ -53,36 +57,47 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
       { fileName: file.name, contentType },
     );
     const uploadRes = await fetch(uploadUrl, { method: "PUT", body: compressed, headers: { "Content-Type": contentType } });
-    if (!uploadRes.ok) throw new Error(`R2 upload failed: ${uploadRes.status}`);
+    if (!uploadRes.ok) {
+      throw new Error(`R2 upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+    }
     await apiPost(`/api/admin/properties/${propertyId}/photos/confirm`, {
       key, fileName: file.name, contentType,
     });
-  }
+  }, [propertyId]);
 
-  async function handleUpload(files: File[]) {
+  // Batch upload — the picker hands FileList off to PhotoUploadDialog which
+  // shows per-tile progress (pending → uploading → uploaded / failed) and
+  // lets the user retry or drop individual files. Mirrors OccurrencePhotos.
+  const [batchFiles, setBatchFiles] = useState<File[] | null>(null);
+
+  const handleFiles = useCallback((files: FileList) => {
     if (files.length === 0) return;
     setUploading(true);
-    let ok = 0;
-    const failed: string[] = [];
-    for (const file of files) {
-      try {
-        await uploadOne(file);
-        ok++;
-      } catch (err) {
-        console.error("[PropertyPhotos] Upload error:", err);
-        failed.push(file.name);
-      }
-    }
-    if (ok > 0) await load();
-    if (failed.length === 0) {
-      publishInlineMessage({ type: "SUCCESS", text: ok === 1 ? "Photo uploaded." : `${ok} photos uploaded.` });
-    } else if (ok > 0) {
-      publishInlineMessage({ type: "ERROR", text: `${ok} uploaded, ${failed.length} failed: ${failed.join(", ")}` });
-    } else {
-      publishInlineMessage({ type: "ERROR", text: "Upload failed." });
-    }
+    setBatchFiles(Array.from(files));
+  }, []);
+
+  const handleBatchClose = useCallback(async (summary: { uploaded: number; failed: number; canceled: number }) => {
+    setBatchFiles(null);
     setUploading(false);
-  }
+    const { uploaded, failed, canceled } = summary;
+    if (uploaded > 0) await load();
+    const tail = [
+      failed ? `${failed} failed` : null,
+      canceled ? `${canceled} canceled` : null,
+    ].filter(Boolean).join(", ");
+    if (uploaded > 0) {
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `${uploaded} photo${uploaded === 1 ? "" : "s"} uploaded${tail ? ` (${tail})` : ""}.`,
+      });
+    } else if (failed > 0) {
+      publishInlineMessage({ type: "ERROR", text: `Upload failed for ${failed} photo${failed === 1 ? "" : "s"}.` });
+    } else if (canceled > 0) {
+      publishInlineMessage({ type: "INFO", text: "Upload canceled." });
+    }
+  }, []);
+
+  const openPicker = useFileUpload(handleFiles);
 
   async function handleDelete(photoId: string) {
     try {
@@ -128,15 +143,7 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
               loading={uploading}
               onClick={(e) => {
                 e.stopPropagation();
-                const input = document.createElement("input");
-                input.type = "file";
-                input.accept = "image/*";
-                input.multiple = true;
-                input.onchange = () => {
-                  const files = input.files ? Array.from(input.files) : [];
-                  if (files.length) void handleUpload(files);
-                };
-                input.click();
+                openPicker();
               }}
             >
               <Upload size={12} /> Upload
@@ -280,6 +287,12 @@ export default function PropertyPhotosManager({ propertyId, readOnly }: Props) {
           </Box>
         );
       })()}
+
+      <PhotoUploadDialog
+        files={batchFiles}
+        onUpload={uploadOneFile}
+        onClose={handleBatchClose}
+      />
     </Box>
   );
 }

@@ -5420,6 +5420,41 @@ Respond ONLY with valid JSON in this exact format:
   // QB bundle — income + expenses + equity + fixed assets in one zip so the
   // operator can hand one file to QuickBooks Import. Blocked by the same
   // unmapped check qb-expenses.csv uses (the zip would include those rows).
+  // Gusto bundle — W-2 + Contractors in one zip so the operator can grab
+  // a single file each pay period. No "unmapped" check (the Gusto CSVs
+  // don't go through the QB chart-of-accounts mapping path) — just zips
+  // whatever the two CSV builders produce for the date range.
+  app.get("/admin/exports/gusto-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
+    const { start, end } = readDateRange(req);
+    const startStr = String(req.query.start);
+    const endStr = String(req.query.end);
+    const [w2, contractors] = await Promise.all([
+      gustoW2Csv(start, end),
+      gustoContractorsCsv(start, end),
+    ]);
+    const zip = new JSZip();
+    zip.file(`gusto-w2-${startStr}_${endStr}.csv`, w2.csv);
+    zip.file(`gusto-contractors-${startStr}_${endStr}.csv`, contractors.csv);
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    const fn = `gusto-bundle-${startStr}_${endStr}.zip`;
+    await prisma.exportRun.create({
+      data: {
+        createdById: await currentUserId(req),
+        kind: "GUSTO_BUNDLE",
+        rangeStart: start,
+        rangeEnd: end,
+        rowCount: w2.rowCount + contractors.rowCount,
+        totalAmount: w2.total + contractors.total,
+        fileName: fn,
+        contentType: "application/zip",
+        bytes,
+      },
+    });
+    reply.header("Content-Type", "application/zip");
+    reply.header("Content-Disposition", `attachment; filename="${fn}"`);
+    return reply.send(bytes);
+  });
+
   app.get("/admin/exports/qb-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
     await assertNoUnmappedExpenseRows(start, end);
@@ -5488,5 +5523,19 @@ Respond ONLY with valid JSON in this exact format:
     reply.header("Content-Type", row.contentType);
     reply.header("Content-Disposition", `attachment; filename="${row.fileName}"`);
     return reply.send(Buffer.from(row.bytes));
+  });
+
+  // Permanently delete an export history entry. Super-only; the UI gates
+  // behind a double-confirm dialog so accidental clicks can't blow away the
+  // snapshot. The underlying tax/payroll data is unaffected — only the
+  // previously-downloaded file bytes + metadata go away. No audit log entry
+  // (no EXPORT AuditScope exists yet); if export-deletion forensics become
+  // important, add the scope + a writeAudit call here.
+  app.delete("/admin/exports/history/:id", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const row = await prisma.exportRun.findUnique({ where: { id }, select: { id: true } });
+    if (!row) throw app.httpErrors.notFound("Export run not found.");
+    await prisma.exportRun.delete({ where: { id } });
+    return { ok: true };
   });
 }

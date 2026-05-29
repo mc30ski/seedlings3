@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Card, HStack, Heading, Input, Spinner, Text, VStack } from "@chakra-ui/react";
-import { FiDownload } from "react-icons/fi";
-import { apiGet, apiDownload } from "@/src/lib/api";
+import { FiDownload, FiTrash2 } from "react-icons/fi";
+import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
+import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 
 type Cadence = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
 
@@ -53,6 +54,7 @@ type HistoryRow = {
   kind:
     | "GUSTO_W2"
     | "GUSTO_CONTRACTORS"
+    | "GUSTO_BUNDLE"
     | "QB_INCOME"
     | "QB_EXPENSES"
     | "QB_EQUITY"
@@ -70,6 +72,7 @@ type HistoryRow = {
 const KIND_LABELS: Record<HistoryRow["kind"], string> = {
   GUSTO_W2: "Gusto W-2",
   GUSTO_CONTRACTORS: "Gusto 1099",
+  GUSTO_BUNDLE: "Gusto Bundle (zip)",
   QB_INCOME: "QB Income",
   QB_EXPENSES: "QB Expenses",
   QB_EQUITY: "QB Equity",
@@ -145,8 +148,24 @@ export default function ExportsTab() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [showUnmappedDetails, setShowUnmappedDetails] = useState(false);
+  const [showQbHelp, setShowQbHelp] = useState(false);
+  const [showGustoHelp, setShowGustoHelp] = useState(false);
+  const [showCadenceHelp, setShowCadenceHelp] = useState(false);
+  // Hide individual-file download buttons behind a toggle so the bundles
+  // (recommended) are the prominent action. Operators who want one specific
+  // file can still get to it without leaving the tab.
+  const [showGustoIndividual, setShowGustoIndividual] = useState(false);
+  const [showQbIndividual, setShowQbIndividual] = useState(false);
   const [history, setHistory] = useState<HistoryRow[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Two-stage delete flow. Stage 1 asks "Delete this entry?"; stage 2 asks
+  // "Are you absolutely sure?" with a stronger warning. The user has to
+  // confirm both to actually fire the DELETE request — accidental taps die
+  // at stage 1, and stage 2 makes the destructive nature of the action
+  // unmissable. `deletingId` powers the per-row button loading state.
+  const [deleteTarget, setDeleteTarget] = useState<HistoryRow | null>(null);
+  const [deleteStage, setDeleteStage] = useState<1 | 2>(1);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -236,6 +255,30 @@ export default function ExportsTab() {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage(`${label} download failed.`, err) });
     } finally {
       setBusyKey(null);
+    }
+  }
+
+  function openDelete(row: HistoryRow) {
+    setDeleteTarget(row);
+    setDeleteStage(1);
+  }
+  function closeDelete() {
+    setDeleteTarget(null);
+    setDeleteStage(1);
+  }
+  async function performDelete() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
+    setDeletingId(id);
+    closeDelete();
+    try {
+      await apiDelete(`/api/admin/exports/history/${id}`);
+      publishInlineMessage({ type: "SUCCESS", text: "Export history entry deleted." });
+      await refreshHistory();
+    } catch (err) {
+      publishInlineMessage({ type: "ERROR", text: getErrorMessage("Delete failed.", err) });
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -454,9 +497,316 @@ export default function ExportsTab() {
 
       <Card.Root>
         <Card.Body>
-          <Text fontSize="sm" fontWeight="medium" mb={2}>
-            Gusto
-          </Text>
+          <HStack justify="space-between" mb={2} wrap="wrap" gap={2}>
+            <Text fontSize="sm" fontWeight="medium">Gusto</Text>
+            <HStack gap={2} wrap="wrap">
+              {/* Cadence info — separate from the per-file explainer because
+                  it's workflow/timing, not file content. Opening one info
+                  panel closes the other so only one is visible at a time. */}
+              <Box
+                as="button"
+                onClick={() => {
+                  setShowCadenceHelp((v) => !v);
+                  setShowGustoHelp(false);
+                }}
+                display="inline-flex"
+                alignItems="center"
+                gap={1.5}
+                px={2.5}
+                py={1}
+                bg="blue.50"
+                color="blue.700"
+                borderWidth="1px"
+                borderColor="blue.300"
+                borderRadius="full"
+                fontSize="xs"
+                fontWeight="medium"
+                cursor="pointer"
+                _hover={{ bg: "blue.100", borderColor: "blue.400" }}
+                aria-expanded={showCadenceHelp}
+              >
+                <Box
+                  as="span"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="14px"
+                  h="14px"
+                  borderRadius="full"
+                  bg="blue.500"
+                  color="white"
+                  fontSize="2xs"
+                  fontWeight="bold"
+                  lineHeight="1"
+                >
+                  i
+                </Box>
+                Pay cadence {showCadenceHelp ? "↑" : "↓"}
+              </Box>
+              {/* Blue pill info indicator — same pattern as the QuickBooks
+                  "Explain these files" affordance above so the operator
+                  learns both surfaces the same way. Mutually exclusive with
+                  the cadence panel so only one is open at a time. */}
+              <Box
+                as="button"
+                onClick={() => {
+                  setShowGustoHelp((v) => !v);
+                  setShowCadenceHelp(false);
+                }}
+                display="inline-flex"
+                alignItems="center"
+                gap={1.5}
+                px={2.5}
+                py={1}
+                bg="blue.50"
+                color="blue.700"
+                borderWidth="1px"
+                borderColor="blue.300"
+                borderRadius="full"
+                fontSize="xs"
+                fontWeight="medium"
+                cursor="pointer"
+                _hover={{ bg: "blue.100", borderColor: "blue.400" }}
+                aria-expanded={showGustoHelp}
+              >
+                <Box
+                  as="span"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="14px"
+                  h="14px"
+                  borderRadius="full"
+                  bg="blue.500"
+                  color="white"
+                  fontSize="2xs"
+                  fontWeight="bold"
+                  lineHeight="1"
+                >
+                  i
+                </Box>
+                Explain these files {showGustoHelp ? "↑" : "↓"}
+              </Box>
+            </HStack>
+          </HStack>
+          {showCadenceHelp && (
+            <Box
+              mb={3}
+              p={3}
+              bg="blue.50"
+              borderWidth="1px"
+              borderColor="blue.300"
+              borderLeftWidth="4px"
+              borderLeftColor="blue.500"
+              rounded="md"
+            >
+              <VStack align="stretch" gap={3} fontSize="sm" color="blue.900">
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Pay period cadence — weekly (recommended)</Text>
+                  <Text>
+                    Weekly pay periods are the natural fit for Seedlings:
+                  </Text>
+                  <Text as="ul" pl={4} mt={1}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Matches job rhythm</Text> — most recurring clients are weekly, so workers get paid for the jobs they just finished rather than work from two weeks ago.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Cash flow + retention</Text> — every-week deposits read as a real paycheck; better for worker budgeting and stickiness.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Clean 7-day windows</Text> — easy reconciliation: jobs → payments → CSV → Gusto, no overlap with prior periods.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Piece-rate-friendly</Text> — pay varies by jobs completed; weekly keeps payouts predictable and small instead of large biweekly lumps.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>The weekly rhythm</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mon–Sun</Text>: workers complete jobs; the app tracks earnings.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mon morning</Text>: download <code>gusto-w2.csv</code> and <code>gusto-contractors.csv</code> from the date range above (defaults to last week).
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mon</Text>: in Gusto, submit the W-2 payroll run first (after the min-wage check), then the contractor payment run.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Wed</Text>: Gusto direct deposits land in worker accounts (typical 2-business-day lag).
+                    </Text>
+                    <Text as="li">Next Mon: repeat.</Text>
+                  </Text>
+                </Box>
+
+                <Text fontSize="xs" color="blue.800">
+                  The default date range on this tab follows the
+                  {" "}<Text as="span" fontWeight="semibold">PAYROLL_PERIOD_CADENCE</Text> setting
+                  (currently <Text as="span" fontWeight="semibold">{cadence.toLowerCase()}</Text>).
+                  Change it in Settings → Payments &amp; Payouts to switch the
+                  default preset (weekly / biweekly / monthly).
+                </Text>
+              </VStack>
+            </Box>
+          )}
+          {showGustoHelp && (
+            <Box
+              mb={3}
+              p={3}
+              bg="blue.50"
+              borderWidth="1px"
+              borderColor="blue.300"
+              borderLeftWidth="4px"
+              borderLeftColor="blue.500"
+              rounded="md"
+            >
+              <VStack align="stretch" gap={3} fontSize="sm" color="blue.900">
+                <Text>
+                  The app calculates each worker's pay-period totals; you
+                  transcribe the dollar amounts into a Gusto payroll run.
+                  Gusto handles withholding, direct deposit, year-end forms,
+                  and QuickBooks sync. No API integration yet — manual paste
+                  per pay period.
+                </Text>
+
+                {/* Clean-rule callout — boundary between what the app
+                    computes vs what Gusto does on top. Mirrors the QB
+                    callout's visual treatment so the two are scannable. */}
+                <Box
+                  bg="white"
+                  borderWidth="1px"
+                  borderColor="blue.300"
+                  borderLeftWidth="4px"
+                  borderLeftColor="green.500"
+                  rounded="md"
+                  p={2.5}
+                >
+                  <Text fontWeight="semibold" mb={1}>The clean rule</Text>
+                  <Text as="ul" pl={4} gap={0.5}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">App</Text> calculates dollar amounts and hours.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Gusto</Text> pays workers, withholds taxes (W-2 only), files forms, and posts the expense to QuickBooks.
+                    </Text>
+                  </Text>
+                </Box>
+
+                {/* Piece-rate explainer — the dollar amounts in both CSVs
+                    aren't hourly; they're per-job. This block exposes the
+                    formula so the operator can sanity-check any row. */}
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>How the dollar amounts are calculated (piece-rate)</Text>
+                  <Text>
+                    Workers are paid <Text as="span" fontWeight="semibold">per job</Text>, not per
+                    hour. For each job: <Text as="span" fontWeight="semibold">net = (price + add-ons) − expenses</Text>.
+                    The business takes a percentage off that net and the rest is the worker's payout.
+                    The percentage is configured in
+                    {" "}<Text as="span" fontWeight="semibold">Settings → Payments &amp; Payouts</Text>:
+                  </Text>
+                  <Text as="ul" pl={4} mt={1}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">W-2 employee / trainee</Text> —
+                      {" "}<Text as="span" fontWeight="semibold">payout = net × (1 − EMPLOYEE_BUSINESS_MARGIN_PERCENT / 100)</Text>.
+                      Default: 30% margin → worker gets 70%. The 30% covers business overhead
+                      (insurance, equipment depreciation, admin time).
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">1099 contractor</Text> —
+                      {" "}<Text as="span" fontWeight="semibold">payout = net × (1 − CONTRACTOR_PLATFORM_FEE_PERCENT / 100)</Text>.
+                      Default: 20% platform fee → contractor keeps 80%.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Multi-worker jobs</Text> — the per-job
+                      payout is split across the non-observer assignees. Default is even split; the
+                      claimer or an admin can override per-worker percentages at completion.
+                    </Text>
+                  </Text>
+                  <Text fontSize="xs" mt={1.5} color="blue.800">
+                    Hours Worked is tracked separately and used only for the minimum-wage compliance
+                    check on the W-2 file. The piece-rate formula itself never uses hours.
+                  </Text>
+                </Box>
+
+                {/* Per-file breakdown */}
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>1. gusto-w2.csv — employees + trainees</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">
+                      Key fields: <Text as="span" fontWeight="semibold">Gross Pay</Text> (pre-tax) and
+                      {" "}<Text as="span" fontWeight="semibold">Hours Worked</Text>.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">In Gusto:</Text> start a payroll run, enter each row's Gross Pay against the matching worker (email-matched).
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Min-wage check before submitting:</Text>
+                      {" "}Gross Pay ÷ Hours Worked must be ≥ <Text as="span" fontWeight="semibold">$7.25</Text> federal floor.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Gusto auto-handles:</Text> federal + NC state withholding, employee FICA (7.65%), employer FICA match, direct deposit, W-2 generation, QB sync.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>2. gusto-contractors.csv — 1099 contractors</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">
+                      Key field: <Text as="span" fontWeight="semibold">Total Paid</Text> (already net of the configured platform fee).
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">In Gusto:</Text> create a contractor payment run, enter each row's Total Paid against the matching contractor.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Gusto auto-handles:</Text> direct deposit, 1099-NEC at year-end for any contractor paid ≥ $600, QB sync.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Gusto does NOT:</Text> withhold taxes — contractors handle their own income tax + self-employment tax.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Each pay period (default weekly)</Text>
+                  <Text>
+                    Pick the range above → download both CSVs → in Gusto, run W-2 payroll first
+                    (verify min wage), then the contractor payment run. Gusto handles deposits,
+                    filings, and the QB sync from there.
+                  </Text>
+                </Box>
+
+                {/* Bottom-line summary table — W-2 vs Contractor at a glance.
+                    Same compact-grid pattern as the QB summary above. */}
+                <Box borderWidth="1px" borderColor="blue.200" rounded="md" overflow="hidden" bg="white">
+                  <HStack gap={0} bg="blue.100" px={2} py={1} fontSize="xs" fontWeight="semibold" color="blue.900">
+                    <Text flex="1.2">File</Text>
+                    <Text flex="1.4">Pay field</Text>
+                    <Text flex="1.4">Tax withholding</Text>
+                    <Text flex="1.2">Year-end form</Text>
+                  </HStack>
+                  {[
+                    { file: "gusto-w2.csv", field: "Gross Pay (pre-tax)", withholding: "Yes — Gusto handles", form: "W-2" },
+                    { file: "gusto-contractors.csv", field: "Total Paid (post-fee)", withholding: "No — contractor's job", form: "1099-NEC if ≥ $600" },
+                  ].map((row) => (
+                    <HStack key={row.file} gap={0} px={2} py={1.5} fontSize="xs" borderTopWidth="1px" borderColor="blue.100">
+                      <Text flex="1.2" fontWeight="medium" color="blue.900">{row.file}</Text>
+                      <Text flex="1.4" color="blue.800">{row.field}</Text>
+                      <Text flex="1.4" color="blue.800">{row.withholding}</Text>
+                      <Text flex="1.2" color="blue.800">{row.form}</Text>
+                    </HStack>
+                  ))}
+                </Box>
+
+                <Text fontSize="xs" color="blue.800">
+                  Worker email in each CSV must match the email on file in Gusto exactly — that's
+                  the field Gusto matches on when you transcribe.
+                </Text>
+              </VStack>
+            </Box>
+          )}
           {/* Pre-download warning: occurrences in the selected range whose
               hours haven't been admin-approved are excluded from the W-2
               export. The banner only renders when there's something to flag;
@@ -492,33 +842,251 @@ export default function ExportsTab() {
             </Box>
           )}
           <VStack align="stretch" gap={2}>
+            {/* Bundle = recommended path. Solid button + tooltip steers
+                operators to grab both Gusto CSVs in one click each pay
+                period instead of two separate downloads. */}
             <Button
-              variant="outline"
+              variant="solid"
               colorPalette="blue"
               size="sm"
-              loading={busyKey === "gusto-w2"}
-              onClick={() => download("gusto-w2", "Gusto W-2 CSV")}
+              loading={busyKey === "gusto-bundle"}
+              onClick={() => download("gusto-bundle", "Gusto Bundle (zip)", "zip")}
+              title="W-2 + Contractors CSVs in a single zip"
             >
-              <FiDownload /> Download W-2 CSV
+              <FiDownload /> Download Gusto Bundle (zip)
             </Button>
+            {/* Individual file downloads — hidden by default. Power users
+                can expand if they need to grab just one file. */}
             <Button
-              variant="outline"
-              colorPalette="blue"
-              size="sm"
-              loading={busyKey === "gusto-contractors"}
-              onClick={() => download("gusto-contractors", "Gusto Contractors CSV")}
+              size="xs"
+              variant="ghost"
+              alignSelf="start"
+              onClick={() => setShowGustoIndividual((v) => !v)}
             >
-              <FiDownload /> Download Contractors CSV
+              {showGustoIndividual ? "Hide individual files ↑" : "Show individual files ↓"}
             </Button>
+            {showGustoIndividual && (
+              <VStack align="stretch" gap={2}>
+                <Button
+                  variant="outline"
+                  colorPalette="blue"
+                  size="sm"
+                  loading={busyKey === "gusto-w2"}
+                  onClick={() => download("gusto-w2", "Gusto W-2 CSV")}
+                >
+                  <FiDownload /> Download W-2 CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  colorPalette="blue"
+                  size="sm"
+                  loading={busyKey === "gusto-contractors"}
+                  onClick={() => download("gusto-contractors", "Gusto Contractors CSV")}
+                >
+                  <FiDownload /> Download Contractors CSV
+                </Button>
+              </VStack>
+            )}
           </VStack>
         </Card.Body>
       </Card.Root>
 
       <Card.Root>
         <Card.Body>
-          <Text fontSize="sm" fontWeight="medium" mb={2}>
-            QuickBooks
-          </Text>
+          <HStack justify="space-between" mb={2}>
+            <Text fontSize="sm" fontWeight="medium">QuickBooks</Text>
+            {/* Blue pill-style info indicator — matches the lightweight
+                "informational" affordance pattern (rounded full, blue tint,
+                ⓘ icon-like dot) used elsewhere for collapsible explainers. */}
+            <Box
+              as="button"
+              onClick={() => setShowQbHelp((v) => !v)}
+              display="inline-flex"
+              alignItems="center"
+              gap={1.5}
+              px={2.5}
+              py={1}
+              bg="blue.50"
+              color="blue.700"
+              borderWidth="1px"
+              borderColor="blue.300"
+              borderRadius="full"
+              fontSize="xs"
+              fontWeight="medium"
+              cursor="pointer"
+              _hover={{ bg: "blue.100", borderColor: "blue.400" }}
+              aria-expanded={showQbHelp}
+            >
+              <Box
+                as="span"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="14px"
+                h="14px"
+                borderRadius="full"
+                bg="blue.500"
+                color="white"
+                fontSize="2xs"
+                fontWeight="bold"
+                lineHeight="1"
+              >
+                i
+              </Box>
+              Explain these files {showQbHelp ? "↑" : "↓"}
+            </Box>
+          </HStack>
+          {showQbHelp && (
+            <Box
+              mb={3}
+              p={3}
+              bg="blue.50"
+              borderWidth="1px"
+              borderColor="blue.300"
+              borderLeftWidth="4px"
+              borderLeftColor="blue.500"
+              rounded="md"
+            >
+              <VStack align="stretch" gap={3} fontSize="sm" color="blue.900">
+                <Text>
+                  QuickBooks imports each transaction type through a different
+                  channel, so they have to ship as separate files. Each file
+                  also has a different level of mapping complexity — only
+                  Expenses needs configurable account names.
+                </Text>
+
+                {/* Worker-payments callout — clarifies the Gusto vs CSV
+                    boundary, which is the most common point of confusion
+                    when reading this panel. */}
+                <Box
+                  bg="white"
+                  borderWidth="1px"
+                  borderColor="blue.300"
+                  borderLeftWidth="4px"
+                  borderLeftColor="green.500"
+                  rounded="md"
+                  p={2.5}
+                >
+                  <Text fontWeight="semibold" mb={1}>The clean rule for worker pay vs. job expenses</Text>
+                  <Text as="ul" pl={4} gap={0.5}>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Worker payments of any kind</Text> (W-2 employee wages AND 1099 contractor payouts) flow
+                      {" "}<Text as="span" fontWeight="semibold">through Gusto → QuickBooks</Text> directly. Gusto's QB integration posts them on its own.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Everything else job-related</Text> (materials, processor fees, business overhead, asset purchases, etc.) flows
+                      {" "}<Text as="span" fontWeight="semibold">through this app's CSV → QuickBooks</Text> via the files below.
+                    </Text>
+                  </Text>
+                  <Text fontSize="xs" mt={1.5} color="blue.800">
+                    Note: the app's current Expenses CSV does emit one
+                    {" "}<i>Contract Labor</i> row per contractor PaymentSplit (from earlier Phase 2 work),
+                    and the EXPENSE_CATEGORIES taxonomy maps it to QB's
+                    Contract Labor account. If Gusto is also syncing those contractor payments to QB,
+                    skip the Contract Labor rows on import to avoid double-counting — or remove the
+                    Contract Labor mapping from EXPENSE_CATEGORIES so they land as <i>Unmapped</i> for
+                    a manual decision per row.
+                  </Text>
+                </Box>
+
+                {/* Per-file breakdown: what it is + how rows map to QB
+                    accounts. The "mapping" line is the part that drove the
+                    EXPENSE_CATEGORIES settings UI. */}
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>1. Income — client payments</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">Imports into QuickBooks as Sales/Income.</Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mapping: hardcoded.</Text>
+                      {" "}Only 1–2 accounts ever — Services and Equipment Rental Income.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>2. Expenses — job materials, processor fees, business overhead</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">Imports into QuickBooks as Expense transactions.</Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">What's in it:</Text>
+                      {" "}job materials (mulch, supplies), processor fees (Venmo, Stripe, etc.),
+                      business overhead (software, subscriptions, insurance, etc.), equipment rental charges.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">What's NOT in it:</Text>
+                      {" "}W-2 employee wages and (by design) 1099 contractor payouts —
+                      both are Gusto's job. See the green-bar callout above for the Contract Labor edge case.
+                    </Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mapping: configurable</Text> via
+                      {" "}<Text as="span" fontWeight="semibold">Settings → EXPENSE_CATEGORIES</Text>.
+                      Many categories, each maps to a different QB account name
+                      (Supplies, Vehicle Maintenance & Repairs, Software & Subscriptions, etc.).
+                      Account names vary by QB setup, and operators can add new
+                      categories any time — that's why this file gets the
+                      dedicated settings screen.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>3. Equity — owner draws and contributions</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">Imports into QuickBooks as Journal Entries (balance sheet, not P&L).</Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mapping: hardcoded.</Text>
+                      {" "}Exactly 2 accounts — Owner Draws and Owner Investments.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>4. Fixed Assets — equipment ≥ the capitalization threshold</Text>
+                  <Text as="ul" pl={4}>
+                    <Text as="li">Imports via the Fixed Asset manager. Depreciated over the asset's life — not expensed immediately.</Text>
+                    <Text as="li">
+                      <Text as="span" fontWeight="semibold">Mapping: hardcoded.</Text>
+                      {" "}Equipment purchases above the threshold are auto-flagged as Fixed Assets — single account type.
+                    </Text>
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Text fontWeight="semibold" mb={1}>Import order in QuickBooks</Text>
+                  <Text>Income → Expenses → Equity → Fixed Assets.</Text>
+                </Box>
+
+                {/* Compact summary table — mirrors the "bottom line" view of
+                    why only Expenses needs the configurable mapping screen.
+                    Plain Box grid keeps it readable on narrow viewports
+                    without pulling in a real Table component. */}
+                <Box borderWidth="1px" borderColor="blue.200" rounded="md" overflow="hidden" bg="white">
+                  <HStack gap={0} bg="blue.100" px={2} py={1} fontSize="xs" fontWeight="semibold" color="blue.900">
+                    <Text flex="1">File</Text>
+                    <Text flex="1.2">Mapping</Text>
+                    <Text flex="2">Why</Text>
+                  </HStack>
+                  {[
+                    { file: "Income", mapping: "Hardcoded", why: "Simple — 1–2 accounts only" },
+                    { file: "Expenses", mapping: "Configurable settings", why: "Complex — many categories" },
+                    { file: "Equity", mapping: "Hardcoded", why: "Simple — 2 accounts only" },
+                    { file: "Assets", mapping: "Hardcoded", why: "Simple — fixed asset type" },
+                  ].map((row) => (
+                    <HStack key={row.file} gap={0} px={2} py={1.5} fontSize="xs" borderTopWidth="1px" borderColor="blue.100">
+                      <Text flex="1" fontWeight="medium" color="blue.900">{row.file}</Text>
+                      <Text flex="1.2" color="blue.800">{row.mapping}</Text>
+                      <Text flex="2" color="blue.800">{row.why}</Text>
+                    </HStack>
+                  ))}
+                </Box>
+
+                <Text fontSize="xs" color="blue.800">
+                  Use <Text as="span" fontWeight="semibold">Download QB Bundle (zip)</Text> below
+                  to grab all four at once for the selected date range.
+                </Text>
+              </VStack>
+            </Box>
+          )}
           {qbBlocked && (
             <Box
               mb={3}
@@ -574,6 +1142,8 @@ export default function ExportsTab() {
             </Box>
           )}
           <VStack align="stretch" gap={2}>
+            {/* Bundle = recommended path. Individual files hidden by default
+                so the operator's eye lands on the all-in-one zip first. */}
             <Button
               variant="solid"
               colorPalette="green"
@@ -581,50 +1151,62 @@ export default function ExportsTab() {
               loading={busyKey === "qb-bundle"}
               disabled={qbBlocked}
               onClick={() => download("qb-bundle", "QB Bundle (zip)", "zip")}
-              title={qbBlocked ? "Fix unmapped rows before downloading the bundle" : "Income + Expenses + Equity in a single zip"}
+              title={qbBlocked ? "Fix unmapped rows before downloading the bundle" : "Income + Expenses + Equity + Fixed Assets in a single zip"}
             >
               <FiDownload /> Download QB Bundle (zip)
             </Button>
             <Button
-              variant="outline"
-              colorPalette="green"
-              size="sm"
-              loading={busyKey === "qb-income"}
-              onClick={() => download("qb-income", "QB Income CSV")}
+              size="xs"
+              variant="ghost"
+              alignSelf="start"
+              onClick={() => setShowQbIndividual((v) => !v)}
             >
-              <FiDownload /> Download Income CSV
+              {showQbIndividual ? "Hide individual files ↑" : "Show individual files ↓"}
             </Button>
-            <Button
-              variant="outline"
-              colorPalette="green"
-              size="sm"
-              loading={busyKey === "qb-expenses"}
-              disabled={qbBlocked}
-              onClick={() => download("qb-expenses", "QB Expenses CSV")}
-              title={qbBlocked ? "Fix unmapped rows before downloading expenses" : undefined}
-            >
-              <FiDownload /> Download Expenses CSV
-            </Button>
-            <Button
-              variant="outline"
-              colorPalette="green"
-              size="sm"
-              loading={busyKey === "qb-equity"}
-              onClick={() => download("qb-equity", "QB Equity CSV")}
-              title="Capital contributions + owner draws — equity account movements (not P&L)"
-            >
-              <FiDownload /> Download Equity CSV
-            </Button>
-            <Button
-              variant="outline"
-              colorPalette="green"
-              size="sm"
-              loading={busyKey === "qb-fixed-assets"}
-              onClick={() => download("qb-fixed-assets", "QB Fixed Assets CSV")}
-              title={`Capital purchases ≥ $${preview?.qbFixedAssets.threshold ?? 500} on/after the policy start date — imported into QB Fixed Asset accounts, not P&L`}
-            >
-              <FiDownload /> Download Fixed Assets CSV
-            </Button>
+            {showQbIndividual && (
+              <VStack align="stretch" gap={2}>
+                <Button
+                  variant="outline"
+                  colorPalette="green"
+                  size="sm"
+                  loading={busyKey === "qb-income"}
+                  onClick={() => download("qb-income", "QB Income CSV")}
+                >
+                  <FiDownload /> Download Income CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  colorPalette="green"
+                  size="sm"
+                  loading={busyKey === "qb-expenses"}
+                  disabled={qbBlocked}
+                  onClick={() => download("qb-expenses", "QB Expenses CSV")}
+                  title={qbBlocked ? "Fix unmapped rows before downloading expenses" : undefined}
+                >
+                  <FiDownload /> Download Expenses CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  colorPalette="green"
+                  size="sm"
+                  loading={busyKey === "qb-equity"}
+                  onClick={() => download("qb-equity", "QB Equity CSV")}
+                  title="Capital contributions + owner draws — equity account movements (not P&L)"
+                >
+                  <FiDownload /> Download Equity CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  colorPalette="green"
+                  size="sm"
+                  loading={busyKey === "qb-fixed-assets"}
+                  onClick={() => download("qb-fixed-assets", "QB Fixed Assets CSV")}
+                  title={`Capital purchases ≥ $${preview?.qbFixedAssets.threshold ?? 500} on/after the policy start date — imported into QB Fixed Asset accounts, not P&L`}
+                >
+                  <FiDownload /> Download Fixed Assets CSV
+                </Button>
+              </VStack>
+            )}
           </VStack>
         </Card.Body>
       </Card.Root>
@@ -673,14 +1255,26 @@ export default function ExportsTab() {
                         {row.totalAmount.toFixed(2)}
                       </Text>
                     </VStack>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      loading={busyKey === `history-${row.id}`}
-                      onClick={() => downloadHistoric(row)}
-                    >
-                      <FiDownload /> Re-download
-                    </Button>
+                    <HStack gap={1} flexShrink={0}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        loading={busyKey === `history-${row.id}`}
+                        onClick={() => downloadHistoric(row)}
+                      >
+                        <FiDownload /> Re-download
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        loading={deletingId === row.id}
+                        onClick={() => openDelete(row)}
+                        title="Permanently delete this entry"
+                      >
+                        <FiTrash2 />
+                      </Button>
+                    </HStack>
                   </HStack>
                 );
               })}
@@ -693,6 +1287,35 @@ export default function ExportsTab() {
         Each CSV ends with a <b>TOTALS</b> row. Compare against the Admin Money tab summary to
         verify before importing into Gusto/QuickBooks.
       </Box>
+
+      {/* Two-stage delete confirmation. Stage 1 is the normal "you sure?";
+          Stage 2 is the "REALLY sure?" with stronger warning copy and the
+          destructive button label. Both must pass before the row goes. */}
+      {deleteTarget && deleteStage === 1 && (
+        <ConfirmDialog
+          open={true}
+          title="Delete export entry?"
+          message={`Remove the ${KIND_LABELS[deleteTarget.kind]} entry from ${deleteTarget.rangeStart.slice(0, 10)} → ${deleteTarget.rangeEnd.slice(0, 10)} (${deleteTarget.fileName})?`}
+          warning="This permanently removes the saved CSV/zip snapshot. The underlying tax and payroll data is not affected, but the previously-downloaded file bytes will be gone — if you need them again you'll have to re-export, and the numbers may differ if records have changed since."
+          confirmLabel="Continue…"
+          confirmColorPalette="red"
+          onConfirm={() => setDeleteStage(2)}
+          onCancel={closeDelete}
+        />
+      )}
+      {deleteTarget && deleteStage === 2 && (
+        <ConfirmDialog
+          open={true}
+          title="Are you absolutely sure?"
+          message={`Final confirmation — delete ${deleteTarget.fileName}? There is no undo.`}
+          warning="Once you tap Delete Forever, the snapshot is removed immediately from the database. There is no recycle bin and no recovery path."
+          confirmLabel="Delete Forever"
+          confirmColorPalette="red"
+          cancelLabel="Cancel"
+          onConfirm={() => void performDelete()}
+          onCancel={closeDelete}
+        />
+      )}
     </VStack>
   );
 }
