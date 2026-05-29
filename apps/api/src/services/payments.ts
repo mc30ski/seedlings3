@@ -572,6 +572,103 @@ export const payments: ServicesPayments = {
     });
   },
 
+  /**
+   * Admin escape hatch for the "client paid offline and never self-reported"
+   * scenario. An invoice was sent, the client paid in real life (Venmo, check,
+   * etc.), but they never tapped the self-report button on the pay page — so
+   * the occurrence is stuck in PENDING_PAYMENT, the "Awaiting payment" alert
+   * keeps firing, and there's no Payment row in the approval queue.
+   *
+   * This method records a Payment row attributed to the admin and immediately
+   * confirms it, running the same downstream as the normal approvePayment
+   * flow (split reconciliation, audit, status transition, and the next
+   * occurrence is generated for repeating jobs). The two service calls are
+   * not wrapped in a single transaction — they each open their own — so a
+   * failure between record and approve leaves an unconfirmed Payment row,
+   * which the admin can then approve via the normal Pending Payments queue.
+   *
+   * Splits default to an even distribution across non-observer assignees so
+   * the admin doesn't have to dictate them inline. approvePayment then
+   * reconciles against the occurrence's promised-payout snapshot if one
+   * exists, so the actual recorded split values match downstream payroll.
+   */
+  async adminMarkInvoicePaid(
+    currentUserId: string,
+    occurrenceId: string,
+    input: { amountPaid: number; method: string; note?: string | null },
+  ) {
+    const { amountPaid, method, note } = input;
+
+    // Pull active assignees so we can derive default completion splits. The
+    // createPayment service requires splits to be non-empty; an occurrence
+    // with no claimer can't be paid via this path (very rare — would mean
+    // an unassigned job somehow reached PENDING_PAYMENT).
+    const occ = await prisma.jobOccurrence.findUnique({
+      where: { id: occurrenceId },
+      select: {
+        id: true,
+        status: true,
+        assignees: { select: { userId: true, role: true } },
+      },
+    });
+    if (!occ) {
+      throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+    }
+    if (occ.status !== JobOccurrenceStatus.PENDING_PAYMENT) {
+      throw new ServiceError(
+        "INVALID_STATUS",
+        `Cannot mark paid — occurrence status is "${occ.status}", expected "PENDING_PAYMENT".`,
+        409,
+      );
+    }
+    const existingPayment = await prisma.payment.findUnique({ where: { occurrenceId } });
+    if (existingPayment) {
+      throw new ServiceError(
+        existingPayment.confirmed ? "ALREADY_PAID" : "PAYMENT_EXISTS",
+        existingPayment.confirmed
+          ? "This invoice already has a confirmed payment."
+          : "A payment record already exists for this invoice — approve it via Pending Payments instead.",
+        409,
+      );
+    }
+    const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+    if (activeAssignees.length === 0) {
+      throw new ServiceError(
+        "NO_CLAIMER",
+        "Cannot mark paid — the occurrence has no active worker assigned. Assign someone first.",
+        409,
+      );
+    }
+    // Even split with the rounding-remainder going to the first (claimer)
+    // slot so the percentages always total exactly 100.
+    const basePercent = Math.floor(100 / activeAssignees.length);
+    const remainder = 100 - basePercent * activeAssignees.length;
+    const completionSplits = activeAssignees.map((a, i) => ({
+      userId: a.userId,
+      percent: basePercent + (i === 0 ? remainder : 0),
+    }));
+
+    // Step 1: record the Payment row (unconfirmed). Uses the standard admin
+    // record path so all the fee snapshotting + split-creation logic is
+    // reused. If approvePayment below fails, the Payment is still in the
+    // DB and recoverable via the normal Pending Payments queue.
+    const payment = await this.createPayment(currentUserId, {
+      occurrenceId,
+      amountPaid,
+      method,
+      note: note ?? null,
+      completionSplits,
+      context: "ADMIN" as any,
+    } as any);
+
+    // Step 2: confirm. This is where the next occurrence is generated for
+    // repeating jobs (auto-create-next is intentionally only at approval
+    // time — see comment in createPayment).
+    const approved = await this.approvePayment(currentUserId, payment.id, undefined as any);
+
+    return approved;
+  },
+
   async forceCreateNextOccurrence(_currentUserId: string, occurrenceId: string) {
     const fullOcc = await prisma.jobOccurrence.findUnique({
       where: { id: occurrenceId },
