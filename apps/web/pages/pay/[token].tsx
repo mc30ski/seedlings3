@@ -313,6 +313,15 @@ function PaymentPageInner() {
     return (
       <PageShell>
         <SelfReportedView data={data} method={reportedKey} methodLabel={reportedLabel} onOpenPhoto={setLightboxIdx} />
+        {lightboxIdx != null && (
+          <PhotoLightbox
+            photos={data.photos}
+            index={lightboxIdx}
+            onClose={() => setLightboxIdx(null)}
+            onPrev={() => setLightboxIdx((i) => (i != null && i > 0 ? i - 1 : i))}
+            onNext={() => setLightboxIdx((i) => (i != null && i < data.photos.length - 1 ? i + 1 : i))}
+          />
+        )}
       </PageShell>
     );
   }
@@ -843,7 +852,7 @@ function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: Re
             <Text fontSize="md" fontWeight="semibold">Thank you.</Text>
           </HStack>
           <Text fontSize="xs" color="fg.muted">
-            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed. We&apos;ll send a receipt once it lands.
+            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed.
             {/* method key reserved for future per-method receipt copy */}
             {method ? "" : ""}
           </Text>
@@ -929,7 +938,7 @@ function AccountNudge({ token }: { token: string }) {
       <VStack align="start" gap={0.5} fontSize="xs" mb={3}>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from visits</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming services</Text></HStack>
-        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule from your phone</Text></HStack>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule your services</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Receipts</Text></HStack>
       </VStack>
       {/* Single CTA — passwordless auth means new and returning clients do
