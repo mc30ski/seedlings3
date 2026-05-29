@@ -595,9 +595,9 @@ export const payments: ServicesPayments = {
   async adminMarkInvoicePaid(
     currentUserId: string,
     occurrenceId: string,
-    input: { amountPaid: number; method: string; note?: string | null },
+    input: { amountPaid: number; method: string; note?: string | null; processorFeeAmount?: number },
   ) {
-    const { amountPaid, method, note } = input;
+    const { amountPaid, method, note, processorFeeAmount } = input;
 
     // Pull active assignees so we can derive default completion splits. The
     // createPayment service requires splits to be non-empty; an occurrence
@@ -663,8 +663,14 @@ export const payments: ServicesPayments = {
 
     // Step 2: confirm. This is where the next occurrence is generated for
     // repeating jobs (auto-create-next is intentionally only at approval
-    // time — see comment in createPayment).
-    const approved = await this.approvePayment(currentUserId, payment.id, undefined as any);
+    // time — see comment in createPayment). The processor-fee override
+    // (when set) is applied here so the actual fee from the processor
+    // statement is what gets persisted, not the formula estimate.
+    const approved = await this.approvePayment(
+      currentUserId,
+      payment.id,
+      processorFeeAmount !== undefined ? { processorFeeAmount } : (undefined as any),
+    );
 
     return approved;
   },
