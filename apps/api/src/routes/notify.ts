@@ -134,9 +134,9 @@ export default async function notifyRoutes(app: FastifyInstance) {
     const senderName = me.displayName
       || [me.firstName, me.lastName].filter(Boolean).join(" ").trim()
       || "Admin";
-    const footer = `\n\n— ${senderName}`;
+    const footer = `\n\n- ${senderName}`;
     const finalBody = messageBody + footer;
-    const finalTitle = title || "Seedlings — message from admin";
+    const finalTitle = title || "Seedlings - message from admin";
 
     const pushOnly = Array.isArray(channels) && channels.length === 1 && channels[0] === "push";
 

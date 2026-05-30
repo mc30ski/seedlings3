@@ -532,7 +532,7 @@ export default async function clientRoutes(app: FastifyInstance) {
       const allowSmsEmail = setting?.value === "true";
       const { notifyWorker } = await import("../lib/notifications");
       const verb = opts.kind === "RESCHEDULE" ? "reschedule" : "skip";
-      const subject = `New ${verb} request — ${opts.clientLabel}`;
+      const subject = `New ${verb} request - ${opts.clientLabel}`;
       const suggestion =
         opts.kind === "RESCHEDULE" && opts.proposedStartAt
           ? ` Suggested: ${opts.proposedStartAt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}.`

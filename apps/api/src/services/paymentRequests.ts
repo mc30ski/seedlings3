@@ -122,11 +122,14 @@ function formatServiceDate(d: Date | null): string {
 }
 
 function buildSmsBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
-  return `Hi ${firstName} — your Seedlings lawn care on ${dateStr} at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`;
+  // Plain ASCII hyphens only — em-dash (—) gets mangled by SMS carriers
+  // when iMessage isn't available, showing up as garbage like "<!- ->"
+  // on the recipient's phone.
+  return `Hi ${firstName} - your Seedlings lawn care on ${dateStr} at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`;
 }
 
 function buildEmailSubject(dollarAmount: string): string {
-  return `Your Seedlings service is complete — ${dollarAmount} due`;
+  return `Your Seedlings service is complete - ${dollarAmount} due`;
 }
 
 function buildEmailBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
