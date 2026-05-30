@@ -1467,7 +1467,20 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
-                client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
+                client: {
+                  select: {
+                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    // Active client contacts as a fallback target for the
+                    // "Request Confirmation" message when the property has
+                    // no pointOfContactId set. Primary first so the worker
+                    // always reaches out to the right person.
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      select: { firstName: true, lastName: true, nickname: true, phone: true, email: true, isPrimary: true },
+                      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                    },
+                  },
+                },
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
@@ -1633,7 +1646,20 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
-                client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
+                client: {
+                  select: {
+                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    // Active client contacts as a fallback target for the
+                    // "Request Confirmation" message when the property has
+                    // no pointOfContactId set. Primary first so the worker
+                    // always reaches out to the right person.
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      select: { firstName: true, lastName: true, nickname: true, phone: true, email: true, isPrimary: true },
+                      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                    },
+                  },
+                },
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
@@ -1723,7 +1749,20 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
-                client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
+                client: {
+                  select: {
+                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    // Active client contacts as a fallback target for the
+                    // "Request Confirmation" message when the property has
+                    // no pointOfContactId set. Primary first so the worker
+                    // always reaches out to the right person.
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      select: { firstName: true, lastName: true, nickname: true, phone: true, email: true, isPrimary: true },
+                      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                    },
+                  },
+                },
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },
@@ -1776,7 +1815,20 @@ export const jobs: ServicesJobs = {
             property: {
               select: {
                 id: true, displayName: true, street1: true, city: true, state: true,
-                client: { select: { id: true, displayName: true, isVip: true, vipReason: true, adminTags: true } },
+                client: {
+                  select: {
+                    id: true, displayName: true, isVip: true, vipReason: true, adminTags: true,
+                    // Active client contacts as a fallback target for the
+                    // "Request Confirmation" message when the property has
+                    // no pointOfContactId set. Primary first so the worker
+                    // always reaches out to the right person.
+                    contacts: {
+                      where: { status: "ACTIVE" },
+                      select: { firstName: true, lastName: true, nickname: true, phone: true, email: true, isPrimary: true },
+                      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+                    },
+                  },
+                },
                 pointOfContact: { select: { firstName: true, lastName: true, nickname: true, phone: true, email: true } },
               },
             },

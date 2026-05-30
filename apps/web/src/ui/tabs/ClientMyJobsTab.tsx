@@ -115,10 +115,13 @@ function formatDuration(mins: number): string {
 }
 
 function workerLabel(workers: string[]): string {
-  if (workers.length === 0) return "";
-  if (workers.length === 1) return workers[0];
-  if (workers.length === 2) return `${workers[0]} & ${workers[1]}`;
-  return `${workers[0]} + ${workers.length - 1} others`;
+  // Casual UI shows first names only — server now returns full "First Last"
+  // strings (receipts need them), so extract the first token for display.
+  const firsts = workers.map((w) => (w ?? "").trim().split(/\s+/)[0]).filter(Boolean);
+  if (firsts.length === 0) return "";
+  if (firsts.length === 1) return firsts[0];
+  if (firsts.length === 2) return `${firsts[0]} & ${firsts[1]}`;
+  return `${firsts[0]} + ${firsts.length - 1} others`;
 }
 
 function prettyJobType(jt: string | null | undefined): string {

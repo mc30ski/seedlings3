@@ -295,7 +295,10 @@ export default async function clientRoutes(app: FastifyInstance) {
           jobType: occ.jobType,
           price: occ.price,
           property: occ.job.property,
-          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
+          // Return full displayName ("First Last") — receipts need the
+          // full name. Casual UI uses workerLabel() to extract the first
+          // name for friendlier "Crew: Mark & Sarah" rendering.
+          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").trim()).filter(Boolean),
           durationMinutes: occ.startedAt && occ.completedAt
             ? Math.round((new Date(occ.completedAt).getTime() - new Date(occ.startedAt).getTime()) / 60000)
             : null,
@@ -450,7 +453,10 @@ export default async function clientRoutes(app: FastifyInstance) {
           proposalAmount: (occ as any).proposalAmount ?? null,
           proposalNotes: (occ as any).proposalNotes ?? null,
           property: occ.job?.property ?? null,
-          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").split(" ")[0]).filter(Boolean),
+          // Return full displayName ("First Last") — receipts need the
+          // full name. Casual UI uses workerLabel() to extract the first
+          // name for friendlier "Crew: Mark & Sarah" rendering.
+          workers: occ.assignees.filter((a) => a.role !== "observer").map((a) => (a.user?.displayName ?? "").trim()).filter(Boolean),
           photos: photos.filter(Boolean),
           // Split the prefetched change requests into pending (banner)
           // and most-recent-resolved-with-note (response from admin).
