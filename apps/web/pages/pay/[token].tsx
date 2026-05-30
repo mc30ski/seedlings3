@@ -317,11 +317,22 @@ function PaymentPageInner() {
       <PageShell>
         <Card.Root variant="outline">
           <Card.Body p={4}>
-            <VStack gap={2} align="stretch">
-              <Text fontSize="md" fontWeight="semibold">Payment link not valid</Text>
-              <Text fontSize="xs" color="fg.muted">
-                It may have expired or the link is mistyped. Please call or text us.
-              </Text>
+            <VStack gap={3} align="stretch">
+              <Box>
+                <Text fontSize="md" fontWeight="semibold">Payment link not valid</Text>
+                <Text fontSize="xs" color="fg.muted">
+                  It may have expired or the link is mistyped.
+                </Text>
+              </Box>
+              <Box borderTopWidth="1px" borderColor="gray.200" pt={3}>
+                <Text fontSize="sm" fontWeight="semibold" mb={1}>
+                  Looking for previous receipts?
+                </Text>
+                <Text fontSize="xs" color="fg.muted" mb={2}>
+                  Sign in (or create a free account) to see your service history, receipts, photos, and upcoming visits.
+                </Text>
+                <AccountNudge token="" />
+              </Box>
             </VStack>
           </Card.Body>
         </Card.Root>

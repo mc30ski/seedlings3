@@ -130,14 +130,14 @@ export default async function cronRoutes(app: FastifyInstance) {
       // Push — short, native-style. URL targets the Home tab so a tap
       // deep-links straight to the worker's daily landing screen.
       const pushPayload = {
-        title: `Tomorrow's plan — ${itemNoun}`,
+        title: `Tomorrow's plan - ${itemNoun}`,
         body: smsBody,
         url: homeLink,
         tag: "daily-plan",
       };
 
       const result = await notifyWorker(userId, { sms: smsBody, email: emailBody, push: pushPayload }, {
-        subject: `Seedlings — ${itemNoun} tomorrow`,
+        subject: `Seedlings - ${itemNoun} tomorrow`,
         link: homeLink,
       });
 
