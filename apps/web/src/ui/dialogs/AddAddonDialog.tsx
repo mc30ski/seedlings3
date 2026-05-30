@@ -17,7 +17,7 @@ import {
   publishInlineMessage,
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
-import { jobTagLabel as _jobTagLabel, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, pricingJobTags, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 
 type Props = {
@@ -39,6 +39,7 @@ type PricingHintEntry = {
     label: string;
     amount: number;
     unit: string;
+    jobTags?: string[] | null;
     jobTag?: string | null;
   } | null;
 };
@@ -70,7 +71,7 @@ export default function AddAddonDialog({ occurrenceId, onClose, serviceTypes, fo
 
   const hintEntry = useMemo(() => {
     if (!tag) return null;
-    return hints.find((p) => p.parsedValue?.jobTag === tag) ?? null;
+    return hints.find((p) => pricingJobTags(p.parsedValue).includes(tag)) ?? null;
   }, [hints, tag]);
 
   async function handleAdd() {

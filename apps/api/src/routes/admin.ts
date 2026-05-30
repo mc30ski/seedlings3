@@ -3023,17 +3023,26 @@ Respond ONLY with valid JSON in this exact format:
     const existing = await prisma.setting.findUnique({ where: { key } });
     if (existing) throw app.httpErrors.conflict("A pricing entry with a similar name already exists");
 
+    // Normalize tags: accept either `jobTags: string[]` (new shape) or
+    // legacy `jobTag: string` (single). Always persist the array form;
+    // readers fall back to the legacy field for old rows.
+    const incomingTags: string[] = Array.isArray(body.jobTags)
+      ? body.jobTags.filter((t: any) => typeof t === "string" && t.length > 0).map(String)
+      : body.jobTag
+        ? [String(body.jobTag)]
+        : [];
     const value = JSON.stringify({
       label: String(body.label),
       description: body.description ? String(body.description) : "",
       unit: String(body.unit),
       amount: Number(body.amount),
       sortOrder: body.sortOrder != null ? Number(body.sortOrder) : 100,
-      // Optional binding to a job tag (MOW, TRIM, EDGE, …) so the add-on
-      // dialog and estimate workflow can surface this entry as an inline
-      // reference price. Pricing entries without a tag still appear on
-      // the Pricing tab — they just don't drive any auto-match hint.
-      jobTag: body.jobTag ? String(body.jobTag) : null,
+      // Optional bindings to one or more job tags (MOW, TRIM, EDGE, …)
+      // so the add-on dialog and estimate workflow can surface this
+      // entry as an inline reference price for any matching tag.
+      // Pricing entries with no tags still appear on the Pricing tab —
+      // they just don't drive any auto-match hint.
+      jobTags: incomingTags,
     });
 
     return services.settings.set(uid, key, value);
@@ -3051,16 +3060,28 @@ Respond ONLY with valid JSON in this exact format:
     try { current = JSON.parse(existing.value); } catch {}
 
     const body = req.body || {};
+    // Resolve the new jobTags array: prefer explicit `jobTags` (array),
+    // fall back to legacy `jobTag` (single), then fall back to whatever
+    // is currently stored — array or legacy single, normalized to array.
+    let nextTags: string[];
+    if (Array.isArray(body.jobTags)) {
+      nextTags = body.jobTags.filter((t: any) => typeof t === "string" && t.length > 0).map(String);
+    } else if ("jobTag" in body) {
+      nextTags = body.jobTag ? [String(body.jobTag)] : [];
+    } else if (Array.isArray(current.jobTags)) {
+      nextTags = current.jobTags.filter((t: any) => typeof t === "string" && t.length > 0);
+    } else if (current.jobTag) {
+      nextTags = [String(current.jobTag)];
+    } else {
+      nextTags = [];
+    }
     const value = JSON.stringify({
       label: body.label != null ? String(body.label) : current.label,
       description: body.description != null ? String(body.description) : current.description,
       unit: body.unit != null ? String(body.unit) : current.unit,
       amount: body.amount != null ? Number(body.amount) : current.amount,
       sortOrder: body.sortOrder != null ? Number(body.sortOrder) : current.sortOrder,
-      // "" or null clears the binding so the entry stops auto-hinting.
-      jobTag: "jobTag" in body
-        ? (body.jobTag ? String(body.jobTag) : null)
-        : (current.jobTag ?? null),
+      jobTags: nextTags,
     });
 
     return services.settings.set(uid, key, value);

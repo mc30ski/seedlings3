@@ -83,6 +83,19 @@ type Summary = {
     clientName: string | null;
     assignees: { userId: string; displayName: string; isClaimer: boolean }[];
   }[];
+  // Aggregate-only: per-row breakdown of work finished today. Includes any
+  // occurrence whose completedAt landed today regardless of post-completion
+  // state (COMPLETED, PENDING_PAYMENT, CLOSED).
+  completedTodayJobs?: {
+    id: string;
+    startAt: string | null;
+    completedAt: string | null;
+    status: string;
+    title: string | null;
+    propertyName: string | null;
+    clientName: string | null;
+    assignees: { userId: string; displayName: string; isClaimer: boolean }[];
+  }[];
 };
 
 type TabFilter = { status?: string; type?: string; kind?: string; datePreset?: string; dateFrom?: string; dateTo?: string; overdue?: boolean; method?: string };
@@ -672,6 +685,108 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                             {dateLabel && (
                               <Text as="span" color="gray.500" fontSize="xs" ml={1}>
                                 · {dateLabel}
+                              </Text>
+                            )}
+                          </Text>
+                          <Text fontSize="xs" color="gray.600" whiteSpace="nowrap">
+                            {assigneeText}
+                          </Text>
+                          <Text fontSize="xs" color="blue.600">→</Text>
+                        </HStack>
+                      );
+                    })}
+                  </VStack>
+                )}
+
+                {/* "Completed today" panel — mirrors "In progress now" in
+                    structure and click behavior. Shows everything that
+                    finished today (status COMPLETED, PENDING_PAYMENT, or
+                    CLOSED) so the admin can see the day's output at a
+                    glance and drill into any row. */}
+                {(s.completedTodayJobs?.length ?? 0) > 0 && (
+                  <VStack align="stretch" gap={1} w="full" mt={2} pt={2} borderTopWidth="1px" borderColor="gray.300">
+                    <Text fontSize="xs" fontWeight="medium" color="gray.700" textTransform="uppercase">
+                      Completed today
+                    </Text>
+                    {(s.completedTodayJobs ?? []).map((occ) => {
+                      const claimer = occ.assignees.find((a) => a.isClaimer);
+                      const others = occ.assignees.filter((a) => !a.isClaimer);
+                      const assigneeText =
+                        occ.assignees.length === 0
+                          ? "(unassigned)"
+                          : claimer
+                            ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
+                            : occ.assignees.map((a) => a.displayName).join(", ");
+                      const jobLabel =
+                        occ.propertyName
+                          ? `${occ.propertyName}${occ.clientName ? ` — ${occ.clientName}` : ""}`
+                          : (occ.title ?? "(untitled)");
+                      // Time-of-completion label so a glance shows what
+                      // wrapped up when. Falls back to the scheduled date
+                      // when completedAt is somehow missing.
+                      const timeLabel = occ.completedAt
+                        ? new Date(occ.completedAt).toLocaleTimeString(undefined, {
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })
+                        : occ.startAt
+                          ? new Date(occ.startAt).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })
+                          : "";
+                      // Dot color reflects post-completion state at a
+                      // glance: blue = awaiting payment, gray = closed
+                      // (paid + done), green = freshly completed.
+                      const dotColor =
+                        occ.status === "PENDING_PAYMENT"
+                          ? "blue.500"
+                          : occ.status === "CLOSED"
+                            ? "gray.500"
+                            : "green.500";
+                      const dotTitle =
+                        occ.status === "PENDING_PAYMENT"
+                          ? "Awaiting payment"
+                          : occ.status === "CLOSED"
+                            ? "Closed"
+                            : "Completed";
+                      return (
+                        <HStack
+                          key={occ.id}
+                          gap={2}
+                          fontSize="sm"
+                          p={1.5}
+                          borderRadius="sm"
+                          cursor="pointer"
+                          _hover={{ bg: "white" }}
+                          onClick={() => {
+                            try {
+                              localStorage.setItem(
+                                "seedlings_jobs_pendingHighlight",
+                                `${occ.id}|${occ.startAt ?? ""}`,
+                              );
+                            } catch {}
+                            window.dispatchEvent(
+                              new CustomEvent("navigate:adminTab", {
+                                detail: { tab: "admin-jobs", remount: true },
+                              }),
+                            );
+                          }}
+                          title="Open this occurrence on the Admin Jobs tab"
+                        >
+                          <Box
+                            w="8px"
+                            h="8px"
+                            borderRadius="full"
+                            bg={dotColor}
+                            flexShrink={0}
+                            title={dotTitle}
+                          />
+                          <Text flex="1" minW={0} truncate color="gray.800">
+                            {jobLabel}
+                            {timeLabel && (
+                              <Text as="span" color="gray.500" fontSize="xs" ml={1}>
+                                · {timeLabel}
                               </Text>
                             )}
                           </Text>

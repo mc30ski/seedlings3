@@ -2205,28 +2205,37 @@ async function seedDatabase() {
   // ── Pricing settings ───────────────────────────────────────────────────────
   console.log("  Creating pricing entries...");
 
-  // Tagged entries match JOB_TAGS keys so the add-on dialog and estimate
-  // workflow can surface them as inline hints. Two reference-only entries
-  // (no jobTag) demonstrate the "browse-only" pattern.
-  const pricingEntries: Array<{ key: string; label: string; description: string; unit: string; amount: number; sortOrder: number; jobTag?: string | null }> = [
-    // Reference-only (no jobTag → no auto-hint, only in the guide)
+  // Tagged entries surface as inline hints in the add-on dialog and
+  // estimate workflow whenever ANY of their tags matches the selected
+  // service. Each entry can carry one or more tags (see "Bagged
+  // clippings" and "Debris disposal" examples for multi-tag). Two
+  // reference-only entries (empty jobTags) demonstrate the "browse-only"
+  // pattern that still shows in the guide but doesn't auto-hint.
+  const pricingEntries: Array<{ key: string; label: string; description: string; unit: string; amount: number; sortOrder: number; jobTags?: string[] }> = [
+    // Reference-only (no jobTags → no auto-hint, only in the guide)
     { key: "pricing_general_labor", label: "General Labor", description: "Hourly rate for general labor tasks like cleanup, hauling, debris removal, and other non-specialized work", unit: "per hour per person", amount: 60, sortOrder: 1 },
     { key: "pricing_mowing_acre", label: "Mowing (per acre)", description: "Standard mowing rate for open acreage using a riding mower. Includes basic trimming along fence lines and obstacles", unit: "per acre", amount: 150, sortOrder: 2 },
 
     // Tagged — each maps to a JOB_TAGS key so picking that tag in the
     // add-on dialog or estimate workflow lights up the inline hint.
-    { key: "pricing_mow_standard", label: "Mow — standard yard", description: "Single-visit residential mow on a typical quarter-acre lot. Includes deck-discharge pattern; bag is +$10.", unit: "per visit", amount: 65, sortOrder: 10, jobTag: "MOW" },
-    { key: "pricing_trim_standard", label: "String trim", description: "Trim along fence lines, beds, trees, and obstacles. Pair with Mow as standard.", unit: "per visit", amount: 25, sortOrder: 20, jobTag: "TRIM" },
-    { key: "pricing_edge_standard", label: "Edge — driveway + walks", description: "Stick-edge driveway, sidewalks, and curb. ~150 linear ft assumed.", unit: "per visit", amount: 25, sortOrder: 30, jobTag: "EDGE" },
-    { key: "pricing_blow_standard", label: "Blow off hardscapes", description: "Clean drive, walks, and patios after mow/trim/edge.", unit: "per visit", amount: 15, sortOrder: 40, jobTag: "BLOW" },
-    { key: "pricing_hedge_small", label: "Hedge — small (under 6 ft)", description: "Boxwood, privet, ornamental. Per-visit shape-up — heavier rejuvenation cuts billed at labor rate.", unit: "per visit", amount: 75, sortOrder: 50, jobTag: "HEDGE" },
-    { key: "pricing_leaf_cleanup_yard", label: "Leaf cleanup — typical yard", description: "Bag-and-haul leaf cleanup on a residential lot. Pricing scales with leaf load; storm cleanup is separate.", unit: "per visit", amount: 180, sortOrder: 60, jobTag: "LEAF_CLEANUP" },
-    { key: "pricing_aeration_5k", label: "Aeration — up to 5,000 sq ft", description: "Core aeration with double-pass on compacted areas. Add seed/starter fertilizer separately.", unit: "per visit", amount: 145, sortOrder: 70, jobTag: "AERATION" },
-    { key: "pricing_mulch_per_yard", label: "Mulch — installed", description: "Premium hardwood mulch, spread to 2–3\" depth. Edging touchup included.", unit: "per cubic yard installed", amount: 95, sortOrder: 80, jobTag: "MULCH" },
-    { key: "pricing_weed_beds", label: "Weed beds", description: "Hand-pull weeds and apply pre-emergent in landscape beds.", unit: "per visit", amount: 60, sortOrder: 90, jobTag: "WEED" },
-    { key: "pricing_fertilize_lawn", label: "Fertilize lawn", description: "Granular fertilizer application, broadcast spreader. Mid-grade NPK; weed-and-feed is +$25.", unit: "per visit", amount: 85, sortOrder: 100, jobTag: "FERTILIZE" },
-    { key: "pricing_tree_trim_small", label: "Tree trim — small (under 20 ft)", description: "Crown thin / shape with pole pruner. Chainsaw work over 4\" diameter is separate.", unit: "per tree", amount: 120, sortOrder: 110, jobTag: "TREE_TRIM" },
-    { key: "pricing_plant_install_1gal", label: "Plant install — 1 gal", description: "Plant install: dig, amend soil, mulch in. Per-plant rate for 1-gallon sizes.", unit: "per plant", amount: 28, sortOrder: 120, jobTag: "PLANT" },
+    { key: "pricing_mow_standard", label: "Mow - standard yard", description: "Single-visit residential mow on a typical quarter-acre lot. Includes deck-discharge pattern; bag is +$10.", unit: "per visit", amount: 65, sortOrder: 10, jobTags: ["MOW"] },
+    { key: "pricing_trim_standard", label: "String trim", description: "Trim along fence lines, beds, trees, and obstacles. Pair with Mow as standard.", unit: "per visit", amount: 25, sortOrder: 20, jobTags: ["TRIM"] },
+    { key: "pricing_edge_standard", label: "Edge - driveway + walks", description: "Stick-edge driveway, sidewalks, and curb. ~150 linear ft assumed.", unit: "per visit", amount: 25, sortOrder: 30, jobTags: ["EDGE"] },
+    { key: "pricing_blow_standard", label: "Blow off hardscapes", description: "Clean drive, walks, and patios after mow/trim/edge.", unit: "per visit", amount: 15, sortOrder: 40, jobTags: ["BLOW"] },
+    { key: "pricing_hedge_small", label: "Hedge - small (under 6 ft)", description: "Boxwood, privet, ornamental. Per-visit shape-up; heavier rejuvenation cuts billed at labor rate.", unit: "per visit", amount: 75, sortOrder: 50, jobTags: ["HEDGE"] },
+    { key: "pricing_leaf_cleanup_yard", label: "Leaf cleanup - typical yard", description: "Bag-and-haul leaf cleanup on a residential lot. Pricing scales with leaf load; storm cleanup is separate.", unit: "per visit", amount: 180, sortOrder: 60, jobTags: ["LEAF_CLEANUP"] },
+    { key: "pricing_aeration_5k", label: "Aeration - up to 5,000 sq ft", description: "Core aeration with double-pass on compacted areas. Add seed/starter fertilizer separately.", unit: "per visit", amount: 145, sortOrder: 70, jobTags: ["AERATION"] },
+    { key: "pricing_mulch_per_yard", label: "Mulch - installed", description: "Premium hardwood mulch, spread to 2-3\" depth. Edging touchup included.", unit: "per cubic yard installed", amount: 95, sortOrder: 80, jobTags: ["MULCH"] },
+    { key: "pricing_weed_beds", label: "Weed beds", description: "Hand-pull weeds and apply pre-emergent in landscape beds.", unit: "per visit", amount: 60, sortOrder: 90, jobTags: ["WEED"] },
+    { key: "pricing_fertilize_lawn", label: "Fertilize lawn", description: "Granular fertilizer application, broadcast spreader. Mid-grade NPK; weed-and-feed is +$25.", unit: "per visit", amount: 85, sortOrder: 100, jobTags: ["FERTILIZE"] },
+    { key: "pricing_tree_trim_small", label: "Tree trim - small (under 20 ft)", description: "Crown thin / shape with pole pruner. Chainsaw work over 4\" diameter is separate.", unit: "per tree", amount: 120, sortOrder: 110, jobTags: ["TREE_TRIM"] },
+    { key: "pricing_plant_install_1gal", label: "Plant install - 1 gal", description: "Plant install: dig, amend soil, mulch in. Per-plant rate for 1-gallon sizes.", unit: "per plant", amount: 28, sortOrder: 120, jobTags: ["PLANT"] },
+
+    // Multi-tag examples - a single entry that applies as a hint across
+    // several service tags. Same row surfaces in the add-on dialog
+    // whether the worker picks MOW, LEAF_CLEANUP, or TREE_TRIM.
+    { key: "pricing_bagged_clippings", label: "Bagged clippings - upcharge", description: "Per-visit upcharge to bag grass clippings or leaf debris instead of mulching/discharging in place. Common on MOW and LEAF_CLEANUP visits.", unit: "per visit", amount: 10, sortOrder: 200, jobTags: ["MOW", "LEAF_CLEANUP"] },
+    { key: "pricing_debris_disposal", label: "Debris disposal / haul-off", description: "Trailer load haul-off for yard debris generated on site. Applies to leaf cleanup, tree trim, mulch tear-out, and any heavy-debris visit.", unit: "per trailer load", amount: 75, sortOrder: 210, jobTags: ["LEAF_CLEANUP", "TREE_TRIM", "MULCH"] },
   ];
   for (const p of pricingEntries) {
     const value = JSON.stringify({
@@ -2235,7 +2244,9 @@ async function seedDatabase() {
       unit: p.unit,
       amount: p.amount,
       sortOrder: p.sortOrder,
-      jobTag: p.jobTag ?? null,
+      // Always persist the array shape; readers fall back to legacy
+      // single-string `jobTag` for old rows that haven't been re-saved.
+      jobTags: p.jobTags ?? [],
     });
     await prisma.setting.upsert({
       where: { key: p.key },

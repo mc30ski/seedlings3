@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dialog, HStack, VStack, Portal, Text, Box } from "@chakra-ui/react";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet } from "@/src/lib/api";
-import { jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
 import PricingGuideDialog from "@/src/ui/dialogs/PricingGuideDialog";
 
 type Props = {
@@ -57,7 +57,7 @@ type Props = {
 
 type PricingHint = {
   key: string;
-  parsedValue: { label: string; amount: number; unit: string; jobTag?: string | null } | null;
+  parsedValue: { label: string; amount: number; unit: string; jobTags?: string[] | null; jobTag?: string | null } | null;
 };
 
 export default function ConfirmDialog({
@@ -116,7 +116,7 @@ export default function ConfirmDialog({
     if (!pricingReferenceTags || pricingReferenceTags.length === 0) return [];
     const tagSet = new Set(pricingReferenceTags);
     return pricingHints
-      .filter((p) => p.parsedValue?.jobTag && tagSet.has(p.parsedValue.jobTag))
+      .filter((p) => pricingJobTags(p.parsedValue).some((t) => tagSet.has(t)))
       .map((p) => p.parsedValue!);
   }, [pricingHints, pricingReferenceTags]);
   const referenceTotal = referenceMatches.reduce((s, r) => s + r.amount, 0);
