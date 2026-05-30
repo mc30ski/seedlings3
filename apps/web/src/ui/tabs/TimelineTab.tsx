@@ -6,7 +6,9 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Portal,
   Select,
   Spinner,
   Text,
@@ -18,7 +20,10 @@ import {
   ArchiveRestore,
   CalendarClock,
   Check,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
+  Eye,
   EyeOff,
   Filter,
   Link2,
@@ -116,6 +121,38 @@ function urgencyColor(u: "past" | "urgent" | "soon" | "future"): string {
   return "green";
 }
 
+// Section bucketing — group upcoming rows by how close they are. Past
+// items get their own bucket so admins can act on them; everything else
+// is bucketed into Today / Next 7 days / Next 30 days / Later. Defaults
+// to expanded for "Overdue" + "Today" so the actionable stuff is
+// visible at a glance; Later/30d collapse by default.
+type SectionKey = "overdue" | "today" | "week" | "month" | "later";
+const SECTION_ORDER: SectionKey[] = ["overdue", "today", "week", "month", "later"];
+const SECTION_LABELS: Record<SectionKey, string> = {
+  overdue: "Overdue",
+  today: "Today",
+  week: "Next 7 days",
+  month: "Next 30 days",
+  later: "Later",
+};
+const SECTION_COLORS: Record<SectionKey, string> = {
+  overdue: "red",
+  today: "red",
+  week: "orange",
+  month: "yellow",
+  later: "teal",
+};
+const DEFAULT_COLLAPSED_SECTIONS: SectionKey[] = ["month", "later"];
+
+function sectionOf(iso: string): SectionKey {
+  const d = diffDays(iso);
+  if (d < 0) return "overdue";
+  if (d === 0) return "today";
+  if (d <= 7) return "week";
+  if (d <= 30) return "month";
+  return "later";
+}
+
 export default function TimelineTab({ isSuper = false }: Props) {
   const apiBase = isSuper ? "/api/super/timeline" : "/api/admin/timeline";
 
@@ -125,6 +162,20 @@ export default function TimelineTab({ isSuper = false }: Props) {
   // kindFilter values: "all" | "docs" | "<CATEGORY_KEY>"
   const [kindFilter, setKindFilter] = useState<string[]>(["all"]);
   const [urgencyFilter, setUrgencyFilter] = useState<string[]>(["all"]);
+  // Collapsible sections — drives the chevron + which bucket is open.
+  const [collapsedSections, setCollapsedSections] = useState<Set<SectionKey>>(
+    () => new Set(DEFAULT_COLLAPSED_SECTIONS),
+  );
+  function toggleSection(key: SectionKey) {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  // Description preview dialog — null when closed, holds the row when open.
+  const [descriptionView, setDescriptionView] = useState<EventRow | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [categories, setCategories] = useState<TimelineCategoryConfig[]>(DEFAULT_TIMELINE_CATEGORIES);
 
@@ -222,6 +273,17 @@ export default function TimelineTab({ isSuper = false }: Props) {
     }
     return out;
   }, [rows, q, kindFilter, urgencyFilter, highlightEventId]);
+
+  // Group the filtered rows into the SECTION_ORDER buckets so the UI can
+  // render each as its own collapsible section. Empty buckets are
+  // skipped at render time — the section header doesn't show at all.
+  const sectionedRows = useMemo(() => {
+    const buckets: Record<SectionKey, UpcomingRow[]> = {
+      overdue: [], today: [], week: [], month: [], later: [],
+    };
+    for (const r of filtered) buckets[sectionOf(r.nextDate)].push(r);
+    return SECTION_ORDER.map((key) => ({ key, label: SECTION_LABELS[key], color: SECTION_COLORS[key], items: buckets[key] }));
+  }, [filtered]);
 
   // Apply a pre-set urgency filter from the title-bar pill navigation.
   useEffect(() => {
@@ -541,12 +603,48 @@ export default function TimelineTab({ isSuper = false }: Props) {
         ) : filtered.length === 0 ? (
           <Box py={4} color="fg.muted" fontSize="sm">No upcoming items.</Box>
         ) : (
-          <VStack align="stretch" gap={2}>
-            {filtered.map((r) => {
-              const u = urgencyOf(r.nextDate);
-              const color = urgencyColor(u);
-              const isDoc = r.kind === "document_expiration";
+          <VStack align="stretch" gap={3}>
+            {sectionedRows.map((section) => {
+              if (section.items.length === 0) return null;
+              const collapsed = collapsedSections.has(section.key);
               return (
+                <Box key={section.key}>
+                  {/* Collapsible section header — tappable bar with the
+                      urgency color so each bucket reads as its own
+                      drawer. Chevron rotates, count badge mirrors the
+                      Jobs tab pattern. */}
+                  <HStack
+                    gap={2}
+                    px={3}
+                    py={2}
+                    cursor="pointer"
+                    onClick={() => toggleSection(section.key)}
+                    bg={`${section.color}.50`}
+                    borderWidth="1px"
+                    borderColor={`${section.color}.200`}
+                    borderLeftWidth="4px"
+                    borderLeftColor={`${section.color}.500`}
+                    borderRadius="md"
+                    _hover={{ bg: `${section.color}.100` }}
+                    transition="background 0.15s"
+                  >
+                    <Box color={`${section.color}.700`} flexShrink={0}>
+                      {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                    </Box>
+                    <Text fontSize="sm" fontWeight="bold" color={`${section.color}.900`} flex="1">
+                      {section.label}
+                    </Text>
+                    <Badge size="sm" colorPalette={section.color} variant="solid" borderRadius="full" px="2">
+                      {section.items.length}
+                    </Badge>
+                  </HStack>
+                  {!collapsed && (
+                    <VStack align="stretch" gap={2} mt={2}>
+                      {section.items.map((r) => {
+            const u = urgencyOf(r.nextDate);
+            const color = urgencyColor(u);
+            const isDoc = r.kind === "document_expiration";
+            return (
                 <Card.Root key={(isDoc ? "d_" : "e_") + (isDoc ? r.documentId : r.id)} variant="outline">
                   <Card.Body p={2}>
                     <VStack align="stretch" gap={1}>
@@ -598,6 +696,18 @@ export default function TimelineTab({ isSuper = false }: Props) {
                           </Button>
                         ) : (
                           <>
+                            {r.description && (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                px="1.5"
+                                minW="0"
+                                onClick={() => setDescriptionView(r)}
+                                title="View full description"
+                              >
+                                <Eye size={13} />
+                              </Button>
+                            )}
                             <Button
                               size="xs"
                               variant="ghost"
@@ -689,6 +799,11 @@ export default function TimelineTab({ isSuper = false }: Props) {
                   </Card.Body>
                 </Card.Root>
               );
+                      })}
+                    </VStack>
+                  )}
+                </Box>
+              );
             })}
           </VStack>
         )}
@@ -742,6 +857,36 @@ export default function TimelineTab({ isSuper = false }: Props) {
           />
         </>
       )}
+
+      {/* Description preview — opens from the Eye button on rows that
+          have a description. Read-only; lets non-Super users skim the
+          full text without needing the Edit dialog. */}
+      <Dialog.Root
+        open={descriptionView != null}
+        onOpenChange={(e) => { if (!e.open) setDescriptionView(null); }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg" maxH="80vh" overflowY="auto">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>{descriptionView?.title ?? "Description"}</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {descriptionView?.description ? (
+                  <Text fontSize="sm" whiteSpace="pre-wrap">{descriptionView.description}</Text>
+                ) : (
+                  <Text fontSize="sm" color="fg.muted" fontStyle="italic">No description.</Text>
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <Button variant="ghost" onClick={() => setDescriptionView(null)}>Close</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   );
 }

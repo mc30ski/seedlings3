@@ -1013,27 +1013,40 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
               const collapsed = collapsedSections.includes(section.key);
               return (
                 <Box key={section.key}>
-                  {/* Collapsible section header */}
+                  {/* Collapsible section header — styled as a prominent
+                      tappable bar so it's obvious each section is its own
+                      drawer. Teal background + thick left accent + larger
+                      type makes the section structure stand out from the
+                      setting rows that live inside it. */}
                   <HStack
-                    gap={2}
-                    px={1}
-                    py={1.5}
+                    gap={3}
+                    px={3}
+                    py={3}
                     cursor="pointer"
                     onClick={() => toggleSection(section.key)}
-                    _hover={{ bg: "gray.50" }}
+                    bg="teal.50"
+                    borderWidth="1px"
+                    borderColor="teal.200"
+                    borderLeftWidth="4px"
+                    borderLeftColor="teal.500"
                     borderRadius="md"
+                    boxShadow="sm"
+                    _hover={{ bg: "teal.100", borderColor: "teal.300", boxShadow: "md" }}
+                    transition="background 0.15s, box-shadow 0.15s"
                   >
-                    <Box color="fg.muted" flexShrink={0}>
-                      {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    <Box color="teal.700" flexShrink={0}>
+                      {collapsed ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
                     </Box>
-                    <VStack align="start" gap={0} flex="1" minW={0}>
-                      <HStack gap={2}>
-                        <Text fontSize="sm" fontWeight="semibold">{section.title}</Text>
-                        <Badge size="sm" colorPalette="gray" variant="subtle" borderRadius="full">
+                    <VStack align="start" gap={0.5} flex="1" minW={0}>
+                      <HStack gap={2} align="center">
+                        <Text fontSize="md" fontWeight="bold" color="teal.900">
+                          {section.title}
+                        </Text>
+                        <Badge size="sm" colorPalette="teal" variant="solid" borderRadius="full" px="2">
                           {items.length}
                         </Badge>
                       </HStack>
-                      <Text fontSize="xs" color="fg.muted">{section.description}</Text>
+                      <Text fontSize="xs" color="teal.800">{section.description}</Text>
                     </VStack>
                   </HStack>
                   {!collapsed && (

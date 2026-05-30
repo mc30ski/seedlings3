@@ -642,6 +642,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       remindersDueOccs, allRemindersPending,
       equipmentCheckedOut, equipmentReserved,
       inProgressList,
+      completedTodayList,
     ] = await Promise.all([
       prisma.jobOccurrence.count({
         where: {
@@ -830,6 +831,48 @@ export default async function workerRoutes(app: FastifyInstance) {
         orderBy: { startAt: "asc" },
         take: 25, // safety cap; team-overview panel is a snapshot, not a list
       }),
+      // Completed-today list: any occurrence whose `completedAt` lands in
+      // today, regardless of post-completion state (CLOSED already-paid,
+      // PENDING_PAYMENT awaiting collection, or COMPLETED — the brief
+      // worker-finished-but-not-yet-priced state). Feeds the "Completed
+      // today" panel under "In progress now" on the Admin Home Team
+      // Overview. Same shape as inProgressList so the UI can render both
+      // with the same row component.
+      prisma.jobOccurrence.findMany({
+        where: {
+          status: { in: ["COMPLETED", "PENDING_PAYMENT", "CLOSED"] as any },
+          completedAt: { gte: todayMidnight, lt: tomorrowMidnight },
+          ...assigneeSubsetFilter,
+        },
+        select: {
+          id: true,
+          startAt: true,
+          completedAt: true,
+          status: true,
+          title: true,
+          job: {
+            select: {
+              property: {
+                select: {
+                  displayName: true,
+                  client: { select: { displayName: true } },
+                },
+              },
+            },
+          },
+          assignees: {
+            where: { OR: [{ role: null }, { role: { not: "observer" } }] },
+            select: {
+              userId: true,
+              role: true,
+              assignedById: true,
+              user: { select: { displayName: true, email: true } },
+            },
+          },
+        },
+        orderBy: { completedAt: "desc" }, // most recent completion first
+        take: 25,
+      }),
     ]);
 
     const todayPotentialAmount = (todayJobs as any[]).reduce((s, o) => s + totalWorkerPayouts(o), 0);
@@ -919,6 +962,23 @@ export default async function workerRoutes(app: FastifyInstance) {
       inProgressJobs: (inProgressList as any[]).map((occ) => ({
         id: occ.id,
         startAt: occ.startAt ? occ.startAt.toISOString() : null,
+        status: occ.status,
+        title: occ.title ?? null,
+        propertyName: occ.job?.property?.displayName ?? null,
+        clientName: occ.job?.property?.client?.displayName ?? null,
+        assignees: (occ.assignees ?? []).map((a: any) => ({
+          userId: a.userId,
+          displayName: a.user?.displayName ?? a.user?.email ?? a.userId,
+          isClaimer: a.assignedById === a.userId,
+        })),
+      })),
+      // Per-row breakdown of work finished today (across PENDING_PAYMENT /
+      // CLOSED / COMPLETED). Same shape as inProgressJobs so the UI renders
+      // both panels with the same row component.
+      completedTodayJobs: (completedTodayList as any[]).map((occ) => ({
+        id: occ.id,
+        startAt: occ.startAt ? occ.startAt.toISOString() : null,
+        completedAt: occ.completedAt ? occ.completedAt.toISOString() : null,
         status: occ.status,
         title: occ.title ?? null,
         propertyName: occ.job?.property?.displayName ?? null,

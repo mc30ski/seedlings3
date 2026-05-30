@@ -15,7 +15,7 @@
 // Read-only — same self-contained pattern as MulchJobTool. Hits the
 // existing /api/admin/pricing endpoint and never mutates anything.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Box,
@@ -28,19 +28,10 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Calculator, Copy, FileText, Sparkles, TriangleAlert } from "lucide-react";
-import { apiGet } from "@/src/lib/api";
+import { jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
+import PricingPicker from "@/src/ui/components/PricingPicker";
+import { usePricingPicker } from "@/src/lib/usePricingPicker";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
-
-type PricingRow = {
-  key: string;
-  parsedValue: {
-    label?: string;
-    description?: string;
-    unit?: string;
-    amount?: number;
-    jobTag?: string | null;
-  } | null;
-};
 
 type BaseMode = "standard" | "acres" | "time" | "custom";
 type FrequencyKey = "one_time" | "weekly" | "biweekly" | "monthly";
@@ -72,7 +63,7 @@ type ToolResult = {
   meta: {
     baseLabel: string;
     baseAmount: number;
-    addOns: { key: string; label: string; amount: number; jobTag: string | null }[];
+    addOns: { key: string; label: string; amount: number; jobTags: string[] }[];
     frequency: FrequencyKey;
     perVisitTotal: number;
     monthlyTotal: number | null;
@@ -81,8 +72,16 @@ type ToolResult = {
 };
 
 export default function MowingJobTool() {
-  const [pricingLoaded, setPricingLoaded] = useState(false);
-  const [allPricing, setAllPricing] = useState<PricingRow[]>([]);
+  // Base mow candidates = every entry whose only tag is MOW. Hook owns
+  // load + filter + default-pick + collection plumbing; we just unwrap
+  // its surface here and forward to <PricingPicker> below.
+  const mowPicker = usePricingPicker({
+    exclusiveTag: MOW_TAG,
+    fallbackUnit: "per visit",
+  });
+  const { pricingLoaded, allPricing } = mowPicker;
+  const standardMow = mowPicker.selected;
+  const standardMowOptions = mowPicker.options;
 
   // Base mow selection
   const [baseMode, setBaseMode] = useState<BaseMode>("standard");
@@ -98,20 +97,9 @@ export default function MowingJobTool() {
   // Frequency
   const [frequency, setFrequency] = useState<FrequencyKey>("weekly");
 
-  useEffect(() => {
-    apiGet<PricingRow[]>("/api/admin/pricing")
-      .then((rows) => {
-        if (Array.isArray(rows)) setAllPricing(rows);
-      })
-      .catch(() => { /* allPricing stays empty — UI shows the missing-config notices */ })
-      .finally(() => setPricingLoaded(true));
-  }, []);
-
-  // Pricing-entry lookups, all derived from the same /api/admin/pricing list.
-  const standardMow = useMemo(
-    () => allPricing.find((r) => r.parsedValue?.jobTag === MOW_TAG) ?? null,
-    [allPricing],
-  );
+  // Other key-based lookups, derived from the same /api/admin/pricing
+  // list the hook just fetched. The Acres mode uses a known key; the
+  // Time mode uses the General Labor entry directly.
   const acreMow = useMemo(
     () => allPricing.find((r) => r.key === "pricing_mowing_acre") ?? null,
     [allPricing],
@@ -121,23 +109,28 @@ export default function MowingJobTool() {
     [allPricing],
   );
 
-  // Available add-ons: every pricing entry that has a jobTag and isn't a
-  // base mow entry. Sorted by sortOrder so the operator's preferred display
-  // order from the Pricing tab carries through.
+  // Available add-ons: every pricing entry that has at least one tag
+  // bound AND at least one of those tags is NOT a base-mow tag. (A row
+  // tagged purely with MOW is the base service, not an add-on; a row
+  // tagged with MOW + something else still surfaces here on the non-MOW
+  // tag.) Sorted by sortOrder so the operator's display order from the
+  // Pricing tab carries through.
   const addOnCatalog = useMemo(() => {
     return allPricing
       .filter((r) => {
-        const tag = r.parsedValue?.jobTag;
-        if (!tag) return false;
-        if (BASE_MOW_TAGS.has(tag)) return false;
-        return true;
+        const tags = pricingJobTags(r.parsedValue);
+        if (tags.length === 0) return false;
+        return tags.some((t) => !BASE_MOW_TAGS.has(t));
       })
       .map((r) => ({
         key: r.key,
         label: r.parsedValue?.label ?? r.key,
         amount: Number(r.parsedValue?.amount ?? 0),
         unit: r.parsedValue?.unit ?? "per visit",
-        jobTag: r.parsedValue?.jobTag ?? null,
+        // Carry every tag bound on the entry through to the catalog row —
+        // downstream logic (full-service auto-enable, display badges) can
+        // then check against the full set.
+        jobTags: pricingJobTags(r.parsedValue),
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [allPricing]);
@@ -203,11 +196,12 @@ export default function MowingJobTool() {
   const annualTotal = isRecurring ? perVisitTotal * visitsPerYear : null;
 
   // Combined jobTags string for the estimate hand-off. MOW base is always
-  // implied; add-on tags are de-duped + comma-joined.
+  // implied; every tag from every selected add-on is unioned in, de-duped,
+  // and comma-joined.
   const jobTagsCombined = useMemo(() => {
     const tags = new Set<string>([MOW_TAG]);
     for (const a of selectedAddOns) {
-      if (a.jobTag) tags.add(a.jobTag);
+      for (const t of a.jobTags) tags.add(t);
     }
     return Array.from(tags).join(",");
   }, [selectedAddOns]);
@@ -239,7 +233,7 @@ export default function MowingJobTool() {
       meta: {
         baseLabel,
         baseAmount,
-        addOns: selectedAddOns.map((a) => ({ key: a.key, label: a.label, amount: a.amount, jobTag: a.jobTag })),
+        addOns: selectedAddOns.map((a) => ({ key: a.key, label: a.label, amount: a.amount, jobTags: a.jobTags })),
         frequency,
         perVisitTotal,
         monthlyTotal,
@@ -258,13 +252,14 @@ export default function MowingJobTool() {
   }
 
   function applyFullService() {
-    // Enable every catalog entry whose jobTag matches the FULL_SERVICE_TAGS
-    // set. Doesn't clear non-matching add-ons the operator already toggled —
-    // additive, never destructive.
+    // Enable every catalog entry that has at least one tag in the
+    // FULL_SERVICE_TAGS set. Multi-tag entries (e.g. "Bagged clippings"
+    // tagged MOW + LEAF_CLEANUP) get included whenever any one of their
+    // tags is part of full service. Additive, never destructive.
     setEnabledAddOns((prev) => {
       const next = new Set(prev);
       for (const a of addOnCatalog) {
-        if (a.jobTag && FULL_SERVICE_TAGS.has(a.jobTag)) next.add(a.key);
+        if (a.jobTags.some((t) => FULL_SERVICE_TAGS.has(t))) next.add(a.key);
       }
       return next;
     });
@@ -328,24 +323,39 @@ export default function MowingJobTool() {
 
               {baseMode === "standard" && (
                 <Box>
-                  {standardMow ? (
-                    <Text fontSize="sm">
-                      <Text as="span" fontWeight="medium">{standardMow.parsedValue?.label}</Text>
-                      {" — "}
-                      <Text as="span" color="green.700" fontWeight="bold">${Number(standardMow.parsedValue?.amount ?? 0).toFixed(2)}</Text>
-                      {" "}{standardMow.parsedValue?.unit ?? "per visit"}
-                    </Text>
-                  ) : (
+                  {standardMowOptions.length === 0 ? (
                     <HStack gap={2} align="start">
                       <Box color="orange.500" mt="0.5"><TriangleAlert size={16} /></Box>
                       <Text fontSize="sm" color="orange.800">
-                        No standard mow rate found (looking for pricing entry with <code>jobTag: "MOW"</code>).
+                        No standard mow rate found (looking for a pricing
+                        entry tagged exclusively <code>MOW</code>).
                         Pick another mode or add one in Pricing settings.
                       </Text>
                     </HStack>
-                  )}
-                  {standardMow?.parsedValue?.description && (
-                    <Text fontSize="xs" color="fg.muted">{standardMow.parsedValue.description}</Text>
+                  ) : (
+                    <VStack align="stretch" gap={1.5}>
+                      {/* Picker — always rendered so the operator can see
+                          which entry is driving the estimate even when
+                          there's only one option. */}
+                      <PricingPicker
+                        items={mowPicker.items}
+                        collection={mowPicker.collection}
+                        selectedKey={mowPicker.selectedKey}
+                        onChange={mowPicker.setSelectedKey}
+                        placeholder="Pick a mow rate"
+                      />
+                      {standardMow && (
+                        <Text fontSize="sm">
+                          <Text as="span" fontWeight="medium">{standardMow.parsedValue?.label}</Text>
+                          {" — "}
+                          <Text as="span" color="green.700" fontWeight="bold">${Number(standardMow.parsedValue?.amount ?? 0).toFixed(2)}</Text>
+                          {" "}{standardMow.parsedValue?.unit ?? "per visit"}
+                        </Text>
+                      )}
+                      {standardMow?.parsedValue?.description && (
+                        <Text fontSize="xs" color="fg.muted">{standardMow.parsedValue.description}</Text>
+                      )}
+                    </VStack>
                   )}
                 </Box>
               )}
@@ -427,14 +437,15 @@ export default function MowingJobTool() {
             <HStack><Spinner size="sm" /><Text fontSize="sm" color="fg.muted">Loading pricing…</Text></HStack>
           ) : addOnCatalog.length === 0 ? (
             <Text fontSize="sm" color="fg.muted">
-              No add-on services found in Pricing. Add entries with <code>jobTag</code>
-              {" "}values like TRIM, EDGE, BLOW in Money → Pricing — they'll appear here.
+              No add-on services found in Pricing. Add entries with one or
+              more tags (e.g. TRIM, EDGE, BLOW) in Money → Pricing — they'll
+              appear here.
             </Text>
           ) : (
             <VStack align="stretch" gap={1}>
               {addOnCatalog.map((a) => {
                 const isOn = enabledAddOns.has(a.key);
-                const inFullService = a.jobTag != null && FULL_SERVICE_TAGS.has(a.jobTag);
+                const inFullService = a.jobTags.some((t) => FULL_SERVICE_TAGS.has(t));
                 return (
                   <HStack
                     key={a.key}
@@ -457,8 +468,17 @@ export default function MowingJobTool() {
                     <Box flex="1" minW={0}>
                       <HStack gap={2}>
                         <Text fontSize="sm" fontWeight="medium">{a.label}</Text>
-                        {a.jobTag && (
-                          <Badge size="sm" variant="subtle" colorPalette="gray">{a.jobTag}</Badge>
+                        {a.jobTags.length > 0 && (
+                          <Badge
+                            size="sm"
+                            variant="subtle"
+                            colorPalette="blue"
+                            borderRadius="full"
+                            px="2"
+                            title={a.jobTags.length > 1 ? "This pricing entry is bound to multiple tags" : "This pricing entry's tag"}
+                          >
+                            ⚡ tag{a.jobTags.length > 1 ? "s" : ""}: {a.jobTags.map((t) => jobTagLabel(t)).join(", ")}
+                          </Badge>
                         )}
                         {inFullService && (
                           <Badge size="sm" variant="subtle" colorPalette="purple">full service</Badge>

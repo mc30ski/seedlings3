@@ -31,6 +31,21 @@ export function jobTagLabel(tag: string, config?: ServiceTypeConfig[]): string {
   return found?.label ?? tag;
 }
 
+/** Read the job-tag bindings off a parsed pricing entry's value. Pricing
+ *  entries used to carry a single `jobTag: string | null`; they now carry
+ *  `jobTags: string[]`. This reader prefers the array shape and falls
+ *  back to the legacy single-tag field so old DB rows keep working
+ *  without a one-shot migration. */
+export function pricingJobTags(parsed: any): string[] {
+  if (Array.isArray(parsed?.jobTags)) {
+    return parsed.jobTags.filter((t: any) => typeof t === "string" && t.length > 0);
+  }
+  if (typeof parsed?.jobTag === "string" && parsed.jobTag.length > 0) {
+    return [parsed.jobTag];
+  }
+  return [];
+}
+
 /** Parse the SERVICE_TYPES setting value */
 export function parseServiceTypesConfig(raw: string | null | undefined): ServiceTypeConfig[] | null {
   if (!raw) return null;

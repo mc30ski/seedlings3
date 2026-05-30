@@ -52,7 +52,7 @@ import { type DatePreset, computeDatesFromPreset, PRESET_LABELS } from "@/src/li
 import OccurrencePhotos from "@/src/ui/components/OccurrencePhotos";
 import OccurrenceInstructions, { InstructionsBadge } from "@/src/ui/components/OccurrenceInstructions";
 import PaymentCommsButtons from "@/src/ui/components/PaymentCommsButtons";
-import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
+import { jobTagLabel as _jobTagLabel, JOB_TAGS, parseServiceTypesConfig, pricingJobTags, DEFAULT_SERVICE_TYPES, type ServiceTypeConfig } from "@/src/ui/components/JobTagPicker";
 import { parseAdminTags, adminTagLabel, adminTagColor } from "@/src/ui/components/AdminTagPicker";
 import TruncatedText from "@/src/ui/components/TruncatedText";
 import { useOffline } from "@/src/lib/offline";
@@ -1026,10 +1026,10 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   const [addonCustomLabel, setAddonCustomLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
   const [addonBusy, setAddonBusy] = useState(false);
-  // Pricing entries (with jobTag bindings) — loaded when the add-on
+  // Pricing entries (with jobTags bindings) — loaded when the add-on
   // dialog is open so we can show an inline reference price next to the
-  // price input when the selected tag has a matching entry.
-  type PricingHintEntry = { key: string; parsedValue: { label: string; amount: number; unit: string; jobTag?: string | null } | null };
+  // price input when the selected tag matches one of the entry's tags.
+  type PricingHintEntry = { key: string; parsedValue: { label: string; amount: number; unit: string; jobTags?: string[] | null; jobTag?: string | null } | null };
   const [pricingHints, setPricingHints] = useState<PricingHintEntry[]>([]);
   const [pricingGuideOpen, setPricingGuideOpen] = useState(false);
   useEffect(() => {
@@ -1040,7 +1040,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   }, [addAddonOcc, forAdmin]);
   const addonHintEntry = useMemo(() => {
     if (!addonTag) return null;
-    return pricingHints.find((p) => p.parsedValue?.jobTag === addonTag) ?? null;
+    return pricingHints.find((p) => pricingJobTags(p.parsedValue).includes(addonTag)) ?? null;
   }, [pricingHints, addonTag]);
   const [photoPromptOccId, setPhotoPromptOccId] = useState<string | null>(null);
 

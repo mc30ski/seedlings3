@@ -14,7 +14,7 @@
 // in v1 — when wired up later, the estimate dialog will listen for a
 // `tool:applyToEstimate` custom event carrying this object.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Box,
@@ -27,22 +27,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Calculator, Copy, FileText, Plus, Trash2, TriangleAlert } from "lucide-react";
-import { apiGet } from "@/src/lib/api";
+import PricingPicker from "@/src/ui/components/PricingPicker";
+import { usePricingPicker } from "@/src/lib/usePricingPicker";
 import { publishInlineMessage } from "@/src/ui/components/InlineMessage";
-
-// Mirrors the parsed pricing row returned by /api/admin/pricing. Only the
-// fields the tool actually uses are declared — additional fields on the
-// JSON payload are ignored.
-type PricingRow = {
-  key: string;
-  parsedValue: {
-    label?: string;
-    description?: string;
-    unit?: string;
-    amount?: number;
-    jobTag?: string | null;
-  } | null;
-};
 
 // One bed entered by the operator. The tool supports either L×W dimensions
 // or a direct sq-ft entry; the active mode is captured by `mode` so the
@@ -112,25 +99,21 @@ function computeBed(b: BedInput, depthIn: number): { sqFt: number; yards: number
 }
 
 export default function MulchJobTool() {
-  const [pricingLoaded, setPricingLoaded] = useState(false);
-  const [mulchPricing, setMulchPricing] = useState<PricingRow | null>(null);
+  // Base mulch candidates = every entry whose only tag is MULCH. The
+  // operator can legitimately maintain several variants (premium
+  // hardwood, dyed black, pine straw, etc.) and picks one per estimate.
+  // Hook owns load + filter + default-pick + collection plumbing.
+  const mulchPicker = usePricingPicker({
+    exclusiveTag: MULCH_TAG,
+    fallbackUnit: "per cubic yard installed",
+  });
+  const { pricingLoaded } = mulchPicker;
+  const mulchOptions = mulchPicker.options;
+  const mulchPricing = mulchPicker.selected;
   const [rateOverride, setRateOverride] = useState<string>("");
   const [depthIn, setDepthIn] = useState<string>(String(DEFAULT_DEPTH_IN));
   const [roundHalfYard, setRoundHalfYard] = useState(true);
   const [beds, setBeds] = useState<BedInput[]>(() => [newBed()]);
-
-  // Load pricing on mount. First MULCH-tagged entry wins; if none, the
-  // operator can still enter an override and produce a quote.
-  useEffect(() => {
-    apiGet<PricingRow[]>("/api/admin/pricing")
-      .then((rows) => {
-        if (!Array.isArray(rows)) return;
-        const mulch = rows.find((r) => r.parsedValue?.jobTag === MULCH_TAG);
-        if (mulch) setMulchPricing(mulch);
-      })
-      .catch(() => { /* no pricing — UI shows the missing-config notice */ })
-      .finally(() => setPricingLoaded(true));
-  }, []);
 
   // Effective rate: override first, then the pricing entry, then 0 (forces
   // the operator to enter something before the totals are meaningful).
@@ -242,8 +225,8 @@ export default function MulchJobTool() {
         </HStack>
         <Text fontSize="sm" color="fg.muted">
           Calculate cubic yards of mulch needed and the installed price based on
-          the configured rate. Reads <code>pricing_*</code> with <code>jobTag: "MULCH"</code>
-          {" "}from Settings.
+          the configured rate. Reads the first <code>pricing_*</code> entry
+          tagged <code>MULCH</code> from Settings.
         </Text>
       </Box>
 
@@ -253,16 +236,28 @@ export default function MulchJobTool() {
           <Text fontWeight="semibold" mb={2}>Rate</Text>
           {!pricingLoaded ? (
             <HStack><Spinner size="sm" /><Text fontSize="sm" color="fg.muted">Loading pricing…</Text></HStack>
-          ) : mulchPricing ? (
+          ) : mulchOptions.length > 0 ? (
             <VStack align="stretch" gap={2}>
+              {/* Picker — always rendered so the operator sees which
+                  mulch entry is driving the rate even when there's only
+                  one option. */}
+              <PricingPicker
+                items={mulchPicker.items}
+                collection={mulchPicker.collection}
+                selectedKey={mulchPicker.selectedKey}
+                onChange={mulchPicker.setSelectedKey}
+                placeholder="Pick a mulch rate"
+              />
               <Box>
-                <Text fontSize="sm">
-                  <Text as="span" fontWeight="medium">{mulchPricing.parsedValue?.label ?? "Mulch"}</Text>
-                  {" — "}
-                  <Text as="span" color="green.700" fontWeight="bold">${Number(mulchPricing.parsedValue?.amount ?? 0).toFixed(2)}</Text>
-                  {" "}{mulchPricing.parsedValue?.unit ?? "per cubic yard"}
-                </Text>
-                {mulchPricing.parsedValue?.description && (
+                {mulchPricing && (
+                  <Text fontSize="sm">
+                    <Text as="span" fontWeight="medium">{mulchPricing.parsedValue?.label ?? "Mulch"}</Text>
+                    {" — "}
+                    <Text as="span" color="green.700" fontWeight="bold">${Number(mulchPricing.parsedValue?.amount ?? 0).toFixed(2)}</Text>
+                    {" "}{mulchPricing.parsedValue?.unit ?? "per cubic yard"}
+                  </Text>
+                )}
+                {mulchPricing?.parsedValue?.description && (
                   <Text fontSize="xs" color="fg.muted">{mulchPricing.parsedValue.description}</Text>
                 )}
               </Box>
@@ -287,8 +282,8 @@ export default function MulchJobTool() {
               <HStack gap={2} align="start">
                 <Box color="orange.500" mt="0.5"><TriangleAlert size={16} /></Box>
                 <Text fontSize="sm" color="orange.800">
-                  No mulch rate found in Pricing settings (looking for an entry with
-                  {" "}<code>jobTag: "MULCH"</code>). Enter a rate to use just for this quote,
+                  No mulch rate found in Pricing settings (looking for an entry
+                  tagged <code>MULCH</code>). Enter a rate to use just for this quote,
                   or add one in <Text as="span" fontWeight="semibold">Money → Pricing</Text>.
                 </Text>
               </HStack>

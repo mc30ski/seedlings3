@@ -13,6 +13,7 @@ import {
   Spinner,
   Text,
   VStack,
+  Wrap,
 } from "@chakra-ui/react";
 import { DollarSign, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
@@ -21,7 +22,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
-import { DEFAULT_SERVICE_TYPES, jobTagLabel } from "@/src/ui/components/JobTagPicker";
+import { DEFAULT_SERVICE_TYPES, jobTagLabel, pricingJobTags } from "@/src/ui/components/JobTagPicker";
 
 export type PricingEntry = {
   id: string;
@@ -35,8 +36,11 @@ export type PricingEntry = {
     unit: string;
     amount: number;
     sortOrder: number;
-    /** Optional binding to a job tag (MOW, TRIM, …). Drives the add-on
-     *  and estimate inline-reference hints when set. */
+    /** Optional bindings to one or more job tags (MOW, TRIM, …). Drives
+     *  the add-on and estimate inline-reference hints when set. The
+     *  legacy `jobTag` single-string field is kept readable for old
+     *  rows; new writes always use the array. */
+    jobTags?: string[] | null;
     jobTag?: string | null;
   } | null;
 };
@@ -64,8 +68,14 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
   const [formDescription, setFormDescription] = useState("");
   const [formUnit, setFormUnit] = useState("");
   const [formAmount, setFormAmount] = useState("");
-  const [formJobTag, setFormJobTag] = useState<string>("");
+  const [formJobTags, setFormJobTags] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  function toggleFormJobTag(tag: string) {
+    setFormJobTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  }
 
   // Delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<{ key: string; label: string } | null>(null);
@@ -94,7 +104,7 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
     setFormDescription("");
     setFormUnit("");
     setFormAmount("");
-    setFormJobTag("");
+    setFormJobTags([]);
     setDialogOpen(true);
   }
 
@@ -106,7 +116,7 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
     setFormDescription(v.description);
     setFormUnit(v.unit);
     setFormAmount(String(v.amount));
-    setFormJobTag(v.jobTag ?? "");
+    setFormJobTags(pricingJobTags(v));
     setDialogOpen(true);
   }
 
@@ -122,7 +132,7 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
         description: formDescription.trim(),
         unit: formUnit.trim(),
         amount: Number(formAmount),
-        jobTag: formJobTag || null,
+        jobTags: formJobTags,
       };
       if (editKey) {
         await apiPatch(`/api/admin/pricing/${editKey}`, payload);
@@ -195,11 +205,15 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
                       <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                         {v.unit}
                       </Badge>
-                      {v.jobTag && (
-                        <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full" title="Pricing hint surfaces when this tag is added on a job">
-                          ⚡ tag: {jobTagLabel(v.jobTag)}
-                        </Badge>
-                      )}
+                      {(() => {
+                        const tags = pricingJobTags(v);
+                        if (tags.length === 0) return null;
+                        return (
+                          <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full" title="Pricing hint surfaces when any of these tags is added on a job">
+                            ⚡ tag{tags.length > 1 ? "s" : ""}: {tags.map((t) => jobTagLabel(t)).join(", ")}
+                          </Badge>
+                        );
+                      })()}
                     </HStack>
                     {v.description && (
                       <Text fontSize="xs" color="fg.muted">{v.description}</Text>
@@ -282,19 +296,29 @@ export default function PricingTab({ isSuper, readOnly }: Props) {
                     </Box>
                   </HStack>
                   <Box>
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>Inline hint for tag (optional)</Text>
-                    <select
-                      value={formJobTag}
-                      onChange={(e) => setFormJobTag(e.target.value)}
-                      style={{ width: "100%", padding: "6px 10px", fontSize: "14px", border: "1px solid #ccc", borderRadius: "6px" }}
-                    >
-                      <option value="">— no inline hint —</option>
-                      {DEFAULT_SERVICE_TYPES.map((t) => (
-                        <option key={t.key} value={t.key}>{t.label} ({t.key})</option>
-                      ))}
-                    </select>
+                    <Text fontSize="sm" fontWeight="medium" mb={1}>
+                      Inline hint for tag(s) (optional)
+                    </Text>
+                    <Wrap gap={1.5}>
+                      {DEFAULT_SERVICE_TYPES.map((t) => {
+                        const on = formJobTags.includes(t.key);
+                        return (
+                          <Button
+                            key={t.key}
+                            type="button"
+                            size="xs"
+                            variant={on ? "solid" : "outline"}
+                            colorPalette={on ? "blue" : "gray"}
+                            borderRadius="full"
+                            onClick={() => toggleFormJobTag(t.key)}
+                          >
+                            {t.label}
+                          </Button>
+                        );
+                      })}
+                    </Wrap>
                     <Text fontSize="xs" color="fg.muted" mt={1}>
-                      When set, this entry's price shows as an inline reference next to the matching tag in the add-on dialog and estimate workflow. Leave blank for browse-only entries.
+                      Tap one or more tags to bind this entry. Its price will show as an inline reference next to any of these tags in the add-on dialog and estimate workflow. Leave all unselected for browse-only entries.
                     </Text>
                   </Box>
                 </VStack>
