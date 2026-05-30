@@ -602,10 +602,28 @@ export default async function publicRoutes(app: FastifyInstance) {
         where: { clerkUserId },
         include: { roles: true },
       });
-      const hasWorkerRole = !!user?.roles?.some((r: any) =>
-        r.role === "WORKER" || r.role === "ADMIN" || r.role === "SUPER",
+      // Super is the owner role and overrides every other role — they can
+      // do anything, including testing the client self-report flow even
+      // when they also hold WORKER/ADMIN rows. For anyone else, block
+      // WORKER and ADMIN from self-reporting on a client's behalf (would
+      // queue an unverified payment without money actually changing hands).
+      const isSuper = !!user?.roles?.some((r: any) => r.role === "SUPER");
+      const hasBlockedRole = !!user?.roles?.some((r: any) =>
+        r.role === "WORKER" || r.role === "ADMIN",
       );
-      if (hasWorkerRole) {
+      // TEMP DEBUG — remove once Super-override is confirmed working.
+      // eslint-disable-next-line no-console
+      console.log("[pay/self-report DEBUG]", {
+        clerkUserId,
+        userFound: !!user,
+        userId: user?.id,
+        userEmail: user?.email,
+        roles: user?.roles?.map((r: any) => r.role) ?? [],
+        isSuper,
+        hasBlockedRole,
+        willBlock: !isSuper && hasBlockedRole,
+      });
+      if (!isSuper && hasBlockedRole) {
         return reply.code(403).send({
           error: "worker_self_report_forbidden",
           message:

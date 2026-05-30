@@ -123,6 +123,10 @@ function PaymentPageInner() {
   // this modal first; the modal's Yes button is what actually fires
   // selfReport(). Older clients tap-and-go too easily without this gate.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Surfaced inline (not an alert) so the user can see exactly why
+  // self-report failed — silent failures looked like "the button does
+  // nothing" and led to the infinite-tap loop.
+  const [selfReportError, setSelfReportError] = useState<string | null>(null);
   // Ref on the currently-selected method card so "Not yet — show me how"
   // can scroll back to the inline steps panel.
   const selectedCardRef = useRef<HTMLDivElement | null>(null);
@@ -185,15 +189,27 @@ function PaymentPageInner() {
           ? me.roles.map((r: any) => r?.role).filter(Boolean)
           : [];
         if (cancelled) return;
+        // Super is the owner role and overrides every other role — when
+        // present we DON'T treat this as a worker session, even if the
+        // same user also has WORKER/ADMIN rows. Worker + Admin without
+        // Super still get the warning banner instead of the methods list.
+        const isSuper = roles.includes("SUPER");
         setIsWorkerSession(
-          roles.includes("WORKER") || roles.includes("ADMIN") || roles.includes("SUPER"),
+          !isSuper && (roles.includes("WORKER") || roles.includes("ADMIN")),
         );
       } catch {
         if (!cancelled) setIsWorkerSession(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [isAuthLoaded, isSignedIn, getToken]);
+    // `getToken` is intentionally excluded — Clerk's useAuth doesn't
+    // guarantee a stable reference across renders, so including it causes
+    // this effect to re-fire on every render → setIsWorkerSession → another
+    // render → infinite loop. We only need to re-run when auth state
+    // actually changes (loaded/signed-in), and we use whatever getToken is
+    // current at the time of the call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthLoaded, isSignedIn]);
 
   // Order the taxonomy-driven methods: business-preferred methods first, then
   // the order the server returned them in. Array.sort is stable, so config
@@ -233,9 +249,10 @@ function PaymentPageInner() {
     // session — see public.ts /public/pay/:token/self-report — but
     // catching it here gives a clearer message and skips the network call.
     if (isWorkerSession) {
-      alert("This page is for the client. Use the worker app's Accept Payment dialog to record payments — don't submit on the client's behalf.");
+      setSelfReportError("This page is for the client. Use the worker app's Accept Payment dialog to record payments — don't submit on the client's behalf.");
       return;
     }
+    setSelfReportError(null);
     setSubmitting(true);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -253,15 +270,30 @@ function PaymentPageInner() {
         headers,
         body: JSON.stringify({ method }),
       });
-      if (!res.ok) throw new Error("Failed to record");
+      if (!res.ok) {
+        // Read the server's error payload so we can surface the actual
+        // reason instead of swallowing it into a generic alert. The pay
+        // page used to `catch {}` the failure, which left the user in the
+        // same state after every tap — looked like the button did nothing.
+        let serverMessage = "";
+        try {
+          const errBody = await res.json();
+          serverMessage = errBody?.message || errBody?.error || "";
+        } catch {
+          try { serverMessage = await res.text(); } catch { /* ignore */ }
+        }
+        throw new Error(`Server returned ${res.status}${serverMessage ? `: ${serverMessage}` : ""}`);
+      }
       setSelectedMethod(method);
       setReportedJustNow(true);
       // Refresh the data so the page shows the new payment state.
       const refreshed = await fetch(`${API_BASE}/api/public/pay/${token}`);
       if (refreshed.ok) setData(await refreshed.json());
-    } catch {
-      // Soft error — user can retry.
-      alert("Couldn't record that just now. Please try again, or text us.");
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[pay] self-report failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setSelfReportError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -408,7 +440,7 @@ function PaymentPageInner() {
           </Box>
         ) : (
           <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={2}>How would you like to pay?</Text>
+            <Text fontSize="sm" fontWeight="semibold" mb={2}>How do you intend to pay?</Text>
             <Box
               mb={3}
               p={3}
@@ -420,9 +452,31 @@ function PaymentPageInner() {
               borderRadius="md"
             >
               <Text fontSize="md" fontWeight="bold" color="orange.900">
-                Selecting below does NOT pay your bill, it just informs us how you intend to pay.
+                Selecting a payment method below does NOT pay your bill automatically. It just helps us find your payment.
               </Text>
             </Box>
+            {selfReportError && (
+              <Box
+                mb={3}
+                p={3}
+                bg="red.50"
+                borderWidth="1px"
+                borderColor="red.300"
+                borderLeftWidth="4px"
+                borderLeftColor="red.500"
+                borderRadius="md"
+              >
+                <Text fontSize="sm" fontWeight="bold" color="red.900" mb={1}>
+                  Could not record your payment
+                </Text>
+                <Text fontSize="xs" color="red.800">
+                  {selfReportError}
+                </Text>
+                <Text fontSize="xs" color="red.700" mt={1}>
+                  Please send us a text or email so we can sort this out.
+                </Text>
+              </Box>
+            )}
             <VStack gap={2} align="stretch">
               {orderedMethods.length === 0 ? (
                 <Text fontSize="xs" color="fg.muted">
@@ -782,7 +836,7 @@ function PaymentMethodCard({
                 Don&apos;t forget — once you&apos;ve sent it:
               </Text>
               <Text fontSize="xs" color="fg.default">
-                Come back here and tap the button below so we know to mark it received.
+                Come back here and tap the button below so we know where to find it.
               </Text>
             </Box>
           )}
@@ -934,16 +988,26 @@ function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: Re
 }
 
 function ConfirmedView({ data }: { data: ResolveResponse }) {
+  const { businessName } = useBranding();
+  // Resolve the method's display label so the headline names the channel
+  // ("Zelle", "Venmo", etc.) instead of just "Payment received". Falls
+  // back to the raw key, then to a generic phrasing if neither's set.
+  const methodLabel =
+    (data.paymentMethods ?? []).find((m) => m.key === data.payment?.method)?.label
+      ?? data.payment?.method
+      ?? null;
   return (
     <Card.Root variant="outline">
       <Card.Body p={4}>
         <VStack gap={3} align="stretch">
           <HStack gap={2}>
             <Box color="green.500"><CheckCircle size={22} /></Box>
-            <Text fontSize="md" fontWeight="semibold">Payment received — thank you!</Text>
+            <Text fontSize="md" fontWeight="bold">
+              {businessName} confirmed your {dollar(data.payment!.amountPaid)}{methodLabel ? ` ${methodLabel}` : ""} payment.
+            </Text>
           </HStack>
-          <Text fontSize="xs" color="fg.muted">
-            {dollar(data.payment!.amountPaid)} for {data.propertyLabel}.
+          <Text fontSize="sm" color="fg.default">
+            We saw it land on our end. Your account is up to date for <Text as="span" fontWeight="semibold">{data.propertyLabel}</Text>. Thank you!
           </Text>
           <AccountNudge token={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""} />
         </VStack>
