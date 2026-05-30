@@ -22,6 +22,7 @@ import {
   Button,
   Card,
   HStack,
+  SimpleGrid,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -351,26 +352,30 @@ function PaymentPageInner() {
         </Card.Root>
 
         {data.photos.length > 0 && (
-          <HStack gap={1.5} overflowX="auto" pb={1}>
-            {data.photos.map((p, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={i}
-                src={p.url}
-                alt=""
-                onClick={() => setLightboxIdx(i)}
-                style={{
-                  flexShrink: 0,
-                  width: "84px",
-                  height: "84px",
-                  objectFit: "cover",
-                  borderRadius: "6px",
-                  border: "1px solid var(--chakra-colors-gray-200)",
-                  cursor: "pointer",
-                }}
-              />
-            ))}
-          </HStack>
+          <Box>
+            <Text fontSize="xs" color="fg.muted" mb={1.5}>What was done:</Text>
+            <SimpleGrid columns={{ base: 3, md: 4 }} gap={2}>
+              {data.photos.map((p, i) => (
+                <Box
+                  key={i}
+                  onClick={() => setLightboxIdx(i)}
+                  cursor="pointer"
+                  borderRadius="md"
+                  overflow="hidden"
+                  borderWidth="1px"
+                  borderColor="gray.200"
+                  css={{ aspectRatio: "1" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.url}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                </Box>
+              ))}
+            </SimpleGrid>
+          </Box>
         )}
 
         {isWorkerSession ? (
@@ -402,10 +407,21 @@ function PaymentPageInner() {
           </Box>
         ) : (
           <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={1}>How would you like to pay?</Text>
-            <Text fontSize="xs" color="fg.muted" mb={2}>
-              Pick a method, send your payment, then tap the button below to let us know so we can confirm the payment. Sign up for a client account to download your receipt.
-            </Text>
+            <Text fontSize="sm" fontWeight="semibold" mb={2}>How would you like to pay?</Text>
+            <Box
+              mb={3}
+              p={3}
+              bg="orange.50"
+              borderWidth="1px"
+              borderColor="orange.300"
+              borderLeftWidth="4px"
+              borderLeftColor="orange.500"
+              borderRadius="md"
+            >
+              <Text fontSize="md" fontWeight="bold" color="orange.900">
+                Selecting below does NOT pay your bill, it just informs us how you intend to pay.
+              </Text>
+            </Box>
             <VStack gap={2} align="stretch">
               {orderedMethods.length === 0 ? (
                 <Text fontSize="xs" color="fg.muted">
@@ -848,35 +864,41 @@ function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: Re
       <Card.Body p={4}>
         <VStack gap={3} align="stretch">
           <HStack gap={2}>
-            <Box color="teal.500"><CheckCircle size={20} /></Box>
-            <Text fontSize="md" fontWeight="semibold">Thank you.</Text>
+            <Box color="orange.500"><AlertTriangle size={20} /></Box>
+            <Text fontSize="md" fontWeight="bold">
+              One last step — did your {dollar(data.amountDue)}{methodLabel ? ` ${methodLabel}` : ""} payment go through?
+            </Text>
           </HStack>
-          <Text fontSize="xs" color="fg.muted">
-            Your{methodLabel ? ` ${methodLabel.toLowerCase()}` : ""} payment of {dollar(data.amountDue)} for {data.propertyLabel} is being confirmed.
-            {/* method key reserved for future per-method receipt copy */}
-            {method ? "" : ""}
+          <Text fontSize="sm" color="fg.default">
+            Please make sure you actually sent it to <Text as="span" fontWeight="semibold">Seedlings Lawn Care</Text>. We&apos;ll watch for it on our end and confirm once it arrives.
           </Text>
+          <Text fontSize="sm" color="fg.default">
+            Want to check the status yourself anytime? <Text as="span" fontWeight="semibold">Sign in (or create a free account) below.</Text>
+          </Text>
+          {/* method key reserved for future per-method copy */}
+          {method ? "" : ""}
           {data.photos.length > 0 && (
-            <HStack gap={1.5} overflowX="auto" pb={1}>
+            <SimpleGrid columns={{ base: 3, md: 4 }} gap={2}>
               {data.photos.map((p, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
+                <Box
                   key={i}
-                  src={p.url}
-                  alt=""
                   onClick={() => onOpenPhoto(i)}
-                  style={{
-                    flexShrink: 0,
-                    width: "72px",
-                    height: "72px",
-                    objectFit: "cover",
-                    borderRadius: "6px",
-                    border: "1px solid var(--chakra-colors-gray-200)",
-                    cursor: "pointer",
-                  }}
-                />
+                  cursor="pointer"
+                  borderRadius="md"
+                  overflow="hidden"
+                  borderWidth="1px"
+                  borderColor="gray.200"
+                  css={{ aspectRatio: "1" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.url}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                </Box>
               ))}
-            </HStack>
+            </SimpleGrid>
           )}
           <AccountNudge token={typeof window !== "undefined" ? new URL(window.location.href).pathname.split("/").pop() ?? "" : ""} />
         </VStack>
@@ -936,6 +958,7 @@ function AccountNudge({ token }: { token: string }) {
         Your free account lets you see:
       </Text>
       <VStack align="start" gap={0.5} fontSize="xs" mb={3}>
+        <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Track payment status</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Photos from visits</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Upcoming services</Text></HStack>
         <HStack gap={2}><Box color="green.500"><Check size={12} /></Box><Text>Reschedule your services</Text></HStack>
