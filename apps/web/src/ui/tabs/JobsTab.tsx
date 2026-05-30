@@ -17,7 +17,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, RotateCcw, Share2, Star, Tag, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
@@ -1757,7 +1757,15 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
   // SMS/email), or cancel. Used by every Confirm-Client entry point (ultra,
   // semi, expanded card) so the experience stays identical across densities.
   function openConfirmClientDialog(occ: WorkerOccurrence) {
-    const poc = (occ.job?.property as any)?.pointOfContact;
+    // Prefer the property's pointOfContact when set; otherwise fall back to
+    // the client's primary active contact (or the first active one with
+    // phone/email). This lets Request Confirmation show on jobs whose
+    // property never had pointOfContactId set but whose client still has
+    // usable contact info on file.
+    const directPoc = (occ.job?.property as any)?.pointOfContact;
+    const clientContacts: any[] = (occ.job?.property as any)?.client?.contacts ?? [];
+    const fallbackPoc = clientContacts.find((c) => c?.phone || c?.email) ?? null;
+    const poc = directPoc ?? fallbackPoc;
     const pocPhone: string | null = poc?.phone ?? null;
     const pocEmail: string | null = poc?.email ?? null;
     const pocName: string | null = poc?.firstName
@@ -3763,11 +3771,6 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                         <Button size="xs" variant="ghost" w="full" justifyContent="start" onClick={() => { setQuickActionMenuOcc(null); setCompleteDialogOcc(occ); }}>
                           <CheckCircle2 size={12} /> Complete
                         </Button>
-                        {forAdmin && (isAdmin || isSuper) && (
-                          <Button size="xs" variant="ghost" w="full" justifyContent="start" colorPalette="red" onClick={() => { setQuickActionMenuOcc(null); setResetJobOcc(occ); }}>
-                            <RotateCcw size={12} /> Reset Job
-                          </Button>
-                        )}
                       </VStack>
                     )}
                   </Box>
