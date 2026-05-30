@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { useAuth } from "@clerk/nextjs";
+import { useBranding } from "@/src/lib/useBranding";
 import {
   Badge,
   Box,
@@ -606,18 +607,42 @@ function PhotoLightbox({
   );
 }
 
+// Season-aware brand icon resolver — mirrors BrandLabel.tsx so the pay
+// page uses the same seasonal swap (spring/summer vs. fall) as the rest
+// of the app. SSR-safe: returns the default spring icon when no window.
+function resolveBrandIcon(): string {
+  if (typeof window === "undefined") return "/seedlings-icon.png";
+  try {
+    const override = localStorage.getItem("seedlings_seasonOverride");
+    if (override === "fall") return "/seedlings-icon-fall.png";
+    if (override === "spring") return "/seedlings-icon.png";
+  } catch { /* ignore — fall through to month-based default */ }
+  const month = new Date().getMonth();
+  return (month >= 2 && month <= 7) ? "/seedlings-icon.png" : "/seedlings-icon-fall.png";
+}
+
 function PageShell({ children }: { children: React.ReactNode }) {
+  const { businessName } = useBranding();
+  const [iconSrc, setIconSrc] = useState("/seedlings-icon.png");
+  useEffect(() => { setIconSrc(resolveBrandIcon()); }, []);
   return (
     <>
       <Head>
-        <title>Pay your invoice — Seedlings Lawn Care</title>
+        <title>Pay your invoice — {businessName}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <Box minH="100vh" bg="gray.50">
         <Box maxW="md" mx="auto" px={3} py={4}>
-          <Text fontSize="md" fontWeight="bold" color="teal.700" mb={3}>
-            🌱 Seedlings Lawn Care
-          </Text>
+          <HStack gap={2} align="center" mb={3}>
+            <img
+              src={iconSrc}
+              alt={businessName}
+              style={{ height: "28px", width: "auto", display: "block" }}
+            />
+            <Text fontSize="md" fontWeight="bold" color="teal.700">
+              {businessName}
+            </Text>
+          </HStack>
           {children}
           <Text fontSize="xs" color="fg.muted" mt={5} textAlign="center">
             Questions? Reply to the text or email we sent you.
@@ -859,6 +884,7 @@ function SentConfirmModal({
 
 
 function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: ResolveResponse; method: MethodKey | null; methodLabel: string | null; onOpenPhoto: (idx: number) => void }) {
+  const { businessName } = useBranding();
   return (
     <Card.Root variant="outline">
       <Card.Body p={4}>
@@ -870,7 +896,7 @@ function SelfReportedView({ data, method, methodLabel, onOpenPhoto }: { data: Re
             </Text>
           </HStack>
           <Text fontSize="sm" color="fg.default">
-            Please make sure you actually sent it to <Text as="span" fontWeight="semibold">Seedlings Lawn Care</Text>. We&apos;ll watch for it on our end and confirm once it arrives.
+            Please make sure you actually sent it to <Text as="span" fontWeight="semibold">{businessName}</Text>. We&apos;ll watch for it on our end and confirm once it arrives.
           </Text>
           <Text fontSize="sm" color="fg.default">
             Want to check the status yourself anytime? <Text as="span" fontWeight="semibold">Sign in (or create a free account) below.</Text>
