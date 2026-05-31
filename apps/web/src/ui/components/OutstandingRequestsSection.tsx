@@ -314,12 +314,12 @@ export default function OutstandingRequestsSection() {
                     occurrence for repeating jobs. */}
                 <Button
                   size="xs"
-                  variant="solid"
+                  variant="ghost"
                   colorPalette="green"
                   onClick={() => openMarkPaid(r)}
                   title="Client paid offline — record the payment and close out the invoice"
                 >
-                  <Check size={12} /> Mark Paid
+                  <Check size={12} /> Reconcile Paid
                 </Button>
               </HStack>
             </Box>
