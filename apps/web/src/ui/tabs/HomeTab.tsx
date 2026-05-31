@@ -623,9 +623,16 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                           : claimer
                             ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
                             : occ.assignees.map((a) => a.displayName).join(", ");
+                      // Client name leads the row so the admin's eye lands
+                      // on "who" before "where" — matches the way most
+                      // admins ask "what's <client> doing right now?".
+                      // Falls back to the property name alone when the
+                      // client name isn't available.
                       const jobLabel =
-                        occ.propertyName
-                          ? `${occ.propertyName}${occ.clientName ? ` — ${occ.clientName}` : ""}`
+                        occ.clientName
+                          ? `${occ.clientName}${occ.propertyName ? ` — ${occ.propertyName}` : ""}`
+                          : occ.propertyName
+                          ? occ.propertyName
                           : (occ.title ?? "(untitled)");
                       // Date label disambiguates rows when the same property
                       // has multiple active occurrences. Older dates are
@@ -717,9 +724,16 @@ export default function HomeTab({ me, onLaunchWorkflow, viewAsUserId, viewAsDisp
                           : claimer
                             ? `${claimer.displayName}${others.length > 0 ? ` +${others.length}` : ""}`
                             : occ.assignees.map((a) => a.displayName).join(", ");
+                      // Client name leads the row so the admin's eye lands
+                      // on "who" before "where" — matches the way most
+                      // admins ask "what's <client> doing right now?".
+                      // Falls back to the property name alone when the
+                      // client name isn't available.
                       const jobLabel =
-                        occ.propertyName
-                          ? `${occ.propertyName}${occ.clientName ? ` — ${occ.clientName}` : ""}`
+                        occ.clientName
+                          ? `${occ.clientName}${occ.propertyName ? ` — ${occ.propertyName}` : ""}`
+                          : occ.propertyName
+                          ? occ.propertyName
                           : (occ.title ?? "(untitled)");
                       // Time-of-completion label so a glance shows what
                       // wrapped up when. Falls back to the scheduled date

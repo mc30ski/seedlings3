@@ -50,6 +50,9 @@ type OutstandingRow = {
   amount: number;
   property: string | null;
   client: string | null;
+  /** Resolved public invoice URL — server-built so the UI doesn't have
+   *  to know the base or the token. Null only in edge cases (no token). */
+  invoiceUrl: string | null;
   claimer: { id: string; displayName: string | null; email: string | null } | null;
 };
 
@@ -293,6 +296,18 @@ export default function OutstandingRequestsSection() {
                 <Button size="xs" variant="ghost" onClick={() => openJob(r)} title="Open the job">
                   <ExternalLink size={12} /> Open job
                 </Button>
+                {r.invoiceUrl && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    asChild
+                    title="Open the client-facing invoice page (the same URL the client received)"
+                  >
+                    <a href={r.invoiceUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink size={12} /> Open invoice
+                    </a>
+                  </Button>
+                )}
                 {/* Admin escape hatch — when the client paid offline and never
                     self-reported, the invoice is stuck here forever. This
                     creates + confirms a Payment row + generates the next
