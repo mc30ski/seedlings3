@@ -557,6 +557,7 @@ export const paymentRequests = {
         startAt: true,
         price: true,
         paymentRequestSentAt: true,
+        paymentRequestToken: true,
         paymentRequestTokenCreatedAt: true,
         addons: { select: { price: true } },
         job: {
@@ -580,6 +581,17 @@ export const paymentRequests = {
         },
       },
     });
+    // Build the public invoice URL up-front for every row that still
+    // has a live token, so the worklist can render a clickable link
+    // without a per-row fetch. The base URL is resolved once.
+    const invoiceUrls = new Map<string, string>();
+    await Promise.all(
+      occs
+        .filter((o) => !!o.paymentRequestToken)
+        .map(async (o) => {
+          invoiceUrls.set(o.id, await buildPaymentUrl(o.paymentRequestToken!));
+        }),
+    );
     const now = Date.now();
     const dayMs = 86_400_000;
     return occs.map((o) => {
@@ -603,6 +615,11 @@ export const paymentRequests = {
         jobId: o.job?.id ?? null,
         property: o.job?.property?.displayName ?? null,
         client: o.job?.property?.client?.displayName ?? null,
+        // Fully-resolved public invoice page URL. Null when the token
+        // is missing entirely (shouldn't happen for rows in this list —
+        // they all have paymentRequestSentAt — but we keep the type
+        // honest for any edge case).
+        invoiceUrl: invoiceUrls.get(o.id) ?? null,
         claimer: claimer?.user
           ? {
               id: claimer.userId,
