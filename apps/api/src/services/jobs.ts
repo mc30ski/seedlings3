@@ -24,6 +24,7 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
+import { occurrenceWorkDateCutoff } from "../lib/businessStartCutoff";
 import {
   consumeHoldsForOccurrence,
   releaseHoldsForOccurrence,
@@ -1460,6 +1461,12 @@ export const jobs: ServicesJobs = {
       where: {
         status: { not: JobOccurrenceStatus.ARCHIVED },
         ...(hasDates ? { startAt: dateRange } : {}),
+        // Business Start Date filter — pre-cutoff occurrences (anchored on
+        // work date: completedAt > startedAt > startAt) hidden entirely from
+        // the operator JobsTab. When cutoff is null this is a no-op so the
+        // off-state matches pre-feature behavior exactly. Client-facing
+        // routes deliberately do NOT pass a cutoff — see routes/client.ts.
+        ...occurrenceWorkDateCutoff(params?.cutoff ?? null),
       },
       include: {
         job: {
@@ -1636,10 +1643,18 @@ export const jobs: ServicesJobs = {
     }));
   },
 
-  async getOccurrencesByIds(ids: string[]) {
+  async getOccurrencesByIds(ids: string[], cutoff?: Date | null) {
     if (ids.length === 0) return [];
     return prisma.jobOccurrence.findMany({
-      where: { id: { in: ids } },
+      where: {
+        id: { in: ids },
+        // Pre-cutoff occurrences filtered out even on explicit-ID fetches
+        // (pins, likes, deep-link includes, ghost reminders). Keeps the
+        // JobsTab consistent with the bulk-list path — without this, a
+        // pinned pre-cutoff occurrence would silently reappear with its
+        // money fields populated, undoing the cutoff. No-op when null.
+        ...occurrenceWorkDateCutoff(cutoff ?? null),
+      },
       include: {
         job: {
           include: {

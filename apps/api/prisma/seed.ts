@@ -130,6 +130,10 @@ async function clearDatabase() {
 // A setting missing from this map keeps section=null and lands in the UI's
 // "Other" group. Run applySettingSections() after settings are seeded.
 const SETTING_SECTIONS: Record<string, string> = {
+  // Business Start Date — non-destructive money cleanup. Pinned to the top
+  // of the Settings tab. See apps/api/src/lib/businessStartCutoff.ts.
+  BUSINESS_START_DATE: "fresh_start",
+  BUSINESS_START_DATE_ENABLED: "fresh_start",
   // Payments & Payouts
   CONTRACTOR_PLATFORM_FEE_PERCENT: "payments",
   EMPLOYEE_BUSINESS_MARGIN_PERCENT: "payments",
@@ -155,6 +159,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   DOCUMENT_TYPES: "catalogs",
   TIMELINE_CATEGORIES: "catalogs",
   EXPENSE_CATEGORIES: "catalogs",
+  EQUIPMENT_RENTAL_INCOME_CONFIG: "catalogs",
   // Photos & Documents
   MAX_PHOTOS_PER_JOB: "media",
   PHOTO_JPEG_QUALITY: "media",
@@ -424,97 +429,97 @@ async function seedDatabase() {
 
   // Mowers
   const mower1 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 75.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 52\"", shortDesc: "Commercial stand-on mower", longDesc: "52\" deck, 25hp Kawasaki FX730V engine. Best for large open properties (HOAs, office parks). Velke platform for stand-on operation. Oil change every 100 hours. Blades in trailer toolbox.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 8.0, requiresInsurance: true, qrSlug: "scag-vride-001" },
   });
   const mower2 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 70.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
+    data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
   });
   const mower3 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 25.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
+    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 4.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
   });
   const mower4 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "toro-tc42-001" },
+    data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 6.0, qrSlug: "toro-tc42-001" },
   });
   await prisma.equipment.create({
-    data: { type: "MOWER", brand: "EGO", model: "LM2135SP", shortDesc: "21\" self-propelled battery mower", longDesc: "Battery-powered push mower. Use for noise-sensitive properties (early morning jobs, near schools/hospitals). Two 5.0Ah batteries included — good for ~45 min combined runtime. Charge overnight before use.", status: "AVAILABLE", energy: "Battery", dailyRate: 30.0, qrSlug: "ego-lm2135-001" },
+    data: { type: "MOWER", brand: "EGO", model: "LM2135SP", shortDesc: "21\" self-propelled battery mower", longDesc: "Battery-powered push mower. Use for noise-sensitive properties (early morning jobs, near schools/hospitals). Two 5.0Ah batteries included — good for ~45 min combined runtime. Charge overnight before use.", status: "AVAILABLE", energy: "Battery", dailyRate: 4.0, qrSlug: "ego-lm2135-001" },
   });
   // Trimmers
   const trimmer1 = await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", longDesc: "36.3cc 4-MIX engine, bike handle. Our heaviest-duty trimmer — use for thick overgrowth, heavy weed patches, and commercial edging. Runs on 50:1 mix. Bump-feed head, .095 line. Harness in trailer.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fs131-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 131", shortDesc: "Professional string trimmer", longDesc: "36.3cc 4-MIX engine, bike handle. Our heaviest-duty trimmer — use for thick overgrowth, heavy weed patches, and commercial edging. Runs on 50:1 mix. Bump-feed head, .095 line. Harness in trailer.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "stihl-fs131-001" },
   });
   const trimmer2 = await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", longDesc: "28.4cc, loop handle. Lighter than the FS 131 — better for all-day use and detail work around beds, fences, and obstacles. Same 50:1 fuel mix. Tap-n-go head with .080 line.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 12.0, qrSlug: "stihl-fs91r-001" },
+    data: { type: "TRIMMER", brand: "Stihl", model: "FS 91 R", shortDesc: "Lightweight string trimmer", longDesc: "28.4cc, loop handle. Lighter than the FS 131 — better for all-day use and detail work around beds, fences, and obstacles. Same 50:1 fuel mix. Tap-n-go head with .080 line.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 2.0, qrSlug: "stihl-fs91r-001" },
   });
   await prisma.equipment.create({
-    data: { type: "TRIMMER", brand: "Echo", model: "SRM-2620T", shortDesc: "Commercial string trimmer", longDesc: "25.4cc, i-start for easy pull. Good balance between power and weight. Use as a backup or second trimmer when running two-person crews. Speed-Feed 400 head — fast line reload without disassembly.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-srm2620-001" },
+    data: { type: "TRIMMER", brand: "Echo", model: "SRM-2620T", shortDesc: "Commercial string trimmer", longDesc: "25.4cc, i-start for easy pull. Good balance between power and weight. Use as a backup or second trimmer when running two-person crews. Speed-Feed 400 head — fast line reload without disassembly.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "echo-srm2620-001" },
   });
   // Hedgers
   const trimmer3 = await prisma.equipment.create({
-    data: { type: "HEDGER", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", longDesc: "30\" double-sided blade, 22.7cc. Best for boxwood, privet, and formal hedges up to 6ft. Cut from bottom up for even shape. Clean blades with resin solvent after each use. Blade guard in case.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-hs82-001" },
+    data: { type: "HEDGER", brand: "Stihl", model: "HS 82", shortDesc: "30\" hedge trimmer", longDesc: "30\" double-sided blade, 22.7cc. Best for boxwood, privet, and formal hedges up to 6ft. Cut from bottom up for even shape. Clean blades with resin solvent after each use. Blade guard in case.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "stihl-hs82-001" },
   });
   await prisma.equipment.create({
-    data: { type: "HEDGER", brand: "Echo", model: "HC-2810", shortDesc: "28\" double-sided hedge trimmer", longDesc: "28\" blade, 21.2cc, lighter than the Stihl. Good for routine hedge maintenance and lighter trimming. Use for holly, jasmine, and other softer hedges. Less vibration — better for extended trimming sessions.", status: "AVAILABLE", energy: "Gas", dailyRate: 14.0, qrSlug: "echo-hc2810-001" },
+    data: { type: "HEDGER", brand: "Echo", model: "HC-2810", shortDesc: "28\" double-sided hedge trimmer", longDesc: "28\" blade, 21.2cc, lighter than the Stihl. Good for routine hedge maintenance and lighter trimming. Use for holly, jasmine, and other softer hedges. Less vibration — better for extended trimming sessions.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "echo-hc2810-001" },
   });
   // Blowers
   const blower1 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", longDesc: "79.9cc, 1071 CFM. Our most powerful blower — use for large parking lots, heavy leaf cleanup, and wet debris. Tube-mounted throttle. Hip-mounted frame reduces back fatigue. Ear protection required.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 20.0, qrSlug: "echo-pb8010t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-8010T", shortDesc: "Backpack blower", longDesc: "79.9cc, 1071 CFM. Our most powerful blower — use for large parking lots, heavy leaf cleanup, and wet debris. Tube-mounted throttle. Hip-mounted frame reduces back fatigue. Ear protection required.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 3.0, qrSlug: "echo-pb8010t-001" },
   });
   const blower2 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", longDesc: "79.9cc, 912 CFM. Similar power to the Echo PB-8010T. Electric start — no pull cord needed. Slightly heavier but easier to get going. Use interchangeably with the Echo for large cleanups.", status: "AVAILABLE", energy: "Gas", dailyRate: 22.0, qrSlug: "stihl-br800-001" },
+    data: { type: "BLOWER", brand: "Stihl", model: "BR 800 C-E", shortDesc: "Backpack blower (heavy duty)", longDesc: "79.9cc, 912 CFM. Similar power to the Echo PB-8010T. Electric start — no pull cord needed. Slightly heavier but easier to get going. Use interchangeably with the Echo for large cleanups.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "stihl-br800-001" },
   });
   const blower3 = await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", longDesc: "58.2cc, 510 CFM. Lighter and quieter than the big blowers. Good for residential post-mow cleanup where you don't need maximum power. Less fuel consumption — runs longer on a tank.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 18.0, qrSlug: "echo-pb580t-001" },
+    data: { type: "BLOWER", brand: "Echo", model: "PB-580T", shortDesc: "Backpack blower (mid-range)", longDesc: "58.2cc, 510 CFM. Lighter and quieter than the big blowers. Good for residential post-mow cleanup where you don't need maximum power. Less fuel consumption — runs longer on a tank.", status: "CHECKED_OUT", energy: "Gas", dailyRate: 2.0, qrSlug: "echo-pb580t-001" },
   });
   await prisma.equipment.create({
-    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted areas and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 18.0, qrSlug: "ego-lb6504-001" },
+    data: { type: "BLOWER", brand: "EGO", model: "LB6504", shortDesc: "Battery backpack blower", longDesc: "56V battery, 600 CFM. Use for noise-restricted areas and early morning residential jobs. About 30 min runtime on turbo, 60 min on low. Charge overnight. Significantly quieter than gas units.", status: "AVAILABLE", energy: "Battery", dailyRate: 2.0, qrSlug: "ego-lb6504-001" },
   });
   // Edgers
   const edger1 = await prisma.equipment.create({
-    data: { type: "EDGER", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", longDesc: "28.4cc dedicated edger. Use along sidewalks, driveways, and curbs for a clean defined line. 8\" blade. Adjust depth wheel for initial cut vs. maintenance pass. Blade lasts about 3 weeks of daily use.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "stihl-fc91-001" },
+    data: { type: "EDGER", brand: "Stihl", model: "FC 91", shortDesc: "Professional edger", longDesc: "28.4cc dedicated edger. Use along sidewalks, driveways, and curbs for a clean defined line. 8\" blade. Adjust depth wheel for initial cut vs. maintenance pass. Blade lasts about 3 weeks of daily use.", status: "AVAILABLE", energy: "Gas", dailyRate: 3.0, qrSlug: "stihl-fc91-001" },
   });
   const edger2 = await prisma.equipment.create({
-    data: { type: "EDGER", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", longDesc: "25.4cc stick-style edger. Lighter than the Stihl FC 91 — good for workers who prefer less weight. Converts to trimmer with attachment (attachment in trailer toolbox). Same 50:1 fuel mix.", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, qrSlug: "echo-pe2620-001" },
+    data: { type: "EDGER", brand: "Echo", model: "PE-2620", shortDesc: "Stick edger", longDesc: "25.4cc stick-style edger. Lighter than the Stihl FC 91 — good for workers who prefer less weight. Converts to trimmer with attachment (attachment in trailer toolbox). Same 50:1 fuel mix.", status: "AVAILABLE", energy: "Gas", dailyRate: 2.0, qrSlug: "echo-pe2620-001" },
   });
   await prisma.equipment.create({
-    data: { type: "EDGER", brand: "McLane", model: "101-4.75GT", shortDesc: "Gas powered lawn edger", longDesc: "Walk-behind wheeled edger. 3.5hp Briggs & Stratton engine. Use for properties with very long edge lines (300ft+) where a stick edger would be fatiguing. Cuts deeper and straighter than handheld edgers.", status: "AVAILABLE", energy: "Gas", dailyRate: 18.0, qrSlug: "mclane-101-001" },
+    data: { type: "EDGER", brand: "McLane", model: "101-4.75GT", shortDesc: "Gas powered lawn edger", longDesc: "Walk-behind wheeled edger. 3.5hp Briggs & Stratton engine. Use for properties with very long edge lines (300ft+) where a stick edger would be fatiguing. Cuts deeper and straighter than handheld edgers.", status: "AVAILABLE", energy: "Gas", dailyRate: 4.0, qrSlug: "mclane-101-001" },
   });
   // Cutters (chainsaws, pole saws)
   const chainsawEquip = await prisma.equipment.create({
-    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 30.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 5.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
   });
   await prisma.equipment.create({
-    data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 25.0, qrSlug: "stihl-ht135-001" },
+    data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 4.0, qrSlug: "stihl-ht135-001" },
   });
   // Aerators
   const aerator = await prisma.equipment.create({
-    data: { type: "AERATOR", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", longDesc: "160cc Honda engine, 19\" working width. Reciprocating tines — works better in clay soils than drum-style. Water the lawn 24h before aerating for best results. Clean tines after each property.", status: "AVAILABLE", energy: "Gas", dailyRate: 45.0, qrSlug: "billygoat-ae401-001" },
+    data: { type: "AERATOR", brand: "Billy Goat", model: "AE401H", shortDesc: "19\" reciprocating aerator", longDesc: "160cc Honda engine, 19\" working width. Reciprocating tines — works better in clay soils than drum-style. Water the lawn 24h before aerating for best results. Clean tines after each property.", status: "AVAILABLE", energy: "Gas", dailyRate: 12.0, qrSlug: "billygoat-ae401-001" },
   });
   await prisma.equipment.create({
-    data: { type: "AERATOR", brand: "Ryan", model: "Lawnaire V", shortDesc: "Core aerator — 5 tine", longDesc: "Drum-style core aerator with 5 tine assemblies. Heavier unit — better for large flat lawns. Pulls 3\" plugs. Transport with trailer only (too heavy for truck bed lift). Schedule in advance — high demand in spring/fall.", status: "AVAILABLE", energy: "Gas", dailyRate: 50.0, qrSlug: "ryan-lawnaire5-001" },
+    data: { type: "AERATOR", brand: "Ryan", model: "Lawnaire V", shortDesc: "Core aerator — 5 tine", longDesc: "Drum-style core aerator with 5 tine assemblies. Heavier unit — better for large flat lawns. Pulls 3\" plugs. Transport with trailer only (too heavy for truck bed lift). Schedule in advance — high demand in spring/fall.", status: "AVAILABLE", energy: "Gas", dailyRate: 15.0, qrSlug: "ryan-lawnaire5-001" },
   });
   // Spreaders
   const spreader = await prisma.equipment.create({
-    data: { type: "SPREADER", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", longDesc: "80lb hopper capacity, stainless steel frame. Use for fertilizer, seed, and pre-emergent applications. Calibrate before each product — settings chart taped inside hopper lid. Wash out after every use to prevent corrosion.", status: "AVAILABLE", energy: "Manual", dailyRate: 10.0, qrSlug: "lesco-101186-001" },
+    data: { type: "SPREADER", brand: "Lesco", model: "101186", shortDesc: "80lb broadcast spreader", longDesc: "80lb hopper capacity, stainless steel frame. Use for fertilizer, seed, and pre-emergent applications. Calibrate before each product — settings chart taped inside hopper lid. Wash out after every use to prevent corrosion.", status: "AVAILABLE", energy: "Manual", dailyRate: 2.0, qrSlug: "lesco-101186-001" },
   });
   await prisma.equipment.create({
-    data: { type: "SPREADER", brand: "Earthway", model: "2150", shortDesc: "50lb commercial drop spreader", longDesc: "Drop spreader for precision application along borders, near flower beds, and sidewalks where broadcast would overshoot. 22\" spread width. Use when you need exact coverage without waste or drift.", status: "AVAILABLE", energy: "Manual", dailyRate: 8.0, qrSlug: "earthway-2150-001" },
+    data: { type: "SPREADER", brand: "Earthway", model: "2150", shortDesc: "50lb commercial drop spreader", longDesc: "Drop spreader for precision application along borders, near flower beds, and sidewalks where broadcast would overshoot. 22\" spread width. Use when you need exact coverage without waste or drift.", status: "AVAILABLE", energy: "Manual", dailyRate: 2.0, qrSlug: "earthway-2150-001" },
   });
   // Washers
   const pressureWasher = await prisma.equipment.create({
-    data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", longDesc: "3100 PSI, 2.5 GPM, Honda GC190 engine. Use for driveways, sidewalks, fences, and siding. 25° nozzle for general cleaning, 15° for stubborn stains. Never use 0° on surfaces — will gouge. Bring own water hose (min 50ft).", status: "AVAILABLE", energy: "Gas", dailyRate: 40.0, qrSlug: "simpson-msh3125-001" },
+    data: { type: "WASHER", brand: "Simpson", model: "MSH3125", shortDesc: "3100 PSI gas pressure washer", longDesc: "3100 PSI, 2.5 GPM, Honda GC190 engine. Use for driveways, sidewalks, fences, and siding. 25° nozzle for general cleaning, 15° for stubborn stains. Never use 0° on surfaces — will gouge. Bring own water hose (min 50ft).", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, qrSlug: "simpson-msh3125-001" },
   });
   await prisma.equipment.create({
-    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent areas. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 25.0, qrSlug: "sunjoe-spx3000-001" },
+    data: { type: "WASHER", brand: "Sun Joe", model: "SPX3000", shortDesc: "2030 PSI electric pressure washer", longDesc: "2030 PSI, 1.76 GPM, electric motor. Lower power than the Simpson but much quieter and no fumes — good for covered patios, screened porches, and indoor-adjacent areas. Needs a standard outdoor outlet (GFCI).", status: "AVAILABLE", energy: "Electric", dailyRate: 5.0, qrSlug: "sunjoe-spx3000-001" },
   });
   // Misc
   const trailer = await prisma.equipment.create({
-    data: { type: "MISC", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", longDesc: "12ft x 6.5ft bed, 2990lb GVWR. Ramp gate for loading mowers. Tie-down hooks every 2ft. Requires 2\" ball hitch and 7-pin connector. Check tire pressure weekly (50 PSI). Registration in glovebox of assigned truck.", status: "CHECKED_OUT", energy: "N/A", dailyRate: 35.0, qrSlug: "bigtex-35sa-001" },
+    data: { type: "MISC", brand: "Big Tex", model: "35SA", shortDesc: "12ft single-axle utility trailer", longDesc: "12ft x 6.5ft bed, 2990lb GVWR. Ramp gate for loading mowers. Tie-down hooks every 2ft. Requires 2\" ball hitch and 7-pin connector. Check tire pressure weekly (50 PSI). Registration in glovebox of assigned truck.", status: "CHECKED_OUT", energy: "N/A", dailyRate: 6.0, qrSlug: "bigtex-35sa-001" },
   });
   const wheelbarrow = await prisma.equipment.create({
-    data: { type: "MISC", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", longDesc: "6 cubic ft steel tray, pneumatic tire. Use for mulch spreading, debris hauling, and soil transport on properties. Flat tire — needs tube replaced before returning to service.", status: "RETIRED", energy: "Manual", dailyRate: 5.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
+    data: { type: "MISC", brand: "Jackson", model: "M6T22", shortDesc: "6 cu ft steel wheelbarrow", longDesc: "6 cubic ft steel tray, pneumatic tire. Use for mulch spreading, debris hauling, and soil transport on properties. Flat tire — needs tube replaced before returning to service.", status: "RETIRED", energy: "Manual", dailyRate: 1.0, qrSlug: "jackson-m6t22-001", retiredAt: daysAgo(10) },
   });
   await prisma.equipment.create({
-    data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 12.0, qrSlug: "gorilla-gor1200-001" },
+    data: { type: "MISC", brand: "Gorilla Carts", model: "GOR1200", shortDesc: "1200lb poly dump cart", longDesc: "1200lb capacity poly dump cart with pull handle. Dump lever for quick unloading. Use for large mulch jobs, gravel, or hauling bags of material across properties. Fits through 36\" gates. Pneumatic tires — check pressure monthly.", status: "AVAILABLE", energy: "Manual", dailyRate: 2.0, qrSlug: "gorilla-gor1200-001" },
   });
 
   // ── Equipment Collections ─────────────────────────────────────────────────
@@ -727,7 +732,7 @@ async function seedDatabase() {
   await prisma.checkout.create({ data: { equipmentId: blower3.id, userId: TRAINEE_ID, reservedAt: daysAgo(1), checkedOutAt: daysAgo(1) } });
   await prisma.checkout.create({ data: { equipmentId: trailer.id, userId: ADMIN_WORKER_ID, reservedAt: daysAgo(7), checkedOutAt: daysAgo(7) } });
   // Past returned checkout
-  await prisma.checkout.create({ data: { equipmentId: chainsawEquip.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(14), checkedOutAt: daysAgo(14), releasedAt: daysAgo(12), rentalDays: 2, rentalCost: 60.0 } });
+  await prisma.checkout.create({ data: { equipmentId: chainsawEquip.id, userId: CONTRACTOR_ID, reservedAt: daysAgo(14), checkedOutAt: daysAgo(14), releasedAt: daysAgo(12), rentalDays: 2, rentalCost: 10.0 } });
 
   // ── Jobs (18) ─────────────────────────────────────────────────────────────
   console.log("  Creating jobs...");
@@ -1891,6 +1896,19 @@ async function seedDatabase() {
       ]),
       description: "Expense-category taxonomy. Each entry maps a category to (a) its Schedule C line for the CPA-facing CSV and (b) its QuickBooks chart-of-accounts name for the QB import CSV. Editing here needs no code change. Account names must match QB exactly (capitalization + spacing).",
     },
+    {
+      // Equipment-rental income routing for the QB Income export. The
+      // Tax Line + QB account are CPA-tweakable from Settings without
+      // a code deploy — change the line to "6" if the operator's CPA
+      // prefers "Other gross receipts" instead of bundling with Line 1.
+      // See memory/project_equipment_rental_income.md.
+      key: "EQUIPMENT_RENTAL_INCOME_CONFIG",
+      value: JSON.stringify({
+        qbAccount: "Equipment Rental Income",
+        scheduleCLine: "1",
+      }),
+      description: "Routing for equipment rental income in the QB Income export. `qbAccount` must match the QB chart-of-accounts entry exactly (capitalization + spacing). `scheduleCLine` is the Schedule C tax line — default '1' (Gross receipts, alongside service revenue); change to '6' (Other gross receipts) if your CPA prefers separate visibility.",
+    },
   ];
   for (const s of feeSettings) {
     await prisma.setting.upsert({
@@ -2057,6 +2075,34 @@ async function seedDatabase() {
       });
     }
   }
+
+  // ── Business Start Date — non-destructive money cleanup ──────────────────
+  // Seeded as DISABLED by default. The user flips the toggle in Settings
+  // when they're ready to engage the filter. Production deploys land OFF.
+  // See apps/api/src/lib/businessStartCutoff.ts.
+  await prisma.setting.upsert({
+    where: { key: "BUSINESS_START_DATE" },
+    create: {
+      key: "BUSINESS_START_DATE",
+      // Pick a representative cutoff for dev — seeded backdated rows below
+      // straddle this date so the filter can be exercised end-to-end.
+      value: "2026-06-01",
+      description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.",
+      updatedById: MICHAEL_ID,
+    },
+    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
+  });
+  await prisma.setting.upsert({
+    where: { key: "BUSINESS_START_DATE_ENABLED" },
+    create: {
+      key: "BUSINESS_START_DATE_ENABLED",
+      // OFF by default — flipping it on in Settings engages the filter.
+      value: "false",
+      description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).",
+      updatedById: MICHAEL_ID,
+    },
+    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
+  });
 
   // ── Timeline categories taxonomy ──────────────────────────────────────────
   const timelineCategoriesValue = JSON.stringify([
@@ -2743,6 +2789,19 @@ async function seedPaymentsBase() {
     create: { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab.", updatedById: MICHAEL_ID },
     update: { description: "How often you run payroll. Sets the default date range on the Exports tab." },
   });
+  // Business Start Date — also seeded here so the payments-clean / payments-
+  // active templates show the toggle in Settings. Idempotent; off by default.
+  // See apps/api/src/lib/businessStartCutoff.ts.
+  await prisma.setting.upsert({
+    where: { key: "BUSINESS_START_DATE" },
+    create: { key: "BUSINESS_START_DATE", value: "2026-06-01", description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle.", updatedById: MICHAEL_ID },
+    update: { description: "Cutoff date for the Business Start Date filter (YYYY-MM-DD). When the toggle below is ON, payments, expenses, equipment charges, and audit events from BEFORE this date are hidden from every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the page-level toggle." },
+  });
+  await prisma.setting.upsert({
+    where: { key: "BUSINESS_START_DATE_ENABLED" },
+    create: { key: "BUSINESS_START_DATE_ENABLED", value: "false", description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them).", updatedById: MICHAEL_ID },
+    update: { description: "Master switch for the Business Start Date filter. Off = every money view shows full history. On = pre-cutoff money rows are hidden from every view and export (Super can transiently reveal them)." },
+  });
   // Stale REQUEST_PAYMENT_FROM_CLIENT_ENABLED setting is best-effort
   // cleaned up so it doesn't linger in the Settings tab after the gate was
   // removed. deleteMany is safe — never throws if the row's already gone.
@@ -2759,6 +2818,20 @@ async function seedPaymentsBase() {
     where: { key: "PAYMENT_METHODS" },
     create: { key: "PAYMENT_METHODS", value: paymentMethodsDefault, description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes.", updatedById: MICHAEL_ID },
     update: { description: "Configurable taxonomy of accepted payment methods. Each entry controls fee, where it's shown, deep link, and client instructions. Adding a method here changes the UI without code changes." },
+  });
+  // Equipment-rental income routing for the QB Income export — see
+  // memory/project_equipment_rental_income.md. Seeded here so the
+  // payments-clean / payments-active templates carry the row through to
+  // dev; production needs the same row inserted via the Settings UI or
+  // a one-time upsert (see the response to the operator).
+  const equipmentRentalIncomeDefault = JSON.stringify({
+    qbAccount: "Equipment Rental Income",
+    scheduleCLine: "1",
+  });
+  await prisma.setting.upsert({
+    where: { key: "EQUIPMENT_RENTAL_INCOME_CONFIG" },
+    create: { key: "EQUIPMENT_RENTAL_INCOME_CONFIG", value: equipmentRentalIncomeDefault, description: "Routing for equipment rental income in the QB Income export. `qbAccount` must match the QB chart-of-accounts entry exactly (capitalization + spacing). `scheduleCLine` is the Schedule C tax line — default '1' (Gross receipts, alongside service revenue); change to '6' (Other gross receipts) if your CPA prefers separate visibility.", updatedById: MICHAEL_ID },
+    update: { description: "Routing for equipment rental income in the QB Income export. `qbAccount` must match the QB chart-of-accounts entry exactly (capitalization + spacing). `scheduleCLine` is the Schedule C tax line — default '1' (Gross receipts, alongside service revenue); change to '6' (Other gross receipts) if your CPA prefers separate visibility." },
   });
   console.log("    Clients + contacts...");
   const adams = await prisma.client.create({ data: { type: "PERSON", displayName: "Adams (normal)" } });
@@ -2993,6 +3066,88 @@ async function seedPaymentsBase() {
     });
   }
 
+  // ── Equipment + contractor rentals ─────────────────────────────────────
+  // Without this block, the Payments tab's "Equipment Charges" section
+  // is empty for the payments-active template because clearDatabase()
+  // wipes equipment and seedPaymentsBase doesn't recreate it. Only
+  // contractors are charged for equipment (see computeRentalCost in
+  // services/equipment.ts — non-contractor checkouts return null cost),
+  // so the seeded charges target CONTRACTOR_ID specifically.
+  console.log("    Equipment + contractor rentals for the Payments tab...");
+  const seedMower = await prisma.equipment.create({
+    data: {
+      type: "MOWER",
+      brand: "Honda",
+      model: "HRX217VLA",
+      shortDesc: "21\" self-propelled mower",
+      status: "AVAILABLE",
+      dailyRate: 4.0,
+    },
+  });
+  const seedTrimmer = await prisma.equipment.create({
+    data: {
+      type: "TRIMMER",
+      brand: "Stihl",
+      model: "FS 91 R",
+      shortDesc: "Pro string trimmer",
+      status: "AVAILABLE",
+      dailyRate: 2.0,
+    },
+  });
+  const seedBlower = await prisma.equipment.create({
+    data: {
+      type: "BLOWER",
+      brand: "Echo",
+      model: "PB-580T",
+      shortDesc: "Backpack blower",
+      status: "AVAILABLE",
+      dailyRate: 2.0,
+    },
+  });
+  const seedChainsaw = await prisma.equipment.create({
+    data: {
+      type: "CUTTER",
+      brand: "Stihl",
+      model: "MS 271",
+      shortDesc: "20\" chainsaw",
+      status: "AVAILABLE",
+      dailyRate: 5.0,
+    },
+  });
+  const seedAerator = await prisma.equipment.create({
+    data: {
+      type: "AERATOR",
+      brand: "Bluebird",
+      model: "PR22",
+      shortDesc: "Walk-behind aerator",
+      status: "AVAILABLE",
+      dailyRate: 12.0,
+    },
+  });
+  // 5 released contractor rentals spread across the last ~3 weeks. Each
+  // has rentalCost set so they appear on the Payments tab's Equipment
+  // Charges section.
+  const rentals = [
+    { equipmentId: seedMower.id,    daysAgoStart: 22, daysAgoEnd: 20, rentalDays: 2, rentalCost: 8.0  },
+    { equipmentId: seedTrimmer.id,  daysAgoStart: 16, daysAgoEnd: 16, rentalDays: 1, rentalCost: 2.0  },
+    { equipmentId: seedBlower.id,   daysAgoStart: 12, daysAgoEnd: 10, rentalDays: 2, rentalCost: 4.0  },
+    { equipmentId: seedChainsaw.id, daysAgoStart: 7,  daysAgoEnd: 5,  rentalDays: 3, rentalCost: 15.0 },
+    { equipmentId: seedAerator.id,  daysAgoStart: 3,  daysAgoEnd: 1,  rentalDays: 2, rentalCost: 24.0 },
+  ];
+  for (const r of rentals) {
+    await prisma.checkout.create({
+      data: {
+        equipmentId: r.equipmentId,
+        userId: CONTRACTOR_ID,
+        reservedAt: daysAgo(r.daysAgoStart + 1, 7),
+        checkedOutAt: daysAgo(r.daysAgoStart, 8),
+        releasedAt: daysAgo(r.daysAgoEnd, 17),
+        rentalDays: r.rentalDays,
+        rentalCost: r.rentalCost,
+      },
+    });
+  }
+
   await applySettingSections();
 
   return { adamsJob, banksJob, cohenJob, davisJob, evansJob };
@@ -3117,6 +3272,23 @@ async function seedPaymentsActive() {
     { paymentRequestToken: "seed-pay-writeoff", selfReportedAmount: 0.0, note: "Client refused to pay — write off" },
   );
 
+  // ── Business Start Date — backdated test fixtures ────────────────────────
+  // Seeds pre-cutoff AND post-cutoff data across every filtered table so the
+  // operator can flip the BUSINESS_START_DATE_ENABLED toggle and watch the
+  // dashboards transition without data destruction. See
+  // apps/api/src/lib/businessStartCutoff.ts.
+  //
+  // Cutoff in the seeded setting is 2026-06-01. We synthesize rows BOTH
+  // before (~2026-04 / 2026-05) and after (~2026-06) so each surface has
+  // observable filter behavior:
+  //   • Payment (confirmed, written-off, pending) on each side
+  //   • PaymentSplit — derived from Payment timing
+  //   • BusinessExpense — EXPENSE + OWNER_DRAW + CAPITAL_CONTRIBUTION
+  //   • Checkout — one released pre-cutoff, one released post-cutoff
+  //   • AuditEvent — a few hand-stamped pre-cutoff events
+  //   • SupplyPurchase pairs with one pre-cutoff BE.
+  await seedBusinessStartCutoffFixtures();
+
   console.log("  Active payments seed complete!");
   console.log("");
   console.log("  5 scenarios are PENDING admin approval. Walk them through");
@@ -3136,6 +3308,361 @@ async function seedPaymentsActive() {
   console.log("");
   console.log("    5. Evans  ($0/$100, contractor+employee 40/60)    → Write off");
   console.log("       Expected: contractor=$0, employee=$48, shortfall=$64, writtenOff=true");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Business Start Date — backdated fixtures.
+//
+// Adds rows on BOTH sides of the seeded BUSINESS_START_DATE so the operator
+// can flip the toggle and watch dashboards transition. Idempotent within a
+// single seed run (we always clear the DB first); pre-cutoff rows use
+// explicit `createdAt` / `date` / `releasedAt` so Prisma writes the dates
+// directly. See apps/api/src/lib/businessStartCutoff.ts.
+//
+// SAFETY: this function intentionally inserts FIXTURE data only. Real
+// production data is never touched by the cutoff feature — the filter is a
+// read-time WHERE-clause, not a destructive operation. If you find yourself
+// tempted to use this pattern outside seeds, stop and re-read the helper.
+// ─────────────────────────────────────────────────────────────────────────────
+async function seedBusinessStartCutoffFixtures() {
+  console.log("    Business Start Date backdated fixtures...");
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  // Anchor dates RELATIVE TO TODAY so the fixtures stay visible in common
+  // date-range presets ("Last Month", "Last 30 Days", "This Month") instead
+  // of drifting to wherever a hardcoded calendar date lands. The seeded
+  // BUSINESS_START_DATE is 2026-06-01; we assume the operator runs the seed
+  // around that time. If they don't, dates shift with NOW which is fine —
+  // the filter logic still demonstrates correctly.
+  //
+  // PRE rows land in the previous ~6 weeks (split across "Last Month" and
+  // "older" so both windows have data).
+  // POST rows land at "today" — the post-cutoff side is intentionally small
+  // since the cutoff IS today.
+  const PRE = (daysBeforeToday: number): Date => daysAgo(daysBeforeToday, 13);
+  const POST = (daysAfterToday: number): Date =>
+    daysFromNow(daysAfterToday, 13);
+
+  // ── BusinessExpense rows (EXPENSE, OWNER_DRAW, CAPITAL_CONTRIBUTION) ────
+  // One of each on each side of the cutoff so the Accounting tab shows
+  // visible filter behavior across all three EntryType buckets.
+  console.log("      BusinessExpense: 3 pre-cutoff + 3 post-cutoff...");
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "EXPENSE",
+      // ~2 weeks back — lands in "Last Month" or "Last 30 days" presets.
+      date: PRE(15),
+      cost: 87.43,
+      description: "Pre-cutoff: lawn fertilizer (test fixture)",
+      category: "Supplies",
+      vendor: "Home Depot",
+    },
+  });
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "OWNER_DRAW",
+      // ~3 weeks back.
+      date: PRE(22),
+      cost: 500.0,
+      description: "Pre-cutoff: monthly owner draw (test fixture)",
+    },
+  });
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "CAPITAL_CONTRIBUTION",
+      // ~6 weeks back — older history that some presets won't include.
+      date: PRE(42),
+      cost: 1500.0,
+      description: "Pre-cutoff: initial capital contribution (test fixture)",
+    },
+  });
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "EXPENSE",
+      date: POST(0),
+      cost: 64.20,
+      description: "Post-cutoff: gas refill (test fixture)",
+      category: "Vehicle expenses",
+      vendor: "Shell",
+    },
+  });
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "OWNER_DRAW",
+      // Today + 1 day so the row is post-cutoff but still in "This Month".
+      date: POST(1),
+      cost: 600.0,
+      description: "Post-cutoff: monthly owner draw (test fixture)",
+    },
+  });
+  await prisma.businessExpense.create({
+    data: {
+      createdById: MICHAEL_ID,
+      type: "CAPITAL_CONTRIBUTION",
+      date: POST(2),
+      cost: 250.0,
+      description: "Post-cutoff: working-capital top-up (test fixture)",
+    },
+  });
+
+  // ── Checkout rows (one released pre, one released post) ────────────────
+  // Pick an existing equipment row from the base payments seed so the FK
+  // resolves. Both rentals are SOLO (no group) so the charge view exercise
+  // is simple.
+  console.log("      Checkout: 1 released pre-cutoff + 1 released post-cutoff...");
+  const someEquipment = await prisma.equipment.findFirst({
+    where: { retiredAt: null },
+    orderBy: { createdAt: "asc" },
+  });
+  if (someEquipment) {
+    await prisma.checkout.create({
+      data: {
+        equipmentId: someEquipment.id,
+        userId: CONTRACTOR_ID,
+        // reserved → checkedOut → released, all pre-cutoff (~2 weeks back).
+        reservedAt: PRE(17),
+        checkedOutAt: PRE(16),
+        releasedAt: PRE(15),
+        rentalDays: 1,
+        rentalCost: 4.0,
+      },
+    });
+    await prisma.checkout.create({
+      data: {
+        equipmentId: someEquipment.id,
+        userId: CONTRACTOR_ID,
+        // reserved → checkedOut → released, all today — releasedAt is the
+        // cutoff anchor so the charge lands on the post-cutoff side.
+        reservedAt: daysAgo(0, 8),
+        checkedOutAt: daysAgo(0, 9),
+        releasedAt: daysAgo(0, 17),
+        rentalDays: 1,
+        rentalCost: 4.0,
+      },
+    });
+  }
+
+  // ── AuditEvent rows ────────────────────────────────────────────────────
+  // Hand-stamped createdAt so they land on either side of the cutoff. These
+  // are pure observability rows — no FK side-effects.
+  console.log("      AuditEvent: 2 pre-cutoff + 2 post-cutoff...");
+  await prisma.auditEvent.create({
+    data: {
+      scope: "SETTING",
+      verb: "UPDATED",
+      action: "seed.fixture.preCutoff",
+      actorUserId: MICHAEL_ID,
+      metadata: { note: "Pre-cutoff audit fixture A" },
+      createdAt: PRE(15),
+    },
+  });
+  await prisma.auditEvent.create({
+    data: {
+      scope: "SETTING",
+      verb: "UPDATED",
+      action: "seed.fixture.preCutoff",
+      actorUserId: MICHAEL_ID,
+      metadata: { note: "Pre-cutoff audit fixture B" },
+      createdAt: PRE(35),
+    },
+  });
+  await prisma.auditEvent.create({
+    data: {
+      scope: "SETTING",
+      verb: "UPDATED",
+      action: "seed.fixture.postCutoff",
+      actorUserId: MICHAEL_ID,
+      metadata: { note: "Post-cutoff audit fixture A" },
+      createdAt: POST(0),
+    },
+  });
+  await prisma.auditEvent.create({
+    data: {
+      scope: "SETTING",
+      verb: "UPDATED",
+      action: "seed.fixture.postCutoff",
+      actorUserId: MICHAEL_ID,
+      metadata: { note: "Post-cutoff audit fixture B" },
+      createdAt: POST(1),
+    },
+  });
+
+  // ── Payment + PaymentSplit pre-cutoff fixture ──────────────────────────
+  // Synthesize a confirmed, non-pending Payment on a brand-new fixture
+  // occurrence so flipping the cutoff toggles the row in/out of the
+  // Payments tab + earnings tiles. We rely on an existing Job from the
+  // payments-base seed to host the occurrence.
+  console.log("      Payment: 1 confirmed pre-cutoff + 1 confirmed post-cutoff...");
+  const someJob = await prisma.job.findFirst({
+    where: { status: { not: "ARCHIVED" } },
+    orderBy: { createdAt: "asc" },
+    include: { property: true },
+  });
+  if (someJob) {
+    // Mirror what the production approval flow writes: per-worker breakdown
+    // columns on PaymentSplit (grossAmount / ratePercent / feeAmount /
+    // netAmount), and Payment-level totals for platformFeeAmount +
+    // businessMarginAmount. Without these the Admin Money summary aggregates
+    // to 0 and the Commission/Margin rows hide themselves — making dev look
+    // visually different from prod even though the data is "valid".
+    //
+    // Rates are the seeded defaults (Contractor 20%, Employee/Trainee 30%);
+    // recompute here so a future tweak to those defaults still produces
+    // consistent fixtures on reseed.
+    const contractorFeePct = 20;
+    const employeeMarginPct = 30;
+
+    type SeedSplit = {
+      userId: string;
+      workerType: "EMPLOYEE" | "TRAINEE" | "CONTRACTOR";
+      role: "primary" | "helper";
+    };
+
+    async function createConfirmedPayment(
+      label: string,
+      when: Date,
+      splits: SeedSplit[],
+      collectedAmount: number = 100.0,
+    ) {
+      const splitPercent = 100 / splits.length;
+      const completionSplits = splits.map((s) => ({ userId: s.userId, percent: splitPercent }));
+      const promisedPayouts = await computePromisedPayoutsForSeed(collectedAmount, 0, completionSplits);
+      const occ = await prisma.jobOccurrence.create({
+        data: {
+          jobId: someJob.id,
+          kind: "SINGLE_ADDRESS",
+          startAt: when,
+          endAt: addMinutes(when, 60),
+          status: "CLOSED",
+          workflow: "STANDARD",
+          price: collectedAmount,
+          estimatedMinutes: 60,
+          startedAt: when,
+          completedAt: when,
+          isClientConfirmed: true,
+          completionSplits: completionSplits as any,
+          promisedPayouts: promisedPayouts as any,
+        },
+      });
+      const primaryId = splits.find((s) => s.role === "primary")?.userId ?? splits[0].userId;
+      for (const sp of splits) {
+        await prisma.jobOccurrenceAssignee.create({
+          data: {
+            occurrenceId: occ.id,
+            userId: sp.userId,
+            role: sp.role,
+            assignedById: sp.role === "primary" ? sp.userId : primaryId,
+          },
+        });
+      }
+      // Compute per-worker breakdown the same shape the approval flow
+      // produces. Each worker takes their splitPercent share of the gross,
+      // then their own rate is applied to that share (per-worker fee model
+      // documented in memory/project_payment_math.md).
+      const grossPer = (collectedAmount * splitPercent) / 100;
+      const computed = splits.map((sp) => {
+        const isEmployeeClass = sp.workerType === "EMPLOYEE" || sp.workerType === "TRAINEE";
+        const ratePercent = isEmployeeClass ? employeeMarginPct : contractorFeePct;
+        const feeAmount = round2((grossPer * ratePercent) / 100);
+        const netAmount = round2(grossPer - feeAmount);
+        return {
+          ...sp,
+          grossAmount: round2(grossPer),
+          ratePercent,
+          feeAmount,
+          netAmount,
+          amount: netAmount, // no top-up in the happy-path fixtures
+        };
+      });
+      const totalContractorFee = computed
+        .filter((c) => c.workerType === "CONTRACTOR")
+        .reduce((s, c) => s + c.feeAmount, 0);
+      const totalEmployeeMargin = computed
+        .filter((c) => c.workerType === "EMPLOYEE" || c.workerType === "TRAINEE")
+        .reduce((s, c) => s + c.feeAmount, 0);
+      const payment = await prisma.payment.create({
+        data: {
+          occurrenceId: occ.id,
+          amountPaid: collectedAmount,
+          method: "ZELLE",
+          note: `${label} confirmed payment (test fixture)`,
+          confirmed: true,
+          confirmedAt: when,
+          confirmedById: MICHAEL_ID,
+          collectedById: MICHAEL_ID,
+          createdAt: when,
+          // Snapshot the rates that were in effect at "approval" time so
+          // a later rate tweak doesn't rewrite this row's math.
+          platformFeePercent: contractorFeePct,
+          platformFeeAmount: round2(totalContractorFee),
+          businessMarginPercent: employeeMarginPct,
+          businessMarginAmount: round2(totalEmployeeMargin),
+        },
+      });
+      for (const sp of computed) {
+        await prisma.paymentSplit.create({
+          data: {
+            paymentId: payment.id,
+            userId: sp.userId,
+            amount: sp.amount,
+            grossAmount: sp.grossAmount,
+            ratePercent: sp.ratePercent,
+            feeAmount: sp.feeAmount,
+            netAmount: sp.netAmount,
+            topUpAmount: 0,
+            createdAt: when,
+          },
+        });
+      }
+    }
+    // PRE-cutoff history (visible only when filter is OFF). Lands in
+    // "Last Month" / "Last 30 days" presets so worker dashboards have
+    // something to display.
+    //
+    //   • PRE_RECENT (~2 weeks back) — Employee + Contractor
+    //   • PRE_OLDER  (~5 weeks back) — Admin Worker + Employee
+    //
+    // Plus a POST-cutoff payment at "today" so the post-cutoff side also
+    // has data for each worker class. With Contractor fee 20% +
+    // Employee margin 30%, a $100 payment split 50/50 lands as:
+    //   • Contractor net = $50 − $10 fee = $40
+    //   • Employee  net = $50 − $15 margin = $35
+    //   • Business kept = $25 ($10 fee + $15 margin)
+    await createConfirmedPayment("PRE-recent", PRE(14), [
+      { userId: EMPLOYEE_ID,   workerType: "EMPLOYEE",   role: "primary" },
+      { userId: CONTRACTOR_ID, workerType: "CONTRACTOR", role: "helper"  },
+    ]);
+    await createConfirmedPayment("PRE-older", PRE(35), [
+      { userId: ADMIN_WORKER_ID, workerType: "EMPLOYEE", role: "primary" },
+      { userId: EMPLOYEE_ID,     workerType: "EMPLOYEE", role: "helper"  },
+    ]);
+    await createConfirmedPayment("POST-today", POST(0), [
+      { userId: EMPLOYEE_ID,   workerType: "EMPLOYEE",   role: "primary" },
+      { userId: CONTRACTOR_ID, workerType: "CONTRACTOR", role: "helper"  },
+    ]);
+    await createConfirmedPayment("POST-today-admin", POST(0), [
+      { userId: ADMIN_WORKER_ID, workerType: "EMPLOYEE", role: "primary" },
+      { userId: EMPLOYEE_ID,     workerType: "EMPLOYEE", role: "helper"  },
+    ]);
+  }
+
+  console.log("    Business Start Date fixtures complete.");
+  console.log("");
+  console.log("    Flip BUSINESS_START_DATE_ENABLED to 'true' in Settings to engage the filter.");
+  console.log("    Expected post-cutoff counts (visible when filter is ON):");
+  console.log("      BusinessExpense: 3 (1 EXPENSE, 1 OWNER_DRAW, 1 CAPITAL_CONTRIBUTION)");
+  console.log("      Checkout (charges): 1");
+  console.log("      AuditEvent: 2 (plus everything seeded post-cutoff today)");
+  console.log("      Payment: 2 confirmed today + the 5 active pending approvals");
+  console.log("    Pre-cutoff payments (visible when filter is OFF):");
+  console.log("      • ~2 weeks ago — Employee + Contractor split");
+  console.log("      • ~5 weeks ago — Admin Worker + Employee split");
+  console.log("    Flip the Super reveal toggle (Settings tab) to see ALL rows again.");
 }
 
 /**

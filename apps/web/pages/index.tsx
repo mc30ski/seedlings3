@@ -757,12 +757,6 @@ export default function HomePage() {
     },
     {
       // ── Records ──
-      value: "statistics",
-      label: "Statistics",
-      icon: FiBarChart2,
-      content: wrapWithInlineMessage(<StatisticsTab />),
-    },
-    {
       value: "activity",
       label: "Engagement",
       icon: FiActivity,
@@ -965,7 +959,7 @@ export default function HomePage() {
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
-          statistics: "Records", activity: "Records", history: "Records", timeline: "Records", documents: "Records",
+          activity: "Records", history: "Records", timeline: "Records", documents: "Records",
           notify: "System", settings: "System", profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
@@ -1016,6 +1010,17 @@ export default function HomePage() {
           label: "Accounting",
           icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // Moved from Admin → Records. Statistics lives under Money on
+          // the Super shell because it slices money/earnings figures
+          // rather than operational records.
+          value: "statistics",
+          label: "Statistics",
+          icon: FiBarChart2,
+          content: wrapWithInlineMessage(<StatisticsTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },
@@ -1171,8 +1176,67 @@ export default function HomePage() {
   setupSearchEvent("jobsTabToClientsTabSearch", "clients");
   setupSearchEvent("paymentsTabToPropertiesTabSearch", "properties");
   setupSearchEvent("paymentsTabToClientsTabSearch", "clients");
-  setupSearchEvent("paymentsTabToServicesTabSearch", "jobs");
+  // paymentsTabToServicesTabSearch (legacy name — actually routes to the
+  // proper JOBS tab now, not Services). Admin lands on AdminJobsTab, worker
+  // on JobsTab. The destination filters by jobId via the dedicated
+  // `jobsTab:filterJob` event below so the result is exact (vs. a loose
+  // property-name search which can land on the wrong job when multiple
+  // jobs share a property).
   setupSearchEvent("jobsTabToServicesTabSearch", "jobs");
+
+  // Payments "Job" link → Jobs tab, highlighted to the exact occurrence the
+  // payment was recorded against. We send the OCCURRENCE id (plus its
+  // startAt for the date anchor) so JobsTab's existing
+  // `jobsTab:highlightOcc` handler can call `applyHighlight()` and narrow
+  // the view to a single row — much more useful than filtering to the job
+  // (which would show every recurring occurrence of that job).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onEvent = (e: Event) => {
+      const { forAdmin, entityId, anchorAt } = (e as CustomEvent).detail || {};
+      if (!entityId) return;
+      pushNavHistory(getCurrentNavState());
+      if (forAdmin) {
+        setTopTab("admin");
+        setAdminInnerTab("admin-jobs");
+      } else {
+        setTopTab("worker");
+        setWorkerInnerTab("jobs");
+      }
+      window.sessionStorage.setItem(
+        "paymentsTabToJobsNav",
+        JSON.stringify({ occId: entityId, anchorAt: anchorAt ?? null }),
+      );
+    };
+    window.addEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
+    return () => window.removeEventListener("open:paymentsTabToServicesTabSearch", onEvent as EventListener);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onAdminJobs = topTab === "admin" && adminInnerTab === "admin-jobs";
+    const onWorkerJobs = topTab === "worker" && workerInnerTab === "jobs";
+    if (!onAdminJobs && !onWorkerJobs) return;
+    const raw = window.sessionStorage.getItem("paymentsTabToJobsNav");
+    if (!raw) return;
+    window.sessionStorage.removeItem("paymentsTabToJobsNav");
+    let payload: { occId: string; anchorAt: string | null };
+    try { payload = JSON.parse(raw); } catch { return; }
+    if (!payload?.occId) return;
+    // Wait for JobsTab to mount and signal ready, same pattern as
+    // servicesTabToJobsTabSearch above. Caps attempts so a never-ready
+    // tab doesn't hang the relay.
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      if ((window as any).__jobsTabReady || attempts >= 30) {
+        clearInterval(interval);
+        window.dispatchEvent(
+          new CustomEvent("jobsTab:highlightOcc", { detail: { occId: payload.occId, anchorAt: payload.anchorAt } }),
+        );
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [topTab, adminInnerTab, workerInnerTab]);
 
   // Generic tab switcher (used by Audit tab and others to navigate across top-level tabs)
   useEffect(() => {
@@ -1937,7 +2001,7 @@ export default function HomePage() {
       equipment: "Equipment", collections: "Equipment", usage: "Equipment",
       clients: "Directory", properties: "Directory", users: "Directory", groups: "Directory",
       payments: "Money", pricing: "Money", supplies: "Money",
-      statistics: "Records", activity: "Records", history: "Records", timeline: "Records", documents: "Records",
+      activity: "Records", history: "Records", timeline: "Records", documents: "Records",
       notify: "System", settings: "System", profile: "System",
     };
     const onNav = (e: Event) => {

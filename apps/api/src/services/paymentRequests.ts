@@ -549,17 +549,23 @@ export const paymentRequests = {
    * pay link has lapsed (the client can no longer pay even if they try).
    * With `claimerUserId`, scoped to one worker's own claimed jobs.
    */
-  async listOutstanding(opts?: { claimerUserId?: string }) {
+  async listOutstanding(opts?: { claimerUserId?: string; cutoff?: Date | null }) {
     const expiryHours = Number(
       (await getSetting("PAYMENT_REQUEST_TOKEN_EXPIRY_HOURS")) ?? DEFAULT_EXPIRY_HOURS,
     );
     const staleDays = Number(
       (await getSetting("PAYMENT_REQUEST_STALE_DAYS")) ?? DEFAULT_STALE_DAYS,
     );
+    // Business Start Date filter — pre-cutoff outstanding requests hidden
+    // when the cutoff is engaged. Anchored on paymentRequestSentAt (the
+    // operational "we asked the client" date). See lib/businessStartCutoff.ts.
+    const cutoff = opts?.cutoff ?? null;
     const occs = await prisma.jobOccurrence.findMany({
       where: {
         status: "PENDING_PAYMENT",
-        paymentRequestSentAt: { not: null },
+        paymentRequestSentAt: cutoff
+          ? { not: null, gte: cutoff }
+          : { not: null },
         // No payment recorded yet — once the client pays, it moves to the
         // approval queue and is no longer "awaiting client payment".
         payment: { is: null },

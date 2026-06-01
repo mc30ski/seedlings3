@@ -126,6 +126,17 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     "users_role", "all"
   );
   const [workerTypeFilter, setWorkerTypeFilter] = usePersistedState("users_workerType", "all");
+  // Section toggles — the directory is split three ways:
+  //   • Pending  — unapproved sign-ups awaiting Approve/Decline. Defaults to
+  //                open because pending rows represent unfinished work.
+  //   • Team     — approved workers/admins/super. Defaults to open since
+  //                most directory tasks target it.
+  //   • Clients  — approved users with no operational role. Defaults to
+  //                collapsed so admins don't accidentally interact with
+  //                client rows during routine team management.
+  const [pendingSectionOpen, setPendingSectionOpen] = usePersistedState("users_pendingSectionOpen", true);
+  const [teamSectionOpen, setTeamSectionOpen] = usePersistedState("users_teamSectionOpen", true);
+  const [clientSectionOpen, setClientSectionOpen] = usePersistedState("users_clientSectionOpen", false);
 
   // Check for pending approvals navigation from header badge — on mount and via event
   useEffect(() => {
@@ -282,6 +293,21 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     }
     return rows;
   }, [items, q, workerTypeFilter, accessRole, readOnly]);
+
+  // Section predicates. Each user lands in exactly one of Pending / Team /
+  // Clients (the three are mutually exclusive and exhaustive).
+  //   Pending = not yet approved — pre-decision row.
+  //   Team    = approved AND has Worker or Admin role.
+  //   Client  = approved AND no operational role.
+  const isPendingUser = (u: ApiUser): boolean => !u.isApproved;
+  const isTeamUser = (u: ApiUser): boolean =>
+    u.isApproved && u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN");
+  const isClientUser = (u: ApiUser): boolean =>
+    u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN");
+
+  const pendingUsers = useMemo(() => filtered.filter(isPendingUser), [filtered]);
+  const teamUsers = useMemo(() => filtered.filter(isTeamUser), [filtered]);
+  const clientUsers = useMemo(() => filtered.filter(isClientUser), [filtered]);
 
   async function approve(userId: string) {
     try {
@@ -621,8 +647,8 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
           </Button>
         </Box>
       )}
-      {!loading &&
-        filtered.map((u) => {
+      {!loading && filtered.length > 0 && (() => {
+        const renderUserCard = (u: ApiUser) => {
           const s = rolesSet(u);
           const isAdmin = s.has("ADMIN");
           const isWorker = s.has("WORKER");
@@ -746,7 +772,19 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                         ) : (
                           <>
                             {/* Role toggles */}
-                            {isClient && (
+                            {/* "Make Worker" disabled per operator preference:
+                                Clients should never be promoted to Workers
+                                via this directory because doing so exposes
+                                internal data (jobs, payments, equipment) to
+                                someone the business considers external.
+                                Preserved here behind a `false` guard so the
+                                control can be restored by flipping the flag
+                                if a future workflow legitimately needs it
+                                (e.g. a client who's joining the team as a
+                                contractor — done via a dedicated flow then).
+                                Server route still accepts the role grant, so
+                                no API change is required to restore. */}
+                            {false && isClient && (
                               <Button
                                 size={{ base: "xs", md: "sm" }}
                                 onClick={() => addRole(u.id, "WORKER")}
@@ -1061,7 +1099,78 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
               )}
             </Box>
           );
-        })}
+        };
+
+        // Section header — collapsible, shows the group name + count.
+        // Made visually prominent: larger type, taller, accent-colored band
+        // on the left so the three sections clearly separate the directory
+        // into distinct piles instead of looking like sub-rows.
+        const SectionHeader = ({ label, count, open, onToggle, accent }: { label: string; count: number; open: boolean; onToggle: () => void; accent: string }) => (
+          <HStack
+            gap={2}
+            mb={2}
+            mt={4}
+            px={3}
+            py={2}
+            cursor="pointer"
+            onClick={onToggle}
+            borderRadius="md"
+            bg="gray.100"
+            borderWidth="1px"
+            borderColor="gray.300"
+            borderLeftWidth="4px"
+            borderLeftColor={accent}
+            _hover={{ bg: "gray.200" }}
+            userSelect="none"
+          >
+            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <Text fontSize="sm" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide">
+              {label} ({count})
+            </Text>
+          </HStack>
+        );
+
+        return (
+          <>
+            <SectionHeader
+              label="Pending"
+              count={pendingUsers.length}
+              open={pendingSectionOpen}
+              onToggle={() => setPendingSectionOpen((v) => !v)}
+              accent="orange.400"
+            />
+            {pendingSectionOpen && (
+              pendingUsers.length === 0
+                ? <Text fontSize="sm" color="fg.muted" pl={2} mb={3}>No pending sign-ups.</Text>
+                : pendingUsers.map(renderUserCard)
+            )}
+            <SectionHeader
+              label="Team"
+              count={teamUsers.length}
+              open={teamSectionOpen}
+              onToggle={() => setTeamSectionOpen((v) => !v)}
+              accent="blue.500"
+            />
+            {teamSectionOpen && (
+              teamUsers.length === 0
+                ? <Text fontSize="sm" color="fg.muted" pl={2} mb={3}>No team members match the current filters.</Text>
+                : teamUsers.map(renderUserCard)
+            )}
+            <SectionHeader
+              label="Clients"
+              count={clientUsers.length}
+              open={clientSectionOpen}
+              onToggle={() => setClientSectionOpen((v) => !v)}
+              accent="green.500"
+            />
+            {clientSectionOpen && (
+              clientUsers.length === 0
+                ? <Text fontSize="sm" color="fg.muted" pl={2} mb={3}>No clients match the current filters.</Text>
+                : clientUsers.map(renderUserCard)
+            )}
+          </>
+        );
+      })()}
       <ConfirmDialog
         open={!!workerTypeConfirm}
         title="Change Worker Type"

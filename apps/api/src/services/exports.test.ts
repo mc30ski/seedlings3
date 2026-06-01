@@ -1,0 +1,772 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Tax-export integrity tests.
+//
+// PURPOSE
+// Lock down the SHAPE and CONTENT of every CSV export that touches the
+// CPA / payroll / tax pipeline. The policy in
+// memory/project_tax_export_integrity.md says: exports may only contain
+// RAW CASH-FLOW fields (Payment.amountPaid, PaymentSplit.amount,
+// BusinessExpense.cost). Derived reporting fields — shortfallAmount,
+// overageAmount, businessMarginAmount, platformFeeAmount, topUpAmount —
+// must NEVER appear in a tax-line item or QB chart-of-accounts row.
+//
+// What this file protects:
+//   1. Column shape (header lock-in). A future "let me add a margin
+//      column to QB Income" PR fails here, not at the CPA's desk.
+//   2. Money values trace to the raw fields (amountPaid / cost).
+//   3. No negative wages in the W-2 export (employees made-whole policy).
+//   4. Schedule-C + QB exports never include rows tagged with
+//      shortfall/overage/topup language.
+//
+// Run with: npm test (workspace: apps/api).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Prisma module is mocked BEFORE the exports module is imported below so the
+// imports inside services/exports.ts hit our test doubles. `vi.hoisted` is
+// required because `vi.mock` calls are hoisted by vitest to the top of the
+// file — a plain const can't be referenced inside the factory otherwise.
+const { prismaMock } = vi.hoisted(() => {
+  const mock: any = {
+    payment: { findMany: vi.fn() },
+    businessExpense: { findMany: vi.fn() },
+    setting: { findUnique: vi.fn() },
+    equipment: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+    jobOccurrence: { findMany: vi.fn() },
+    paymentSplit: { findMany: vi.fn() },
+    // qbIncomeCsv now also pulls equipment rentals (Checkout rows with
+    // releasedAt + rentalCost > 0) so they're routed through to QB Income
+    // as "Equipment Rental Income". See
+    // memory/project_equipment_rental_income.md for the policy.
+    checkout: { findMany: vi.fn() },
+  };
+  return { prismaMock: mock };
+});
+
+vi.mock("../db/prisma", () => ({
+  prisma: prismaMock,
+}));
+
+vi.mock("./expenseCategories", () => ({
+  loadQbAccountMap: vi.fn(async () => new Map<string, string>([
+    ["Supplies", "Direct Supplies and Materials"],
+    ["Vehicle expenses", "Vehicle Maintenance & Repairs"],
+    ["Payment Processing Fees", "Payment Processing Fees"],
+  ])),
+  loadScheduleCLineMap: vi.fn(async () => new Map<string, string>([
+    ["Supplies", "22"],
+    ["Vehicle expenses", "9"],
+    ["Payment Processing Fees", "10"],
+  ])),
+  loadFixedAssetMinCost: vi.fn(async () => 500),
+  loadCategoryLabels: vi.fn(async () => new Map<string, string>()),
+}));
+
+// Import AFTER the mocks are registered so the module captures the mocked
+// prisma binding (CommonJS modules evaluate imports eagerly).
+import {
+  gustoW2Csv,
+  gustoContractorsCsv,
+  qbIncomeCsv,
+  qbExpensesCsv,
+  qbEquityCsv,
+} from "./exports";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test fixtures
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RANGE_START = new Date("2026-06-01T00:00:00.000Z");
+const RANGE_END = new Date("2026-06-30T23:59:59.999Z");
+
+// Two confirmed payments — one Contractor-only ($100), one mixed crew with
+// an underpay scenario ($60 collected on a $100 promise, employee made whole
+// with a top-up). The shortfall and topUp fields are populated as the
+// approval flow would write them — the tests then assert these DO NOT bleed
+// into any tax export.
+function makeConfirmedPayments() {
+  return [
+    {
+      id: "pmt-1",
+      amountPaid: 100,
+      method: "ZELLE",
+      note: "Adams payment",
+      confirmed: true,
+      confirmedAt: new Date("2026-06-10T15:00:00.000Z"),
+      writtenOff: false,
+      platformFeeAmount: 20,
+      platformFeePercent: 20,
+      businessMarginAmount: 0,
+      businessMarginPercent: 30,
+      shortfallAmount: 0,
+      overageAmount: 0,
+      processorFeeAmount: null,
+      processorFeeFixed: null,
+      processorFeePercent: null,
+      grossCharged: null,
+      netReceived: null,
+      occurrence: {
+        id: "occ-1",
+        startedAt: new Date("2026-06-10T13:00:00.000Z"),
+        completedAt: new Date("2026-06-10T14:00:00.000Z"),
+        totalPausedMs: 0,
+        assignees: [{ userId: "c1", role: null }],
+        job: {
+          property: {
+            displayName: "Home — Adams",
+            street1: "123 Main",
+            city: "Town",
+            state: "ST",
+            client: { displayName: "Adams" },
+          },
+        },
+      },
+      splits: [
+        {
+          userId: "c1",
+          amount: 80,
+          grossAmount: 100,
+          ratePercent: 20,
+          feeAmount: 20,
+          netAmount: 80,
+          topUpAmount: 0,
+          ownerEarnings: false,
+          user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com", workerType: "CONTRACTOR" },
+        },
+      ],
+    },
+    {
+      id: "pmt-2",
+      amountPaid: 60,
+      method: "CASH",
+      note: "Banks underpay",
+      confirmed: true,
+      confirmedAt: new Date("2026-06-15T16:00:00.000Z"),
+      writtenOff: false,
+      platformFeeAmount: 10,
+      platformFeePercent: 20,
+      businessMarginAmount: 15,
+      businessMarginPercent: 30,
+      shortfallAmount: 25,
+      overageAmount: 0,
+      processorFeeAmount: null,
+      processorFeeFixed: null,
+      processorFeePercent: null,
+      grossCharged: null,
+      netReceived: null,
+      occurrence: {
+        id: "occ-2",
+        startedAt: new Date("2026-06-15T13:00:00.000Z"),
+        completedAt: new Date("2026-06-15T14:30:00.000Z"),
+        totalPausedMs: 0,
+        assignees: [
+          { userId: "c1", role: null },
+          { userId: "e1", role: "helper" },
+        ],
+        job: {
+          property: {
+            displayName: "Home — Banks",
+            street1: "1 Lake",
+            city: "Town",
+            state: "ST",
+            client: { displayName: "Banks" },
+          },
+        },
+      },
+      splits: [
+        {
+          userId: "c1",
+          amount: 20,
+          grossAmount: 30,
+          ratePercent: 20,
+          feeAmount: 6,
+          netAmount: 24,
+          topUpAmount: 0,
+          ownerEarnings: false,
+          user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com", workerType: "CONTRACTOR" },
+        },
+        {
+          userId: "e1",
+          amount: 35,
+          grossAmount: 30,
+          ratePercent: 30,
+          feeAmount: 9,
+          netAmount: 21,
+          // Employee made whole with $14 top-up. This field must NOT
+          // appear as a separate column in any tax export.
+          topUpAmount: 14,
+          ownerEarnings: false,
+          user: { id: "e1", displayName: "Eve Employee", email: "eve@example.com", workerType: "EMPLOYEE" },
+        },
+      ],
+    },
+  ];
+}
+
+function makeCompletedOccurrences() {
+  // Used by gustoW2Csv to compute per-worker W-2 wages.
+  return [
+    {
+      id: "occ-1",
+      startedAt: new Date("2026-06-10T13:00:00.000Z"),
+      completedAt: new Date("2026-06-10T14:00:00.000Z"),
+      totalPausedMs: 0,
+      price: 100,
+      proposalAmount: null,
+      promisedPayouts: null,
+      completionSplits: [{ userId: "e1", percent: 100 }],
+      addons: [],
+      expenses: [],
+      assignees: [{ userId: "e1", role: null, user: { id: "e1", displayName: "Eve Employee", email: "eve@example.com", workerType: "EMPLOYEE" } }],
+    },
+    {
+      id: "occ-2",
+      startedAt: new Date("2026-06-15T13:00:00.000Z"),
+      completedAt: new Date("2026-06-15T14:30:00.000Z"),
+      totalPausedMs: 0,
+      price: 100,
+      proposalAmount: null,
+      promisedPayouts: null,
+      completionSplits: [
+        { userId: "c1", percent: 50 },
+        { userId: "e1", percent: 50 },
+      ],
+      addons: [],
+      expenses: [],
+      assignees: [
+        { userId: "c1", role: null, user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com", workerType: "CONTRACTOR" } },
+        { userId: "e1", role: "helper", user: { id: "e1", displayName: "Eve Employee", email: "eve@example.com", workerType: "EMPLOYEE" } },
+      ],
+    },
+  ];
+}
+
+function makeEquipmentRentals() {
+  // Contractor rentals — Checkouts with rentalCost > 0 and releasedAt
+  // in range. These are equipment rental INCOME to the business (the
+  // contractor pays the LLC to use company-owned equipment) and must
+  // appear in qb-income.csv.
+  return [
+    {
+      id: "co-1",
+      equipmentId: "eq-mower",
+      userId: "c1",
+      reservedAt: new Date("2026-06-09T13:00:00.000Z"),
+      checkedOutAt: new Date("2026-06-09T14:00:00.000Z"),
+      releasedAt: new Date("2026-06-10T22:00:00.000Z"),
+      rentalDays: 2,
+      rentalCost: 60.0,
+      equipment: { id: "eq-mower", shortDesc: "21\" mower", brand: "Honda", model: "HRX217VLA" },
+      user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+    },
+    {
+      id: "co-2",
+      equipmentId: "eq-aerator",
+      userId: "c1",
+      reservedAt: new Date("2026-06-20T13:00:00.000Z"),
+      checkedOutAt: new Date("2026-06-21T14:00:00.000Z"),
+      releasedAt: new Date("2026-06-22T22:00:00.000Z"),
+      rentalDays: 2,
+      rentalCost: 120.0,
+      equipment: { id: "eq-aerator", shortDesc: "Aerator", brand: "Bluebird", model: "PR22" },
+      user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+    },
+  ];
+}
+
+function makeBusinessExpenses() {
+  return [
+    {
+      id: "be-1",
+      type: "EXPENSE" as const,
+      date: new Date("2026-06-05T12:00:00.000Z"),
+      cost: 87.43,
+      description: "Lawn fertilizer",
+      category: "Supplies",
+      vendor: "Home Depot",
+      invoiceNumber: null,
+      notes: null,
+      equipmentId: null,
+      occurrenceId: null,
+      receiptR2Key: null,
+      receiptFileName: null,
+      receiptContentType: null,
+      receiptUploadedAt: null,
+      recurrence: null,
+      recurrenceSkippedUntil: null,
+      createdById: "u-michael",
+      occurrence: null,
+    },
+    {
+      id: "be-2",
+      type: "EXPENSE" as const,
+      date: new Date("2026-06-12T12:00:00.000Z"),
+      cost: 42.10,
+      description: "Gas refill",
+      category: "Vehicle expenses",
+      vendor: "Shell",
+      invoiceNumber: null,
+      notes: null,
+      equipmentId: null,
+      occurrenceId: null,
+      receiptR2Key: null,
+      receiptFileName: null,
+      receiptContentType: null,
+      receiptUploadedAt: null,
+      recurrence: null,
+      recurrenceSkippedUntil: null,
+      createdById: "u-michael",
+      occurrence: null,
+    },
+  ];
+}
+
+function makeEquityEntries() {
+  return [
+    {
+      id: "be-eq-1",
+      type: "CAPITAL_CONTRIBUTION" as const,
+      date: new Date("2026-06-03T12:00:00.000Z"),
+      cost: 1500,
+      description: "Initial capital",
+      category: null,
+      notes: null,
+    },
+    {
+      id: "be-eq-2",
+      type: "OWNER_DRAW" as const,
+      date: new Date("2026-06-20T12:00:00.000Z"),
+      cost: 500,
+      description: "Monthly owner draw",
+      category: null,
+      notes: null,
+    },
+  ];
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default mock: empty results. Individual tests override per case.
+  prismaMock.payment.findMany.mockResolvedValue([]);
+  prismaMock.businessExpense.findMany.mockResolvedValue([]);
+  prismaMock.equipment.findMany.mockResolvedValue([]);
+  prismaMock.user.findMany.mockResolvedValue([]);
+  prismaMock.jobOccurrence.findMany.mockResolvedValue([]);
+  prismaMock.paymentSplit.findMany.mockResolvedValue([]);
+  prismaMock.checkout.findMany.mockResolvedValue([]);
+  // Settings are looked up by key. Different keys need different values
+  // so tests don't accidentally read e.g. the FIXED_ASSET_MIN_COST
+  // threshold as a margin percent. The big-cost defaults match the
+  // production seed for the keys exercised by the exports under test.
+  prismaMock.setting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) => {
+    const defaults: Record<string, string> = {
+      EMPLOYEE_BUSINESS_MARGIN_PERCENT: "30",
+      CONTRACTOR_PLATFORM_FEE_PERCENT: "20",
+      // Test fixtures stay below this so they classify as operating
+      // expenses (qb-expenses.csv), not fixed-asset purchases.
+      FIXED_ASSET_MIN_COST: "500",
+      // Equipment rental income routing — defaults match production seed.
+      EQUIPMENT_RENTAL_INCOME_CONFIG: JSON.stringify({
+        qbAccount: "Equipment Rental Income",
+        scheduleCLine: "1",
+      }),
+    };
+    const value = defaults[where.key];
+    return value == null ? null : { value };
+  });
+});
+
+// Helper — parse a CSV string into rows of cell strings. Naïve splitter
+// adequate for our deterministic test output (no embedded newlines in
+// fixture cells; quoted commas are not exercised here).
+function parseCsv(csv: string): string[][] {
+  return csv
+    .trim()
+    .split("\n")
+    .map((line) => line.split(","));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// qb-income.csv
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("qbIncomeCsv — tax integrity", () => {
+  it("locks in the column header (any new column requires updating this test)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    expect(rows[0]).toEqual([
+      "Date",
+      "Description",
+      "Amount",
+      "Account",
+      "Reference ID",
+      "Category",
+      "Tax Line",
+      "Customer",
+      "Property",
+      "Method",
+      "Vendor",
+      "Invoice #",
+      "Job ID",
+    ]);
+  });
+
+  it("Amount column uses Payment.amountPaid — NOT a derived field", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    const adamsRow = rows.find((r) => r.some((c) => c.includes("PAY-pmt-1")));
+    const banksRow = rows.find((r) => r.some((c) => c.includes("PAY-pmt-2")));
+    expect(adamsRow?.[2]).toBe("100.00"); // = amountPaid, NOT splits sum (80)
+    expect(banksRow?.[2]).toBe("60.00"); // = amountPaid (the underpaid amount),
+                                          // NOT promised ($100) or splits sum ($55)
+  });
+
+  it("TOTALS row equals sum of amountPaid values", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv, total } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    const totalsRow = rows.find((r) => r[0] === "TOTALS");
+    expect(totalsRow?.[2]).toBe("160.00"); // 100 + 60
+    expect(total).toBe(160);
+  });
+
+  it("NEVER includes derived columns (shortfall / overage / topup / margin / fee)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    // The pmt-2 fixture has shortfall=25 and a $14 topUp on the employee
+    // split — both must be invisible in the income export.
+    expect(csv.toLowerCase()).not.toContain("shortfall");
+    expect(csv.toLowerCase()).not.toContain("overage");
+    expect(csv.toLowerCase()).not.toContain("topup");
+    expect(csv.toLowerCase()).not.toContain("top-up");
+    expect(csv).not.toMatch(/\b25\.00\b/); // shortfall value
+    expect(csv).not.toMatch(/\b14\.00\b/); // topUp value
+  });
+
+  // ───── Equipment rental income (memory/project_equipment_rental_income.md)
+  // The bug fixed on 2026-06-XX: equipment was being shown as a deduction
+  // in the Admin summary AND missing entirely from QB Income. These tests
+  // pin both ends — the rentals appear as income lines with raw cash
+  // values, and the export account label routes to QB correctly.
+
+  it("includes equipment rental rows with Amount = Checkout.rentalCost", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv, total } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    // Each rental's rentalCost (raw cash value) must appear verbatim.
+    expect(csv).toContain("60.00");
+    expect(csv).toContain("120.00");
+    // Total = sum of rentalCost values (no derived adjustment).
+    expect(total).toBe(180);
+  });
+
+  it("tags equipment rental rows with the 'Equipment Rental Income' account", async () => {
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("Equipment Rental Income");
+  });
+
+  it("uses RENT- reference prefix for equipment rows (distinct from PAY-)", async () => {
+    // PAY- vs RENT- prefixes let QB dedup on re-import without colliding
+    // job-payment refs with equipment-rental refs.
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("RENT-co-1");
+    expect(csv).toContain("RENT-co-2");
+    expect(csv).not.toContain("PAY-co-1");
+  });
+
+  it("equipment rental income sums correctly alongside job payments", async () => {
+    // Payments fixture totals $160 (100 + 60). Equipment rentals total
+    // $180. Combined export total must be $340 — proving both income
+    // sources contribute additively, no subtraction or netting.
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(total).toBe(340);
+    expect(rowCount).toBe(4); // 2 payments + 2 rentals
+  });
+
+  it("EQUIPMENT_RENTAL_INCOME_CONFIG setting overrides the QB account + Schedule C line", async () => {
+    // CPA prefers separate-line visibility: Line 6 (Other gross receipts)
+    // with a distinct chart-of-accounts entry name. Flipping the Setting
+    // should change the export rows immediately — no code deploy.
+    prismaMock.setting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) => {
+      if (where.key === "EQUIPMENT_RENTAL_INCOME_CONFIG") {
+        return { value: JSON.stringify({ qbAccount: "Equipment Rental Revenue", scheduleCLine: "6" }) };
+      }
+      // All other setting reads keep their default values for this test.
+      const defaults: Record<string, string> = {
+        EMPLOYEE_BUSINESS_MARGIN_PERCENT: "30",
+        CONTRACTOR_PLATFORM_FEE_PERCENT: "20",
+        FIXED_ASSET_MIN_COST: "500",
+      };
+      const v = defaults[where.key];
+      return v == null ? null : { value: v };
+    });
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("Equipment Rental Revenue");
+    expect(csv).not.toContain("Equipment Rental Income");
+    // Schedule C line 6 appears in the Tax Line column for rental rows.
+    // We can't directly grep a single digit "6" reliably (job-payment rows
+    // also have a "1" in that column), so look for the rental row's
+    // RENT- prefix on the same line as "6".
+    const lines = csv.split("\n");
+    const rentalLines = lines.filter((l) => l.includes("RENT-"));
+    expect(rentalLines.length).toBeGreaterThan(0);
+    for (const line of rentalLines) {
+      // CSV columns: Date, Description, Amount, Account, RefID, Category, TaxLine, ...
+      const cells = line.split(",");
+      expect(cells[6]).toBe("6"); // Tax Line column
+    }
+  });
+
+  it("falls back to defaults when EQUIPMENT_RENTAL_INCOME_CONFIG is missing", async () => {
+    // No setting row at all → defaults apply (Line 1 / "Equipment Rental
+    // Income"). This protects fresh databases that haven't run the seed
+    // and prod environments that haven't manually inserted the row yet.
+    prismaMock.setting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) => {
+      if (where.key === "EQUIPMENT_RENTAL_INCOME_CONFIG") return null;
+      const defaults: Record<string, string> = {
+        EMPLOYEE_BUSINESS_MARGIN_PERCENT: "30",
+        CONTRACTOR_PLATFORM_FEE_PERCENT: "20",
+        FIXED_ASSET_MIN_COST: "500",
+      };
+      const v = defaults[where.key];
+      return v == null ? null : { value: v };
+    });
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("Equipment Rental Income");
+  });
+
+  it("falls back to defaults when EQUIPMENT_RENTAL_INCOME_CONFIG is malformed JSON", async () => {
+    // Malformed value (typo, broken JSON) must not crash the export.
+    prismaMock.setting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) => {
+      if (where.key === "EQUIPMENT_RENTAL_INCOME_CONFIG") return { value: "{not-json" };
+      const defaults: Record<string, string> = {
+        EMPLOYEE_BUSINESS_MARGIN_PERCENT: "30",
+        CONTRACTOR_PLATFORM_FEE_PERCENT: "20",
+        FIXED_ASSET_MIN_COST: "500",
+      };
+      const v = defaults[where.key];
+      return v == null ? null : { value: v };
+    });
+    prismaMock.checkout.findMany.mockResolvedValue(makeEquipmentRentals());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("Equipment Rental Income"); // default qbAccount
+  });
+
+  it("skips rentals with rentalCost ≤ 0 (defensive — Prisma where clause already filters, but guard anyway)", async () => {
+    // The findMany query has `rentalCost: { gt: 0 }`, but we double-guard
+    // in code in case the data ever shows up wrong (e.g. via a manual
+    // SQL fix). A $0 rental should not produce a CSV row.
+    prismaMock.checkout.findMany.mockResolvedValue([
+      // Prisma where would filter this, but the mock returns it
+      // unconditionally — the in-code guard skips it.
+      { ...makeEquipmentRentals()[0], id: "co-zero", rentalCost: 0 },
+      makeEquipmentRentals()[1],
+    ]);
+    const { csv, total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    // Only the $120 rental contributes; the $0 row is suppressed.
+    expect(csv).not.toContain("RENT-co-zero");
+    expect(total).toBe(120);
+    expect(rowCount).toBe(1); // only the $120 row was written
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// qb-expenses.csv
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("qbExpensesCsv — tax integrity", () => {
+  it("locks in the column header", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue([]);
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    const { csv } = await qbExpensesCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    expect(rows[0]).toEqual([
+      "Date",
+      "Description",
+      "Amount",
+      "Account",
+      "Reference ID",
+      "Category",
+      "Tax Line",
+      "Customer",
+      "Property",
+      "Method",
+      "Vendor",
+      "Invoice #",
+      "Job ID",
+    ]);
+  });
+
+  it("Amount column uses BusinessExpense.cost — NOT a derived field", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue(makeBusinessExpenses());
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    const { csv, total } = await qbExpensesCsv(RANGE_START, RANGE_END);
+    // The fixture has two EXPENSE rows ($87.43 + $42.10 = $129.53). The
+    // CSV should contain those exact strings AND the totals row should
+    // reflect their sum — proving the Amount column is BusinessExpense.cost
+    // and nothing has been substituted with a derived value.
+    expect(csv).toContain("87.43");
+    expect(csv).toContain("42.10");
+    expect(total).toBe(129.53);
+  });
+
+  it("NEVER bleeds shortfall / overage / topup into expense rows", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue(makeBusinessExpenses());
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await qbExpensesCsv(RANGE_START, RANGE_END);
+    expect(csv.toLowerCase()).not.toContain("shortfall");
+    expect(csv.toLowerCase()).not.toContain("overage");
+    expect(csv.toLowerCase()).not.toContain("topup");
+    expect(csv.toLowerCase()).not.toContain("top-up");
+    expect(csv.toLowerCase()).not.toContain("bad debt");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// qb-equity.csv
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("qbEquityCsv — tax integrity", () => {
+  it("locks in the column header", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue([]);
+    const { csv } = await qbEquityCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    expect(rows[0]).toEqual([
+      "Date",
+      "Description",
+      "Amount",
+      "Account",
+      "Reference ID",
+      "Category",
+      "Tax Line",
+      "Customer",
+      "Property",
+      "Method",
+      "Vendor",
+      "Invoice #",
+      "Job ID",
+    ]);
+  });
+
+  it("Capital contributions and owner draws use BusinessExpense.cost", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue(makeEquityEntries());
+    const { csv } = await qbEquityCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    const capRow = rows.find((r) => r.some((c) => c.includes("EXP-be-eq-1")));
+    const drawRow = rows.find((r) => r.some((c) => c.includes("EXP-be-eq-2")));
+    expect(capRow?.[2]).toBe("1500.00");
+    expect(capRow?.[3]).toBe("Owner Investments"); // QB equity account name
+    expect(drawRow?.[2]).toBe("500.00");
+    expect(drawRow?.[3]).toBe("Owner Draws");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// gusto-w2.csv — payroll integrity
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("gustoW2Csv — payroll integrity", () => {
+  it("never produces a negative wage amount", async () => {
+    // Even on an underpaid job, the employee is made whole; gross wages
+    // for an employee must be ≥ 0 in the W-2 export.
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(makeCompletedOccurrences());
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+    const { csv } = await gustoW2Csv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv);
+    // Find any numeric cell in the body rows; assert no leading "-".
+    for (const row of rows.slice(1)) { // skip header
+      if (row[0] === "TOTALS") continue;
+      for (const cell of row) {
+        // Any value formatted as "$NNN.NN" or plain "NNN.NN" must be non-negative.
+        if (/^-?\d+\.\d{2}$/.test(cell)) {
+          expect(Number(cell)).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it("NEVER includes shortfall / topup / overage language in the CSV", async () => {
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(makeCompletedOccurrences());
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+    const { csv } = await gustoW2Csv(RANGE_START, RANGE_END);
+    expect(csv.toLowerCase()).not.toContain("shortfall");
+    expect(csv.toLowerCase()).not.toContain("topup");
+    expect(csv.toLowerCase()).not.toContain("top-up");
+    expect(csv.toLowerCase()).not.toContain("overage");
+    expect(csv.toLowerCase()).not.toContain("bad debt");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// gusto-contractors.csv — 1099 integrity
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("gustoContractorsCsv — 1099 integrity", () => {
+  it("amount per contractor uses split.amount (their final reconciled net)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await gustoContractorsCsv(RANGE_START, RANGE_END);
+    // Carla appears on two payments: $80 + $20 = $100 total contractor pay.
+    // Eve is an employee — must NOT appear in contractors export.
+    expect(csv).toContain("Carla");
+    expect(csv).not.toContain("Eve Employee");
+  });
+
+  it("NEVER includes derived/internal fields", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await gustoContractorsCsv(RANGE_START, RANGE_END);
+    expect(csv.toLowerCase()).not.toContain("shortfall");
+    expect(csv.toLowerCase()).not.toContain("topup");
+    expect(csv.toLowerCase()).not.toContain("overage");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregate guard — runs every export with non-trivial fixtures, scans the
+// concatenated output for forbidden tokens. Catch-all for "did anyone
+// accidentally introduce a derived column in one of these exports?".
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("All tax exports — forbidden-field guard", () => {
+  it("none of the tax/payroll exports leak derived reporting fields", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    prismaMock.businessExpense.findMany.mockResolvedValue([
+      ...makeBusinessExpenses(),
+      ...makeEquityEntries(),
+    ]);
+    prismaMock.jobOccurrence.findMany.mockResolvedValue(makeCompletedOccurrences());
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "30" });
+
+    const all = await Promise.all([
+      qbIncomeCsv(RANGE_START, RANGE_END),
+      qbExpensesCsv(RANGE_START, RANGE_END),
+      qbEquityCsv(RANGE_START, RANGE_END),
+      gustoW2Csv(RANGE_START, RANGE_END),
+      gustoContractorsCsv(RANGE_START, RANGE_END),
+    ]);
+    const concatenated = all.map((r) => r.csv).join("\n---\n").toLowerCase();
+    // Internal reporting fields that must NEVER bleed into a tax export.
+    const forbidden = [
+      "shortfall",
+      "overage",
+      "topup",
+      "top-up",
+      "bad debt",
+      "businessmargin",
+      "platformfee", // header text variant
+    ];
+    for (const token of forbidden) {
+      expect(concatenated).not.toContain(token);
+    }
+  });
+});

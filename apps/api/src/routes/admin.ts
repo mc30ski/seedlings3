@@ -14,6 +14,14 @@ import {
 } from "@prisma/client";
 import { normalizePhone } from "../lib/phone";
 import { loadCategoryLabels } from "../services/expenseCategories";
+import {
+  resolveCutoff,
+  cutoffWhere,
+  paymentSplitCutoffWhere,
+  paymentIncludeWithCutoff,
+  expensesIncludeWithCutoff,
+  occurrenceWorkDateCutoff,
+} from "../lib/businessStartCutoff";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -95,6 +103,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       action: q.action || undefined,
       from: q.from || undefined,
       to: q.to || undefined,
+      cutoff: await resolveCutoff(req),
       page,
       pageSize,
     });
@@ -1669,12 +1678,14 @@ export default async function adminRoutes(app: FastifyInstance) {
       userId?: string;
       method?: string;
     };
-    return services.payments.listAllPayments({ from, to, userId, method });
+    const cutoff = await resolveCutoff(req);
+    return services.payments.listAllPayments({ from, to, userId, method, cutoff });
   });
 
   app.get("/admin/payments/equipment-charges", adminGuard, async (req: any) => {
     const { from, to, userId } = (req.query || {}) as { from?: string; to?: string; userId?: string };
-    return services.equipment.listEquipmentCharges({ from, to, userId });
+    const cutoff = await resolveCutoff(req);
+    return services.equipment.listEquipmentCharges({ from, to, userId, cutoff });
   });
 
   // Equipment-usage dashboard — every worker's checkouts in a date range.
@@ -2011,8 +2022,10 @@ Respond ONLY with valid JSON in this exact format:
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
+    // Business Start Date filter — see lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
     const splits = await prisma.paymentSplit.findMany({
-      where: { userId },
+      where: { userId, ...paymentSplitCutoffWhere(cutoff) },
       include: { payment: { select: { createdAt: true, method: true } } },
     });
 
@@ -2074,11 +2087,18 @@ Respond ONLY with valid JSON in this exact format:
     if (to) dateFilter.lte = etEndOfDay(to);
     const hasDate = from || to;
 
+    // Business Start Date filter — pre-cutoff occurrences hidden (their work
+    // date is before the cutoff). This is Pattern C: occurrence-level
+    // filtering because stats iterate occurrences directly and the work-date
+    // anchor is the right semantic for per-worker job counts and earnings.
+    const cutoff = await resolveCutoff(req);
+
     // Get all closed occurrences with assignees, payment splits, timing
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["CLOSED", "PENDING_PAYMENT"] },
         ...(hasDate ? { completedAt: dateFilter } : {}),
+        ...occurrenceWorkDateCutoff(cutoff),
       },
       select: {
         id: true,
@@ -2098,6 +2118,10 @@ Respond ONLY with valid JSON in this exact format:
           },
         },
         payment: {
+          // Pattern B filter ensures pre-cutoff payments (e.g. on a
+          // job that was completed post-cutoff but whose Payment row was
+          // created before — rare but possible) don't sneak into stats.
+          where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
           select: {
             amountPaid: true,
             method: true,
@@ -2109,6 +2133,12 @@ Respond ONLY with valid JSON in this exact format:
           },
         },
         expenses: {
+          where: cutoff
+            ? { OR: [
+                { businessExpense: { date: { gte: cutoff } } },
+                { businessExpense: null, createdAt: { gte: cutoff } },
+              ] }
+            : undefined,
           select: { cost: true },
         },
         job: {
@@ -2370,6 +2400,16 @@ Respond ONLY with valid JSON in this exact format:
     const dateFrom = from ? etMidnight(from) : etMidnight(todayKey);
     const dateTo = to ? etEndOfDay(to) : etEndOfDay(todayKey);
 
+    // Business Start Date filter — pre-cutoff occurrences are hidden entirely
+    // via Pattern C (occurrence work date) on the top-level where, matching
+    // the JobsTab and Statistics behavior. Pattern B is still layered on
+    // payment + expenses as a defense-in-depth: catches the edge case where
+    // an occurrence is post-cutoff but its Payment row was created pre-cutoff
+    // (rare but possible — e.g. a payment retroactively attached). See
+    // lib/businessStartCutoff.ts. Super reveal resolves cutoff to null so
+    // every spread becomes a no-op and behavior matches pre-feature exactly.
+    const cutoff = await resolveCutoff(req);
+
     // Jobs summary
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
@@ -2378,11 +2418,12 @@ Respond ONLY with valid JSON in this exact format:
           { startAt: { gte: dateFrom, lte: dateTo } },
           { completedAt: { gte: dateFrom, lte: dateTo } },
         ],
+        ...occurrenceWorkDateCutoff(cutoff),
       },
       include: {
         assignees: { select: { userId: true, role: true } },
-        payment: { include: { splits: true } },
-        expenses: true,
+        payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
+        expenses: expensesIncludeWithCutoff(cutoff),
       },
     });
 
@@ -2488,8 +2529,9 @@ Respond ONLY with valid JSON in this exact format:
     for (const cc of clientCounts) clientMap[cc.status] = cc._count;
     const vipClients = await prisma.client.count({ where: { isVip: true, status: "ACTIVE" } });
 
-    // Recent audit events
+    // Recent audit events — also gated by the Business Start Date cutoff.
     const recentAudit = await prisma.auditEvent.findMany({
+      where: { ...cutoffWhere("AuditEvent", cutoff) },
       orderBy: { createdAt: "desc" },
       take: 10,
       include: { actor: { select: { displayName: true } } },
@@ -3762,6 +3804,17 @@ Respond ONLY with valid JSON in this exact format:
         { notes: { contains: term, mode: "insensitive" } },
       ];
     }
+    // Business Start Date filter — pre-cutoff BusinessExpense rows hidden
+    // from the Accounting tab. If a from-date is already set, the cutoff is
+    // additive (later bound wins). See lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
+    if (cutoff) {
+      const existingGte = where.date?.gte;
+      where.date = {
+        ...(where.date ?? {}),
+        gte: existingGte && existingGte > cutoff ? existingGte : cutoff,
+      };
+    }
 
     // Pagination — limit/offset, applied to the same `where` filter so the
     // page is a slice of the filtered set. `all=true` bypasses the page cap;
@@ -4029,17 +4082,24 @@ Respond ONLY with valid JSON in this exact format:
     const to = q.to ? (() => { const t = new Date(q.to as string); t.setHours(23, 59, 59, 999); return t; })() : null;
     const inRange = (d: Date) => (!from || d >= from) && (!to || d <= to);
 
+    // Business Start Date filter — pre-cutoff rows excluded from the P&L
+    // calculation. Each table is filtered on its own anchor (see
+    // lib/businessStartCutoff.ts).
+    const cutoff = await resolveCutoff(req);
+
     const [payments, allEntries, rentals] = await Promise.all([
       prisma.payment.findMany({
+        where: { ...cutoffWhere("Payment", cutoff) },
         select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       // One query covers all three EntryType buckets; split by `type`
       // below. Saves a round-trip vs. separate queries.
       prisma.businessExpense.findMany({
+        where: { ...cutoffWhere("BusinessExpense", cutoff) },
         select: { type: true, date: true, cost: true },
       }),
       prisma.checkout.findMany({
-        where: { rentalCost: { not: null }, releasedAt: { not: null } },
+        where: { rentalCost: { not: null }, releasedAt: { not: null }, ...cutoffWhere("Checkout", cutoff) },
         select: { releasedAt: true, rentalCost: true },
       }),
     ]);
@@ -4107,6 +4167,15 @@ Respond ONLY with valid JSON in this exact format:
         t.setHours(23, 59, 59, 999);
         where.date.lte = t;
       }
+    }
+    // Business Start Date filter — pre-cutoff rows excluded from totals.
+    const summaryCutoff = await resolveCutoff(req);
+    if (summaryCutoff) {
+      const existingGte = where.date?.gte;
+      where.date = {
+        ...(where.date ?? {}),
+        gte: existingGte && existingGte > summaryCutoff ? existingGte : summaryCutoff,
+      };
     }
     const all = await prisma.businessExpense.findMany({ where, select: { date: true, cost: true, category: true } });
     let today = 0, thisWeek = 0, thisMonth = 0, thisYear = 0, total = 0;
@@ -4258,7 +4327,22 @@ Respond ONLY with valid JSON in this exact format:
 
   // ── Full Data Export ──
 
-  app.get("/admin/export", adminGuard, async (_req: any, reply: any) => {
+  app.get("/admin/export", adminGuard, async (req: any, reply: any) => {
+
+    // Business Start Date filter — pre-cutoff money tables (Payment,
+    // PaymentSplit, Expense, AuditEvent, Checkout) hidden from this raw
+    // export. Non-money tables (Users, Clients, Properties, Jobs, etc.) are
+    // unchanged — the cutoff is a MONEY-only filter, not a schema cutoff.
+    // For full historical exports (e.g. tax season), Super can toggle the
+    // reveal header. See lib/businessStartCutoff.ts and the Tax Export
+    // Integrity memory note (project_tax_export_integrity.md).
+    const cutoff = await resolveCutoff(req);
+    if (cutoff) {
+      req.log?.info(
+        { cutoff: cutoff.toISOString() },
+        "/admin/export running with Business Start Date filter active — pre-cutoff money rows are excluded",
+      );
+    }
 
     const [
       users,
@@ -4283,7 +4367,7 @@ Respond ONLY with valid JSON in this exact format:
       prisma.user.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.userRole.findMany(),
       prisma.equipment.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.checkout.findMany(),
+      prisma.checkout.findMany({ where: { ...cutoffWhere("Checkout", cutoff) } }),
       prisma.client.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.clientContact.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.property.findMany({ orderBy: { createdAt: "asc" } }),
@@ -4294,10 +4378,18 @@ Respond ONLY with valid JSON in this exact format:
       prisma.jobOccurrence.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.jobAssigneeDefault.findMany({ orderBy: { createdAt: "asc" } }),
       prisma.jobOccurrenceAssignee.findMany(),
-      prisma.payment.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.paymentSplit.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.expense.findMany({ orderBy: { createdAt: "asc" } }),
-      prisma.auditEvent.findMany({ orderBy: { createdAt: "asc" } }),
+      prisma.payment.findMany({ where: { ...cutoffWhere("Payment", cutoff) }, orderBy: { createdAt: "asc" } }),
+      prisma.paymentSplit.findMany({ where: { ...paymentSplitCutoffWhere(cutoff) }, orderBy: { createdAt: "asc" } }),
+      prisma.expense.findMany({
+        where: cutoff ? {
+          OR: [
+            { businessExpense: { date: { gte: cutoff } } },
+            { businessExpense: null, createdAt: { gte: cutoff } },
+          ],
+        } : undefined,
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.auditEvent.findMany({ where: { ...cutoffWhere("AuditEvent", cutoff) }, orderBy: { createdAt: "asc" } }),
     ]);
 
     const data = {
@@ -4331,7 +4423,13 @@ Respond ONLY with valid JSON in this exact format:
 
   // ── Human-Readable Summary Export ──
 
-  app.get("/admin/export-summary", adminGuard, async (_req: any) => {
+  app.get("/admin/export-summary", adminGuard, async (req: any) => {
+
+    // Business Start Date filter — pre-cutoff money relations hidden via
+    // filtered includes. Occurrence rows themselves remain visible (jobs
+    // stay on the report) but `payment` resolves to null and `expenses` to
+    // [] for pre-cutoff occurrences. See lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
 
     const clients = await prisma.client.findMany({
       orderBy: { displayName: "asc" },
@@ -4350,8 +4448,8 @@ Respond ONLY with valid JSON in this exact format:
                   orderBy: { startAt: "asc" },
                   include: {
                     assignees: { include: { user: true } },
-                    payment: true,
-                    expenses: true,
+                    payment: paymentIncludeWithCutoff(cutoff),
+                    expenses: expensesIncludeWithCutoff(cutoff),
                   },
                 },
               },
@@ -4588,7 +4686,8 @@ Respond ONLY with valid JSON in this exact format:
   });
 
   app.get("/admin/supplies/:id/history", adminGuard, async (req: any) => {
-    return services.supplies.listHistory(String(req.params.id));
+    const cutoff = await resolveCutoff(req);
+    return services.supplies.listHistory(String(req.params.id), { cutoff });
   });
 
   // ── Receipt photo on a BusinessExpense ──
@@ -5236,13 +5335,15 @@ Respond ONLY with valid JSON in this exact format:
   // Admins (and super) approve self-reported payments before the occurrence
   // closes. See services/payments.ts for the approve/reject/list logic.
 
-  app.get("/admin/payments/pending", superGuard, async () => {
-    return services.payments.listPendingApprovals();
+  app.get("/admin/payments/pending", superGuard, async (req: any) => {
+    const cutoff = await resolveCutoff(req);
+    return services.payments.listPendingApprovals(cutoff);
   });
 
   // Outstanding payment requests — sent to a client, not yet paid back.
-  app.get("/admin/payment-requests/outstanding", superGuard, async () => {
-    return services.paymentRequests.listOutstanding();
+  app.get("/admin/payment-requests/outstanding", superGuard, async (req: any) => {
+    const cutoff = await resolveCutoff(req);
+    return services.paymentRequests.listOutstanding({ cutoff });
   });
 
   app.post("/admin/payments/:id/approve", superGuard, async (req: any) => {
@@ -5336,6 +5437,24 @@ Respond ONLY with valid JSON in this exact format:
     return { start, end };
   }
 
+  // Business Start Date filter — clamps the export window's lower bound to
+  // the cutoff. Logs a warning so the operator has an audit breadcrumb in
+  // case they ran an export thinking they had full history. Returns the
+  // same `start` when the cutoff is off (null). See
+  // lib/businessStartCutoff.ts and the Tax Export Integrity memory note.
+  async function clampExportStartToCutoff(req: any, start: Date): Promise<Date> {
+    const cutoff = await resolveCutoff(req);
+    if (!cutoff) return start;
+    if (cutoff > start) {
+      req.log?.warn(
+        { originalStart: start.toISOString(), cutoff: cutoff.toISOString() },
+        "Export start clamped to Business Start Date cutoff — pre-cutoff rows excluded. Toggle the reveal header for full history.",
+      );
+      return cutoff;
+    }
+    return start;
+  }
+
   // Persist + serve a single CSV. Stores the exact bytes the operator
   // received so a re-download from history is byte-identical.
   async function deliverCsv(
@@ -5387,40 +5506,45 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/exports/preview", superGuard, async (req: any) => {
     const { start, end } = readDateRange(req);
-    return exportPreview(start, end);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
+    return exportPreview(effectiveStart, end);
   });
 
   app.get("/admin/exports/gusto-w2.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await gustoW2Csv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start, end, startStr, endStr }, "gusto-w2", result);
+    const result = await gustoW2Csv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start: effectiveStart, end, startStr, endStr }, "gusto-w2", result);
   });
 
   app.get("/admin/exports/gusto-contractors.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await gustoContractorsCsv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "GUSTO_CONTRACTORS", { start, end, startStr, endStr }, "gusto-contractors", result);
+    const result = await gustoContractorsCsv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_CONTRACTORS", { start: effectiveStart, end, startStr, endStr }, "gusto-contractors", result);
   });
 
   app.get("/admin/exports/qb-income.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await qbIncomeCsv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start, end, startStr, endStr }, "qb-income", result);
+    const result = await qbIncomeCsv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-income", result);
   });
 
   app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    await assertNoUnmappedExpenseRows(start, end);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
+    await assertNoUnmappedExpenseRows(effectiveStart, end);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await qbExpensesCsv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start, end, startStr, endStr }, "qb-expenses", result);
+    const result = await qbExpensesCsv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-expenses", result);
   });
 
   // Equity export — capital contributions + owner draws. Separate file from
@@ -5428,10 +5552,11 @@ Respond ONLY with valid JSON in this exact format:
   // not P&L expense lines. Mixing would mis-categorize on import.
   app.get("/admin/exports/qb-equity.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await qbEquityCsv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start, end, startStr, endStr }, "qb-equity", result);
+    const result = await qbEquityCsv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start: effectiveStart, end, startStr, endStr }, "qb-equity", result);
   });
 
   // Fixed Assets export — capital purchases (≥ $500 on/after the policy
@@ -5440,10 +5565,11 @@ Respond ONLY with valid JSON in this exact format:
   // through regular Depreciation expense entries instead.
   app.get("/admin/exports/qb-fixed-assets.csv", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
-    const result = await qbFixedAssetsCsv(start, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start, end, startStr, endStr }, "qb-fixed-assets", result);
+    const result = await qbFixedAssetsCsv(effectiveStart, end);
+    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start: effectiveStart, end, startStr, endStr }, "qb-fixed-assets", result);
   });
 
   // QB bundle — income + expenses + equity + fixed assets in one zip so the
@@ -5455,11 +5581,12 @@ Respond ONLY with valid JSON in this exact format:
   // whatever the two CSV builders produce for the date range.
   app.get("/admin/exports/gusto-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const [w2, contractors] = await Promise.all([
-      gustoW2Csv(start, end),
-      gustoContractorsCsv(start, end),
+      gustoW2Csv(effectiveStart, end),
+      gustoContractorsCsv(effectiveStart, end),
     ]);
     const zip = new JSZip();
     zip.file(`gusto-w2-${startStr}_${endStr}.csv`, w2.csv);
@@ -5470,7 +5597,7 @@ Respond ONLY with valid JSON in this exact format:
       data: {
         createdById: await currentUserId(req),
         kind: "GUSTO_BUNDLE",
-        rangeStart: start,
+        rangeStart: effectiveStart,
         rangeEnd: end,
         rowCount: w2.rowCount + contractors.rowCount,
         totalAmount: w2.total + contractors.total,
@@ -5486,14 +5613,15 @@ Respond ONLY with valid JSON in this exact format:
 
   app.get("/admin/exports/qb-bundle.zip", superGuard, async (req: any, reply: FastifyReply) => {
     const { start, end } = readDateRange(req);
-    await assertNoUnmappedExpenseRows(start, end);
+    const effectiveStart = await clampExportStartToCutoff(req, start);
+    await assertNoUnmappedExpenseRows(effectiveStart, end);
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const [income, expenses, equity, fixedAssets] = await Promise.all([
-      qbIncomeCsv(start, end),
-      qbExpensesCsv(start, end),
-      qbEquityCsv(start, end),
-      qbFixedAssetsCsv(start, end),
+      qbIncomeCsv(effectiveStart, end),
+      qbExpensesCsv(effectiveStart, end),
+      qbEquityCsv(effectiveStart, end),
+      qbFixedAssetsCsv(effectiveStart, end),
     ]);
     const zip = new JSZip();
     zip.file(`qb-income-${startStr}_${endStr}.csv`, income.csv);
@@ -5506,7 +5634,7 @@ Respond ONLY with valid JSON in this exact format:
       data: {
         createdById: await currentUserId(req),
         kind: "QB_BUNDLE",
-        rangeStart: start,
+        rangeStart: effectiveStart,
         rangeEnd: end,
         rowCount: income.rowCount + expenses.rowCount + equity.rowCount + fixedAssets.rowCount,
         totalAmount: income.total + expenses.total + equity.total + fixedAssets.total,

@@ -16,6 +16,8 @@ import { publishInlineMessage } from "../src/ui/components/InlineMessage";
 import { initOfflineExecutor } from "../src/lib/offlineExecutor";
 import { getSeasonIcons } from "../src/lib/season";
 import { refreshPushSubscription } from "../src/lib/usePushNotifications";
+import { BusinessStartProvider } from "../src/lib/businessStartCutoff";
+import BusinessStartRevealBanner from "../src/ui/components/BusinessStartRevealBanner";
 import "../src/styles/globals.css";
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!;
@@ -127,6 +129,11 @@ function AppInner({ Component, pageProps }: AppProps) {
     <ChakraProvider value={system}>
       {/* Apply minimal, mode-aware padding so the brand/header never sits under the status bar */}
       <Box pt={TOP_PAD}>
+        {/* Global Super "Reveal pre-cutoff history" indicator. Sticks to the
+            top of every page when engaged; renders nothing otherwise. Lives
+            here (above Component) so it survives route changes and can't
+            be hidden by any per-tab layout. */}
+        <BusinessStartRevealBanner />
         {/* Custom pull-to-refresh — blocked when offline */}
         <PWAPullToRefresh onRefresh={async () => {
           if (offlineState.isOffline) {
@@ -179,7 +186,12 @@ export default function MyApp(props: AppProps) {
 
       <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
         <OfflineProvider>
-          <AppInner {...props} />
+          {/* Business Start Date cutoff — fetches the effective cutoff from
+              /me/business-start once Clerk auth resolves, and exposes the
+              Super reveal toggle. See src/lib/businessStartCutoff.tsx. */}
+          <BusinessStartProvider>
+            <AppInner {...props} />
+          </BusinessStartProvider>
         </OfflineProvider>
       </ClerkProvider>
     </>

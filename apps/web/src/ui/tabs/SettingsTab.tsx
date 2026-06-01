@@ -16,6 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
+import { useBusinessStartCutoff } from "@/src/lib/businessStartCutoff";
 import { emailKey, phoneKey } from "@/src/lib/comms";
 import { type TabPropsType } from "@/src/lib/types";
 import { determineRoles, fmtDateTime } from "@/src/lib/lib";
@@ -99,6 +100,16 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
 const BOOLEAN_SETTINGS = new Set([
   "NOTIFY_PAYMENT_APPROVAL_VIA_SMS_EMAIL",
   "REQUEST_PAYMENT_FROM_CLIENT_ENABLED",
+  // When true, pre-cutoff money rows are hidden from every view & export.
+  // Paired with BUSINESS_START_DATE (the cutoff itself). See
+  // lib/businessStartCutoff.tsx (client) and apps/api/src/lib/businessStartCutoff.ts.
+  "BUSINESS_START_DATE_ENABLED",
+]);
+
+/** Setting keys whose value is a calendar date (stored as YYYY-MM-DD). Rendered
+ *  as a native <input type="date"> in the editor. */
+const DATE_SETTINGS = new Set([
+  "BUSINESS_START_DATE",
 ]);
 
 function validateNumericSetting(key: string, value: string): { ok: boolean; error?: string } {
@@ -785,6 +796,147 @@ function JsonArrayEditor({ value, onChange, onSave, onCancel, saving, originalVa
   );
 }
 
+/**
+ * Status panel for the Business Start Date section. Renders above the
+ * BUSINESS_START_DATE_ENABLED / BUSINESS_START_DATE rows so the operator
+ * can see at a glance:
+ *   • whether the filter is currently active for THEIR session
+ *   • whether they have the Super reveal toggle engaged
+ *   • a one-click button to flip the reveal
+ *
+ * "Active for me" combines the global enabled flag with the per-session
+ * reveal override — it's the EFFECTIVE state the API is applying.
+ * See lib/businessStartCutoff.tsx (client) and
+ * apps/api/src/lib/businessStartCutoff.ts (server).
+ */
+function BusinessStartStatusPanel({ isSuper }: { isSuper: boolean }) {
+  const { cutoff, reveal, setReveal } = useBusinessStartCutoff();
+  const filterActive = cutoff !== null;
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  // Three visual states. The OFF state reads as an INFORMATIONAL message
+  // (blue) — nothing requires attention. The ACTIVE state is a WARNING-style
+  // banner (amber) because pre-cutoff data is being hidden across the app.
+  // Reveal-engaged is technically OFF but worth its own purple banner so
+  // the Super doesn't forget they're seeing pre-cutoff data via override.
+  const tone: "info" | "warn" | "reveal" = filterActive
+    ? "warn"
+    : reveal
+      ? "reveal"
+      : "info";
+  const toneColors = {
+    info:   { border: "blue.200",   bg: "blue.50",   icon: "blue.700",   title: "blue.900",   body: "blue.800" },
+    warn:   { border: "amber.300",  bg: "amber.50",  icon: "amber.700",  title: "amber.900",  body: "amber.800" },
+    reveal: { border: "purple.300", bg: "purple.50", icon: "purple.700", title: "purple.900", body: "purple.800" },
+  }[tone];
+  return (
+    // The status indicator. Informational only — no controls. Visually
+    // restrained so it reads as a status banner, not a setting.
+    <Box
+      borderWidth="1px"
+      borderColor={toneColors.border}
+      bg={toneColors.bg}
+      borderRadius="md"
+      px={3}
+      py={2}
+    >
+      <HStack align="start" gap={2}>
+        <Box mt="2px" color={toneColors.icon} flexShrink={0}>
+          {filterActive ? <EyeOff size={14} /> : <Eye size={14} />}
+        </Box>
+        <VStack align="start" gap={0} flex="1" minW={0}>
+          <Text fontSize="xs" fontWeight="semibold" color={toneColors.title}>
+            {filterActive ? "Filter ACTIVE" : "Filter OFF"}
+            {reveal && !filterActive && " — Super reveal engaged"}
+          </Text>
+          <Text fontSize="xs" color={toneColors.body}>
+            {filterActive
+              ? `Money rows from before ${fmtDate(cutoff!)} are hidden from every view and export.`
+              : reveal
+                ? "Pre-cutoff history is visible because you have the Super reveal toggle on. Reload the page to revert."
+                : "Every money view shows full history. Configure and turn on the filter below to engage cleanup."}
+          </Text>
+        </VStack>
+      </HStack>
+    </Box>
+  );
+}
+
+/**
+ * Session-only Super override. Renders OUTSIDE the persisted-setting card
+ * list (above the section header in the section render loop) so its
+ * transient nature is visually unmistakable: distinct dashed border,
+ * purple accent ("transient" elsewhere in this app), explicit "SESSION
+ * ONLY" pill, and a clock-icon "resets on reload" tag.
+ *
+ * Do not move this back inside the section's setting cards — it persists
+ * to nothing and shouldn't sit alongside controls that do.
+ */
+function BusinessStartRevealToggle() {
+  const { reveal, setReveal } = useBusinessStartCutoff();
+  return (
+    <Box
+      borderWidth="1px"
+      borderStyle="dashed"
+      borderColor={reveal ? "purple.400" : "purple.200"}
+      bg={reveal ? "purple.50" : "transparent"}
+      borderRadius="md"
+      px={3}
+      py={2}
+    >
+      <HStack align="center" gap={3}>
+        <Box color={reveal ? "purple.700" : "purple.500"} flexShrink={0}>
+          {reveal ? <Eye size={16} /> : <EyeOff size={16} />}
+        </Box>
+        <VStack align="start" gap={0.5} flex="1" minW={0}>
+          <HStack gap={2} align="center">
+            <Text fontSize="xs" fontWeight="semibold" color="purple.900">
+              Reveal pre-cutoff history
+            </Text>
+            <Badge
+              size="xs"
+              colorPalette="purple"
+              variant="solid"
+              borderRadius="full"
+              fontSize="2xs"
+              px={2}
+              textTransform="uppercase"
+              letterSpacing="wider"
+            >
+              Session only
+            </Badge>
+          </HStack>
+          <Text fontSize="xs" color="purple.800">
+            Temporarily restores the full unfiltered view for YOUR browser.
+            Resets on page reload — other users are never affected, and the
+            persistent settings below are unchanged.
+          </Text>
+        </VStack>
+        <HStack gap={1} flexShrink={0}>
+          <Button
+            size="xs"
+            variant={!reveal ? "solid" : "ghost"}
+            colorPalette="gray"
+            disabled={!reveal}
+            onClick={() => setReveal(false)}
+          >
+            Off
+          </Button>
+          <Button
+            size="xs"
+            variant={reveal ? "solid" : "outline"}
+            colorPalette="purple"
+            disabled={reveal}
+            onClick={() => setReveal(true)}
+          >
+            On
+          </Button>
+        </HStack>
+      </HStack>
+    </Box>
+  );
+}
+
 export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const { isAvail, isSuper: userIsSuper } = determineRoles(me, purpose);
   const isSuper = userIsSuper && purpose === "SUPER";
@@ -1051,6 +1203,15 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                   </HStack>
                   {!collapsed && (
                     <VStack align="stretch" gap={3} mt={2}>
+                      {/* Business Start Date section — render the active-state
+                          indicator above the persistent setting cards. The
+                          session-only reveal toggle is rendered AFTER the
+                          cards (see below) with a distinct dashed/purple
+                          treatment so it can't be confused with a setting.
+                          See lib/businessStartCutoff.tsx. */}
+                      {section.key === "fresh_start" && (
+                        <BusinessStartStatusPanel isSuper={isSuper} />
+                      )}
                       {items.map((s) => (
               <Card.Root key={s.id} variant="outline">
                 <Card.Body py="2" px="3">
@@ -1064,7 +1225,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                           <Text fontSize="xs" color="fg.muted">{s.description}</Text>
                         )}
                       </VStack>
-                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && (
+                      {isSuper && editingKey !== s.key && s.key !== "DEFAULT_PAYMENT_COMMUNICATIONS_MODE" && s.key !== "PAYROLL_PERIOD_CADENCE" && !BOOLEAN_SETTINGS.has(s.key) && !DATE_SETTINGS.has(s.key) && (
                         <Button size="xs" variant="outline" onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>
                           Edit
                         </Button>
@@ -1114,6 +1275,37 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                         >
                           Claimer
                         </Button>
+                      </HStack>
+                    ) : DATE_SETTINGS.has(s.key) ? (
+                      // Calendar date — stored as YYYY-MM-DD. Native input
+                      // for cross-browser parity. Super-only. Saves on
+                      // `onChange` because that's when native date pickers
+                      // fire on every platform (mobile pickers have no blur
+                      // step) — using onBlur alone would let users pick a
+                      // date that never gets saved.
+                      <HStack gap={2} align="center">
+                        <Input
+                          type="date"
+                          size="sm"
+                          value={s.value || ""}
+                          disabled={!isSuper || saving}
+                          onChange={(e) => {
+                            const v = e.target.value.trim();
+                            if (v && v !== s.value) {
+                              // Force the picker to dismiss after a
+                              // selection. Some browsers (notably mobile
+                              // Safari) keep the picker open until focus
+                              // moves away, and disabling the input during
+                              // the async save can keep that focus pinned.
+                              e.target.blur();
+                              void saveSettingValue(s.key, v);
+                            }
+                          }}
+                          maxW="200px"
+                        />
+                        {!s.value && (
+                          <Text fontSize="xs" color="fg.muted">No date set</Text>
+                        )}
                       </HStack>
                     ) : BOOLEAN_SETTINGS.has(s.key) ? (
                       // Off/On toggle — value is "true"/"false". Super-only.
@@ -1339,6 +1531,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
                 </Card.Body>
               </Card.Root>
                       ))}
+                      {/* Session-only Super reveal. Rendered AFTER the
+                          persisted-setting cards with a dashed/purple
+                          treatment so it can't be visually confused with
+                          the controls above (those persist; this one
+                          resets on reload). See BusinessStartRevealToggle. */}
+                      {section.key === "fresh_start" && isSuper && (
+                        <BusinessStartRevealToggle />
+                      )}
                     </VStack>
                   )}
                 </Box>

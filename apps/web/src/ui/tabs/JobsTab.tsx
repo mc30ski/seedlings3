@@ -20,6 +20,7 @@ import {
 import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
+import { projectViewerPayout } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
@@ -1573,6 +1574,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     };
   }, []);
 
+
   // In-app handoff: RemindersTab's "View →" links pre-write `<occId>|<startAt>`
   // to localStorage and force a remount. This effect runs once on every fresh
   // mount, consumes the key, and applies the highlight with a narrow date range
@@ -1955,16 +1957,31 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
         // this, a reminder on a completed (past-dated) job stays pinned to
         // that past date and never appears in a future range like "this week".
         const ghostDate = (occ as any)._ghostDate;
-        const day =
-          ((occ as any)._isReminderGhost || (occ as any)._isPinnedGhost) && ghostDate
-            ? (typeof ghostDate === "string" && ghostDate.length === 10
-                ? ghostDate
-                : bizDateKey(ghostDate))
-            : (occ.startAt ? bizDateKey(occ.startAt) : null);
-        if (!day) return true; // no date — include
-        if (dateFrom && day < dateFrom) return false;
-        if (dateTo && day > dateTo) return false;
-        return true;
+        const isGhost = ((occ as any)._isReminderGhost || (occ as any)._isPinnedGhost) && ghostDate;
+        // Each row's "presence" in the date range is decided by every
+        // meaningful date stamped on the occurrence — its scheduled
+        // start AND (when present) its completion date. This way a job
+        // scheduled 5/30 but completed 5/31 shows under both "Last
+        // week" (matches via startAt) and "Yesterday" (matches via
+        // completedAt). The visual grouping below stays on startAt so
+        // the section header still reads 5/30; only inclusion changes.
+        const candidates: string[] = [];
+        if (isGhost) {
+          candidates.push(
+            typeof ghostDate === "string" && ghostDate.length === 10
+              ? ghostDate
+              : bizDateKey(ghostDate),
+          );
+        } else {
+          if (occ.startAt) candidates.push(bizDateKey(occ.startAt));
+          if ((occ as any).completedAt) candidates.push(bizDateKey((occ as any).completedAt));
+        }
+        if (candidates.length === 0) return true; // no date — include
+        return candidates.some((day) => {
+          if (dateFrom && day < dateFrom) return false;
+          if (dateTo && day > dateTo) return false;
+          return true;
+        });
       });
     }
     // Trainees should not see tentative jobs
@@ -4943,13 +4960,16 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Badge>
                         )}
                         {displayPrice != null && !occ.payment && (() => {
-                          const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                          const net = displayPrice - expTotal;
+                          // Per-worker payout PROJECTION (no Payment row yet).
+                          // Centralized in lib/paymentMath.ts — read the
+                          // doc-block there before touching this site.
+                          const payout = projectViewerPayout(occ as any, me, {
+                            contractorFeePercent: commissionPercent,
+                            employeeMarginPercent: marginPercent,
+                          });
                           const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
                           const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
                           const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                          const deduction = Math.round(net * pct) / 100;
-                          const payout = net - deduction;
                           const label = me?.isOwner ? "Owner Earnings" : "Payout";
                           return pct > 0 ? (
                             <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
@@ -5188,6 +5208,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </HStack>
                           )}
                           {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
+                            // Expanded "Est. your payout" panel. The final
+                            // myPayout number comes from the canonical
+                            // helper; the local `myShare`/`myDeduction`
+                            // breakdown is kept ONLY for the explanatory
+                            // sub-line ("$50 share − $15 margin (30%)") —
+                            // the headline number must always equal
+                            // `projectViewerPayout(...)` to avoid drift
+                            // with the inline badge above.
                             const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
                             const addonsAmt = addonTotal(occ);
                             const displayPrice = basePrice + addonsAmt;
@@ -5200,8 +5228,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
                             const workerCount = Math.max(1, activeAssignees.length);
                             const myShare = net / workerCount;
-                            const myDeduction = Math.round(myShare * pct) / 100;
-                            const myPayout = myShare - myDeduction;
+                            const myPayout = projectViewerPayout(occ as any, me, {
+                              contractorFeePercent: commissionPercent,
+                              employeeMarginPercent: marginPercent,
+                            });
+                            const myDeduction = Math.round((myShare - myPayout) * 100) / 100;
                             const sameClassCrew = activeAssignees.every((a) => {
                               const t = a.user?.workerType;
                               if (isEmp) return t === "EMPLOYEE" || t === "TRAINEE";

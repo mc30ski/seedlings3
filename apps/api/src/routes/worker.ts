@@ -8,6 +8,14 @@ import { ServiceError } from "../lib/errors";
 import { normalizePhone } from "../lib/phone";
 import { persistCompletionSplits } from "../services/payments";
 import { evaluateHoursApproval, loadHoursApprovalVarianceThreshold } from "../services/jobs";
+import {
+  resolveCutoff,
+  cutoffWhere,
+  paymentSplitCutoffWhere,
+  paymentIncludeWithCutoff,
+  expensesIncludeWithCutoff,
+  occurrenceWorkDateCutoff,
+} from "../lib/businessStartCutoff";
 
 async function currentUserId(req: any) {
   return (await services.currentUser.me(req.auth?.clerkUserId)).id;
@@ -107,6 +115,13 @@ export default async function workerRoutes(app: FastifyInstance) {
     // ("You have X jobs left today (Y as observer)").
     const myObserverOccIds = myAssignments.filter((a) => a.role === "observer").map((a) => a.occurrenceId);
 
+    // Business Start Date filter — resolved once per request (one Settings
+    // lookup) and applied to every money/pending tile below. See
+    // lib/businessStartCutoff.ts. Null means filter off — every helper
+    // becomes a no-op so the dashboard returns its full pre-feature shape.
+    const cutoff = await resolveCutoff(req);
+    const workDateCutoff = occurrenceWorkDateCutoff(cutoff);
+
     if (myOccIds.length === 0) {
       const [equipmentCheckedOut, equipmentReserved, allRemindersPending] = await Promise.all([
         prisma.checkout.count({ where: { userId: uid, releasedAt: null, checkedOutAt: { not: null } } }),
@@ -174,6 +189,10 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myOccIds },
           status: "PENDING_PAYMENT" as any,
           startAt: { gte: lookbackStart },
+          // Pre-cutoff PENDING_PAYMENT jobs hidden from the Awaiting Payment
+          // tile per the Business Start Date design. Super can toggle the
+          // reveal header to see them when chasing the client.
+          ...workDateCutoff,
         },
       }),
       prisma.jobOccurrence.count({
@@ -254,7 +273,8 @@ export default async function workerRoutes(app: FastifyInstance) {
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
           startedAt: { not: null },
-          completedAt: { gte: sevenDaysAgo, lt: todayMidnight, not: null },
+          // Cutoff is "additive" with the 7-day window — take the LATER bound.
+          completedAt: { gte: cutoff && cutoff > sevenDaysAgo ? cutoff : sevenDaysAgo, lt: todayMidnight, not: null },
         },
         select: {
           startedAt: true,
@@ -334,7 +354,10 @@ export default async function workerRoutes(app: FastifyInstance) {
           id: { in: myWorkingOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-          completedAt: { gte: trendStart, not: null },
+          // Weekly trend chart — cutoff is additive with the 13-week window;
+          // take the LATER bound so the chart shows blank weeks instead of
+          // pre-cutoff data padding the bars.
+          completedAt: { gte: cutoff && cutoff > trendStart ? cutoff : trendStart, not: null },
         },
         select: {
           completedAt: true,
@@ -471,13 +494,16 @@ export default async function workerRoutes(app: FastifyInstance) {
     const weekEarningsTo = fmtEtDate(1);   // yesterday
     let actualWeekEarnings = 0;
     let weekJobCount = 0;
+    // Business Start Date filter (`cutoff` declared at the top of this
+    // handler) applied to the "Earnings last 7 days" tile so pre-cutoff
+    // jobs/payments don't pad the worker's weekly tile.
     if (isEmp) {
       const empJobs = await prisma.jobOccurrence.findMany({
         where: {
           id: { in: myWorkingOccIds },
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-          completedAt: { gte: earnWindowStart, lt: todayMidnight, not: null },
+          completedAt: { gte: cutoff && cutoff > earnWindowStart ? cutoff : earnWindowStart, lt: todayMidnight, not: null },
         },
         select: {
           price: true,
@@ -493,7 +519,7 @@ export default async function workerRoutes(app: FastifyInstance) {
       const mySplits = await prisma.paymentSplit.findMany({
         where: {
           userId: uid,
-          payment: { createdAt: { gte: earnWindowStart, lt: todayMidnight } },
+          payment: { createdAt: { gte: cutoff && cutoff > earnWindowStart ? cutoff : earnWindowStart, lt: todayMidnight } },
         },
         select: { amount: true },
       });
@@ -551,6 +577,11 @@ export default async function workerRoutes(app: FastifyInstance) {
       : [];
     const isSubset = subsetIds.length > 0;
     const subsetSet = new Set(subsetIds);
+
+    // Business Start Date filter — resolved once for the entire aggregate.
+    // See lib/businessStartCutoff.ts.
+    const cutoff = await resolveCutoff(req);
+    const workDateCutoff = occurrenceWorkDateCutoff(cutoff);
 
     const todayStr = etToday();
     const todayMidnight = etMidnight(todayStr);
@@ -665,6 +696,8 @@ export default async function workerRoutes(app: FastifyInstance) {
           status: "PENDING_PAYMENT" as any,
           startAt: { gte: lookbackStart },
           ...assigneeSubsetFilter,
+          // Pre-cutoff Awaiting Payment hidden per Business Start Date design.
+          ...workDateCutoff,
         },
       }),
       prisma.jobOccurrence.count({
@@ -743,7 +776,8 @@ export default async function workerRoutes(app: FastifyInstance) {
           startedAt: { not: null },
           // Today excluded — see the per-worker route's matching query for
           // the rationale (Hours/Earnings tiles must cover the same window).
-          completedAt: { gte: sevenDaysAgo, lt: todayMidnight, not: null },
+          // Cutoff is additive — take the LATER bound.
+          completedAt: { gte: cutoff && cutoff > sevenDaysAgo ? cutoff : sevenDaysAgo, lt: todayMidnight, not: null },
           ...assigneeSubsetFilter,
         },
         select: {
@@ -757,7 +791,8 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
           workflow: { in: ["STANDARD", "ONE_OFF"] as any },
-          completedAt: { gte: trendStart, not: null },
+          // Cutoff is additive with the 13-week window.
+          completedAt: { gte: cutoff && cutoff > trendStart ? cutoff : trendStart, not: null },
           ...assigneeSubsetFilter,
         },
         select: { completedAt: true, ...moneySelect },
@@ -1172,7 +1207,12 @@ export default async function workerRoutes(app: FastifyInstance) {
   // Worker occurrence routes
   app.get("/occurrences", workerGuard, async (req: any) => {
     const { from, to, includeOccId, viewAsUserId } = (req.query || {}) as { from?: string; to?: string; includeOccId?: string; viewAsUserId?: string };
-    const occs = await services.jobs.listAllOccurrences({ from, to });
+    // Business Start Date cutoff is operator-only — applies to the worker /
+    // admin JobsTab. Client-facing /client/jobs deliberately does not pass
+    // this through (a client should always see their own service history
+    // regardless of the operator's internal accounting cutoff).
+    const cutoff = await resolveCutoff(req);
+    const occs = await services.jobs.listAllOccurrences({ from, to, cutoff });
 
     // Merge pinned occurrences that fall outside the date range (not reminders — those get ghost cards)
     const callerUid = await currentUserId(req);
@@ -1205,7 +1245,7 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (includeOccId && !loadedIds.has(includeOccId)) extraIds.add(includeOccId);
 
     if (extraIds.size > 0) {
-      const extraOccs = await services.jobs.getOccurrencesByIds([...extraIds]);
+      const extraOccs = await services.jobs.getOccurrencesByIds([...extraIds], cutoff);
       occs.push(...(extraOccs as any[]));
       for (const eo of extraOccs) loadedIds.add((eo as any).id);
     }
@@ -1225,7 +1265,7 @@ export default async function workerRoutes(app: FastifyInstance) {
 
     let reminderGhosts: any[] = [];
     if (ghostReminderIds.length > 0) {
-      const ghostOccs = await services.jobs.getOccurrencesByIds(ghostReminderIds);
+      const ghostOccs = await services.jobs.getOccurrencesByIds(ghostReminderIds, cutoff);
       reminderGhosts = ghostOccs.map((go: any) => {
         const rem = reminderMap.get(go.id);
         return { ...go, reminder: rem, _isReminderGhost: true, _ghostDate: rem?.remindAt };
@@ -1289,7 +1329,8 @@ export default async function workerRoutes(app: FastifyInstance) {
   // not yet paid. Powers the Planning-tab nudge so a claimer can chase a
   // request that's gone quiet.
   app.get("/me/outstanding-payment-requests", workerGuard, async (req: any) => {
-    return services.paymentRequests.listOutstanding({ claimerUserId: req.user.id });
+    const cutoff = await resolveCutoff(req);
+    return services.paymentRequests.listOutstanding({ claimerUserId: req.user.id, cutoff });
   });
 
   app.post("/occurrences/:id/start", workerGuard, async (req: any) => {
@@ -1796,9 +1837,22 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   app.get("/payments/mine", workerGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    return services.payments.listMyPayments(uid, { from, to });
+    const callerUid = await currentUserId(req);
+    const { from, to, asUserId } = (req.query || {}) as { from?: string; to?: string; asUserId?: string };
+    // Super-only "view as worker" — used by the Super Payments tab to
+    // inspect what an individual worker sees. The param is silently
+    // ignored for non-Super callers so there's no info leak via the
+    // header presence.
+    let targetUid = callerUid;
+    if (asUserId && typeof asUserId === "string" && asUserId.length > 0) {
+      const caller = await prisma.user.findUnique({
+        where: { id: callerUid }, include: { roles: true },
+      });
+      const isSuper = !!caller?.roles.some((r: any) => r.role === "SUPER");
+      if (isSuper) targetUid = asUserId;
+    }
+    const cutoff = await resolveCutoff(req);
+    return services.payments.listMyPayments(targetUid, { from, to, cutoff });
   });
 
   app.get("/payments/earnings-summary", workerGuard, async (req: any) => {
@@ -1911,15 +1965,22 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (when >= startOfToday) today += value;
     }
 
+    const cutoff = await resolveCutoff(req);
     if (isEmployee) {
       // ── Employee/trainee: bucket every assigned job by work date ─────────
       // Each job contributes the promised net (paid or unpaid).
+      //
+      // Business Start Date filter — pre-cutoff work-date occurrences are
+      // excluded so employee earnings tiles "start fresh" on the cutoff.
+      // Work date = completedAt ?? startedAt ?? startAt (the same precedence
+      // used to bucket the value into a Today/Week/Month/Year window below).
       const occs = await prisma.jobOccurrence.findMany({
         where: {
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
           workflow: { in: ["STANDARD", "ONE_OFF"] },
           // CANCELED / ARCHIVED don't pay out.
           status: { notIn: ["CANCELED", "ARCHIVED"] },
+          ...occurrenceWorkDateCutoff(cutoff),
         },
         select: {
           startAt: true,
@@ -1969,8 +2030,14 @@ export default async function workerRoutes(app: FastifyInstance) {
       //   (b) optimistic projection for TODAY ONLY of unpaid pipeline
       //       jobs whose work-date is today. Past unpaid jobs don't
       //       project (cash may never clear).
+      // Business Start Date filter — pre-cutoff confirmed splits (by parent
+      // Payment.createdAt) are excluded so contractor earnings tiles start
+      // fresh on the cutoff. See lib/businessStartCutoff.ts.
       const splits = await prisma.paymentSplit.findMany({
-        where: { userId: uid, payment: { confirmed: true } },
+        where: {
+          userId: uid,
+          payment: { confirmed: true, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+        },
         include: {
           payment: {
             select: { createdAt: true, method: true },
@@ -1986,6 +2053,9 @@ export default async function workerRoutes(app: FastifyInstance) {
         }
       }
 
+      // Business Start Date filter — pre-cutoff pipeline occurrences hidden
+      // (relevant only when cutoff is in the future, since today's
+      // projection is naturally post-cutoff for any past cutoff).
       const todayPipelineOccs = await prisma.jobOccurrence.findMany({
         where: {
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
@@ -1995,6 +2065,7 @@ export default async function workerRoutes(app: FastifyInstance) {
             { payment: { confirmed: false } },
           ],
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+          ...occurrenceWorkDateCutoff(cutoff),
         },
         select: {
           startAt: true,
@@ -2130,12 +2201,17 @@ export default async function workerRoutes(app: FastifyInstance) {
       if (when >= startOfToday) today += value;
     }
 
+    const cutoff = await resolveCutoff(req);
     if (isEmployee) {
+      // Business Start Date filter — pre-cutoff occurrences hidden so the
+      // title-bar buckets start fresh on the cutoff. See
+      // lib/businessStartCutoff.ts.
       const occs = await prisma.jobOccurrence.findMany({
         where: {
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
           workflow: { in: ["STANDARD", "ONE_OFF"] },
           status: { notIn: ["CANCELED", "ARCHIVED"] },
+          ...occurrenceWorkDateCutoff(cutoff),
         },
         select: {
           startAt: true,
@@ -2180,8 +2256,13 @@ export default async function workerRoutes(app: FastifyInstance) {
         if (value > 0) jobCount++;
       }
     } else {
+      // Business Start Date filter — contractor confirmed splits filtered via
+      // parent Payment.createdAt.
       const splits = await prisma.paymentSplit.findMany({
-        where: { userId: uid, payment: { confirmed: true } },
+        where: {
+          userId: uid,
+          payment: { confirmed: true, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+        },
         include: { payment: { select: { createdAt: true, method: true } } },
       });
       for (const sp of splits) {
@@ -2191,6 +2272,11 @@ export default async function workerRoutes(app: FastifyInstance) {
           jobCount++;
         }
       }
+      // Pipeline projection's work-date is constrained to TODAY by the
+      // in-loop check, so the Business Start cutoff is naturally satisfied
+      // for any cutoff <= today. The explicit `occurrenceWorkDateCutoff`
+      // below covers the cutoff-in-the-future edge case (e.g. an admin
+      // setting a future fresh-start date to stage the transition).
       const todayPipelineOccs = await prisma.jobOccurrence.findMany({
         where: {
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
@@ -2200,6 +2286,7 @@ export default async function workerRoutes(app: FastifyInstance) {
             { payment: { confirmed: false } },
           ],
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
+          ...occurrenceWorkDateCutoff(cutoff),
         },
         select: {
           startAt: true,
@@ -2239,9 +2326,19 @@ export default async function workerRoutes(app: FastifyInstance) {
   });
 
   app.get("/payments/equipment-charges", workerGuard, async (req: any) => {
-    const uid = await currentUserId(req);
-    const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    return services.equipment.listEquipmentCharges({ userId: uid, from, to });
+    const callerUid = await currentUserId(req);
+    const { from, to, asUserId } = (req.query || {}) as { from?: string; to?: string; asUserId?: string };
+    // Same Super-only "view as worker" override as /payments/mine.
+    let targetUid = callerUid;
+    if (asUserId && typeof asUserId === "string" && asUserId.length > 0) {
+      const caller = await prisma.user.findUnique({
+        where: { id: callerUid }, include: { roles: true },
+      });
+      const isSuper = !!caller?.roles.some((r: any) => r.role === "SUPER");
+      if (isSuper) targetUid = asUserId;
+    }
+    const cutoff = await resolveCutoff(req);
+    return services.equipment.listEquipmentCharges({ userId: targetUid, from, to, cutoff });
   });
 
   app.post("/occurrences/:id/add-assignee", workerGuard, async (req: any) => {
@@ -3144,18 +3241,37 @@ export default async function workerRoutes(app: FastifyInstance) {
     if (to) dateFilter.lte = etEndOfDay(to);
     const hasDate = from || to;
 
+    // Business Start Date filter — mirror /admin/statistics so the BSD
+    // toggle behaves identically regardless of whether the StatisticsTab
+    // hits the admin or personal endpoint. Same Pattern C (occurrence work
+    // date) + Pattern B (nested payment/expenses) layering. Super reveal
+    // header is honored via resolveCutoff.
+    const cutoff = await resolveCutoff(req);
+
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
         status: { in: ["CLOSED", "PENDING_PAYMENT"] },
         assignees: { some: { userId: uid } },
         ...(hasDate ? { completedAt: dateFilter } : {}),
+        ...occurrenceWorkDateCutoff(cutoff),
       },
       select: {
         id: true, status: true, kind: true, startedAt: true, completedAt: true,
         estimatedMinutes: true, price: true, workflow: true, isEstimate: true, startAt: true,
         assignees: { select: { userId: true, user: { select: { id: true, displayName: true, email: true, workerType: true } } } },
-        payment: { select: { amountPaid: true, method: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } } },
-        expenses: { select: { cost: true } },
+        payment: {
+          where: cutoff ? { createdAt: { gte: cutoff } } : undefined,
+          select: { amountPaid: true, method: true, platformFeeAmount: true, businessMarginAmount: true, splits: { select: { userId: true, amount: true } } },
+        },
+        expenses: {
+          where: cutoff
+            ? { OR: [
+                { businessExpense: { date: { gte: cutoff } } },
+                { businessExpense: null, createdAt: { gte: cutoff } },
+              ] }
+            : undefined,
+          select: { cost: true },
+        },
         job: { select: { property: { select: { id: true, displayName: true, city: true } } } },
       },
       orderBy: { completedAt: "desc" },
