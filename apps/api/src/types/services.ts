@@ -239,7 +239,13 @@ export type ServicesEquipment = {
   maintenanceStart(currentUserId: string, id: string): Promise<Equipment>;
   maintenanceEnd(currentUserId: string, id: string): Promise<Equipment>;
 
-  listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }): Promise<any[]>;
+  // `cutoff` is the Business Start Date filter — pre-cutoff Checkouts (by
+  // releasedAt) are excluded. Pass null/undefined for no filter. See
+  // lib/businessStartCutoff.ts.
+  listEquipmentCharges(params?: { userId?: string; from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
+  // Usage view does NOT take a cutoff — equipment USAGE history (which jobs
+  // used what tools) is operational data, not money. The cutoff only applies
+  // to the CHARGE view (listEquipmentCharges).
   listUsage(params?: { from?: string; to?: string; userId?: string }): Promise<any[]>;
 };
 
@@ -384,6 +390,8 @@ export type ServicesAudit = {
     to?: string;
     page?: number;
     pageSize?: number;
+    // Business Start Date filter — see lib/businessStartCutoff.ts.
+    cutoff?: Date | null;
   }): Promise<{ items: AuditEvent[]; total: number }>;
 };
 
@@ -475,8 +483,8 @@ export type ServicesJobs = {
     to?: string;
   }): Promise<JobListItem[]>;
 
-  listAllOccurrences(params?: { from?: string; to?: string }): Promise<any[]>;
-  getOccurrencesByIds(ids: string[]): Promise<any[]>;
+  listAllOccurrences(params?: { from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
+  getOccurrencesByIds(ids: string[], cutoff?: Date | null): Promise<any[]>;
   listMyOccurrences(userId: string): Promise<any[]>;
   listAvailableOccurrences(): Promise<any[]>;
   claimOccurrence(currentUserId: string, occurrenceId: string): Promise<{ claimed: true }>;
@@ -629,7 +637,10 @@ export type ServicesPayments = {
 
   listMyPayments(
     userId: string,
-    params?: { from?: string; to?: string }
+    // `cutoff` is the Business Start Date filter — pre-cutoff payments are
+    // excluded. Pass null (or omit) for no filter. See
+    // lib/businessStartCutoff.ts.
+    params?: { from?: string; to?: string; cutoff?: Date | null }
   ): Promise<{ items: any[]; totalAmount: number }>;
 
   listAllPayments(params?: {
@@ -637,6 +648,7 @@ export type ServicesPayments = {
     to?: string;
     userId?: string;
     method?: string;
+    cutoff?: Date | null;
   }): Promise<{
     items: any[];
     personTotals: Array<{ userId: string; displayName: string | null; total: number }>;
@@ -715,7 +727,7 @@ export type ServicesPayments = {
     reason?: string | null,
   ): Promise<any>;
 
-  listPendingApprovals(): Promise<any[]>;
+  listPendingApprovals(cutoff?: Date | null): Promise<any[]>;
 };
 
 export type ExpenseInput = {
@@ -820,7 +832,10 @@ export type ServicesSupplies = {
 
   recordAdjustment(currentUserId: string, supplyId: string, input: SupplyAdjustmentInput): Promise<any>;
 
-  listHistory(supplyId: string): Promise<any[]>;
+  // `cutoff` is the Business Start Date filter — pre-cutoff SupplyPurchase
+  // rows hidden. Holds and adjustments pass through (they're operational,
+  // not money). See lib/businessStartCutoff.ts.
+  listHistory(supplyId: string, opts?: { cutoff?: Date | null }): Promise<any[]>;
 
   // Add a hold (consumption reservation) on an occurrence — creates a paired
   // job-level Expense for payout deduction. Workers (claimers) and admins can

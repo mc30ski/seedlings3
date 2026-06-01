@@ -5,6 +5,13 @@ import { getDownloadUrl } from "../lib/r2";
 /**
  * Client-facing routes. Require Clerk auth but NOT worker/admin roles.
  * Access is scoped to the client linked via ClientContact.clerkUserId.
+ *
+ * Business Start Date cutoff is OPERATOR-ONLY: do NOT call resolveCutoff()
+ * here or pass a cutoff to any service from this file. The BSD setting is
+ * an internal accounting boundary — clients should always see their full
+ * service history (within whatever per-route window applies, e.g. the
+ * 12-month cap on /client/jobs). Bleeding the cutoff into client views
+ * would gaslight clients about service the business actually performed.
  */
 export default async function clientRoutes(app: FastifyInstance) {
   // Guard: must be authenticated via Clerk

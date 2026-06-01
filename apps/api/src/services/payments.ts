@@ -12,6 +12,10 @@ import {
   computeProcessorFee,
   type PaymentContext,
 } from "./paymentMethods";
+import {
+  cutoffWhere,
+  paymentSplitCutoffWhere,
+} from "../lib/businessStartCutoff";
 
 // Valid payment-method keys are the keys of the active PAYMENT_METHODS
 // taxonomy — not a DB enum. A typo in the Settings JSON, or a method that
@@ -61,6 +65,15 @@ function rateFor(wt: WorkerType | null, rates: Rates): number {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// When two `gte` constraints apply to the same field (e.g., a user-supplied
+// from-date AND the Business Start Date cutoff), keep the LATER one. The
+// later date is the stricter filter — both must hold, but `gte` only encodes
+// the lower bound so we take the max.
+function maxDate(a: Date | undefined | null, b: Date): Date {
+  if (!a) return b;
+  return a.getTime() >= b.getTime() ? a : b;
 }
 
 // Canonical per-worker breakdown for a given collected amount + expenses.
@@ -779,6 +792,15 @@ export const payments: ServicesPayments = {
       if (params.to) range.lte = etEndOfDay(params.to);
       where.payment = { createdAt: range };
     }
+    // Business Start Date filter — pre-cutoff splits hidden via their parent
+    // Payment's createdAt. Merges into where.payment if a from/to range is
+    // also set (both constraints become `gte` on createdAt; later one wins).
+    const cutoff = params?.cutoff ?? null;
+    if (cutoff) {
+      where.payment = where.payment
+        ? { ...where.payment, createdAt: { ...(where.payment.createdAt ?? {}), gte: maxDate(where.payment.createdAt?.gte, cutoff) } }
+        : { createdAt: { gte: cutoff } };
+    }
 
     const splits = await prisma.paymentSplit.findMany({
       where,
@@ -871,6 +893,13 @@ export const payments: ServicesPayments = {
         { occurrence: { assignees: { some: { userId: params.userId } } } },
       ];
     }
+    // Business Start Date filter — pre-cutoff payments hidden via createdAt.
+    // If a from-date is already set, take the later of the two (cutoff is
+    // additive). See lib/businessStartCutoff.ts.
+    const cutoff = params?.cutoff ?? null;
+    if (cutoff) {
+      where.createdAt = { ...(where.createdAt ?? {}), gte: maxDate(where.createdAt?.gte, cutoff) };
+    }
 
     const payments = await prisma.payment.findMany({
       where,
@@ -887,10 +916,24 @@ export const payments: ServicesPayments = {
             id: true,
             jobId: true,
             startAt: true,
+            // promisedPayouts is the per-worker net snapshot taken at
+            // Take-Payment time — the source of truth for what each
+            // worker IS OWED before the client pays. Surfacing it here
+            // lets the PaymentsTab card show employees their expected
+            // payout on pending approvals (employees are made whole
+            // regardless; only contractors are contingent on collection).
+            promisedPayouts: true,
             job: {
               select: {
                 id: true,
                 property: { select: { id: true, displayName: true, client: { select: { id: true, displayName: true } } } },
+              },
+            },
+            assignees: {
+              select: {
+                userId: true,
+                role: true,
+                user: { select: { id: true, displayName: true, email: true, workerType: true } },
               },
             },
             expenses: {
@@ -1767,9 +1810,11 @@ export const payments: ServicesPayments = {
     return result;
   },
 
-  async listPendingApprovals() {
+  async listPendingApprovals(cutoff?: Date | null) {
+    // Business Start Date filter — pre-cutoff pending approvals hidden.
+    // Super can toggle the reveal header to see them when chasing the client.
     return prisma.payment.findMany({
-      where: { confirmed: false },
+      where: { confirmed: false, ...cutoffWhere("Payment", cutoff ?? null) },
       orderBy: { createdAt: "asc" },
       include: {
         collectedBy: { select: { id: true, displayName: true, email: true } },

@@ -16,6 +16,15 @@ export type SettingSection = {
 
 // Ordered — sections render top-to-bottom in this order.
 export const SETTING_SECTIONS: SettingSection[] = [
+  // Pinned to the top — flipping the cutoff affects EVERY money view in the
+  // app, so the operator should see this control before any rate/method
+  // tweak. The toggle UI is rendered inline by SettingsTab (special-cased
+  // before the generic per-section loop). See lib/businessStartCutoff.tsx.
+  {
+    key: "fresh_start",
+    title: "Business Start Date",
+    description: "Non-destructive money cleanup. When enabled, payments, expenses, equipment charges, and audit events from before the configured date are hidden across every view and export. No data is deleted — Super can temporarily reveal pre-cutoff history via the toggle below the date.",
+  },
   {
     key: "payments",
     title: "Payments & Payouts",

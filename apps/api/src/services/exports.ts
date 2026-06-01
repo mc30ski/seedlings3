@@ -453,8 +453,68 @@ export async function gustoContractorsCsv(start: Date, end: Date): Promise<CsvRe
 // • Tax Line = "1" (Schedule C Gross receipts or sales).
 // • Category is blank — only meaningful for expenses.
 // ─────────────────────────────────────────────────────────────────────────────
+// Default values used when the EQUIPMENT_RENTAL_INCOME_CONFIG setting is
+// missing, blank, or unparseable. Mirrors the existing fallback patterns
+// for other config-driven export taxonomies (EXPENSE_CATEGORIES, etc.).
+const EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT = {
+  // QB chart-of-accounts entry name. Must match the operator's QB
+  // configuration exactly (capitalization + spacing) for the CSV import
+  // to route to the right account.
+  qbAccount: "Equipment Rental Income",
+  // Schedule C line number. Default "1" = Gross receipts (alongside
+  // service revenue). Some CPAs prefer "6" (Other gross receipts) for
+  // a separate visibility — flip via the setting, not the code.
+  scheduleCLine: "1",
+};
+
+async function loadEquipmentRentalIncomeConfig(
+  client: typeof prisma | any = prisma,
+): Promise<{ qbAccount: string; scheduleCLine: string }> {
+  const row = await client.setting.findUnique({
+    where: { key: "EQUIPMENT_RENTAL_INCOME_CONFIG" },
+  });
+  if (!row?.value) return EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT;
+  try {
+    const parsed = JSON.parse(row.value);
+    return {
+      qbAccount:
+        typeof parsed?.qbAccount === "string" && parsed.qbAccount.trim()
+          ? parsed.qbAccount.trim()
+          : EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT.qbAccount,
+      scheduleCLine:
+        typeof parsed?.scheduleCLine === "string" && parsed.scheduleCLine.trim()
+          ? parsed.scheduleCLine.trim()
+          : EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT.scheduleCLine,
+    };
+  } catch {
+    // Malformed JSON — fall back to defaults rather than blow up the
+    // entire export. The operator will notice the wrong values in QB
+    // on import, which is the right surface for catching this.
+    return EQUIPMENT_RENTAL_INCOME_CONFIG_DEFAULT;
+  }
+}
+
 export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
-  const payments = await loadConfirmedPayments(start, end);
+  // Income comes from two sources:
+  //   1. Confirmed Payment rows — client → business job payments
+  //   2. Equipment rental Checkouts — contractor → business equipment income
+  //      (see memory/project_equipment_rental_income.md)
+  // Both are raw cash-flow fields. No derived values participate.
+  const [payments, equipmentRentals, rentalIncomeConfig] = await Promise.all([
+    loadConfirmedPayments(start, end),
+    prisma.checkout.findMany({
+      where: {
+        rentalCost: { gt: 0 },
+        releasedAt: { gte: start, lte: end },
+      },
+      include: {
+        equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
+        user: { select: { id: true, displayName: true, email: true } },
+      },
+      orderBy: { releasedAt: "asc" },
+    }),
+    loadEquipmentRentalIncomeConfig(),
+  ]);
 
   const header = [
     "Date",
@@ -473,6 +533,7 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
   ];
   const lines: string[] = [csvRow(header)];
   let total = 0;
+  // Job-payment income rows.
   for (const p of payments) {
     const prop = p.occurrence.job?.property;
     const propLabel = [prop?.displayName, prop?.street1, prop?.city, prop?.state]
@@ -501,6 +562,41 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
     );
     total += p.amountPaid;
   }
+  // Equipment rental income rows. Customer column carries the contractor's
+  // name (they're the "customer" for the rental); Account name is fixed to
+  // "Equipment Rental Income" so QB routes it to the right chart entry on
+  // import. Reference ID uses RENT- prefix (distinct from PAY-) for dedup.
+  for (const c of equipmentRentals) {
+    // Defensive double-guard. The Prisma query already filters
+    // `rentalCost > 0`, but a stale or hand-edited row that slips past
+    // (or future code that adds a different loader) must not produce a
+    // zero-dollar income line.
+    if (!c.releasedAt || c.rentalCost == null || c.rentalCost <= 0) continue;
+    const eqLabel = [c.equipment.brand, c.equipment.model].filter(Boolean).join(" ") || c.equipment.shortDesc;
+    const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
+    lines.push(
+      csvRow([
+        toQbDate(c.releasedAt),
+        `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`,
+        round2(c.rentalCost).toFixed(2),
+        // QB chart-of-accounts entry + Schedule C line both come from
+        // the EQUIPMENT_RENTAL_INCOME_CONFIG setting so the CPA can
+        // change them without a code deploy. See the loader above for
+        // the fallback defaults.
+        rentalIncomeConfig.qbAccount,
+        `RENT-${c.id}`,
+        "",
+        rentalIncomeConfig.scheduleCLine,
+        contractorName,
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]),
+    );
+    total += c.rentalCost;
+  }
   lines.push(
     csvRow([
       "TOTALS",
@@ -518,7 +614,11 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
       "",
     ]),
   );
-  return { csv: lines.join("\n") + "\n", rowCount: payments.length, total: round2(total) };
+  // rowCount = body data rows actually written (matches the convention
+  // used by the other CSV builders). Defensive-skipped rentals don't
+  // contribute to the count.
+  const writtenRentalCount = equipmentRentals.filter((c) => c.releasedAt && c.rentalCost != null && c.rentalCost > 0).length;
+  return { csv: lines.join("\n") + "\n", rowCount: payments.length + writtenRentalCount, total: round2(total) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -523,6 +523,29 @@ export type PaymentListItem = PaymentInfo & {
     jobId: string;
     startAt?: string | null;
     expenses?: ExpenseItem[];
+    // Promised-net snapshot taken at Take-Payment time. Each row is the
+    // per-worker outcome the canonical math computed for the invoiced
+    // amount, BEFORE the client pays. Used by the PaymentsTab card to
+    // show employees their expected payout on pending approvals (they're
+    // made whole; only contractors are contingent on the actual collected
+    // amount). Null on legacy occurrences that pre-date the snapshot.
+    promisedPayouts?: Array<{
+      userId: string;
+      workerType: string | null;
+      splitPercent: number;
+      gross: number;
+      ratePercent: number;
+      fee: number;
+      net: number;
+    }> | null;
+    // Active + observer assignees on the occurrence, with workerType so
+    // the card can fall back to compute promised-net for workers who
+    // somehow lack a `promisedPayouts` entry (legacy data).
+    assignees?: Array<{
+      userId: string;
+      role?: string | null;
+      user?: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null } | null;
+    }>;
     job: {
       id: string;
       property: { id: string; displayName: string; client?: { id: string; displayName: string } | null };

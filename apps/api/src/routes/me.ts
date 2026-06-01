@@ -3,6 +3,7 @@ import { services } from "../services";
 import { createClerkClient } from "@clerk/backend";
 import { prisma } from "../db/prisma";
 import { IMPERSONATE_HEADER } from "../lib/impersonation";
+import { resolveCutoff } from "../lib/businessStartCutoff";
 
 function readBearer(req: any): string | null {
   const h = req.headers?.authorization ?? "";
@@ -43,6 +44,21 @@ export default async function meRoutes(app: FastifyInstance) {
       // gating needed here.
       return services.users.me(token, req.headers[IMPERSONATE_HEADER]);
     }
+  });
+
+  // Business Start Date — exposes the EFFECTIVE cutoff for the current
+  // request so the client can render UI consistently with the API filter.
+  // Honors the X-Reveal-Pre-Cutoff header the same way every money endpoint
+  // does — i.e. when a Super sends reveal=true, this returns null and the
+  // UI shows the unfiltered state. See lib/businessStartCutoff.ts.
+  app.get("/me/business-start", { preHandler: app.requireApproved.bind(app) }, async (req: any) => {
+    const cutoff = await resolveCutoff(req);
+    return {
+      // `cutoff` is null when the filter is off (globally OR via reveal
+      // header). When non-null, ISO 8601 — UI compares against job dates
+      // to decide whether to show "—" for hidden money fields.
+      cutoff: cutoff ? cutoff.toISOString() : null,
+    };
   });
 
   app.post("/me/sync", async (req: any, reply: FastifyReply) => {

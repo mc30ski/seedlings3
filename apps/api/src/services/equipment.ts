@@ -6,12 +6,16 @@ import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import { deleteObject } from "../lib/r2";
+import { cutoffWhere } from "../lib/businessStartCutoff";
 
 type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
-function computeRentalCost(
+// Exported for unit-test coverage (equipment.test.ts). Internal callers
+// reference it as a regular file-local function — exporting doesn't change
+// the call site behavior.
+export function computeRentalCost(
   checkedOutAt: Date | null,
   releasedAt: Date,
   workerType: string | null | undefined,
@@ -835,10 +839,16 @@ export const equipment: ServicesEquipment = {
     });
   },
 
-  async listEquipmentCharges(params?: { userId?: string; from?: string; to?: string }) {
+  async listEquipmentCharges(params?: { userId?: string; from?: string; to?: string; cutoff?: Date | null }) {
     // When userId is supplied we return *that worker's share* — solo rentals
     // (Checkout.userId === userId) plus group rentals where they have a
     // CheckoutSplit row. Without userId we return all rentals (admin view).
+    //
+    // Business Start Date filter — pre-cutoff charges (by releasedAt) hidden.
+    // Anchored on releasedAt because rentalCost only materializes at release;
+    // still-active checkouts (releasedAt=null) are already excluded by the
+    // `rentalCost: { not: null }` predicate. See lib/businessStartCutoff.ts.
+    const cutoff = params?.cutoff ?? null;
     if (params?.userId) {
       const userId = params.userId;
       const dateRange: any = {};
@@ -852,6 +862,7 @@ export const equipment: ServicesEquipment = {
           groupId: null,
           rentalCost: { not: null },
           ...(hasDate ? { releasedAt: dateRange } : {}),
+          ...cutoffWhere("Checkout", cutoff),
         },
         orderBy: { releasedAt: "desc" },
         include: {
@@ -867,6 +878,7 @@ export const equipment: ServicesEquipment = {
           checkout: {
             rentalCost: { not: null },
             ...(hasDate ? { releasedAt: dateRange } : {}),
+            ...cutoffWhere("Checkout", cutoff),
           },
         },
         orderBy: { checkout: { releasedAt: "desc" } },
@@ -921,6 +933,10 @@ export const equipment: ServicesEquipment = {
       where.releasedAt = {};
       if (params.from) where.releasedAt.gte = etMidnight(params.from);
       if (params.to) where.releasedAt.lte = etEndOfDay(params.to);
+    }
+    // Business Start Date filter — admin all-charges view.
+    if (cutoff) {
+      where.releasedAt = { ...(where.releasedAt ?? {}), gte: where.releasedAt?.gte && where.releasedAt.gte.getTime() >= cutoff.getTime() ? where.releasedAt.gte : cutoff };
     }
     return prisma.checkout.findMany({
       where,

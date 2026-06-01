@@ -5,9 +5,14 @@ export function openEventSearch(
   q: string,
   forAdmin: boolean,
   entityId?: string,
+  // Optional date anchor — used by the Payments → Jobs handoff to narrow
+  // the JobsTab date range around the occurrence's startAt so the
+  // highlighted row is visible without scrolling through a year-wide
+  // window. Ignored by handoffs that don't care about a date anchor.
+  anchorAt?: string | null,
 ) {
   window.dispatchEvent(
-    new CustomEvent(`open:${eventName}`, { detail: { q, forAdmin, entityId } })
+    new CustomEvent(`open:${eventName}`, { detail: { q, forAdmin, entityId, anchorAt } })
   );
 }
 

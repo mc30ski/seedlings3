@@ -47,6 +47,41 @@ function attachImpersonateHeader(h: Headers) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Super-only "Reveal Pre-Cutoff" header — transient session-only override of
+// the Business Start Date filter. Intentionally NOT persisted in localStorage:
+// a page reload always reverts to the filtered view so the operator can't
+// forget the toggle is on. See apps/api/src/lib/businessStartCutoff.ts.
+//
+// The server gates on the caller's REAL role (post-impersonation Super) so a
+// non-Super browser sending a forged value is a no-op. The module-level
+// boolean is set by setRevealPreCutoff() from the React Context provider.
+// ─────────────────────────────────────────────────────────────────────────────
+let revealPreCutoff = false;
+const revealListeners = new Set<(v: boolean) => void>();
+
+export function setRevealPreCutoff(v: boolean) {
+  if (revealPreCutoff === v) return;
+  revealPreCutoff = v;
+  // Notify any context provider so React state can update too.
+  for (const l of revealListeners) l(v);
+}
+
+export function getRevealPreCutoff(): boolean {
+  return revealPreCutoff;
+}
+
+export function subscribeRevealPreCutoff(fn: (v: boolean) => void): () => void {
+  revealListeners.add(fn);
+  return () => revealListeners.delete(fn);
+}
+
+function attachRevealPreCutoffHeader(h: Headers) {
+  // Only emit when the toggle is on. Browsers running a non-Super session
+  // can still set this true; the server ignores it for non-Super callers.
+  if (revealPreCutoff) h.set("X-Reveal-Pre-Cutoff", "true");
+}
+
 // Bypass is used to avoid the blocking (401) of Preview requests.
 // Vercel’s preview deployments require a valid _vercel_jwt cookie or the x-vercel-protection-bypass header on every request.
 
@@ -79,6 +114,7 @@ export async function request<T>(
   const headers = new Headers();
   await authHeaders(headers); // your existing auth (e.g., Authorization)
   attachImpersonateHeader(headers);
+  attachRevealPreCutoffHeader(headers);
 
   // Build the absolute URL we’ll call
   const url = makeAbsolute(`${API_BASE}${path}`);
@@ -158,6 +194,7 @@ export async function apiDownload(path: string, filename: string): Promise<void>
   const headers = new Headers();
   await authHeaders(headers);
   attachImpersonateHeader(headers);
+  attachRevealPreCutoffHeader(headers);
   const url = makeAbsolute(`${API_BASE}${path}`);
   const cross = isCrossOrigin(url);
   if (IS_BROWSER && IS_PREVIEW && BYPASS) {

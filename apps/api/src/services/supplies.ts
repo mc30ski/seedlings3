@@ -408,10 +408,16 @@ export const supplies: ServicesSupplies = {
     });
   },
 
-  async listHistory(supplyId) {
+  async listHistory(supplyId, opts?: { cutoff?: Date | null }) {
+    // Business Start Date filter — pre-cutoff supply purchases hidden so the
+    // Supplies tab "purchases" timeline aligns with the paired
+    // BusinessExpense filter on the Accounting tab. Holds and adjustments
+    // are operational (inventory movement), not money, so they pass through
+    // unfiltered. See lib/businessStartCutoff.ts.
+    const cutoff = opts?.cutoff ?? null;
     const [purchases, holds, adjustments] = await Promise.all([
       prisma.supplyPurchase.findMany({
-        where: { supplyId },
+        where: { supplyId, ...(cutoff ? { date: { gte: cutoff } } : {}) },
         orderBy: { date: "desc" },
         include: purchaseInclude,
       }),
