@@ -121,11 +121,31 @@ function formatServiceDate(d: Date | null): string {
   });
 }
 
+/**
+ * Replace Unicode characters that SMS carriers commonly mangle (em-dash,
+ * en-dash, curly quotes, ellipsis, non-breaking space) with ASCII
+ * equivalents. Applied to every SMS body just before it's returned, so
+ * NO em-dash can survive into the carrier network — whether it came
+ * from a template literal, a property's displayName in the DB, a
+ * contact's first name, or any future interpolated source.
+ *
+ * The mangled form most clients see (`<!- ->` or `<!-- -->`) is the
+ * carrier rendering an em-dash byte sequence as if it were HTML.
+ */
+function smsSafe(body: string): string {
+  return body
+    .replace(/[—]/g, " - ")    // em-dash → spaced hyphen
+    .replace(/[–]/g, "-")      // en-dash → hyphen
+    .replace(/[‘’]/g, "'") // curly single quotes → straight
+    .replace(/[“”]/g, '"') // curly double quotes → straight
+    .replace(/…/g, "...")      // ellipsis → three dots
+    .replace(/ /g, " ");       // non-breaking space → regular space
+}
+
 function buildSmsBody(firstName: string, propLabel: string, dateStr: string, dollarAmount: string, url: string): string {
-  // Plain ASCII hyphens only — em-dash (—) gets mangled by SMS carriers
-  // when iMessage isn't available, showing up as garbage like "<!- ->"
-  // on the recipient's phone.
-  return `Hi ${firstName} - your Seedlings lawn care on ${dateStr} at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`;
+  return smsSafe(
+    `Hi ${firstName} - your Seedlings lawn care on ${dateStr} at ${propLabel} is complete! Total due: ${dollarAmount}. View your invoice: ${url}`,
+  );
 }
 
 function buildEmailSubject(dollarAmount: string): string {
