@@ -693,7 +693,14 @@ function PageShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Head>
-        <title>Pay your invoice — {businessName}</title>
+        {/* Title is built as a single template-literal string so React
+            doesn't render it as multiple text nodes with comment-marker
+            separators ("<!-- -->") between them. Apple's iMessage link
+            preview fetches the HTML <title> and would otherwise display
+            those marker comments verbatim in the preview card. Also use
+            a plain ASCII hyphen instead of an em-dash so SMS carriers
+            never mangle the character on top of the React issue. */}
+        <title>{`Pay your invoice - ${businessName}`}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <Box minH="100vh" bg="gray.50">
