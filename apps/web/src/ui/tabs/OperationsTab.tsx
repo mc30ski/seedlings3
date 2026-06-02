@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { usePersistedState } from "@/src/lib/usePersistedState";
 import {
   Badge,
@@ -13,7 +13,16 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { CalendarRange, ChevronDown } from "lucide-react";
+import { BarChart3, CalendarRange, ChevronDown, ChevronRight, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import DateInput from "@/src/ui/components/DateInput";
 import { Button, Dialog, Portal } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
@@ -40,7 +49,22 @@ type OpsData = {
   jobs: { scheduled: number; inProgress: number; completed: number; canceled: number; overdue: number; unclaimed: number };
   financial: { totalRevenue: number; totalExpenses: number; netRevenue: number; totalPlatformFees: number; totalBusinessMargin: number; avgJobPrice: number; paymentsByMethod: Record<string, number> };
   team: { activeWorkers: number; workersByType: Record<string, number>; topWorkers: { name: string; jobs: number; earnings: number }[]; workersWithJobs: number; workersIdle: number };
-  equipment: { total: number; available: number; checkedOut: number; reserved: number; inMaintenance: number };
+  equipment: {
+    total: number; available: number; checkedOut: number; reserved: number; inMaintenance: number;
+    // Window-scoped usage (anchored on Checkout.checkedOutAt inside the
+    // selected date range). See routes/admin.ts equipmentLeaderboard.
+    windowDays: number;
+    windowCheckouts: number;
+    windowIncome: number;
+    windowDistinctUsed: number;
+    leaderboard: {
+      id: string; shortDesc: string | null; brand: string | null; model: string | null; type: string | null;
+      checkouts: number; daysOut: number; income: number; utilizationPct: number;
+    }[];
+    idle: {
+      id: string; shortDesc: string | null; brand: string | null; model: string | null; type: string | null; status: string;
+    }[];
+  };
   estimates: { pending: number; accepted: number; rejected: number };
   clients: { active: number; paused: number; archived: number; vip: number };
   unclaimedItems: UnclaimedItem[];
@@ -60,9 +84,17 @@ const presetItems = [
 ];
 const presetCollection = createListCollection({ items: presetItems });
 
-function MetricCard({ label, value, color = "fg.default", sub }: { label: string; value: string | number; color?: string; sub?: string }) {
+function MetricCard({ label, value, color = "fg.default", sub, onClick }: { label: string; value: string | number; color?: string; sub?: string; onClick?: () => void }) {
+  const interactive = !!onClick;
   return (
-    <Card.Root variant="outline">
+    <Card.Root
+      variant="outline"
+      cursor={interactive ? "pointer" : undefined}
+      onClick={onClick}
+      _hover={interactive ? { bg: "gray.50", borderColor: "blue.300" } : undefined}
+      transition={interactive ? "all 0.15s" : undefined}
+      title={interactive ? `Open Admin Jobs filtered to "${label}"` : undefined}
+    >
       <Card.Body py="2" px="3">
         <Text fontSize="2xl" fontWeight="bold" color={color} lineHeight="1">{value}</Text>
         <Text fontSize="xs" color="fg.muted" mt={1}>{label}</Text>
@@ -80,6 +112,62 @@ function SectionHeader({ children }: { children: string }) {
   );
 }
 
+// Same visual treatment as SectionHeader but wraps a chevron toggle and
+// renders children only when `open`. Click anywhere on the header row
+// flips the section. Used for every operator-level Operations section so
+// the page can be shrunk to "just the headers I care about" — useful on
+// laptop screens where the full page is tall.
+function CollapsibleSection({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <HStack
+        mt={4}
+        mb={open ? 2 : 0}
+        px={1}
+        py={1}
+        gap={1.5}
+        cursor="pointer"
+        onClick={onToggle}
+        _hover={{ color: "fg" }}
+        color="fg.muted"
+        userSelect="none"
+      >
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <Text fontSize="xs" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide">
+          {title}
+        </Text>
+      </HStack>
+      {open && children}
+    </>
+  );
+}
+
+// Section list — order here matches the render order below. Used by the
+// expand/collapse-all toggle so adding/removing a section in one place
+// keeps the toggle button consistent. Each key gets a persisted boolean
+// (default open) under `ops_sectionsOpen`.
+const SECTION_KEYS = [
+  "jobs",
+  "unclaimed",
+  "financial",
+  "workers",
+  "equipment",
+  "estimates",
+  "clients",
+  "activity",
+] as const;
+type SectionKey = (typeof SECTION_KEYS)[number];
+
 function formatDuration(mins: number): string {
   if (mins <= 0) return "0m";
   const h = Math.floor(mins / 60);
@@ -95,6 +183,42 @@ export default function OperationsTab() {
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const [confirmAllTime, setConfirmAllTime] = useState(false);
   const [quickDateMenuOpen, setQuickDateMenuOpen] = useState(false);
+
+  // Worker Performance view toggle + metric selector. Table is the default
+  // because the row layout shows multiple metrics side-by-side; chart mode
+  // is single-metric but easier to scan for relative differences. Both
+  // states are persisted so the operator's preference survives reloads.
+  const [workerView, setWorkerView] = usePersistedState<"table" | "chart">("ops_workerView", "table");
+  const [workerChartMetric, setWorkerChartMetric] = usePersistedState<
+    "jobsCompleted" | "scheduledJobs" | "totalEarnings" | "totalActualMinutes" | "efficiency"
+  >("ops_workerChartMetric", "jobsCompleted");
+  // Equipment leaderboard view + metric. Same toggle pattern as the worker
+  // section. Idle list rendering is gated on its own collapsed-by-default
+  // disclosure inside the equipment section.
+  const [equipmentView, setEquipmentView] = usePersistedState<"table" | "chart">("ops_equipmentView", "table");
+  const [equipmentChartMetric, setEquipmentChartMetric] = usePersistedState<
+    "daysOut" | "checkouts" | "income" | "utilizationPct"
+  >("ops_equipmentChartMetric", "daysOut");
+  const [equipmentIdleOpen, setEquipmentIdleOpen] = useState(false);
+
+  // Per-section open state, persisted. Default all sections open. Missing
+  // keys are treated as "open" so adding a new SECTION_KEYS entry doesn't
+  // surprise users with a collapsed-by-default state.
+  const [sectionsOpen, setSectionsOpen] = usePersistedState<Record<string, boolean>>(
+    "ops_sectionsOpen",
+    Object.fromEntries(SECTION_KEYS.map((k) => [k, true])),
+  );
+  const isOpen = (key: SectionKey): boolean => sectionsOpen[key] !== false;
+  const toggleSection = (key: SectionKey) =>
+    setSectionsOpen((prev) => ({ ...prev, [key]: !(prev[key] !== false) }));
+  // Expand/collapse-all toggle: if any section is currently open, the next
+  // click collapses everything; otherwise it expands everything. Lets the
+  // operator switch between "headers only" and "full page" with one tap.
+  const anySectionOpen = SECTION_KEYS.some((k) => isOpen(k));
+  const toggleAllSections = () => {
+    const next = !anySectionOpen;
+    setSectionsOpen(Object.fromEntries(SECTION_KEYS.map((k) => [k, next])));
+  };
 
   const [datePreset, setDatePreset] = useState<DatePreset>(() => {
     try {
@@ -141,6 +265,23 @@ export default function OperationsTab() {
 
   useEffect(() => { void load(); }, [dateFrom, dateTo]);
 
+  // Hand off to Admin → Jobs with a pre-applied filter. Mirrors the
+  // pendingHighlight pattern used elsewhere (e.g. HomeTab/SuppliesTab
+  // jumping to a specific occurrence) but carries a filter spec instead
+  // of an ID. The JobsTab consumes `seedlings_jobs_pendingFilter` from
+  // localStorage on mount and replays it via the existing
+  // jobs:applyFilter handler.
+  function navigateToAdminJobs(detail: Record<string, unknown>) {
+    try {
+      localStorage.setItem("seedlings_jobs_pendingFilter", JSON.stringify(detail));
+    } catch {}
+    window.dispatchEvent(
+      new CustomEvent("navigate:adminTab", {
+        detail: { tab: "admin-jobs", remount: true },
+      }),
+    );
+  }
+
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const today = bizDateKey(new Date());
 
@@ -184,6 +325,21 @@ export default function OperationsTab() {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {/* Expand/collapse-all toggle. Lives at the end of the date-controls
+            row so it doesn't compete with the date picker for space. Icon
+            flips based on the current aggregate state so the affordance
+            self-describes ("anything open → click to minimize"). */}
+        <Button
+          size="sm"
+          variant="ghost"
+          px="2"
+          minW="0"
+          onClick={toggleAllSections}
+          title={anySectionOpen ? "Collapse all sections" : "Expand all sections"}
+          aria-label={anySectionOpen ? "Collapse all sections" : "Expand all sections"}
+        >
+          {anySectionOpen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </Button>
       </HStack>
 
       <HStack mb={2} gap={1} px={1}>
@@ -216,16 +372,33 @@ export default function OperationsTab() {
 
       {data && (
         <>
-          {/* Jobs Overview */}
-          <SectionHeader>Jobs Overview</SectionHeader>
-          <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(3, 1fr)" }} gap={2}>
-            <MetricCard label="Scheduled" value={data.jobs.scheduled} color="gray.600" />
-            <MetricCard label="In Progress" value={data.jobs.inProgress} color="blue.600" />
-            <MetricCard label="Completed" value={data.jobs.completed} color="green.600" />
-            <MetricCard label="Canceled" value={data.jobs.canceled} color="red.500" />
-            <MetricCard label="Overdue" value={data.jobs.overdue} color={data.jobs.overdue > 0 ? "red.600" : "gray.400"} />
-            <MetricCard label="Unclaimed" value={data.jobs.unclaimed} color={data.jobs.unclaimed > 0 ? "orange.600" : "gray.400"} />
-          </Box>
+          {/* Jobs Overview — each card hands off to the Admin Jobs tab with
+              the matching filter pre-applied. The filter payload is stashed
+              in localStorage (consumed on JobsTab mount), then a
+              navigate:adminTab event with remount=true forces a fresh
+              JobsTab so the filter replay can't race the existing tab's
+              state. See JobsTab seedlings_jobs_pendingFilter consumer. */}
+          <CollapsibleSection title="Jobs Overview" open={isOpen("jobs")} onToggle={() => toggleSection("jobs")}>
+            <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(3, 1fr)" }} gap={2}>
+              <MetricCard label="Scheduled" value={data.jobs.scheduled} color="gray.600"
+                onClick={() => navigateToAdminJobs({ status: "SCHEDULED", dateFrom, dateTo })} />
+              <MetricCard label="In Progress" value={data.jobs.inProgress} color="blue.600"
+                onClick={() => navigateToAdminJobs({ status: "IN_PROGRESS", dateFrom, dateTo })} />
+              {/* "Completed" maps to JobsTab's FINISHED bucket
+                  (COMPLETED + CLOSED + PENDING_PAYMENT). Operations counts
+                  CLOSED + PENDING_PAYMENT only, so the resulting JobsTab list
+                  may include a small number of transient COMPLETED rows on
+                  top of the metric count. */}
+              <MetricCard label="Completed" value={data.jobs.completed} color="green.600"
+                onClick={() => navigateToAdminJobs({ status: "FINISHED", dateFrom, dateTo })} />
+              <MetricCard label="Canceled" value={data.jobs.canceled} color="red.500"
+                onClick={() => navigateToAdminJobs({ status: "CANCELED", dateFrom, dateTo })} />
+              <MetricCard label="Overdue" value={data.jobs.overdue} color={data.jobs.overdue > 0 ? "red.600" : "gray.400"}
+                onClick={() => navigateToAdminJobs({ overdue: true, dateFrom, dateTo })} />
+              <MetricCard label="Unclaimed" value={data.jobs.unclaimed} color={data.jobs.unclaimed > 0 ? "orange.600" : "gray.400"}
+                onClick={() => navigateToAdminJobs({ status: "UNCLAIMED", dateFrom, dateTo })} />
+            </Box>
+          </CollapsibleSection>
 
           {/* Unclaimed Jobs */}
           {data.unclaimedItems.length > 0 && (() => {
@@ -234,8 +407,7 @@ export default function OperationsTab() {
             const visibleItems = showAllUnclaimed ? [...overdue, ...upcoming] : overdue;
             const headerCount = overdue.length + (showAllUnclaimed ? upcoming.length : 0);
             return (
-              <>
-                <SectionHeader>{`Unclaimed Jobs (${headerCount})`}</SectionHeader>
+              <CollapsibleSection title={`Unclaimed Jobs (${headerCount})`} open={isOpen("unclaimed")} onToggle={() => toggleSection("unclaimed")}>
                 {visibleItems.length === 0 && !showAllUnclaimed && upcoming.length > 0 && (
                   <Text fontSize="xs" color="fg.muted" px={1} mb={1}>No overdue unclaimed jobs.</Text>
                 )}
@@ -293,41 +465,42 @@ export default function OperationsTab() {
                     </Button>
                   )}
                 </VStack>
-              </>
+              </CollapsibleSection>
             );
           })()}
 
           {/* Financial */}
-          <SectionHeader>Financial</SectionHeader>
-          <Card.Root variant="outline" bg={data.financial.netRevenue >= 0 ? "green.50" : "red.50"} borderColor={data.financial.netRevenue >= 0 ? "green.200" : "red.200"} mb={2}>
-            <Card.Body py="2" px="3">
-              <Text fontSize="3xl" fontWeight="bold" color={data.financial.netRevenue >= 0 ? "green.700" : "red.700"} lineHeight="1">
-                {fmt(data.financial.netRevenue)}
-              </Text>
-              <Text fontSize="xs" color="fg.muted" mt={1}>Net Revenue</Text>
-            </Card.Body>
-          </Card.Root>
-          <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={2}>
-            <MetricCard label="Revenue" value={fmt(data.financial.totalRevenue)} color="green.600" />
-            <MetricCard label="Expenses" value={fmt(data.financial.totalExpenses)} color="red.500" />
-            <MetricCard label="Platform Fees" value={fmt(data.financial.totalPlatformFees)} color="orange.600" />
-            <MetricCard label="Business Margin" value={fmt(data.financial.totalBusinessMargin)} color="blue.600" />
-          </Box>
-          {data.financial.avgJobPrice > 0 && (
-            <Text fontSize="xs" color="fg.muted" mt={1} px={1}>Avg job price: {fmt(data.financial.avgJobPrice)}</Text>
-          )}
-          {Object.keys(data.financial.paymentsByMethod).length > 0 && (
-            <HStack mt={2} gap={2} wrap="wrap" px={1}>
-              {Object.entries(data.financial.paymentsByMethod).map(([method, amount]) => (
-                <Badge key={method} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                  {methodLabel(method)}: {fmt(amount)}
-                </Badge>
-              ))}
-            </HStack>
-          )}
+          <CollapsibleSection title="Financial" open={isOpen("financial")} onToggle={() => toggleSection("financial")}>
+            <Card.Root variant="outline" bg={data.financial.netRevenue >= 0 ? "green.50" : "red.50"} borderColor={data.financial.netRevenue >= 0 ? "green.200" : "red.200"} mb={2}>
+              <Card.Body py="2" px="3">
+                <Text fontSize="3xl" fontWeight="bold" color={data.financial.netRevenue >= 0 ? "green.700" : "red.700"} lineHeight="1">
+                  {fmt(data.financial.netRevenue)}
+                </Text>
+                <Text fontSize="xs" color="fg.muted" mt={1}>Net Revenue</Text>
+              </Card.Body>
+            </Card.Root>
+            <Box display="grid" gridTemplateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={2}>
+              <MetricCard label="Revenue" value={fmt(data.financial.totalRevenue)} color="green.600" />
+              <MetricCard label="Expenses" value={fmt(data.financial.totalExpenses)} color="red.500" />
+              <MetricCard label="Platform Fees" value={fmt(data.financial.totalPlatformFees)} color="orange.600" />
+              <MetricCard label="Business Margin" value={fmt(data.financial.totalBusinessMargin)} color="blue.600" />
+            </Box>
+            {data.financial.avgJobPrice > 0 && (
+              <Text fontSize="xs" color="fg.muted" mt={1} px={1}>Avg job price: {fmt(data.financial.avgJobPrice)}</Text>
+            )}
+            {Object.keys(data.financial.paymentsByMethod).length > 0 && (
+              <HStack mt={2} gap={2} wrap="wrap" px={1}>
+                {Object.entries(data.financial.paymentsByMethod).map(([method, amount]) => (
+                  <Badge key={method} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                    {methodLabel(method)}: {fmt(amount)}
+                  </Badge>
+                ))}
+              </HStack>
+            )}
+          </CollapsibleSection>
 
           {/* Worker Comparison */}
-          <SectionHeader>Worker Performance</SectionHeader>
+          <CollapsibleSection title="Worker Performance" open={isOpen("workers")} onToggle={() => toggleSection("workers")}>
           <HStack gap={2} wrap="wrap" mb={2}>
             <Badge colorPalette="blue" variant="solid" fontSize="sm" px="3" borderRadius="full">
               {data.team.activeWorkers} Workers
@@ -347,107 +520,391 @@ export default function OperationsTab() {
             )}
           </HStack>
 
-          {data.workerStats.length > 0 && (
-            <Card.Root variant="outline">
-              <Card.Body py="2" px="0">
-                {/* Header */}
-                <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
-                  <Text flex="1" minW={0}>Worker</Text>
-                  <Text w="50px" textAlign="right">Done</Text>
-                  <Text w="50px" textAlign="right">Sched</Text>
-                  <Text w="65px" textAlign="right" display={{ base: "none", md: "block" }}>Earned</Text>
-                  <Text w="50px" textAlign="right" display={{ base: "none", md: "block" }}>Time</Text>
-                  <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}>Eff</Text>
-                </HStack>
-                {/* Rows */}
-                {(showAllWorkers ? data.workerStats : data.workerStats.slice(0, 5)).map((w) => (
-                  <HStack key={w.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
-                    _hover={{ bg: "gray.50" }}
-                  >
-                    <VStack align="start" gap={0} flex="1" minW={0}>
-                      <Text fontWeight="medium">{w.name}</Text>
-                      <Badge colorPalette={w.workerType === "CONTRACTOR" ? "orange" : w.workerType === "TRAINEE" ? "purple" : "blue"} variant="subtle" fontSize="2xs" px="1" borderRadius="full">
-                        {w.workerType === "CONTRACTOR" ? "1099" : w.workerType === "TRAINEE" ? "Trainee" : "W-2"}
-                      </Badge>
-                    </VStack>
-                    <Text w="50px" textAlign="right" fontWeight="medium" color="green.600">{w.jobsCompleted}</Text>
-                    <Text w="50px" textAlign="right" color="fg.muted">{w.scheduledJobs}</Text>
-                    <Text w="65px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmt(w.totalEarnings)}</Text>
-                    <Text w="50px" textAlign="right" color="fg.muted" display={{ base: "none", md: "block" }}>{w.totalActualMinutes > 0 ? formatDuration(w.totalActualMinutes) : "—"}</Text>
-                    <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}
-                      color={w.efficiency >= 100 ? "green.600" : w.efficiency > 0 ? "orange.600" : "fg.muted"}
-                      fontWeight={w.efficiency > 0 ? "medium" : "normal"}
+          {data.workerStats.length > 0 && (() => {
+            // Single source of truth for the chartable metrics — the
+            // selector below and the chart accessor + tooltip pull from
+            // this array. Add a metric by appending an entry with the
+            // value extractor + axis label + tooltip formatter.
+            const WORKER_METRICS = [
+              { key: "jobsCompleted",     label: "Jobs Done", color: "#38A169", getter: (w: typeof data.workerStats[number]) => w.jobsCompleted,        tip: (v: number) => `${v}` },
+              { key: "scheduledJobs",     label: "Scheduled", color: "#3182CE", getter: (w: typeof data.workerStats[number]) => w.scheduledJobs,        tip: (v: number) => `${v}` },
+              { key: "totalEarnings",     label: "Earnings",  color: "#319795", getter: (w: typeof data.workerStats[number]) => Math.round(w.totalEarnings * 100) / 100, tip: (v: number) => `$${v.toFixed(2)}` },
+              { key: "totalActualMinutes",label: "Hours",     color: "#D69E2E", getter: (w: typeof data.workerStats[number]) => Math.round(w.totalActualMinutes / 60 * 10) / 10, tip: (v: number) => `${v}h` },
+              { key: "efficiency",        label: "Efficiency",color: "#805AD5", getter: (w: typeof data.workerStats[number]) => w.efficiency,           tip: (v: number) => `${v}%` },
+            ] as const;
+            const activeMetric = WORKER_METRICS.find((m) => m.key === workerChartMetric) ?? WORKER_METRICS[0];
+            // Sort chart data DESC by the active metric so the longest bar
+            // sits at the top — that's the convention people scan for
+            // first ("who's leading on this metric?"). The table view
+            // keeps server order so admins can compare side-by-side.
+            const chartData = data.workerStats
+              .map((w) => ({ name: w.name, value: activeMetric.getter(w) }))
+              .sort((a, b) => b.value - a.value);
+            // Truncate names to keep the Y axis readable on narrow screens.
+            const truncName = (n: string) => (n.length > 18 ? n.slice(0, 17) + "…" : n);
+            return (
+              <>
+                <HStack gap={2} mb={2} wrap="wrap" align="center">
+                  {/* Metric selector — left side; only meaningful in chart
+                      mode (table already shows every metric). Takes flex=1
+                      so the toggle is pushed flush against the right edge
+                      regardless of how many metric pills are visible. */}
+                  {workerView === "chart" ? (
+                    <HStack gap={1} wrap="wrap" flex="1" minW={0}>
+                      {WORKER_METRICS.map((m) => (
+                        <Badge
+                          key={m.key}
+                          size="sm"
+                          variant={workerChartMetric === m.key ? "solid" : "outline"}
+                          colorPalette="gray"
+                          cursor="pointer"
+                          onClick={() => setWorkerChartMetric(m.key)}
+                        >
+                          {m.label}
+                        </Badge>
+                      ))}
+                    </HStack>
+                  ) : (
+                    // Table mode has no metric selector — keep an empty
+                    // flex=1 spacer so the toggle stays right-aligned
+                    // identically across views.
+                    <Box flex="1" minW={0} />
+                  )}
+                  {/* View toggle — table vs chart. Right-aligned per
+                      operator preference. */}
+                  <HStack gap={0} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" flexShrink={0}>
+                    <Button
+                      size="xs"
+                      variant={workerView === "table" ? "solid" : "ghost"}
+                      colorPalette={workerView === "table" ? "blue" : undefined}
+                      borderRadius="0"
+                      onClick={() => setWorkerView("table")}
+                      title="Table view"
                     >
-                      {w.efficiency > 0 ? `${w.efficiency}%` : "—"}
-                    </Text>
+                      <LayoutGrid size={12} />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant={workerView === "chart" ? "solid" : "ghost"}
+                      colorPalette={workerView === "chart" ? "blue" : undefined}
+                      borderRadius="0"
+                      onClick={() => setWorkerView("chart")}
+                      title="Chart view"
+                    >
+                      <BarChart3 size={12} />
+                    </Button>
                   </HStack>
-                ))}
-                {data.workerStats.length > 5 && (
-                  <Box px={3} py={1}>
-                    <Text
-                      as="button"
-                      fontSize="xs"
-                      color="blue.600"
-                      cursor="pointer"
-                      onClick={() => setShowAllWorkers(!showAllWorkers)}
-                    >
-                      {showAllWorkers ? "Show less" : `Show all ${data.workerStats.length} workers`}
-                    </Text>
-                  </Box>
+                </HStack>
+
+                {workerView === "table" && (
+                  <Card.Root variant="outline">
+                    <Card.Body py="2" px="0">
+                      {/* Header */}
+                      <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
+                        <Text flex="1" minW={0}>Worker</Text>
+                        <Text w="50px" textAlign="right">Done</Text>
+                        <Text w="50px" textAlign="right">Sched</Text>
+                        <Text w="65px" textAlign="right" display={{ base: "none", md: "block" }}>Earned</Text>
+                        <Text w="50px" textAlign="right" display={{ base: "none", md: "block" }}>Time</Text>
+                        <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}>Eff</Text>
+                      </HStack>
+                      {/* Rows */}
+                      {(showAllWorkers ? data.workerStats : data.workerStats.slice(0, 5)).map((w) => (
+                        <HStack key={w.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
+                          _hover={{ bg: "gray.50" }}
+                        >
+                          <VStack align="start" gap={0} flex="1" minW={0}>
+                            <Text fontWeight="medium">{w.name}</Text>
+                            <Badge colorPalette={w.workerType === "CONTRACTOR" ? "orange" : w.workerType === "TRAINEE" ? "purple" : "blue"} variant="subtle" fontSize="2xs" px="1" borderRadius="full">
+                              {w.workerType === "CONTRACTOR" ? "1099" : w.workerType === "TRAINEE" ? "Trainee" : "W-2"}
+                            </Badge>
+                          </VStack>
+                          <Text w="50px" textAlign="right" fontWeight="medium" color="green.600">{w.jobsCompleted}</Text>
+                          <Text w="50px" textAlign="right" color="fg.muted">{w.scheduledJobs}</Text>
+                          <Text w="65px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmt(w.totalEarnings)}</Text>
+                          <Text w="50px" textAlign="right" color="fg.muted" display={{ base: "none", md: "block" }}>{w.totalActualMinutes > 0 ? formatDuration(w.totalActualMinutes) : "—"}</Text>
+                          <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}
+                            color={w.efficiency >= 100 ? "green.600" : w.efficiency > 0 ? "orange.600" : "fg.muted"}
+                            fontWeight={w.efficiency > 0 ? "medium" : "normal"}
+                          >
+                            {w.efficiency > 0 ? `${w.efficiency}%` : "—"}
+                          </Text>
+                        </HStack>
+                      ))}
+                      {data.workerStats.length > 5 && (
+                        <Box px={3} py={1}>
+                          <Text
+                            as="button"
+                            fontSize="xs"
+                            color="blue.600"
+                            cursor="pointer"
+                            onClick={() => setShowAllWorkers(!showAllWorkers)}
+                          >
+                            {showAllWorkers ? "Show less" : `Show all ${data.workerStats.length} workers`}
+                          </Text>
+                        </Box>
+                      )}
+                    </Card.Body>
+                  </Card.Root>
                 )}
-              </Card.Body>
-            </Card.Root>
-          )}
+
+                {workerView === "chart" && (
+                  <Card.Root variant="outline">
+                    <Card.Body py="3" px="2">
+                      {/* Vertical bar chart — one row per worker, sized so
+                          even a 10-worker team fits without scrolling. Same
+                          recharts pattern as StatisticsTab. */}
+                      <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 28)}>
+                        <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                          <XAxis type="number" fontSize={11} tickFormatter={(v: number) => activeMetric.tip(v)} />
+                          <YAxis
+                            type="category"
+                            dataKey="name"
+                            width={120}
+                            tick={{ fontSize: 10, style: { fontSize: "10px" } }}
+                            tickFormatter={truncName}
+                          />
+                          <Tooltip formatter={(v: any) => [activeMetric.tip(Number(v)), activeMetric.label]} />
+                          <Bar dataKey="value" fill={activeMetric.color} radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </Card.Body>
+                  </Card.Root>
+                )}
+              </>
+            );
+          })()}
+          </CollapsibleSection>
 
           {/* Equipment */}
-          <SectionHeader>Equipment</SectionHeader>
-          <HStack gap={2} wrap="wrap" mb={2}>
-            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Available: {data.equipment.available}</Badge>
-            <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">Checked Out: {data.equipment.checkedOut}</Badge>
-            <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">Reserved: {data.equipment.reserved}</Badge>
-            <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">Maintenance: {data.equipment.inMaintenance}</Badge>
-            <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Total: {data.equipment.total}</Badge>
-          </HStack>
+          <CollapsibleSection title="Equipment" open={isOpen("equipment")} onToggle={() => toggleSection("equipment")}>
+            {/* "Right now" snapshot — current state of the fleet, NOT
+                scoped to the date range. Kept as a thin strip above the
+                timeframe data so the operator can answer both "what's out
+                this minute?" and "what's earning its keep this period?"
+                without switching screens. */}
+            <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mb={1} px={1}>Right Now</Text>
+            <HStack gap={2} wrap="wrap" mb={3}>
+              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Available: {data.equipment.available}</Badge>
+              <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">Checked Out: {data.equipment.checkedOut}</Badge>
+              <Badge colorPalette="yellow" variant="subtle" fontSize="xs" px="2" borderRadius="full">Reserved: {data.equipment.reserved}</Badge>
+              <Badge colorPalette="red" variant="subtle" fontSize="xs" px="2" borderRadius="full">Maintenance: {data.equipment.inMaintenance}</Badge>
+              <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Total: {data.equipment.total}</Badge>
+            </HStack>
+
+            {/* "In this window" — checkout-anchored usage stats. Answers
+                "what's been doing real work in the selected timeframe?"
+                Leaderboard + idle list driven by Checkout.checkedOutAt
+                inside [dateFrom, dateTo]. */}
+            <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mb={1} px={1}>
+              In This Window ({data.equipment.windowDays} {data.equipment.windowDays === 1 ? "day" : "days"})
+            </Text>
+            <Box display="grid" gridTemplateColumns={{ base: "repeat(3, 1fr)" }} gap={2} mb={2}>
+              <MetricCard label="Checkouts" value={data.equipment.windowCheckouts} color="blue.600" />
+              <MetricCard label="Rental Income" value={fmt(data.equipment.windowIncome)} color="green.600" />
+              <MetricCard label="Pieces Used" value={`${data.equipment.windowDistinctUsed} / ${data.equipment.total}`} color="gray.700" />
+            </Box>
+
+            {data.equipment.leaderboard.length > 0 && (() => {
+              const EQ_METRICS = [
+                { key: "daysOut",        label: "Days Out",    color: "#3182CE", getter: (e: typeof data.equipment.leaderboard[number]) => e.daysOut,        tip: (v: number) => `${v}d` },
+                { key: "checkouts",      label: "Checkouts",   color: "#805AD5", getter: (e: typeof data.equipment.leaderboard[number]) => e.checkouts,      tip: (v: number) => `${v}` },
+                { key: "income",         label: "Income",      color: "#38A169", getter: (e: typeof data.equipment.leaderboard[number]) => Math.round(e.income * 100) / 100, tip: (v: number) => `$${v.toFixed(2)}` },
+                { key: "utilizationPct", label: "Utilization", color: "#D69E2E", getter: (e: typeof data.equipment.leaderboard[number]) => e.utilizationPct, tip: (v: number) => `${v}%` },
+              ] as const;
+              const activeMetric = EQ_METRICS.find((m) => m.key === equipmentChartMetric) ?? EQ_METRICS[0];
+              const chartData = data.equipment.leaderboard
+                .map((e) => ({ name: e.shortDesc ?? e.id, value: activeMetric.getter(e) }))
+                .sort((a, b) => b.value - a.value);
+              const truncName = (n: string) => (n.length > 22 ? n.slice(0, 21) + "…" : n);
+              return (
+                <>
+                  <HStack gap={2} mb={2} wrap="wrap" align="center">
+                    {equipmentView === "chart" ? (
+                      <HStack gap={1} wrap="wrap" flex="1" minW={0}>
+                        {EQ_METRICS.map((m) => (
+                          <Badge
+                            key={m.key}
+                            size="sm"
+                            variant={equipmentChartMetric === m.key ? "solid" : "outline"}
+                            colorPalette="gray"
+                            cursor="pointer"
+                            onClick={() => setEquipmentChartMetric(m.key)}
+                          >
+                            {m.label}
+                          </Badge>
+                        ))}
+                      </HStack>
+                    ) : (
+                      <Box flex="1" minW={0} />
+                    )}
+                    <HStack gap={0} borderWidth="1px" borderColor="gray.300" borderRadius="md" overflow="hidden" flexShrink={0}>
+                      <Button
+                        size="xs"
+                        variant={equipmentView === "table" ? "solid" : "ghost"}
+                        colorPalette={equipmentView === "table" ? "blue" : undefined}
+                        borderRadius="0"
+                        onClick={() => setEquipmentView("table")}
+                        title="Table view"
+                      >
+                        <LayoutGrid size={12} />
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant={equipmentView === "chart" ? "solid" : "ghost"}
+                        colorPalette={equipmentView === "chart" ? "blue" : undefined}
+                        borderRadius="0"
+                        onClick={() => setEquipmentView("chart")}
+                        title="Chart view"
+                      >
+                        <BarChart3 size={12} />
+                      </Button>
+                    </HStack>
+                  </HStack>
+
+                  {equipmentView === "table" && (
+                    <Card.Root variant="outline" mb={2}>
+                      <Card.Body py="2" px="0">
+                        <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
+                          <Text flex="1" minW={0}>Equipment</Text>
+                          <Text w="55px" textAlign="right">Days</Text>
+                          <Text w="55px" textAlign="right">Rentals</Text>
+                          <Text w="70px" textAlign="right" display={{ base: "none", md: "block" }}>Income</Text>
+                          <Text w="55px" textAlign="right">Util %</Text>
+                        </HStack>
+                        {data.equipment.leaderboard.map((e) => (
+                          <HStack key={e.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
+                            _hover={{ bg: "gray.50" }}
+                          >
+                            <VStack align="start" gap={0} flex="1" minW={0}>
+                              <Text fontWeight="medium" truncate>{e.shortDesc ?? "—"}</Text>
+                              {(e.brand || e.model) && (
+                                <Text color="fg.muted" fontSize="2xs" truncate>
+                                  {[e.brand, e.model].filter(Boolean).join(" ")}
+                                </Text>
+                              )}
+                            </VStack>
+                            <Text w="55px" textAlign="right" color="blue.600" fontWeight="medium">{e.daysOut}</Text>
+                            <Text w="55px" textAlign="right" color="fg.muted">{e.checkouts}</Text>
+                            <Text w="70px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmt(e.income)}</Text>
+                            <Text w="55px" textAlign="right" color={e.utilizationPct >= 50 ? "green.600" : e.utilizationPct > 0 ? "orange.600" : "fg.muted"}>{e.utilizationPct}%</Text>
+                          </HStack>
+                        ))}
+                      </Card.Body>
+                    </Card.Root>
+                  )}
+
+                  {equipmentView === "chart" && (
+                    <Card.Root variant="outline" mb={2}>
+                      <Card.Body py="3" px="2">
+                        <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 28)}>
+                          <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                            <XAxis type="number" fontSize={11} tickFormatter={(v: number) => activeMetric.tip(v)} />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              width={150}
+                              tick={{ fontSize: 10, style: { fontSize: "10px" } }}
+                              tickFormatter={truncName}
+                            />
+                            <Tooltip formatter={(v: any) => [activeMetric.tip(Number(v)), activeMetric.label]} />
+                            <Bar dataKey="value" fill={activeMetric.color} radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </Card.Body>
+                    </Card.Root>
+                  )}
+                </>
+              );
+            })()}
+
+            {data.equipment.leaderboard.length === 0 && data.equipment.idle.length > 0 && (
+              <Text fontSize="xs" color="fg.muted" mt={1} mb={2} px={1}>
+                No equipment was checked out in this window.
+              </Text>
+            )}
+
+            {/* Idle list — equipment with zero checkouts in the window.
+                Candidates for sale / retire / "why do we own this?" review.
+                Collapsed by default since it's typically a long, low-
+                frequency list. */}
+            {data.equipment.idle.length > 0 && (
+              <Box>
+                <HStack
+                  gap={1.5}
+                  cursor="pointer"
+                  onClick={() => setEquipmentIdleOpen((v) => !v)}
+                  _hover={{ color: "fg" }}
+                  color="fg.muted"
+                  userSelect="none"
+                  py={1}
+                  px={1}
+                >
+                  {equipmentIdleOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  <Text fontSize="xs" fontWeight="medium">
+                    Idle ({data.equipment.idle.length}) — no checkouts in this window
+                  </Text>
+                </HStack>
+                {equipmentIdleOpen && (
+                  <HStack gap={1} wrap="wrap" mt={1} px={1}>
+                    {data.equipment.idle.map((e) => (
+                      <Badge key={e.id} size="sm" colorPalette="gray" variant="subtle" fontSize="2xs" px="2" borderRadius="full">
+                        {e.shortDesc ?? "—"}
+                        {(e.brand || e.model) && (
+                          <Text as="span" color="fg.muted" ml={1}>
+                            ({[e.brand, e.model].filter(Boolean).join(" ")})
+                          </Text>
+                        )}
+                      </Badge>
+                    ))}
+                  </HStack>
+                )}
+              </Box>
+            )}
+          </CollapsibleSection>
 
           {/* Estimates */}
           {(data.estimates.pending + data.estimates.accepted + data.estimates.rejected) > 0 && (
-            <>
-              <SectionHeader>Estimates Pipeline</SectionHeader>
+            <CollapsibleSection title="Estimates Pipeline" open={isOpen("estimates")} onToggle={() => toggleSection("estimates")}>
               <Box display="grid" gridTemplateColumns="repeat(3, 1fr)" gap={2}>
                 <MetricCard label="Pending" value={data.estimates.pending} color="purple.600" />
                 <MetricCard label="Accepted" value={data.estimates.accepted} color="green.600" />
                 <MetricCard label="Rejected" value={data.estimates.rejected} color="red.500" />
               </Box>
-            </>
+            </CollapsibleSection>
           )}
 
           {/* Clients */}
-          <SectionHeader>Clients</SectionHeader>
-          <HStack gap={2} wrap="wrap" mb={2}>
-            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Active: {data.clients.active}</Badge>
-            {data.clients.vip > 0 && <Badge colorPalette="yellow" variant="solid" fontSize="xs" px="2" borderRadius="full">VIP: {data.clients.vip}</Badge>}
-            {data.clients.paused > 0 && <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">Paused: {data.clients.paused}</Badge>}
-            {data.clients.archived > 0 && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Archived: {data.clients.archived}</Badge>}
-          </HStack>
+          <CollapsibleSection title="Clients" open={isOpen("clients")} onToggle={() => toggleSection("clients")}>
+            <HStack gap={2} wrap="wrap" mb={2}>
+              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Active: {data.clients.active}</Badge>
+              {data.clients.vip > 0 && <Badge colorPalette="yellow" variant="solid" fontSize="xs" px="2" borderRadius="full">VIP: {data.clients.vip}</Badge>}
+              {data.clients.paused > 0 && <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">Paused: {data.clients.paused}</Badge>}
+              {data.clients.archived > 0 && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Archived: {data.clients.archived}</Badge>}
+            </HStack>
+          </CollapsibleSection>
 
           {/* Recent Activity */}
-          <SectionHeader>Recent Activity</SectionHeader>
-          <VStack align="stretch" gap={0}>
-            {data.recentAudit.map((a) => (
-              <HStack key={a.id} px={2} py={1.5} fontSize="xs" gap={2} borderBottomWidth="1px" borderColor="gray.100">
-                <Text color="fg.muted" flexShrink={0} w={{ base: "70px", md: "120px" }}>{fmtDateTime(a.createdAt)}</Text>
-                <Badge colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full" flexShrink={0}>{a.scope}</Badge>
-                <Text flex="1" minW={0}>
-                  <Text as="span" fontWeight="medium">{a.actorName}</Text>
-                  {" "}{prettyStatus(a.verb).toLowerCase()}
-                  {a.action ? ` (${a.action})` : ""}
-                </Text>
-              </HStack>
-            ))}
-            {data.recentAudit.length === 0 && (
-              <Text fontSize="xs" color="fg.muted" px={2}>No recent activity</Text>
-            )}
-          </VStack>
+          <CollapsibleSection title="Recent Activity" open={isOpen("activity")} onToggle={() => toggleSection("activity")}>
+            <VStack align="stretch" gap={0}>
+              {data.recentAudit.map((a) => (
+                <HStack key={a.id} px={2} py={1.5} fontSize="xs" gap={2} borderBottomWidth="1px" borderColor="gray.100">
+                  <Text color="fg.muted" flexShrink={0} w={{ base: "70px", md: "120px" }}>{fmtDateTime(a.createdAt)}</Text>
+                  <Badge colorPalette="gray" variant="subtle" fontSize="2xs" px="1.5" borderRadius="full" flexShrink={0}>{a.scope}</Badge>
+                  <Text flex="1" minW={0}>
+                    <Text as="span" fontWeight="medium">{a.actorName}</Text>
+                    {" "}{prettyStatus(a.verb).toLowerCase()}
+                    {a.action ? ` (${a.action})` : ""}
+                  </Text>
+                </HStack>
+              ))}
+              {data.recentAudit.length === 0 && (
+                <Text fontSize="xs" color="fg.muted" px={2}>No recent activity</Text>
+              )}
+            </VStack>
+          </CollapsibleSection>
         </>
       )}
       {/* Confirm All Time */}

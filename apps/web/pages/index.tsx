@@ -43,7 +43,11 @@ import PlanWorkdayWorkflow from "@/src/ui/workflows/PlanWorkdayWorkflow";
 import BeginWorkDayWorkflow from "@/src/ui/workflows/BeginWorkDayWorkflow";
 import AdminTasksTab, { type TaskDef, FiPlus, FiDownload, FiDatabase, FiShare2 } from "@/src/ui/tabs/AdminTasksTab";
 import SharePhotosWorkflow from "@/src/ui/workflows/SharePhotosWorkflow";
-import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
+// StatisticsTab is no longer wired into the worker or super shell (both tab
+// entries were removed per operator preference). The component file and the
+// /api/me/statistics + /api/admin/statistics endpoints stay in place so
+// the import can be reinstated cleanly if the tab returns.
+// import StatisticsTab from "@/src/ui/tabs/StatisticsTab";
 import ProfileTab from "@/src/ui/tabs/ProfileTab";
 import AdminRoutesTab from "@/src/ui/tabs/AdminRoutesTab";
 import PreviewRoutesTab from "@/src/ui/tabs/PreviewRoutesTab";
@@ -633,14 +637,13 @@ export default function HomePage() {
       icon: FiPackage,
       content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="WORKER" />),
     },
-    // ── Records ──
-    {
-      value: "statistics",
-      label: "Statistics",
-      icon: FiBarChart2,
-      visible: () => !!me?.workerType,
-      content: wrapWithInlineMessage(<StatisticsTab myId={me?.id} />),
-    },
+    // NOTE: the Worker "Records → Statistics" tab was removed per operator
+    // preference (no longer needed). The StatisticsTab component file and
+    // its API endpoints (/api/me/statistics, /api/admin/statistics) stay
+    // in place in case the tab is wanted back later — to restore, re-add a
+    // tab block here with visible: () => !!me?.workerType and
+    // content: <StatisticsTab myId={me?.id} />, plus the catMap entry
+    // `statistics: "Records"` below.
     // ── System ──
     {
       value: "profile",
@@ -651,6 +654,35 @@ export default function HomePage() {
   ];
 
   const adminTabs: TabItem[] = [
+    {
+      // ── Records ──
+      // Moved to the top of the Admin shell per operator preference, mirroring
+      // the Super shell ordering. BreadcrumbNav derives the category list
+      // from the order tabs appear here; keep tabs of the same category
+      // contiguous.
+      value: "activity",
+      label: "Engagement",
+      icon: FiActivity,
+      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
+    },
+    {
+      value: "history",
+      label: "History",
+      icon: FiFileText,
+      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
+    },
+    {
+      value: "timeline",
+      label: "Timeline",
+      icon: FiCalendar,
+      content: wrapWithInlineMessage(<TimelineTab />),
+    },
+    {
+      value: "documents",
+      label: "Documents",
+      icon: FiFolder,
+      content: wrapWithInlineMessage(<DocumentsTab />),
+    },
     {
       // ── Work ──
       value: "admin-home",
@@ -754,31 +786,6 @@ export default function HomePage() {
       label: "Supplies",
       icon: FiPackage,
       content: wrapWithInlineMessage(<SuppliesTab readOnly purpose="ADMIN" />),
-    },
-    {
-      // ── Records ──
-      value: "activity",
-      label: "Engagement",
-      icon: FiActivity,
-      content: wrapWithInlineMessage(<ActivityTab role="admin" />),
-    },
-    {
-      value: "history",
-      label: "History",
-      icon: FiFileText,
-      content: wrapWithInlineMessage(<HistoryTab role="admin" />),
-    },
-    {
-      value: "timeline",
-      label: "Timeline",
-      icon: FiCalendar,
-      content: wrapWithInlineMessage(<TimelineTab />),
-    },
-    {
-      value: "documents",
-      label: "Documents",
-      icon: FiFolder,
-      content: wrapWithInlineMessage(<DocumentsTab />),
     },
     {
       // ── System ──
@@ -914,7 +921,7 @@ export default function HomePage() {
           equipment: "Equipment", collections: "Equipment", usage: "Equipment",
           clients: "Directory", properties: "Directory",
           payments: "Money", pricing: "Money", supplies: "Money",
-          statistics: "Records",
+          // statistics: "Records" — re-add when the Worker Statistics tab is restored.
           profile: "System",
         };
         const catIconMap: Record<string, React.ElementType> = {
@@ -975,6 +982,44 @@ export default function HomePage() {
       visible: () => !!isSignedIn && isSuper,
       innerTabs: [
         {
+          // ── Records ──
+          // Moved to the top of the Super shell per operator preference —
+          // the day-to-day "what's happening" tabs (Operations + Audit +
+          // Timeline + Documents) are now the first thing a Super sees on
+          // the inner tab rail. Category order otherwise matches the
+          // intended display order, see comment above the workerTabs map.
+          value: "operations",
+          label: "Operations",
+          icon: FiBarChart2,
+          content: <OperationsTab />,
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "audit",
+          label: "Audit",
+          icon: FiSearch,
+          content: <AuditTab />,
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "timeline",
+          label: "Timeline",
+          icon: FiCalendar,
+          content: wrapWithInlineMessage(<TimelineTab isSuper />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
+          value: "documents",
+          label: "Documents",
+          icon: FiFolder,
+          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
+          category: "Records",
+          categoryIcon: FiBarChart2,
+        },
+        {
           // ── Directory ──
           // Super-only writable Users view. The same component admins
           // see read-only on their Directory tab, but with full mutation
@@ -1013,17 +1058,11 @@ export default function HomePage() {
           category: "Money",
           categoryIcon: TfiMoney,
         },
-        {
-          // Moved from Admin → Records. Statistics lives under Money on
-          // the Super shell because it slices money/earnings figures
-          // rather than operational records.
-          value: "statistics",
-          label: "Statistics",
-          icon: FiBarChart2,
-          content: wrapWithInlineMessage(<StatisticsTab />),
-          category: "Money",
-          categoryIcon: TfiMoney,
-        },
+        // NOTE: the Super "Money → Statistics" tab was removed per operator
+        // preference (no longer needed for routine ops review). The
+        // StatisticsTab component still ships for the Worker personal-stats
+        // view (workerTabs, "Records" category). To restore the Super entry,
+        // re-add a tab block here pointing at <StatisticsTab /> (no myId).
         {
           value: "supplies",
           label: "Supplies",
@@ -1070,39 +1109,6 @@ export default function HomePage() {
           content: wrapWithInlineMessage(<MulchJobTool />),
           category: "Tools",
           categoryIcon: FiTool,
-        },
-        {
-          // ── Records ──
-          value: "operations",
-          label: "Operations",
-          icon: FiBarChart2,
-          content: <OperationsTab />,
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "audit",
-          label: "Audit",
-          icon: FiSearch,
-          content: <AuditTab />,
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "timeline",
-          label: "Timeline",
-          icon: FiCalendar,
-          content: wrapWithInlineMessage(<TimelineTab isSuper />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
-        },
-        {
-          value: "documents",
-          label: "Documents",
-          icon: FiFolder,
-          content: wrapWithInlineMessage(<DocumentsTab isSuper />),
-          category: "Records",
-          categoryIcon: FiBarChart2,
         },
         {
           // ── System ──

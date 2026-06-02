@@ -911,6 +911,34 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
     return () => window.removeEventListener("jobs:applyFilter", handler as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // localStorage handoff for cross-tab navigations that need to apply a
+  // filter on landing (e.g. clicking a Jobs Overview metric card on the
+  // Super Operations tab). The dispatching tab writes a JSON-encoded filter
+  // payload, then dispatches navigate:adminTab with remount=true — this
+  // tab unmounts and remounts, and we replay the filter via the existing
+  // jobs:applyFilter handler above. localStorage is necessary because the
+  // event-based path would race the remount (the listener isn't yet
+  // registered when the dispatching tab fires the event). Key is consumed
+  // on read.
+  useEffect(() => {
+    let raw: string | null = null;
+    try { raw = localStorage.getItem("seedlings_jobs_pendingFilter"); } catch {}
+    if (!raw) return;
+    try { localStorage.removeItem("seedlings_jobs_pendingFilter"); } catch {}
+    try {
+      const detail = JSON.parse(raw);
+      // Defer one tick so the handler effect above has definitely registered
+      // its listener by the time we dispatch (effects run in declaration
+      // order on mount, but being explicit costs us nothing).
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("jobs:applyFilter", { detail }));
+      }, 0);
+    } catch {
+      /* malformed payload — ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [vipOnly, setVipOnly] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
   const presetBeforeOverdueRef = useRef<DatePreset>(datePreset);
@@ -6111,7 +6139,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       )}
                     </>)}
                     {(isClaimer || isActiveAssignee || forAdmin) && occ.status === "PROPOSAL_SUBMITTED" && (occ.workflow === "ESTIMATE" || occ.isEstimate) && (
-                      <HStack gap={2}>
+                      // w="full" forces this HStack onto its own row inside
+                      // the wrap="wrap" parent — otherwise the Accept/Reject
+                      // pair packs next to the "Stand-alone estimate" warning
+                      // text on wide screens, which reads as cramped/unclear.
+                      <HStack gap={2} w="full">
                         <Button
                           size="sm"
                           variant="solid"

@@ -900,7 +900,11 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/jobs/:id", adminGuard, async (req: any) => {
-    return services.jobs.get(String(req.params.id));
+    // BSD cutoff applies to the embedded occurrences (and their nested money
+    // includes) so the Services job-detail view matches every other operator
+    // surface. Super reveal flows through resolveCutoff.
+    const cutoff = await resolveCutoff(req);
+    return services.jobs.get(String(req.params.id), cutoff);
   });
 
   app.post("/admin/jobs", adminGuard, async (req: any) => {
@@ -2495,7 +2499,8 @@ Respond ONLY with valid JSON in this exact format:
     const workersWithJobs = new Set(occurrences.flatMap((o) => o.assignees.filter((a) => a.role !== "observer").map((a) => a.userId)));
     const workersIdle = workers.filter((w) => !workersWithJobs.has(w.id)).length;
 
-    // Equipment summary
+    // Equipment summary — current snapshot (state right now, not scoped to
+    // the date range).
     const equipmentCounts = await prisma.equipment.groupBy({
       by: ["status"],
       where: { retiredAt: null },
@@ -2507,6 +2512,89 @@ Respond ONLY with valid JSON in this exact format:
       eqMap[ec.status] = ec._count;
       totalEquipment += ec._count;
     }
+
+    // Equipment usage over the window — checkout-anchored. Answers "what's
+    // actually earning its keep?" by aggregating checkouts whose
+    // checkedOutAt falls inside the selected date range. BSD cutoff is
+    // applied via Checkout.releasedAt so pre-cutoff legacy rentals drop
+    // out (same anchor the QuickBooks Income export uses; see
+    // project_equipment_rental_income memory). The "Now" snapshot above
+    // is BSD-independent — it's about machine state, not income.
+    const checkoutsInWindow = await prisma.checkout.findMany({
+      where: {
+        checkedOutAt: { gte: dateFrom, lte: dateTo },
+        ...cutoffWhere("Checkout", cutoff),
+      },
+      include: {
+        equipment: { select: { id: true, shortDesc: true, brand: true, model: true, type: true } },
+      },
+    });
+    const allActiveEquipment = await prisma.equipment.findMany({
+      where: { retiredAt: null },
+      select: { id: true, shortDesc: true, brand: true, model: true, type: true, status: true },
+    });
+
+    type EqAgg = {
+      id: string;
+      shortDesc: string | null;
+      brand: string | null;
+      model: string | null;
+      type: string | null;
+      checkouts: number;
+      daysOut: number;
+      income: number;
+    };
+    const byEquipment = new Map<string, EqAgg>();
+    for (const c of checkoutsInWindow) {
+      if (!c.equipment) continue;
+      const existing = byEquipment.get(c.equipmentId) ?? {
+        id: c.equipmentId,
+        shortDesc: c.equipment.shortDesc,
+        brand: c.equipment.brand,
+        model: c.equipment.model,
+        type: c.equipment.type,
+        checkouts: 0,
+        daysOut: 0,
+        income: 0,
+      };
+      existing.checkouts++;
+      existing.daysOut += c.rentalDays ?? 0;
+      existing.income += c.rentalCost ?? 0;
+      byEquipment.set(c.equipmentId, existing);
+    }
+    // Inclusive day count for the window; minimum 1 to avoid divide-by-zero
+    // on same-day ranges. Used as the denominator for utilization %.
+    const windowDays = Math.max(
+      1,
+      Math.round((dateTo.getTime() - dateFrom.getTime()) / 86_400_000) + 1,
+    );
+    const usedEquipmentIds = new Set(byEquipment.keys());
+    const equipmentLeaderboard = [...byEquipment.values()]
+      .map((e) => ({
+        ...e,
+        // Utilization is a rough metric: sum of rental-days over window-
+        // days, capped at 100%. Multi-rental overlap (rare with the
+        // single-active-checkout invariant) can briefly push above 100;
+        // the cap keeps the chart readable.
+        utilizationPct: Math.min(100, Math.round((e.daysOut / windowDays) * 100)),
+      }))
+      .sort((a, b) => b.daysOut - a.daysOut);
+    const equipmentIdle = allActiveEquipment
+      .filter((e) => !usedEquipmentIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        shortDesc: e.shortDesc,
+        brand: e.brand,
+        model: e.model,
+        type: e.type,
+        status: e.status,
+      }));
+    const equipmentWindowTotals = {
+      checkouts: checkoutsInWindow.length,
+      income: checkoutsInWindow.reduce((s, c) => s + (c.rentalCost ?? 0), 0),
+      distinctUsed: usedEquipmentIds.size,
+      days: windowDays,
+    };
 
     // Estimates summary
     const estimates = await prisma.jobOccurrence.groupBy({
@@ -2644,6 +2732,14 @@ Respond ONLY with valid JSON in this exact format:
         checkedOut: eqMap["CHECKED_OUT"] ?? 0,
         reserved: eqMap["RESERVED"] ?? 0,
         inMaintenance: eqMap["MAINTENANCE"] ?? 0,
+        // Window-scoped usage: leaderboard + idle list + headline totals.
+        // Driven by Checkout.checkedOutAt inside the selected date range.
+        windowDays: equipmentWindowTotals.days,
+        windowCheckouts: equipmentWindowTotals.checkouts,
+        windowIncome: equipmentWindowTotals.income,
+        windowDistinctUsed: equipmentWindowTotals.distinctUsed,
+        leaderboard: equipmentLeaderboard,
+        idle: equipmentIdle,
       },
       estimates: {
         pending: estMap["PROPOSAL_SUBMITTED"] ?? 0,

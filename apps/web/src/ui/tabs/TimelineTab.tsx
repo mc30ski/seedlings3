@@ -342,8 +342,17 @@ export default function TimelineTab({ isSuper = false }: Props) {
   }
   async function markComplete(id: string, title: string) {
     try {
-      await apiPost(`${apiBase}/${id}/complete`);
-      publishInlineMessage({ type: "SUCCESS", text: `Marked "${title}" complete.` });
+      // The server returns the updated event; `nextDueDate` is null if the
+      // event was one-time (or its rrule has run out) and the row was
+      // auto-archived, otherwise it's the next rrule instance. Use that to
+      // tailor the toast so the operator immediately sees when the rolled-
+      // forward entry will resurface — saves them re-opening the row.
+      const updated = await apiPost<{ nextDueDate: string | null }>(`${apiBase}/${id}/complete`);
+      const next = updated?.nextDueDate ?? null;
+      const text = next
+        ? `Marked "${title}" complete. Next entry: ${fmtDate(next)}.`
+        : `Marked "${title}" complete.`;
+      publishInlineMessage({ type: "SUCCESS", text });
       void load();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage("Failed to mark complete.", err) });
