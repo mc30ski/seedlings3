@@ -189,8 +189,14 @@ export const timelineEvents = {
     let soon = 0;
     for (const r of rows) {
       const u = urgencyOf(r.nextDate, now);
-      if (u === "urgent" || u === "past") urgent++;
-      else if (u === "soon") soon++;
+      // `urgent` here drives the title-bar Timeline alert badge. Operator
+      // preference: the badge fires for OVERDUE rows only ("past"), not for
+      // upcoming-within-7-days rows. The 7-day window is still useful as a
+      // visual urgency tier inside the Timeline list itself, but it should
+      // not pull attention from the header. `soon` keeps its existing 8–30
+      // day meaning in case any caller wants the upcoming-soon count.
+      if (u === "past") urgent++;
+      else if (u === "urgent" || u === "soon") soon++;
     }
     return { urgent, soon };
   },

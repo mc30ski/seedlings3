@@ -12,11 +12,15 @@
 //      render differently based on whether a filter applies (e.g. job
 //      payment badges, Settings active-state indicator).
 //
-//   2. The Super "Reveal Pre-Cutoff" override. In-memory, NOT persisted —
-//      a page reload always reverts to the filtered view. Toggling this
-//      flips the X-Reveal-Pre-Cutoff header on every subsequent API call
-//      AND refetches the cutoff (since the server's resolved cutoff
-//      depends on whether the header is honored).
+//   2. The Super "Reveal Pre-Cutoff" override. Session-only — a manual
+//      page reload (F5, navigate-then-back) always reverts to the filtered
+//      view. Toggling the reveal switch (via SettingsTab or the global
+//      banner) triggers a full window.location.reload() so every open
+//      view re-fetches its data with the new X-Reveal-Pre-Cutoff header
+//      state — that's the simplest way to guarantee a consistent
+//      post-toggle world without per-tab refetch wiring. A short-lived
+//      sessionStorage key (`seedlings:bsdRevealPending`) carries the
+//      intended state across that one reload; it's consumed on next mount.
 //
 // Safety: when `cutoff` is null (filter off / reveal active), the rest of
 // the UI should be byte-identical to its pre-feature behavior. Treat the
@@ -58,12 +62,44 @@ type Ctx = {
 
 const BusinessStartCtx = createContext<Ctx | null>(null);
 
+// sessionStorage key used to carry the intended reveal state across the
+// page reload that setReveal triggers. Consumed once on next mount, then
+// deleted — preserves the "session-only" safety (manual F5 still reverts
+// to the filtered view, only the reveal-triggered reload preserves it).
+const REVEAL_PENDING_KEY = "seedlings:bsdRevealPending";
+
 export function BusinessStartProvider({ children }: { children: ReactNode }) {
   const [cutoff, setCutoff] = useState<Date | null>(null);
   // Mirror the api.ts module-level reveal boolean into React state so
   // consumers re-render when it changes. The subscribe call below keeps
   // them in sync if reveal is flipped from outside React.
-  const [reveal, setRevealState] = useState<boolean>(() => getRevealPreCutoff());
+  //
+  // On bootstrap, hydrate from sessionStorage if a setReveal-triggered
+  // reload just landed us here. Done synchronously inside useState so the
+  // X-Reveal-Pre-Cutoff header is set BEFORE the very first API call this
+  // tree makes (e.g. /me/business-start below).
+  const [reveal, setRevealState] = useState<boolean>(() => {
+    if (typeof window === "undefined") return getRevealPreCutoff();
+    let pending: string | null = null;
+    try {
+      pending = sessionStorage.getItem(REVEAL_PENDING_KEY);
+      if (pending != null) sessionStorage.removeItem(REVEAL_PENDING_KEY);
+    } catch {
+      /* sessionStorage unavailable — fall through to module flag */
+    }
+    if (pending === "1") {
+      setRevealPreCutoff(true);
+      return true;
+    }
+    if (pending === "0") {
+      // Explicit OFF from a setReveal(false) reload — also clear any leftover
+      // module-level flag from earlier in this same JS context (shouldn't
+      // happen after a real reload, but cheap insurance).
+      setRevealPreCutoff(false);
+      return false;
+    }
+    return getRevealPreCutoff();
+  });
 
   const fetchCutoff = useCallback(async () => {
     try {
@@ -85,14 +121,26 @@ export function BusinessStartProvider({ children }: { children: ReactNode }) {
   // Keep React state in sync if reveal flips outside of this provider.
   useEffect(() => subscribeRevealPreCutoff(setRevealState), []);
 
-  const setReveal = useCallback(
-    (v: boolean) => {
+  const setReveal = useCallback((v: boolean) => {
+    // Persist the intended state across the reload, then hard-reload so
+    // every open tab/view re-fetches its data with the new X-Reveal-Pre-Cutoff
+    // header state. Reload is the bluntest fix but the most robust: it busts
+    // all in-memory caches at once (HomeTab summary, Payments, Jobs, Stats,
+    // Operations, Audit — any view derived from cutoff-affected endpoints),
+    // so the operator sees a consistent post-toggle state without any
+    // per-tab refetch wiring. sessionStorage keeps the intended state alive
+    // for exactly one reload; manual F5 afterward still reverts to OFF, so
+    // the "session-only" safety property is preserved.
+    try {
+      sessionStorage.setItem(REVEAL_PENDING_KEY, v ? "1" : "0");
+    } catch {
+      /* sessionStorage unavailable — fall back to in-process update */
       setRevealPreCutoff(v);
-      // Refetch — the server's resolved cutoff depends on the reveal header.
       void fetchCutoff();
-    },
-    [fetchCutoff],
-  );
+      return;
+    }
+    if (typeof window !== "undefined") window.location.reload();
+  }, [fetchCutoff]);
 
   const value = useMemo<Ctx>(
     () => ({ cutoff, reveal, setReveal, refresh: fetchCutoff }),

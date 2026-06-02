@@ -498,7 +498,7 @@ export type ServicesJobs = {
     extras?: { completionSplits?: Array<{ userId: string; percent: number }> }
   ): Promise<JobOccurrence>;
 
-  get(id: string): Promise<
+  get(id: string, cutoff?: Date | null): Promise<
     Job & {
       property: Property;
       schedule?: JobSchedule | null;

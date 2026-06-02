@@ -941,6 +941,13 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
   const { isAvail, isSuper: userIsSuper } = determineRoles(me, purpose);
   const isSuper = userIsSuper && purpose === "SUPER";
 
+  // BSD context refresh — saving BUSINESS_START_DATE_ENABLED or
+  // BUSINESS_START_DATE changes the effective cutoff on the server, but
+  // the BSD provider only fetches /me/business-start once on app mount.
+  // Without this refresh, the BusinessStartStatusPanel + the global
+  // reveal banner stay stuck on the pre-save state until a page reload.
+  const { refresh: refreshBusinessStart } = useBusinessStartCutoff();
+
   // General settings
   const [settings, setSettings] = useState<Setting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1058,6 +1065,12 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
         const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
         invalidateExpenseCategories();
       }
+      // BSD settings — same rationale as saveSettingValue: refresh the
+      // provider so the status panel + banner reflect the new cutoff
+      // without requiring a page reload.
+      if (key === "BUSINESS_START_DATE_ENABLED" || key === "BUSINESS_START_DATE") {
+        await refreshBusinessStart();
+      }
       setEditingKey(null);
       void load();
     } catch (err) {
@@ -1080,6 +1093,14 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       if (key === "EXPENSE_CATEGORIES") {
         const { invalidateExpenseCategories } = await import("@/src/lib/useExpenseCategories");
         invalidateExpenseCategories();
+      }
+      // BSD settings change the effective cutoff resolved by the server.
+      // Refresh the provider so the status panel + reveal banner flip
+      // immediately without a page reload. The provider re-fetches
+      // /me/business-start; everything else that depends on cutoff is
+      // server-side and naturally reflects the new value on next request.
+      if (key === "BUSINESS_START_DATE_ENABLED" || key === "BUSINESS_START_DATE") {
+        await refreshBusinessStart();
       }
       void load();
     } catch (err) {

@@ -24,7 +24,11 @@ import { AUDIT } from "../lib/auditActions";
 import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
-import { occurrenceWorkDateCutoff } from "../lib/businessStartCutoff";
+import {
+  occurrenceWorkDateCutoff,
+  paymentIncludeWithCutoff,
+  expensesIncludeWithCutoff,
+} from "../lib/businessStartCutoff";
 import {
   consumeHoldsForOccurrence,
   releaseHoldsForOccurrence,
@@ -351,7 +355,7 @@ export const jobs: ServicesJobs = {
     }));
   },
 
-  async get(id) {
+  async get(id, cutoff: Date | null = null) {
     return prisma.job.findUniqueOrThrow({
       where: { id },
       include: {
@@ -374,6 +378,12 @@ export const jobs: ServicesJobs = {
           },
         },
         occurrences: {
+          // Business Start Date filter — Pattern C on the occurrence work
+          // date so pre-cutoff occurrences drop out of the Services job
+          // detail view, matching JobsTab + Statistics + Operations. Pattern
+          // B layered on payment / expenses below as defense-in-depth.
+          // Super reveal resolves cutoff to null so this becomes a no-op.
+          where: { ...occurrenceWorkDateCutoff(cutoff) },
           orderBy: [{ createdAt: "desc" }],
           take: 50,
           include: {
@@ -382,13 +392,13 @@ export const jobs: ServicesJobs = {
                 user: { select: { id: true, displayName: true, email: true, workerType: true } },
               },
             },
-            payment: {
+            payment: paymentIncludeWithCutoff(cutoff, {
               include: {
                 splits: { include: { user: { select: { id: true, displayName: true } } } },
                 collectedBy: { select: { id: true, displayName: true } },
               },
-            },
-            expenses: {
+            }),
+            expenses: expensesIncludeWithCutoff(cutoff, {
               include: {
                 createdBy: { select: { id: true, displayName: true } },
                 businessExpense: { select: { category: true, vendor: true, date: true } },
@@ -402,7 +412,7 @@ export const jobs: ServicesJobs = {
                 },
               },
               orderBy: { createdAt: "asc" as const },
-            },
+            }),
             addons: {
               select: { id: true, tag: true, customLabel: true, price: true },
               orderBy: { createdAt: "asc" as const },
