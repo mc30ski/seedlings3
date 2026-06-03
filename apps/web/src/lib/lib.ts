@@ -202,11 +202,19 @@ export const hasRole = (roles: Me["roles"] | undefined, role: Role) =>
 export function determineRoles(me: Me | null, purpose: Role) {
   const isWorker = hasRole(me?.roles, "WORKER");
   const isAdmin = hasRole(me?.roles, "ADMIN");
+  const isSuper = hasRole(me?.roles, "SUPER");
   return {
     isWorker: isWorker,
     isAdmin: isAdmin,
-    isSuper: hasRole(me?.roles, "SUPER"),
+    isSuper: isSuper,
     isAvail: isAdmin || isWorker,
-    forAdmin: purpose === "ADMIN" && isAdmin,
+    // Admin-flavored views — true on either the Admin shell OR the Super
+    // shell, since Super always inherits Admin capabilities and the Super
+    // tabs lean on the same admin-mode rendering. Tabs that want to
+    // further distinguish "Super inner tab" from "Admin inner tab" should
+    // gate on `purpose === "SUPER"` directly (e.g. EquipmentTab uses this
+    // to expose the act-on-behalf-of-worker buttons in addition to the
+    // admin controls).
+    forAdmin: (purpose === "ADMIN" && isAdmin) || (purpose === "SUPER" && (isSuper || isAdmin)),
   };
 }

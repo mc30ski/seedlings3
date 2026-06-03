@@ -192,6 +192,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const [qrAction, setQrAction] = useState<{ equipmentId: string; slug: string; action: "checkout" | "return"; label: string } | null>(null);
   const [qrActionBusy, setQrActionBusy] = useState(false);
 
+  // Super "act on behalf of a worker" state. When `action === "reserve"`
+  // the dialog includes a worker picker (the worker isn't already implied
+  // by an active checkout). For the other three actions the current holder
+  // is the implied target, so the dialog is just a confirm.
+  const [superActionFor, setSuperActionFor] = useState<
+    | { equipment: Equipment; action: "reserve" | "cancel" | "checkout" | "return" }
+    | null
+  >(null);
+  const [superPickerUserId, setSuperPickerUserId] = useState<string>("");
+  const [superActionBusy, setSuperActionBusy] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Listen for external filter requests (e.g., from HomeTab tiles).
@@ -243,6 +254,28 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
   const statusCollection = useMemo(
     () => createListCollection({ items: statusItems }),
     [statusItems]
+  );
+
+  // Worker picker collection — Super "act on behalf of" dialog uses this to
+  // pick the target worker for a reserve action. Sorted by display name.
+  const superWorkerItems = useMemo(
+    () =>
+      adminWorkers
+        .slice()
+        .sort((a, b) =>
+          (a.displayName || a.email || "").localeCompare(
+            b.displayName || b.email || "",
+          ),
+        )
+        .map((w) => ({
+          label: w.displayName || w.email || w.id.slice(0, 8),
+          value: w.id,
+        })),
+    [adminWorkers],
+  );
+  const superWorkerCollection = useMemo(
+    () => createListCollection({ items: superWorkerItems }),
+    [superWorkerItems],
   );
 
   // Main function to load all the items from the API.
@@ -952,6 +985,98 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     }
   }
 
+  // ── Super "act on behalf of a worker" handlers ─────────────────────────
+  // These hit the /api/super/equipment/* routes which accept a target
+  // userId in the body. The audit actor remains the calling Super so the
+  // trail records who pulled the lever. checkout-for and return-for skip
+  // the QR scan (the Super is the override; the equipment's own qrSlug is
+  // sent server-side to satisfy the verify check).
+  async function superReserveFor(
+    e: Equipment,
+    userId: string,
+    groupId?: string | null,
+  ) {
+    try {
+      await apiPost(`/api/super/equipment/${e.id}/reserve-for`, {
+        userId,
+        ...(groupId ? { groupId } : {}),
+      });
+      notifyEquipmentUpdated();
+      await load(false);
+      const name = adminWorkerName(userId);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Reserved '${e.qrSlug}' on behalf of ${name}.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Reserve on behalf failed.`, err),
+      });
+    }
+  }
+  async function superCancelFor(e: Equipment) {
+    const uid = e.holder?.userId;
+    if (!uid) return;
+    try {
+      await apiPost(`/api/super/equipment/${e.id}/reserve-for/cancel`, {
+        userId: uid,
+      });
+      notifyEquipmentUpdated();
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Reservation canceled for ${adminWorkerName(uid)}.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Cancel on behalf failed.`, err),
+      });
+    }
+  }
+  async function superCheckoutFor(e: Equipment) {
+    const uid = e.holder?.userId;
+    if (!uid) return;
+    try {
+      await apiPost(`/api/super/equipment/${e.id}/checkout-for/verify`, {
+        userId: uid,
+        slug: e.qrSlug,
+      });
+      notifyEquipmentUpdated();
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Checked out '${e.qrSlug}' for ${adminWorkerName(uid)}.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Checkout on behalf failed.`, err),
+      });
+    }
+  }
+  async function superReturnFor(e: Equipment) {
+    const uid = e.holder?.userId;
+    if (!uid) return;
+    try {
+      await apiPost(`/api/super/equipment/${e.id}/return-for/verify`, {
+        userId: uid,
+      });
+      notifyEquipmentUpdated();
+      await load(false);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: `Returned '${e.qrSlug}' for ${adminWorkerName(uid)}.`,
+      });
+    } catch (err) {
+      publishInlineMessage({
+        type: "ERROR",
+        text: getErrorMessage(`Return on behalf failed.`, err),
+      });
+    }
+  }
+
   function unavailableMessage(item: Equipment) {
     if (
       item.holder?.state === "CHECKED_OUT" ||
@@ -993,25 +1118,40 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
     !isTrainee &&
     (!e.requiresInsurance || me?.isInsuranceValid || me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE");
 
+  // Super "act on behalf of a worker" capabilities. The Super Equipment
+  // Inventory tab is the same as the Admin tab plus the ability for the
+  // Super to perform any worker action (reserve, cancel, checkout, return)
+  // when a worker is stuck. Only "Reserve" needs a worker picker; the
+  // other three act on the current holder.
+  const isSuperView = purpose === "SUPER";
+  const canSuperReserveFor = (e: Equipment) =>
+    isSuperView && e.status === "AVAILABLE";
+  const canSuperCancelFor = (e: Equipment) =>
+    isSuperView && e.status === "RESERVED" && !!e.holder;
+  const canSuperCheckoutFor = (e: Equipment) =>
+    isSuperView && e.status === "RESERVED" && !!e.holder;
+  const canSuperReturnFor = (e: Equipment) =>
+    isSuperView && e.status === "CHECKED_OUT" && !!e.holder;
+
   const canAdminForceRelease = (e: Equipment) =>
-    purpose === "ADMIN" && !!e.holder;
+    (purpose === "ADMIN" || purpose === "SUPER") && !!e.holder;
   const canAdminStartMaintenance = (e: Equipment) =>
-    purpose === "ADMIN" &&
+    (purpose === "ADMIN" || purpose === "SUPER") &&
     e.status !== "RETIRED" &&
     e.status !== "MAINTENANCE" &&
     !e.holder;
   const canAdminEndMaintenance = (e: Equipment) =>
-    purpose === "ADMIN" && e.status === "MAINTENANCE";
+    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "MAINTENANCE";
   const canAdminRetire = (e: Equipment) =>
-    purpose === "ADMIN" &&
+    (purpose === "ADMIN" || purpose === "SUPER") &&
     e.status !== "RETIRED" &&
     !e.holder &&
     e.status !== "RESERVED" &&
     e.status !== "CHECKED_OUT";
   const canAdminUnretire = (e: Equipment) =>
-    purpose === "ADMIN" && e.status === "RETIRED";
+    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "RETIRED";
   const canAdminHardDelete = (e: Equipment) =>
-    purpose === "ADMIN" && e.status === "RETIRED";
+    (purpose === "ADMIN" || purpose === "SUPER") && e.status === "RETIRED";
 
   const isMine = (e: Equipment) =>
     !!me && !!e.holder && e.holder.userId === me.id;
@@ -1999,6 +2139,61 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     setBusyId={setStatusButtonBusyId}
                   />
                 )}
+                {canSuperReserveFor(e) && (
+                  <StatusButton
+                    id={"equipment-super-reserve-for"}
+                    itemId={e.id}
+                    label={"Reserve for worker…"}
+                    onClick={async () => {
+                      setSuperPickerUserId("");
+                      setSuperActionFor({ equipment: e, action: "reserve" });
+                    }}
+                    variant={"subtle"}
+                    colorPalette={"purple"}
+                    disabled={loading}
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                )}
+                {canSuperCancelFor(e) && (
+                  <StatusButton
+                    id={"equipment-super-cancel-for"}
+                    itemId={e.id}
+                    label={`Cancel for ${e.holder?.displayName || e.holder?.email || "holder"}`}
+                    onClick={async () => setSuperActionFor({ equipment: e, action: "cancel" })}
+                    variant={"subtle"}
+                    colorPalette={"purple"}
+                    disabled={loading}
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                )}
+                {canSuperCheckoutFor(e) && (
+                  <StatusButton
+                    id={"equipment-super-checkout-for"}
+                    itemId={e.id}
+                    label={`Checkout for ${e.holder?.displayName || e.holder?.email || "holder"}`}
+                    onClick={async () => setSuperActionFor({ equipment: e, action: "checkout" })}
+                    variant={"solid"}
+                    colorPalette={"purple"}
+                    disabled={loading}
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                )}
+                {canSuperReturnFor(e) && (
+                  <StatusButton
+                    id={"equipment-super-return-for"}
+                    itemId={e.id}
+                    label={`Return for ${e.holder?.displayName || e.holder?.email || "holder"}`}
+                    onClick={async () => setSuperActionFor({ equipment: e, action: "return" })}
+                    variant={"solid"}
+                    colorPalette={"purple"}
+                    disabled={loading}
+                    busyId={statusButtonBusyId}
+                    setBusyId={setStatusButtonBusyId}
+                  />
+                )}
               </HStack>
             </Card.Footer>
             )}
@@ -2287,6 +2482,157 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     }}
                   >
                     Reserve Equipment
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Super "act on behalf of a worker" dialog. Reserve picks a worker
+          from the workers list; the other three actions imply the current
+          holder. checkout-for and return-for skip the QR scan since the
+          Super is the override path. */}
+      <Dialog.Root
+        open={!!superActionFor}
+        onOpenChange={(e) => {
+          if (!e.open) {
+            setSuperActionFor(null);
+            setSuperPickerUserId("");
+          }
+        }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="md" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>
+                  {superActionFor?.action === "reserve" && "Reserve on behalf of a worker"}
+                  {superActionFor?.action === "cancel" && "Cancel reservation on behalf"}
+                  {superActionFor?.action === "checkout" && "Check out on behalf"}
+                  {superActionFor?.action === "return" && "Return on behalf"}
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                {superActionFor && (
+                  <VStack align="stretch" gap={3}>
+                    <Box p={3} bg="gray.50" rounded="md" borderWidth="1px" borderColor="gray.200">
+                      <Text fontSize="sm" fontWeight="medium">
+                        {superActionFor.equipment.shortDesc}
+                      </Text>
+                      {(superActionFor.equipment.brand || superActionFor.equipment.model) && (
+                        <Text fontSize="xs" color="fg.muted">
+                          {[superActionFor.equipment.brand, superActionFor.equipment.model]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </Text>
+                      )}
+                      <Text fontSize="xs" color="fg.muted" mt={1}>
+                        QR: {superActionFor.equipment.qrSlug}
+                      </Text>
+                    </Box>
+
+                    {superActionFor.action === "reserve" ? (
+                      <>
+                        <Text fontSize="sm" color="fg.muted">
+                          Pick the worker this reservation should be recorded for. The audit trail will show you as the Super who performed the action.
+                        </Text>
+                        <Box>
+                          <Text fontSize="xs" fontWeight="semibold" mb={1}>Worker</Text>
+                          <Select.Root
+                            collection={superWorkerCollection}
+                            value={superPickerUserId ? [superPickerUserId] : []}
+                            onValueChange={(e) => setSuperPickerUserId(e.value[0] ?? "")}
+                            size="sm"
+                            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                          >
+                            <Select.Control>
+                              <Select.Trigger w="full">
+                                <Select.ValueText placeholder="— select worker —" />
+                              </Select.Trigger>
+                            </Select.Control>
+                            <Select.Positioner>
+                              <Select.Content>
+                                {superWorkerItems.map((it) => (
+                                  <Select.Item key={it.value} item={it.value}>
+                                    <Select.ItemText>{it.label}</Select.ItemText>
+                                  </Select.Item>
+                                ))}
+                              </Select.Content>
+                            </Select.Positioner>
+                          </Select.Root>
+                        </Box>
+                      </>
+                    ) : (
+                      <Box p={2} bg="purple.50" rounded="md" borderWidth="1px" borderColor="purple.200">
+                        <Text fontSize="sm" color="purple.800">
+                          {superActionFor.action === "cancel" && "Cancel "}
+                          {superActionFor.action === "checkout" && "Check out "}
+                          {superActionFor.action === "return" && "Return "}
+                          on behalf of{" "}
+                          <Text as="span" fontWeight="semibold">
+                            {superActionFor.equipment.holder?.displayName ||
+                              superActionFor.equipment.holder?.email ||
+                              "the current holder"}
+                          </Text>
+                          .
+                        </Text>
+                        {superActionFor.action === "checkout" && (
+                          <Text fontSize="xs" color="purple.700" mt={1}>
+                            QR scan is bypassed — Super override.
+                          </Text>
+                        )}
+                      </Box>
+                    )}
+                  </VStack>
+                )}
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setSuperActionFor(null);
+                      setSuperPickerUserId("");
+                    }}
+                    disabled={superActionBusy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="purple"
+                    loading={superActionBusy}
+                    disabled={
+                      superActionFor?.action === "reserve" && !superPickerUserId
+                    }
+                    onClick={async () => {
+                      if (!superActionFor) return;
+                      setSuperActionBusy(true);
+                      try {
+                        const { equipment, action } = superActionFor;
+                        if (action === "reserve") {
+                          await superReserveFor(equipment, superPickerUserId);
+                        } else if (action === "cancel") {
+                          await superCancelFor(equipment);
+                        } else if (action === "checkout") {
+                          await superCheckoutFor(equipment);
+                        } else if (action === "return") {
+                          await superReturnFor(equipment);
+                        }
+                      } finally {
+                        setSuperActionBusy(false);
+                        setSuperActionFor(null);
+                        setSuperPickerUserId("");
+                      }
+                    }}
+                  >
+                    {superActionFor?.action === "reserve" && "Reserve"}
+                    {superActionFor?.action === "cancel" && "Cancel reservation"}
+                    {superActionFor?.action === "checkout" && "Check out"}
+                    {superActionFor?.action === "return" && "Return"}
                   </Button>
                 </HStack>
               </Dialog.Footer>

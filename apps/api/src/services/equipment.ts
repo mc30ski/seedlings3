@@ -12,6 +12,18 @@ type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
+// Super "act on behalf of a worker" audit marker. When the action's actor
+// (currentUserId) differs from the target worker (userId), the action is by
+// construction a Super override — only the /super/equipment/* routes pass
+// a target userId that's distinct from the caller. Folding this marker into
+// the audit metadata makes Super overrides immediately legible in the audit
+// feed without changing the actorUserId (which must still record who pulled
+// the lever — the Super, not the worker). See routes/admin.ts /super/* and
+// EquipmentTab.tsx Super action buttons.
+function onBehalfOfMeta(currentUserId: string, userId: string) {
+  return currentUserId !== userId ? { actedOnBehalfOfUserId: userId } : {};
+}
+
 /** ISO YYYY-MM-DD in Eastern Time for the given Date. */
 const ET_DAY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
 export function etDayKey(d: Date): string {
@@ -843,6 +855,7 @@ export const equipment: ServicesEquipment = {
       await writeAudit(tx, AUDIT.EQUIPMENT.RESERVED, currentUserId, {
         equipmentRecord: { ...eq },
         checkoutRecord: { ...reserve },
+        ...onBehalfOfMeta(currentUserId, userId),
       });
 
       return { id, userId };
@@ -878,6 +891,7 @@ export const equipment: ServicesEquipment = {
         {
           equipmentRecord: { ...eq },
           checkoutRecord: { ...unreserved },
+          ...onBehalfOfMeta(currentUserId, userId),
         }
       );
 
@@ -935,6 +949,7 @@ export const equipment: ServicesEquipment = {
       await writeAudit(tx, AUDIT.EQUIPMENT.CHECKED_OUT, currentUserId, {
         equipmentRecord: { ...updated },
         checkoutRecord: { ...checkout },
+        ...onBehalfOfMeta(currentUserId, userId),
       });
 
       return { id, userId };
@@ -1049,6 +1064,7 @@ export const equipment: ServicesEquipment = {
         equipmentRecord: { ...updated },
         checkoutRecord: { ...returned },
         rentalBreakdown: rental?.breakdown ?? null,
+        ...onBehalfOfMeta(currentUserId, userId),
       });
 
       return { released: true };
@@ -1232,7 +1248,7 @@ export const equipment: ServicesEquipment = {
   // (checkedOutAt set — reservations that were never picked up don't count as
   // usage) overlapping the requested range. With userId the result is scoped
   // to one worker's own checkouts; without it, every worker (admin view).
-  async listUsage(params?: { from?: string; to?: string; userId?: string }) {
+  async listUsage(params?: { from?: string; to?: string; userId?: string; cutoff?: Date | null }) {
     const where: any = { checkedOutAt: { not: null } };
     if (params?.to) where.checkedOutAt.lte = etEndOfDay(params.to);
     if (params?.from) {
@@ -1241,6 +1257,20 @@ export const equipment: ServicesEquipment = {
         { releasedAt: null },
         { releasedAt: { gte: etMidnight(params.from) } },
       ];
+    }
+    // Business Start Date filter — hide checkouts that happened pre-cutoff.
+    // Anchored on checkedOutAt (when the usage event occurred) rather than
+    // releasedAt: this tab cares about WHEN equipment was used, and active
+    // (releasedAt=null) checkouts must remain visible. Super reveal header
+    // returns null cutoff in the route, so this is a no-op when revealed.
+    if (params?.cutoff) {
+      const c = params.cutoff;
+      where.checkedOutAt = {
+        ...where.checkedOutAt,
+        gte: where.checkedOutAt?.gte && where.checkedOutAt.gte.getTime() >= c.getTime()
+          ? where.checkedOutAt.gte
+          : c,
+      };
     }
     if (params?.userId) where.userId = params.userId;
     const checkouts = await prisma.checkout.findMany({

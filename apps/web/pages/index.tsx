@@ -1020,6 +1020,20 @@ export default function HomePage() {
           categoryIcon: FiBarChart2,
         },
         {
+          // ── Equipment ──
+          // Same component as the admin Inventory tab, but rendered with
+          // purpose="SUPER" so EquipmentTab exposes its act-on-behalf-of-
+          // worker controls (reserve / cancel / checkout / return for a
+          // specific worker). Fail-safe for when a worker is stuck in the
+          // mobile flow and a Super needs to drive the action remotely.
+          value: "equipment",
+          label: "Inventory",
+          icon: FiTool,
+          content: wrapWithInlineMessage(<EquipmentTab key={`seq-${adminEquipmentRemountKey}`} me={me} purpose="SUPER" />),
+          category: "Equipment",
+          categoryIcon: FiTool,
+        },
+        {
           // ── Directory ──
           // Super-only writable Users view. The same component admins
           // see read-only on their Directory tab, but with full mutation

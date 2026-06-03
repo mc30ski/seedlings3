@@ -245,10 +245,12 @@ export type ServicesEquipment = {
   // releasedAt) are excluded. Pass null/undefined for no filter. See
   // lib/businessStartCutoff.ts.
   listEquipmentCharges(params?: { userId?: string; from?: string; to?: string; cutoff?: Date | null }): Promise<any[]>;
-  // Usage view does NOT take a cutoff — equipment USAGE history (which jobs
-  // used what tools) is operational data, not money. The cutoff only applies
-  // to the CHARGE view (listEquipmentCharges).
-  listUsage(params?: { from?: string; to?: string; userId?: string }): Promise<any[]>;
+  // Usage view respects the BSD cutoff just like other money-adjacent views —
+  // pre-cutoff checkouts are hidden so the operator's "fresh slate" view of
+  // the books is consistent across surfaces. Anchored on checkedOutAt (the
+  // usage event) rather than releasedAt, so active (releasedAt=null) checkouts
+  // post-cutoff still appear. Super reveal flips cutoff to null upstream.
+  listUsage(params?: { from?: string; to?: string; userId?: string; cutoff?: Date | null }): Promise<any[]>;
 };
 
 export type ServicesUsers = {
