@@ -20,7 +20,7 @@ import {
 import { AlertCircle, AlertTriangle, Archive, Ban, Bell, BellOff, Calendar, CalendarRange, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clock, Copy, Eye, Filter, Hand, Heart, Info, LayoutList, Link2, List, Mail, Maximize2, MessageCircle, MoreHorizontal, Pause, Phone, Pin, PinOff, Play, RefreshCw, Repeat, Share2, Star, Tag, X } from "lucide-react";
 import DateInput from "@/src/ui/components/DateInput";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/src/lib/api";
-import { projectViewerPayout } from "@/src/lib/paymentMath";
+import { projectViewerPayout, projectTeamPayoutsForOcc, perWorkerShare, rateForViewer } from "@/src/lib/paymentMath";
 import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { getLocation } from "@/src/lib/geo";
 import { determineRoles, occurrenceStatusColor, prettyStatus, clientLabel, fmtDate, fmtDateTime, fmtDateWeekday, bizDateKey, jobTypeLabel } from "@/src/lib/lib";
@@ -4988,22 +4988,49 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           </Badge>
                         )}
                         {displayPrice != null && !occ.payment && (() => {
-                          // Per-worker payout PROJECTION (no Payment row yet).
-                          // Centralized in lib/paymentMath.ts — read the
-                          // doc-block there before touching this site.
-                          const payout = projectViewerPayout(occ as any, me, {
-                            contractorFeePercent: commissionPercent,
-                            employeeMarginPercent: marginPercent,
-                          });
-                          const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-                          const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
-                          const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                          const label = me?.isOwner ? "Owner Earnings" : "Payout";
-                          return pct > 0 ? (
-                            <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                          // Payout PROJECTION (no Payment row yet).
+                          // Centralized in lib/paymentMath.ts.
+                          //
+                          // Two cases:
+                          //   1. JOB IS ASSIGNED → project from the assignee(s)'
+                          //      worker types. An admin viewing a contractor's
+                          //      job sees the contractor's projection, not the
+                          //      admin's own. For multi-worker crews, sum
+                          //      across all active assignees.
+                          //   2. JOB IS UNCLAIMED → fall back to the viewer's
+                          //      worker type ("if I claim this, my payout").
+                          //      Preserves the unclaimed-job affordance for
+                          //      workers browsing available work.
+                          const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
+                          const isUnclaimed = activeAssignees.length === 0;
+                          const rates = { contractorFeePercent: commissionPercent, employeeMarginPercent: marginPercent };
+                          const payout = isUnclaimed
+                            ? projectViewerPayout(occ as any, me, rates)
+                            : projectTeamPayoutsForOcc(occ as any, rates);
+                          if (payout <= 0) return null;
+                          // Label varies by case:
+                          //   • Unclaimed → "Est. owner earnings" / "Payout (if you claim)"
+                          //   • Single assignee → "<name>'s payout" (or "Owner Earnings" if owner)
+                          //   • Multi → "Workers payout"
+                          const single = !isUnclaimed && activeAssignees.length === 1 ? activeAssignees[0] : null;
+                          const singleIsOwner = !!single?.user && (single.user as any).isOwner;
+                          const label = isUnclaimed
+                            ? me?.isOwner
+                              ? "Est. owner earnings (if claimed)"
+                              : "Payout (if you claim)"
+                            : single
+                              ? singleIsOwner
+                                ? "Owner Earnings"
+                                : `${single.user?.displayName ?? "Worker"}'s payout`
+                              : "Workers payout";
+                          const palette = isUnclaimed
+                            ? me?.isOwner ? "purple" : "green"
+                            : singleIsOwner ? "purple" : "green";
+                          return (
+                            <Badge colorPalette={palette} variant="subtle" fontSize="xs" px="2" borderRadius="full">
                               {label}: ${payout.toFixed(2)}
                             </Badge>
-                          ) : null;
+                          );
                         })()}
                         {!isTaskOrReminder && !isEstimateOcc && !isEvent && !isFollowup && !isAnnouncement && (() => {
                           const actual = effectiveMinutes(occ);
@@ -5236,68 +5263,99 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                             </HStack>
                           )}
                           {((occ.price || null) ?? (occ.proposalAmount || null)) != null && !occ.payment && (() => {
-                            // Expanded "Est. your payout" panel. The final
-                            // myPayout number comes from the canonical
-                            // helper; the local `myShare`/`myDeduction`
-                            // breakdown is kept ONLY for the explanatory
-                            // sub-line ("$50 share − $15 margin (30%)") —
-                            // the headline number must always equal
-                            // `projectViewerPayout(...)` to avoid drift
-                            // with the inline badge above.
+                            // Expanded per-worker payout PROJECTION (no
+                            // Payment row yet). For assigned jobs we project
+                            // each assignee's payout using THEIR worker type
+                            // — admin viewing a contractor's job sees the
+                            // contractor's projection, not the admin's. For
+                            // unclaimed jobs we fall back to the viewer's
+                            // projection ("if I claim, my payout").
                             const basePrice = ((occ.price || null) ?? (occ.proposalAmount || null))!;
                             const addonsAmt = addonTotal(occ);
-                            const displayPrice = basePrice + addonsAmt;
+                            const displayPriceVal = basePrice + addonsAmt;
                             const expTotal = (occ.expenses ?? []).reduce((s, e) => s + e.cost, 0);
-                            const net = displayPrice - expTotal;
-                            const isEmp = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE";
-                            const isCon = me?.workerType === "CONTRACTOR" || !me?.workerType;
-                            const pct = isEmp ? marginPercent : isCon ? commissionPercent : 0;
-                            const label = isEmp ? "margin" : "commission";
+                            const net = Math.max(0, displayPriceVal - expTotal);
                             const activeAssignees = (occ.assignees ?? []).filter((a) => a.role !== "observer");
-                            const workerCount = Math.max(1, activeAssignees.length);
-                            const myShare = net / workerCount;
-                            const myPayout = projectViewerPayout(occ as any, me, {
-                              contractorFeePercent: commissionPercent,
-                              employeeMarginPercent: marginPercent,
+                            const rates = { contractorFeePercent: commissionPercent, employeeMarginPercent: marginPercent };
+                            const isUnclaimed = activeAssignees.length === 0;
+
+                            if (isUnclaimed) {
+                              // "If you claim this" projection — viewer's
+                              // worker type drives the rate. Matches the
+                              // chip's unclaimed-case behavior above.
+                              const viewerRate = rateForViewer(me as any, rates);
+                              if (viewerRate <= 0) return null;
+                              const share = perWorkerShare(occ as any);
+                              const myPayout = projectViewerPayout(occ as any, me, rates);
+                              const myDeduction = Math.round((share - myPayout) * 100) / 100;
+                              const viewerLabel = me?.workerType === "EMPLOYEE" || me?.workerType === "TRAINEE" ? "margin" : "commission";
+                              return (
+                                <Box fontSize="xs" color="fg.muted">
+                                  <HStack gap={2}>
+                                    <Text>{me?.isOwner ? "Est. owner earnings (if claimed):" : "Payout if you claim:"}</Text>
+                                    <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                      ${myPayout.toFixed(2)}
+                                    </Badge>
+                                  </HStack>
+                                  <Text fontSize="xs" color="fg.muted">
+                                    ${displayPriceVal.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${myDeduction.toFixed(2)} {viewerLabel} ({viewerRate}%)
+                                  </Text>
+                                </Box>
+                              );
+                            }
+
+                            // Assigned case: per-worker breakdown using each
+                            // assignee's own worker type. share is identical
+                            // for every assignee (equal split of `net`).
+                            const sharePerWorker = net / activeAssignees.length;
+                            const rows = activeAssignees.map((a) => {
+                              const wt = a.user?.workerType ?? null;
+                              const isEmpClass = wt === "EMPLOYEE" || wt === "TRAINEE";
+                              const ratePct = isEmpClass ? marginPercent : commissionPercent;
+                              const deduction = Math.round(sharePerWorker * (ratePct / 100) * 100) / 100;
+                              const payout = Math.round(Math.max(0, sharePerWorker - deduction) * 100) / 100;
+                              return {
+                                userId: a.userId,
+                                name: a.user?.displayName ?? a.user?.email ?? a.userId,
+                                workerType: wt,
+                                isOwner: !!(a.user as any)?.isOwner,
+                                share: Math.round(sharePerWorker * 100) / 100,
+                                deduction,
+                                deductionLabel: isEmpClass ? "margin" : "commission",
+                                ratePct,
+                                payout,
+                              };
                             });
-                            const myDeduction = Math.round((myShare - myPayout) * 100) / 100;
-                            const sameClassCrew = activeAssignees.every((a) => {
-                              const t = a.user?.workerType;
-                              if (isEmp) return t === "EMPLOYEE" || t === "TRAINEE";
-                              if (isCon) return t === "CONTRACTOR" || !t;
-                              return true;
-                            });
+                            const totalPayout = rows.reduce((s, r) => s + r.payout, 0);
+                            const workerCount = activeAssignees.length;
+                            const headlineLabel = workerCount === 1
+                              ? (rows[0].isOwner ? `Est. ${rows[0].name}'s owner earnings:` : `Est. ${rows[0].name}'s payout:`)
+                              : "Est. workers' payout:";
+                            const headlinePalette = workerCount === 1 && rows[0].isOwner ? "purple" : "green";
                             return (
                               <Box fontSize="xs" color="fg.muted">
-                                {pct > 0 && (
-                                  <>
-                                    <HStack gap={2}>
-                                      <Text>{me?.isOwner ? "Est. your owner earnings:" : "Est. your payout:"}</Text>
-                                      <Badge colorPalette={me?.isOwner ? "purple" : "green"} variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                                        ${myPayout.toFixed(2)}
-                                      </Badge>
-                                    </HStack>
-                                    {workerCount > 1 ? (
-                                      <>
-                                        {expTotal > 0 && (
-                                          <Text fontSize="xs" color="fg.muted">
-                                            ${displayPrice.toFixed(2)} − ${expTotal.toFixed(2)} exp = ${net.toFixed(2)} net
-                                          </Text>
-                                        )}
-                                        <Text fontSize="xs" color="fg.muted">
-                                          Your {Math.round(100 / workerCount)}% share: ${myShare.toFixed(2)} − ${myDeduction.toFixed(2)} {label} ({pct}%)
-                                        </Text>
-                                      </>
-                                    ) : (
-                                      <Text fontSize="xs" color="fg.muted">
-                                        ${displayPrice.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${myDeduction.toFixed(2)} {label} ({pct}%)
-                                      </Text>
-                                    )}
-                                  </>
+                                <HStack gap={2}>
+                                  <Text>{headlineLabel}</Text>
+                                  <Badge colorPalette={headlinePalette} variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                                    ${totalPayout.toFixed(2)}
+                                  </Badge>
+                                </HStack>
+                                {workerCount > 1 && expTotal > 0 && (
+                                  <Text fontSize="xs" color="fg.muted">
+                                    ${displayPriceVal.toFixed(2)} − ${expTotal.toFixed(2)} exp = ${net.toFixed(2)} net
+                                  </Text>
                                 )}
-                                {workerCount > 1 && sameClassCrew && pct > 0 && (
-                                  <Text fontSize="xs" color="fg.muted" mt={0.5}>
-                                    ~${myPayout.toFixed(2)}/person if split evenly ({workerCount} workers)
+                                {workerCount > 1 ? (
+                                  <VStack align="start" gap={0} mt={0.5}>
+                                    {rows.map((r) => (
+                                      <Text key={r.userId} fontSize="xs" color="fg.muted">
+                                        {r.name}: ${r.share.toFixed(2)} share − ${r.deduction.toFixed(2)} {r.deductionLabel} ({r.ratePct}%) = ${r.payout.toFixed(2)}
+                                      </Text>
+                                    ))}
+                                  </VStack>
+                                ) : (
+                                  <Text fontSize="xs" color="fg.muted">
+                                    ${displayPriceVal.toFixed(2)}{expTotal > 0 ? ` − $${expTotal.toFixed(2)} exp` : ""} − ${rows[0].deduction.toFixed(2)} {rows[0].deductionLabel} ({rows[0].ratePct}%)
                                   </Text>
                                 )}
                               </Box>

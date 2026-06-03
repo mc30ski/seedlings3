@@ -69,6 +69,11 @@ export default function EquipmentDialog({
   const [issues, setIssues] = useState<string | undefined>("");
   const [age, setAge] = useState<string | undefined>("");
   const [dailyRate, setDailyRate] = useState("");
+  // Per-job + per-day-cap billing knob. Empty string = legacy flat-daily
+  // billing. A positive integer engages the new model: contractors pay
+  // (dailyRate / equivalentJobs) per formal-crew or solo job completed
+  // while the equipment is checked out, capped at dailyRate per day.
+  const [equivalentJobs, setEquivalentJobs] = useState("");
   const [requiresInsurance, setRequiresInsurance] = useState(false);
   const [instructions, setInstructions] = useState<EquipmentInstruction[]>([]);
   const [instructionsDialogOpen, setInstructionsDialogOpen] = useState(false);
@@ -124,6 +129,7 @@ export default function EquipmentDialog({
       setIssues(initial.issues ?? "");
       setAge(initial.age ?? "");
       setDailyRate(initial.dailyRate != null ? initial.dailyRate.toFixed(2) : "");
+      setEquivalentJobs((initial as any).equivalentJobs != null ? String((initial as any).equivalentJobs) : "");
       setRequiresInsurance(!!initial.requiresInsurance);
       setInstructions(initial.instructions ?? []);
     } else {
@@ -139,6 +145,7 @@ export default function EquipmentDialog({
       setIssues("");
       setAge("");
       setDailyRate("");
+      setEquivalentJobs("");
       setRequiresInsurance(false);
       setInstructions([]);
     }
@@ -159,11 +166,15 @@ export default function EquipmentDialog({
       issues: issues,
       age: age,
       dailyRate: dailyRate ? parseFloat(dailyRate) : null,
+      // Cast to int; empty string / NaN / non-positive sends null, which
+      // means "flat-daily billing" on the server.
+      equivalentJobs: equivalentJobs && parseInt(equivalentJobs, 10) > 0
+        ? parseInt(equivalentJobs, 10)
+        : null,
       requiresInsurance,
     };
 
     setBusy(true);
-    let didCreate = false;
     try {
       let saved: Equipment;
       // Effectively UPDATE if we have an id (either from initial or just-created).
@@ -172,10 +183,9 @@ export default function EquipmentDialog({
         saved = await apiPost<Equipment>("/api/admin/equipment", payload);
         publishInlineMessage({
           type: "SUCCESS",
-          text: `Equipment “${payload.shortDesc}” created. You can now add photos and instructions.`,
+          text: `Equipment “${payload.shortDesc}” created. Reopen the row to add photos or instructions.`,
         });
         setCreatedId(saved.id);
-        didCreate = true;
       } else {
         if (!existingId) throw new Error("Missing equipment id");
         saved = await apiPatch<Equipment>(
@@ -199,8 +209,13 @@ export default function EquipmentDialog({
         ),
       });
     } finally {
-      // After CREATE, keep the dialog open so the user can manage photos / instructions.
-      if (!didCreate) onOpenChange(false);
+      // Close on both CREATE and UPDATE. The old "stay open after CREATE so
+      // the user can manage photos/instructions" behavior was intentional
+      // but surprised admins who expected the dialog to close like every
+      // other form. To restore the stay-open behavior, the previous code
+      // guarded onOpenChange(false) with a `didCreate` flag; just re-add
+      // that flag if you want it back.
+      onOpenChange(false);
       setBusy(false);
     }
   }
@@ -283,7 +298,30 @@ export default function EquipmentDialog({
                         placeholder="0.00 (no charge)"
                       />
                       <Text fontSize="xs" color="fg.muted" mt="1">
-                        Only contractors are charged for equipment usage. Employees and trainees use equipment at no cost.
+                        Only contractors are charged for equipment usage. Employees and trainees use equipment at no cost (covered by their business margin).
+                      </Text>
+                    </div>
+                    <div>
+                      <Text mb="1">Equivalent Jobs / Day</Text>
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        step={1}
+                        size="sm"
+                        value={equivalentJobs}
+                        onChange={(e) => setEquivalentJobs(e.target.value)}
+                        placeholder="Leave blank for flat daily rate"
+                      />
+                      <Text fontSize="xs" color="fg.muted" mt="1">
+                        When set, contractors are charged per job instead of per
+                        day, with the daily rate as the cap. Per-job rate ={" "}
+                        {dailyRate && equivalentJobs && parseInt(equivalentJobs, 10) > 0
+                          ? `$${(parseFloat(dailyRate) / parseInt(equivalentJobs, 10)).toFixed(2)}/job`
+                          : "(set rate + jobs to preview)"}
+                        . On a day with N jobs and equivalent {equivalentJobs || "X"}, contractor pays
+                        {" "}min(N × per-job, daily rate). Leave blank to keep
+                        flat-daily billing for this piece.
                       </Text>
                     </div>
                     <div>

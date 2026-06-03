@@ -240,6 +240,18 @@ model Equipment {
   age       String?
 
   dailyRate         Float?
+
+  // Per-job-with-daily-cap billing knob for contractors.
+  //   NULL  → legacy flat-daily billing (rentalCost = rentalDays × dailyRate).
+  //   N > 0 → per-job rate is (dailyRate / N), capped per ET calendar day at
+  //           dailyRate. Contractors pay per formal-crew (or solo) job
+  //           completed while the equipment was checked out. The "Right Now"
+  //           cap protects them from overpaying on heavy-volume days.
+  // Admin opts a piece into the new model by setting this column. See
+  // services/equipment.ts computeRentalCost and the memo at
+  // memory/feature_per_job_equipment_billing.md.
+  equivalentJobs    Int?
+
   requiresInsurance Boolean @default(false)
 
   checkouts        Checkout[]
@@ -281,6 +293,14 @@ model Checkout {
   releasedAt   DateTime?
   rentalDays   Int?
   rentalCost   Float?
+
+  // Per-day breakdown captured at release time. Shape:
+  //   [{ day: "YYYY-MM-DD", jobs: number|null, subtotal: number, capped: bool }]
+  // `jobs` is null for flat-daily billing; a count for per-job billing.
+  // Stored so receipts / "my charges" views can reconstruct the math
+  // without re-running fetchJobsByDayForCheckout. See
+  // services/equipment.ts computeRentalCost.
+  rentalBreakdown Json?
 
   // Group rentals: when set, the checkout is owned by the group's claimer
   // (still tracked in userId) but the cost is split among workers per
@@ -1114,6 +1134,11 @@ model BusinessExpense {
   vendor        String?
   invoiceNumber String?
   notes         String?
+  // Free-text record of which account / instrument the payment came from
+  // (e.g. "Chase business card", "Owner cash", "Bluevine checking"). Pure
+  // operator note — not categorized, never feeds tax line items. Useful for
+  // reconciling against bank/card statements at month-end.
+  paymentFrom   String?
 
   // Optional link to a piece of equipment — useful for capital purchases
   // (e.g. "$8K rider mower" categorized as Depreciation gets linked to its

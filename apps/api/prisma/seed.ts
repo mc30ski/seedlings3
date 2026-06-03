@@ -435,7 +435,10 @@ async function seedDatabase() {
     data: { type: "MOWER", brand: "Scag", model: "V-Ride II 48\"", shortDesc: "Commercial stand-on mower (compact)", longDesc: "48\" deck, 22hp Kawasaki FX691V. Same as the 52\" but fits through standard 48\" gates. Use this one for fenced residential backyards. Spare belt in under-seat compartment.", status: "AVAILABLE", energy: "Gas", dailyRate: 8.0, requiresInsurance: true, qrSlug: "scag-vride-002" },
   });
   const mower3 = await prisma.equipment.create({
-    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 4.0, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
+    // Per-job billing example: $4/day cap, 4 equivalent jobs → $1/job. Lets
+    // dev exercise the new model alongside flat-daily pieces on the same
+    // equipment list.
+    data: { type: "MOWER", brand: "Honda", model: "HRN216VKA", shortDesc: "21\" push mower", longDesc: "Self-propelled 21\" push mower. Use for small yards, tight areas, or slopes where stand-on is unsafe. Variable speed drive. Bag or mulch — switch plate under deck. Runs on regular unleaded.", status: "MAINTENANCE", energy: "Gas", dailyRate: 4.0, equivalentJobs: 4, qrSlug: "honda-hrn216-001", issues: "Blade needs sharpening" },
   });
   const mower4 = await prisma.equipment.create({
     data: { type: "MOWER", brand: "Toro", model: "TimeCutter 42\"", shortDesc: "Zero-turn residential mower", longDesc: "42\" zero-turn with 22.5hp Toro V-Twin. Good mid-size option for residential lawns too large for a push mower but too small for the Scags. Lap bars for steering. Fuel shutoff valve on left side.", status: "AVAILABLE", energy: "Gas", dailyRate: 6.0, qrSlug: "toro-tc42-001" },
@@ -485,7 +488,9 @@ async function seedDatabase() {
   });
   // Cutters (chainsaws, pole saws)
   const chainsawEquip = await prisma.equipment.create({
-    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 5.0, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
+    // Per-job billing example with a tighter equivalentJobs (heavy wear
+    // per use): $5/day cap, 2 equivalent jobs → $2.50/job.
+    data: { type: "CUTTER", brand: "Stihl", model: "MS 271", shortDesc: "20\" farm & ranch chainsaw", longDesc: "50.2cc, 20\" bar. Use for limb removal, storm cleanup, and tree work up to 18\" diameter. Pre-separation air filter — clean weekly. Chain tension: finger-tight with slight pull. Chaps required when operating.", status: "AVAILABLE", energy: "Gas", dailyRate: 5.0, equivalentJobs: 2, requiresInsurance: true, qrSlug: "stihl-ms271-001" },
   });
   await prisma.equipment.create({
     data: { type: "CUTTER", brand: "Stihl", model: "HT 135", shortDesc: "Telescoping pole pruner", longDesc: "Reaches up to 16ft without a ladder. 24.1cc, 12\" bar. Use for trimming overhead branches that are too high for the chainsaw. Extend slowly — gets heavy at full reach. Two-person operation recommended for stability.", status: "AVAILABLE", energy: "Gas", dailyRate: 4.0, qrSlug: "stihl-ht135-001" },
@@ -1837,7 +1842,11 @@ async function seedDatabase() {
           supportsClientRequest: true,
           supportsOnSite: true,
           deepLinkTemplate: null,
-          instructions: "Send {{amount}} to {ZELLE_ADDRESS} via Zelle in your bank app",
+          instructions: "Open your bank's Zelle, paste the address above as the recipient, and send the amount. Then come back here and tap \"I've sent the payment\" so we know to look for it.",
+          // payToTarget drives the manual-pay modal — same big orange button
+          // as Venmo, but tapping opens a modal showing this address in big
+          // text with a copy button (Zelle has no universal deep link).
+          payToTarget: "{ZELLE_ADDRESS}",
           active: true,
           preferred: true,
         },

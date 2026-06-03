@@ -247,7 +247,9 @@ function makeEquipmentRentals() {
   // Contractor rentals — Checkouts with rentalCost > 0 and releasedAt
   // in range. These are equipment rental INCOME to the business (the
   // contractor pays the LLC to use company-owned equipment) and must
-  // appear in qb-income.csv.
+  // appear in qb-income.csv. Solo rentals have `splits: []` (no group);
+  // the export emits one row per checkout. Group-rental fixtures are
+  // added by individual tests as needed.
   return [
     {
       id: "co-1",
@@ -260,6 +262,7 @@ function makeEquipmentRentals() {
       rentalCost: 60.0,
       equipment: { id: "eq-mower", shortDesc: "21\" mower", brand: "Honda", model: "HRX217VLA" },
       user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+      splits: [],
     },
     {
       id: "co-2",
@@ -272,6 +275,7 @@ function makeEquipmentRentals() {
       rentalCost: 120.0,
       equipment: { id: "eq-aerator", shortDesc: "Aerator", brand: "Bluebird", model: "PR22" },
       user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+      splits: [],
     },
   ];
 }
@@ -578,6 +582,129 @@ describe("qbIncomeCsv — tax integrity", () => {
     expect(csv).not.toContain("RENT-co-zero");
     expect(total).toBe(120);
     expect(rowCount).toBe(1); // only the $120 row was written
+  });
+
+  // ── Group rentals — per-contractor split rows ──────────────────────────
+  // When a Checkout has CheckoutSplit rows (i.e., it was a group rental),
+  // the export emits ONE ROW PER CONTRACTOR SPLIT instead of one row at
+  // the parent Checkout.rentalCost. Employee/trainee splits have amount=0
+  // and are filtered by the Prisma where clause (`splits.where.amount > 0`);
+  // here we verify the export logic handles whatever the query returns.
+  it("group rental emits one CSV row per contractor split, NOT a single row at parent rentalCost", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.checkout.findMany.mockResolvedValue([
+      {
+        ...makeEquipmentRentals()[0],
+        id: "co-group-1",
+        groupId: "g-alpha-crew",
+        // Parent rentalCost = sum of contractor splits (per the new
+        // splitter contract). Two contractors at $30 each = $60.
+        rentalCost: 60.0,
+        splits: [
+          {
+            checkoutId: "co-group-1",
+            userId: "c1",
+            percent: 50,
+            amount: 30.0,
+            user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+          },
+          {
+            checkoutId: "co-group-1",
+            userId: "c2",
+            percent: 50,
+            amount: 30.0,
+            user: { id: "c2", displayName: "Carl Contractor", email: "carl@example.com" },
+          },
+        ],
+      },
+    ]);
+    const { csv, total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    const lines = csv.split("\n");
+    const rentalLines = lines.filter((l) => l.includes("RENT-"));
+    // Two CSV rows — one per contractor split.
+    expect(rentalLines.length).toBe(2);
+    // Each row carries its own contractor as Customer.
+    expect(csv).toContain("Carla Contractor");
+    expect(csv).toContain("Carl Contractor");
+    // Each row carries the user-specific RENT- ref so QB dedupes per
+    // contractor on re-import.
+    expect(csv).toContain("RENT-co-group-1-c1");
+    expect(csv).toContain("RENT-co-group-1-c2");
+    // The plain "RENT-co-group-1" without the user suffix must NOT appear
+    // (would imply a single per-checkout row collapsing both contractors).
+    for (const line of rentalLines) {
+      expect(line).toMatch(/RENT-co-group-1-c[12]/);
+    }
+    // Each row's Amount = the contractor's CheckoutSplit.amount, not the
+    // parent's rentalCost.
+    expect(csv).toContain("30.00");
+    expect(total).toBe(60); // sum of the two splits
+    expect(rowCount).toBe(2);
+  });
+
+  it("mixed crew (contractor + employee splits) — employee amount=0 already filtered, contractor row only", async () => {
+    // The Prisma query has `splits.where.amount > 0`, so $0 employee
+    // splits never reach the mock here. This test pins what the export
+    // emits given that filtered input: just the contractor.
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.checkout.findMany.mockResolvedValue([
+      {
+        ...makeEquipmentRentals()[0],
+        id: "co-mixed",
+        groupId: "g-mixed",
+        rentalCost: 30.0, // only the contractor's $30 (employee absorbed)
+        splits: [
+          {
+            checkoutId: "co-mixed",
+            userId: "c1",
+            percent: 50,
+            amount: 30.0,
+            user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+          },
+          // The employee split (amount=0) was filtered out by the Prisma
+          // where clause — not in the mock data.
+        ],
+      },
+    ]);
+    const { csv, total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(csv).toContain("Carla Contractor");
+    expect(csv).not.toContain("Eve Employee"); // employee never appears
+    expect(total).toBe(30);
+    expect(rowCount).toBe(1);
+  });
+
+  it("group rental income sums alongside solo rentals correctly", async () => {
+    // Solo rental: $60. Group rental: 2 contractors at $30 each = $60.
+    // Total: $120 across 3 rows (1 solo + 2 group splits).
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.checkout.findMany.mockResolvedValue([
+      makeEquipmentRentals()[0], // solo, $60
+      {
+        ...makeEquipmentRentals()[1],
+        id: "co-group-2",
+        groupId: "g-bravo-crew",
+        rentalCost: 60.0,
+        splits: [
+          {
+            checkoutId: "co-group-2",
+            userId: "c1",
+            percent: 50,
+            amount: 30.0,
+            user: { id: "c1", displayName: "Carla Contractor", email: "carla@example.com" },
+          },
+          {
+            checkoutId: "co-group-2",
+            userId: "c2",
+            percent: 50,
+            amount: 30.0,
+            user: { id: "c2", displayName: "Carl Contractor", email: "carl@example.com" },
+          },
+        ],
+      },
+    ]);
+    const { total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    expect(total).toBe(120);
+    expect(rowCount).toBe(3); // 1 solo + 2 group split rows
   });
 });
 

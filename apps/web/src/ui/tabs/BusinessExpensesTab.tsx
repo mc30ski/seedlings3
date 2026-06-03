@@ -96,6 +96,11 @@ type BusinessExpense = {
   category?: string | null;
   vendor?: string | null;
   invoiceNumber?: string | null;
+  // Free-text "what account/instrument did this come out of?" — pure
+  // operator note (e.g. "Chase business card", "Owner cash"). Never
+  // feeds tax line items; only surfaced as a column on the entry card
+  // for reconciliation against bank/card statements.
+  paymentFrom?: string | null;
   notes?: string | null;
   equipmentId?: string | null;
   equipment?: { id: string; shortDesc?: string | null; brand?: string | null; model?: string | null; qrSlug?: string | null } | null;
@@ -328,6 +333,7 @@ export default function BusinessExpensesTab() {
   const [fCategory, setFCategory] = useState("");
   const [fVendor, setFVendor] = useState("");
   const [fInvoiceNumber, setFInvoiceNumber] = useState("");
+  const [fPaymentFrom, setFPaymentFrom] = useState("");
   const [fNotes, setFNotes] = useState("");
   const [fEquipmentId, setFEquipmentId] = useState<string>("");
   const [fRecurrence, setFRecurrence] = useState<string>(""); // "" = one-off
@@ -423,6 +429,7 @@ export default function BusinessExpensesTab() {
     setFCategory("");
     setFVendor("");
     setFInvoiceNumber("");
+    setFPaymentFrom("");
     setFNotes("");
     setFEquipmentId("");
     setFRecurrence("");
@@ -443,6 +450,7 @@ export default function BusinessExpensesTab() {
     setFCategory(e.category ?? "");
     setFVendor(e.vendor ?? "");
     setFInvoiceNumber(e.invoiceNumber ?? "");
+    setFPaymentFrom(e.paymentFrom ?? "");
     setFNotes(e.notes ?? "");
     setFEquipmentId(e.equipmentId ?? "");
     setFRecurrence(e.recurrence ?? "");
@@ -464,6 +472,7 @@ export default function BusinessExpensesTab() {
     setFCategory(s.prefill.category ?? "");
     setFVendor(s.prefill.vendor ?? "");
     setFInvoiceNumber("");
+    setFPaymentFrom("");
     setFNotes("");
     setFEquipmentId(s.prefill.equipmentId ?? "");
     setFRecurrence(s.prefill.recurrence);
@@ -512,6 +521,10 @@ export default function BusinessExpensesTab() {
         category: fType === "EXPENSE" ? (fCategory.trim() || null) : null,
         vendor: fType === "EXPENSE" ? (fVendor.trim() || null) : null,
         invoiceNumber: fType === "EXPENSE" ? (fInvoiceNumber.trim() || null) : null,
+        // paymentFrom applies to all entry types — even equity entries
+        // (capital contributions / owner draws) have a source/destination
+        // worth recording. Always send.
+        paymentFrom: fPaymentFrom.trim() || null,
         notes: fNotes.trim() || null,
         equipmentId: fType === "EXPENSE" ? (fEquipmentId || null) : null,
         recurrence: fRecurrence || null,
@@ -1089,6 +1102,7 @@ export default function BusinessExpensesTab() {
                       <Text>{fmtDate(e.date)}</Text>
                       {e.vendor && <Text>· {e.vendor}</Text>}
                       {e.invoiceNumber && <Text>· #{e.invoiceNumber}</Text>}
+                      {e.paymentFrom && <Text>· from {e.paymentFrom}</Text>}
                       {e.createdBy?.displayName && <Text>· by {e.createdBy.displayName}</Text>}
                     </HStack>
                     {e.notes && (
@@ -1337,6 +1351,13 @@ export default function BusinessExpensesTab() {
                       </Box>
                     </>
                   )}
+                  {/* Optional source-of-funds note. Pure free text — never
+                      categorized or fed to tax line items. Useful for
+                      matching to bank/card statements at month-end. */}
+                  <Box>
+                    <Text fontSize="sm" mb={1}>Payment From <Text as="span" fontSize="xs" color="fg.muted">(optional)</Text></Text>
+                    <Input size="sm" value={fPaymentFrom} onChange={(e) => setFPaymentFrom(e.target.value)} placeholder="e.g., Chase business card, Owner cash" />
+                  </Box>
                   <Box>
                     <Text fontSize="sm" mb={1}>Notes</Text>
                     <Textarea size="sm" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Optional notes" rows={2} />

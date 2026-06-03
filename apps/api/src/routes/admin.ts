@@ -2543,6 +2543,11 @@ Respond ONLY with valid JSON in this exact format:
       checkouts: number;
       daysOut: number;
       income: number;
+      // Sum of `jobs` across every day's breakdown. Null for flat-daily
+      // pieces (the model isn't job-driven). Useful in the operator
+      // leaderboard for the new per-job-with-cap pieces — answers "how
+      // many billed jobs did this tool see this window?"
+      jobsBilled: number | null;
     };
     const byEquipment = new Map<string, EqAgg>();
     for (const c of checkoutsInWindow) {
@@ -2556,10 +2561,24 @@ Respond ONLY with valid JSON in this exact format:
         checkouts: 0,
         daysOut: 0,
         income: 0,
+        jobsBilled: null,
       };
       existing.checkouts++;
       existing.daysOut += c.rentalDays ?? 0;
       existing.income += c.rentalCost ?? 0;
+      // Sum jobs from rentalBreakdown when present. A breakdown line
+      // with jobs=null (flat-daily mode) contributes nothing — keep the
+      // aggregate null when we've only seen flat-daily rentals. The
+      // first per-job breakdown promotes the running total to 0+, then
+      // accumulates.
+      const breakdown = (c as any).rentalBreakdown as Array<{ jobs: number | null }> | null | undefined;
+      if (Array.isArray(breakdown)) {
+        for (const line of breakdown) {
+          if (line.jobs != null) {
+            existing.jobsBilled = (existing.jobsBilled ?? 0) + line.jobs;
+          }
+        }
+      }
       byEquipment.set(c.equipmentId, existing);
     }
     // Inclusive day count for the window; minimum 1 to avoid divide-by-zero
@@ -4009,6 +4028,10 @@ Respond ONLY with valid JSON in this exact format:
         // exists for owner contributions or draws.
         vendor: type === "EXPENSE" && b.vendor ? String(b.vendor).trim() : null,
         invoiceNumber: type === "EXPENSE" && b.invoiceNumber ? String(b.invoiceNumber).trim() : null,
+        // paymentFrom applies to every entry type — equity entries (capital
+        // contributions / owner draws) have a source/destination too. Pure
+        // free-text operator note; never tax-relevant.
+        paymentFrom: b.paymentFrom ? String(b.paymentFrom).trim() : null,
         notes: b.notes ? String(b.notes).trim() : null,
         equipmentId: type === "EXPENSE" ? equipmentId : null,
         recurrence: recurrence as any,
@@ -4043,6 +4066,7 @@ Respond ONLY with valid JSON in this exact format:
     }
     if ("vendor" in b) data.vendor = b.vendor ? String(b.vendor).trim() : null;
     if ("invoiceNumber" in b) data.invoiceNumber = b.invoiceNumber ? String(b.invoiceNumber).trim() : null;
+    if ("paymentFrom" in b) data.paymentFrom = b.paymentFrom ? String(b.paymentFrom).trim() : null;
     if ("notes" in b) data.notes = b.notes ? String(b.notes).trim() : null;
     if ("equipmentId" in b) {
       const equipmentId = b.equipmentId ? String(b.equipmentId) : null;
@@ -5552,7 +5576,11 @@ Respond ONLY with valid JSON in this exact format:
   }
 
   // Persist + serve a single CSV. Stores the exact bytes the operator
-  // received so a re-download from history is byte-identical.
+  // received so a re-download from history is byte-identical, UNLESS the
+  // caller passes `saveHistory=false` — in which case the bytes are
+  // delivered but no ExportRun row is created. The toggle lets the
+  // operator grab an ad-hoc export (e.g. for spot-checking) without
+  // polluting the audit history.
   async function deliverCsv(
     reply: FastifyReply,
     userId: string,
@@ -5566,25 +5594,38 @@ Respond ONLY with valid JSON in this exact format:
     range: { start: Date; end: Date; startStr: string; endStr: string },
     fileSlug: string,
     result: { csv: string; rowCount: number; total: number },
+    saveHistory: boolean,
   ) {
     const fn = `${fileSlug}-${range.startStr}_${range.endStr}.csv`;
     const bytes = Buffer.from(result.csv, "utf-8");
-    await prisma.exportRun.create({
-      data: {
-        createdById: userId,
-        kind,
-        rangeStart: range.start,
-        rangeEnd: range.end,
-        rowCount: result.rowCount,
-        totalAmount: result.total,
-        fileName: fn,
-        contentType: "text/csv; charset=utf-8",
-        bytes,
-      },
-    });
+    if (saveHistory) {
+      await prisma.exportRun.create({
+        data: {
+          createdById: userId,
+          kind,
+          rangeStart: range.start,
+          rangeEnd: range.end,
+          rowCount: result.rowCount,
+          totalAmount: result.total,
+          fileName: fn,
+          contentType: "text/csv; charset=utf-8",
+          bytes,
+        },
+      });
+    }
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="${fn}"`);
     return reply.send(bytes);
+  }
+
+  // Parse the `saveHistory` query param. Default = true (preserves
+  // existing audit-trail behavior). The client opts out by passing
+  // `saveHistory=0` or `false`.
+  function readSaveHistory(req: any): boolean {
+    const raw = req.query?.saveHistory;
+    if (raw == null) return true;
+    const s = String(raw).toLowerCase();
+    return !(s === "false" || s === "0");
   }
 
   // qb-expenses (and the zip that contains it) is blocked when any row in
@@ -5612,7 +5653,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await gustoW2Csv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start: effectiveStart, end, startStr, endStr }, "gusto-w2", result);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_W2", { start: effectiveStart, end, startStr, endStr }, "gusto-w2", result, readSaveHistory(req));
   });
 
   app.get("/admin/exports/gusto-contractors.csv", superGuard, async (req: any, reply: FastifyReply) => {
@@ -5621,7 +5662,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await gustoContractorsCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "GUSTO_CONTRACTORS", { start: effectiveStart, end, startStr, endStr }, "gusto-contractors", result);
+    return deliverCsv(reply, await currentUserId(req), "GUSTO_CONTRACTORS", { start: effectiveStart, end, startStr, endStr }, "gusto-contractors", result, readSaveHistory(req));
   });
 
   app.get("/admin/exports/qb-income.csv", superGuard, async (req: any, reply: FastifyReply) => {
@@ -5630,7 +5671,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbIncomeCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-income", result);
+    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-income", result, readSaveHistory(req));
   });
 
   app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
@@ -5640,7 +5681,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbExpensesCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-expenses", result);
+    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-expenses", result, readSaveHistory(req));
   });
 
   // Equity export — capital contributions + owner draws. Separate file from
@@ -5652,7 +5693,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbEquityCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start: effectiveStart, end, startStr, endStr }, "qb-equity", result);
+    return deliverCsv(reply, await currentUserId(req), "QB_EQUITY", { start: effectiveStart, end, startStr, endStr }, "qb-equity", result, readSaveHistory(req));
   });
 
   // Fixed Assets export — capital purchases (≥ $500 on/after the policy
@@ -5665,7 +5706,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbFixedAssetsCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start: effectiveStart, end, startStr, endStr }, "qb-fixed-assets", result);
+    return deliverCsv(reply, await currentUserId(req), "QB_FIXED_ASSETS", { start: effectiveStart, end, startStr, endStr }, "qb-fixed-assets", result, readSaveHistory(req));
   });
 
   // QB bundle — income + expenses + equity + fixed assets in one zip so the
@@ -5689,19 +5730,21 @@ Respond ONLY with valid JSON in this exact format:
     zip.file(`gusto-contractors-${startStr}_${endStr}.csv`, contractors.csv);
     const bytes = await zip.generateAsync({ type: "nodebuffer" });
     const fn = `gusto-bundle-${startStr}_${endStr}.zip`;
-    await prisma.exportRun.create({
-      data: {
-        createdById: await currentUserId(req),
-        kind: "GUSTO_BUNDLE",
-        rangeStart: effectiveStart,
-        rangeEnd: end,
-        rowCount: w2.rowCount + contractors.rowCount,
-        totalAmount: w2.total + contractors.total,
-        fileName: fn,
-        contentType: "application/zip",
-        bytes,
-      },
-    });
+    if (readSaveHistory(req)) {
+      await prisma.exportRun.create({
+        data: {
+          createdById: await currentUserId(req),
+          kind: "GUSTO_BUNDLE",
+          rangeStart: effectiveStart,
+          rangeEnd: end,
+          rowCount: w2.rowCount + contractors.rowCount,
+          totalAmount: w2.total + contractors.total,
+          fileName: fn,
+          contentType: "application/zip",
+          bytes,
+        },
+      });
+    }
     reply.header("Content-Type", "application/zip");
     reply.header("Content-Disposition", `attachment; filename="${fn}"`);
     return reply.send(bytes);
@@ -5726,19 +5769,21 @@ Respond ONLY with valid JSON in this exact format:
     zip.file(`qb-fixed-assets-${startStr}_${endStr}.csv`, fixedAssets.csv);
     const bytes = await zip.generateAsync({ type: "nodebuffer" });
     const fn = `qb-bundle-${startStr}_${endStr}.zip`;
-    await prisma.exportRun.create({
-      data: {
-        createdById: await currentUserId(req),
-        kind: "QB_BUNDLE",
-        rangeStart: effectiveStart,
-        rangeEnd: end,
-        rowCount: income.rowCount + expenses.rowCount + equity.rowCount + fixedAssets.rowCount,
-        totalAmount: income.total + expenses.total + equity.total + fixedAssets.total,
-        fileName: fn,
-        contentType: "application/zip",
-        bytes,
-      },
-    });
+    if (readSaveHistory(req)) {
+      await prisma.exportRun.create({
+        data: {
+          createdById: await currentUserId(req),
+          kind: "QB_BUNDLE",
+          rangeStart: effectiveStart,
+          rangeEnd: end,
+          rowCount: income.rowCount + expenses.rowCount + equity.rowCount + fixedAssets.rowCount,
+          totalAmount: income.total + expenses.total + equity.total + fixedAssets.total,
+          fileName: fn,
+          contentType: "application/zip",
+          bytes,
+        },
+      });
+    }
     reply.header("Content-Type", "application/zip");
     reply.header("Content-Disposition", `attachment; filename="${fn}"`);
     return reply.send(bytes);

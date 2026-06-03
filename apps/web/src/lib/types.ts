@@ -173,6 +173,10 @@ export type Equipment = {
   age?: string | undefined;
 
   dailyRate?: number | null;
+  // Per-job + per-day-cap billing knob (see services/equipment.ts
+  // computeRentalCost). null = legacy flat-daily billing. Positive int
+  // engages per-job-with-cap mode for this piece.
+  equivalentJobs?: number | null;
   requiresInsurance?: boolean;
 
   createdAt: string | undefined;
@@ -604,12 +608,25 @@ export type EquipmentCharge = {
   releasedAt: string | null;
   rentalDays: number | null;
   rentalCost: number | null;
+  // Per-day breakdown captured at release time. See
+  // services/equipment.ts computeRentalCost and the
+  // RentalBreakdownLine type for the shape. The worker money tab uses
+  // this to render an expandable per-day audit trail of the charge.
+  rentalBreakdown?:
+    | {
+        day: string;
+        jobs: number | null;
+        subtotal: number;
+        capped: boolean;
+      }[]
+    | null;
   equipment: {
     id: string;
     shortDesc: string;
     brand: string | null;
     model: string | null;
     dailyRate: number | null;
+    equivalentJobs?: number | null;
   };
   user: {
     id: string;

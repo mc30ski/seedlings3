@@ -12,30 +12,155 @@ type Tx = Prisma.TransactionClient;
 
 const now = () => new Date();
 
-// Exported for unit-test coverage (equipment.test.ts). Internal callers
-// reference it as a regular file-local function — exporting doesn't change
-// the call site behavior.
+/** ISO YYYY-MM-DD in Eastern Time for the given Date. */
+const ET_DAY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+export function etDayKey(d: Date): string {
+  return ET_DAY_FMT.format(d);
+}
+
+/** Per-day line in the rental breakdown, for receipts and audit metadata. */
+export type RentalBreakdownLine = {
+  /** ET calendar day, YYYY-MM-DD. */
+  day: string;
+  /** Job count counted toward this day. `null` for flat-daily billing
+   *  (the model isn't job-driven, so the count is irrelevant). */
+  jobs: number | null;
+  /** Dollars billed for this day. */
+  subtotal: number;
+  /** True iff `subtotal` hit the daily cap. Always true for flat-daily. */
+  capped: boolean;
+};
+
+/** Internal helper: list the ET calendar days in the closed interval
+ *  `[from, to]`, inclusive of both ends. Same day = ["yyyy-mm-dd"]. */
+function listEtDaysBetween(from: Date, to: Date): string[] {
+  const toUtcNoon = (d: Date) => {
+    const [y, m, day] = ET_DAY_FMT.format(d).split("-").map(Number);
+    return Date.UTC(y, m - 1, day, 12);
+  };
+  const startUtc = toUtcNoon(from);
+  const endUtc = toUtcNoon(to);
+  if (endUtc < startUtc) return [];
+  const days: string[] = [];
+  for (let t = startUtc; t <= endUtc; t += 86_400_000) {
+    days.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+/**
+ * Compute the rental cost for a checkout.
+ *
+ * Two billing models coexist, selected per piece of equipment:
+ *
+ *   1. **Flat daily** (when `Equipment.equivalentJobs IS NULL`):
+ *      `rentalCost = rentalDays × dailyRate`. The legacy model.
+ *
+ *   2. **Per-job with per-day cap** (when `Equipment.equivalentJobs` is set):
+ *      For each ET calendar day in the rental window:
+ *        perJob = dailyRate / equivalentJobs
+ *        daySubtotal = min(jobsOnThisDay × perJob, dailyRate)
+ *      `rentalCost = Σ daySubtotal`
+ *      Jobs that count are those whose `completedAt` is within
+ *      `[checkedOutAt, releasedAt]` and that match the formal-crew
+ *      assignment (`assignedGroupId == checkout.groupId`) for crew
+ *      rentals, or have this contractor as an assignee for solo. The
+ *      caller is responsible for fetching + bucketing those jobs into
+ *      `jobsByDay` keyed on ET calendar day before calling.
+ *
+ * Worker-type gating is NOT done here. This function returns the
+ * **notional** rental cost as if it were billable. The caller (and
+ * `writeCheckoutSplits` for groups) decides who actually pays — employees
+ * and trainees show up with `amount = 0` because their equipment usage is
+ * already covered by the higher business margin on their jobs.
+ *
+ * Returns null only on missing required inputs (no checkedOutAt, no rate,
+ * or zero/negative rate). A zero-cost result (e.g., 0 jobs all days in
+ * per-job mode) returns a valid object with `rentalCost = 0`.
+ *
+ * Exported for unit-test coverage (equipment.test.ts).
+ */
 export function computeRentalCost(
   checkedOutAt: Date | null,
   releasedAt: Date,
-  workerType: string | null | undefined,
-  contractorRate: number | null,
-): { rentalDays: number; rentalCost: number } | null {
+  dailyRate: number | null,
+  equivalentJobs: number | null,
+  jobsByDay: Record<string, number> | null,
+): { rentalDays: number; rentalCost: number; breakdown: RentalBreakdownLine[] } | null {
   if (!checkedOutAt) return null;
-  // Only contractors are charged for equipment usage. Employees and trainees
-  // use equipment at no cost.
-  if (workerType !== "CONTRACTOR") return null;
-  const rate = contractorRate;
-  if (!rate || rate <= 0) return null;
-  // Count distinct calendar days in Eastern Time, inclusive of both ends.
-  // Same day = 1 day; crossing one midnight = 2 days; etc.
-  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
-  const toUtcNoon = (d: Date) => {
-    const [y, m, day] = fmt.format(d).split("-").map(Number);
-    return Date.UTC(y, m - 1, day, 12);
+  if (!dailyRate || dailyRate <= 0) return null;
+
+  const days = listEtDaysBetween(checkedOutAt, releasedAt);
+  const rentalDays = Math.max(1, days.length);
+
+  // Flat-daily mode (legacy). One subtotal per day at the full daily rate.
+  if (equivalentJobs == null || equivalentJobs <= 0) {
+    const breakdown: RentalBreakdownLine[] = days.map((day) => ({
+      day,
+      jobs: null,
+      subtotal: dailyRate,
+      capped: true,
+    }));
+    // Guard rentalDays >= 1 (matches legacy ET-inclusive math).
+    const rentalCost = Math.round(rentalDays * dailyRate * 100) / 100;
+    return { rentalDays, rentalCost, breakdown };
+  }
+
+  // Per-job mode. Bucketed job counts must be provided by the caller.
+  const perJob = dailyRate / equivalentJobs;
+  const buckets = jobsByDay ?? {};
+  const breakdown: RentalBreakdownLine[] = days.map((day) => {
+    const n = buckets[day] ?? 0;
+    const raw = n * perJob;
+    const capped = raw >= dailyRate;
+    const subtotal = capped ? dailyRate : Math.round(raw * 100) / 100;
+    return { day, jobs: n, subtotal, capped };
+  });
+  const rentalCost = Math.round(breakdown.reduce((s, b) => s + b.subtotal, 0) * 100) / 100;
+  return { rentalDays, rentalCost, breakdown };
+}
+
+/**
+ * Fetch the JobOccurrence rows that count toward a given checkout's
+ * job-driven billing, and bucket their `completedAt` by ET calendar day.
+ *
+ * Solo checkouts count jobs where this contractor was an assignee (role
+ * != observer) AND the job has no `assignedGroupId` (solo work, not a
+ * crew-assigned job — those are billed via the crew checkout, if any).
+ *
+ * Group checkouts count jobs where `assignedGroupId == groupId` (formal-
+ * crew jobs only — solo claims by members don't bleed in).
+ *
+ * Both are restricted to workflow STANDARD/ONE_OFF in a finished status
+ * (COMPLETED/CLOSED/PENDING_PAYMENT). Estimates, tasks, reminders,
+ * announcements, events, and followups never count.
+ */
+export async function fetchJobsByDayForCheckout(
+  tx: Tx,
+  ctx: { userId: string; groupId: string | null; checkedOutAt: Date; releasedAt: Date },
+): Promise<Record<string, number>> {
+  const baseWhere: Prisma.JobOccurrenceWhereInput = {
+    workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+    status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+    completedAt: { gte: ctx.checkedOutAt, lte: ctx.releasedAt },
   };
-  const rentalDays = Math.max(1, Math.round((toUtcNoon(releasedAt) - toUtcNoon(checkedOutAt)) / 86_400_000) + 1);
-  return { rentalDays, rentalCost: rentalDays * rate };
+  const scopeWhere: Prisma.JobOccurrenceWhereInput = ctx.groupId
+    ? { assignedGroupId: ctx.groupId }
+    : {
+        assignedGroupId: null,
+        assignees: { some: { userId: ctx.userId, role: { not: "observer" } } },
+      };
+  const jobs = await tx.jobOccurrence.findMany({
+    where: { ...baseWhere, ...scopeWhere },
+    select: { completedAt: true },
+  });
+  const buckets: Record<string, number> = {};
+  for (const j of jobs) {
+    if (!j.completedAt) continue;
+    const key = etDayKey(j.completedAt);
+    buckets[key] = (buckets[key] ?? 0) + 1;
+  }
+  return buckets;
 }
 
 /**
@@ -47,53 +172,112 @@ export function computeRentalCost(
  * falling back to even-split when percents don't sum to 100). Otherwise
  * cost is split evenly among all workers (including the claimer).
  */
+/**
+ * Pure splitter math. Exported for unit-test coverage (equipment.test.ts);
+ * the DB-writing wrapper `writeCheckoutSplits` below calls into this.
+ *
+ * Given a rental total and the workers in a group (claimer + non-observer
+ * members) along with their worker types, returns the per-worker share
+ * rows and the actually-billed contractor total.
+ *
+ * Policy:
+ *   • Percent allocation uses each worker's `equipmentCostPercent` when
+ *     EVERY worker has one and they sum to 100 (tolerance 0.001). Else
+ *     even-split.
+ *   • EMPLOYEE / TRAINEE workers get `amount = 0` after allocation. Their
+ *     equipment usage is already covered upstream by the higher business
+ *     margin charged on their jobs (no actual loss to the business —
+ *     it's an accounting note that the cost was paid elsewhere). The row
+ *     itself is preserved so the audit trail keeps a record that the
+ *     employee was on the crew.
+ *   • CONTRACTOR and unclassified-null workers are billable.
+ *   • Unbilled shares are NOT redistributed to remaining contractors —
+ *     that would punish contractors for crewing with employees.
+ */
+export function calculateContractorSplits(
+  workers: Array<{ userId: string; equipmentCostPercent: number | null; workerType: string | null }>,
+  rentalCost: number,
+): {
+  splits: Array<{ userId: string; percent: number; amount: number }>;
+  contractorTotal: number;
+} {
+  if (workers.length === 0) return { splits: [], contractorTotal: 0 };
+  const customSet = workers.filter((w) => w.equipmentCostPercent != null);
+  const useCustom =
+    customSet.length === workers.length &&
+    Math.abs(workers.reduce((s, w) => s + (w.equipmentCostPercent ?? 0), 0) - 100) < 0.001;
+  let contractorTotal = 0;
+  const seen = new Set<string>();
+  const splits: Array<{ userId: string; percent: number; amount: number }> = [];
+  for (const w of workers) {
+    // De-dupe in case the claimer was also listed in members (the group
+    // invariants shouldn't allow this, but stay defensive — without dedup
+    // a claimer-as-member would double-bill).
+    if (seen.has(w.userId)) continue;
+    seen.add(w.userId);
+    const percent = useCustom ? (w.equipmentCostPercent ?? 0) : 100 / workers.length;
+    const rawShare = Math.round(rentalCost * (percent / 100) * 100) / 100;
+    const billable = w.workerType === "CONTRACTOR" || w.workerType === null;
+    const amount = billable ? rawShare : 0;
+    contractorTotal += amount;
+    splits.push({
+      userId: w.userId,
+      percent: Math.round(percent * 1e4) / 1e4,
+      amount,
+    });
+  }
+  return { splits, contractorTotal: Math.round(contractorTotal * 100) / 100 };
+}
+
+/**
+ * Materialize CheckoutSplit rows for a finished group rental and return
+ * the sum of contractor billings (which the caller writes into
+ * `Checkout.rentalCost` as the "actual income from this checkout").
+ * Math lives in `calculateContractorSplits`; this wrapper just does the
+ * DB I/O.
+ */
 async function writeCheckoutSplits(
   tx: Tx,
   params: { checkoutId: string; groupId: string; rentalCost: number },
-): Promise<void> {
+): Promise<{ contractorTotal: number }> {
   const { checkoutId, groupId, rentalCost } = params;
   const group = await tx.group.findUnique({
     where: { id: groupId },
     include: { members: { select: { userId: true, role: true, equipmentCostPercent: true } } },
   });
-  if (!group) return;
+  if (!group) return { contractorTotal: 0 };
   // Claimer counts as a worker for cost-split purposes.
-  const workers: Array<{ userId: string; equipmentCostPercent: number | null }> = [
+  const baseWorkers: Array<{ userId: string; equipmentCostPercent: number | null }> = [
     { userId: group.claimerUserId, equipmentCostPercent: null },
     ...group.members
       .filter((m) => m.role !== "observer")
       .map((m) => ({ userId: m.userId, equipmentCostPercent: m.equipmentCostPercent })),
   ];
-  if (workers.length === 0) return;
+  if (baseWorkers.length === 0) return { contractorTotal: 0 };
 
-  const customSet = workers.filter((w) => w.equipmentCostPercent != null);
-  const useCustom =
-    customSet.length === workers.length &&
-    Math.abs(workers.reduce((s, w) => s + (w.equipmentCostPercent ?? 0), 0) - 100) < 0.001;
-
-  const splits = workers.map((w) => {
-    const percent = useCustom
-      ? (w.equipmentCostPercent ?? 0)
-      : 100 / workers.length;
-    return {
-      userId: w.userId,
-      percent: Math.round(percent * 1e4) / 1e4,
-      amount: Math.round(rentalCost * (percent / 100) * 100) / 100,
-    };
+  // Resolve workerType for each worker — needed to zero out W-2 / trainee
+  // shares. One query for all of them avoids a per-member round-trip.
+  const userIds = [...new Set(baseWorkers.map((w) => w.userId))];
+  const users = await tx.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, workerType: true },
   });
+  const wtById = new Map(users.map((u) => [u.id, u.workerType]));
 
-  // De-dupe in case claimer was also listed in members (shouldn't happen
-  // per group invariants, but stay defensive).
-  const seen = new Set<string>();
+  const workers = baseWorkers.map((w) => ({
+    ...w,
+    workerType: wtById.get(w.userId) ?? null,
+  }));
+  const { splits, contractorTotal } = calculateContractorSplits(workers, rentalCost);
+
   for (const s of splits) {
-    if (seen.has(s.userId)) continue;
-    seen.add(s.userId);
     await tx.checkoutSplit.upsert({
       where: { checkoutId_userId: { checkoutId, userId: s.userId } },
       create: { checkoutId, userId: s.userId, percent: s.percent, amount: s.amount },
       update: { percent: s.percent, amount: s.amount },
     });
   }
+  return { contractorTotal };
 }
 
 // Row-level lock helper
@@ -313,6 +497,7 @@ export const equipment: ServicesEquipment = {
       age?: string;
       qrSlug?: string | null;
       dailyRate?: number | null;
+      equivalentJobs?: number | null;
       requiresInsurance?: boolean;
     }
   ) {
@@ -332,6 +517,7 @@ export const equipment: ServicesEquipment = {
         ...(input.issues !== undefined ? { issues: input.issues } : {}),
         ...(input.age !== undefined ? { age: input.age } : {}),
         ...(input.dailyRate !== undefined ? { dailyRate: input.dailyRate } : {}),
+        ...(input.equivalentJobs !== undefined ? { equivalentJobs: input.equivalentJobs } : {}),
         ...(input.requiresInsurance !== undefined ? { requiresInsurance: input.requiresInsurance } : {}),
       };
 
@@ -363,6 +549,7 @@ export const equipment: ServicesEquipment = {
         | "issues"
         | "age"
         | "dailyRate"
+        | "equivalentJobs"
         | "requiresInsurance"
       >
     >
@@ -385,6 +572,7 @@ export const equipment: ServicesEquipment = {
       if (patch.issues !== undefined) data.issues = patch.issues;
       if (patch.age !== undefined) data.age = patch.age;
       if (patch.dailyRate !== undefined) data.dailyRate = patch.dailyRate;
+      if (patch.equivalentJobs !== undefined) data.equivalentJobs = patch.equivalentJobs;
       if (patch.requiresInsurance !== undefined) data.requiresInsurance = patch.requiresInsurance;
 
       const updated = await tx.equipment.update({ where: { id }, data });
@@ -507,20 +695,63 @@ export const equipment: ServicesEquipment = {
         const eq = await tx.equipment.findUnique({ where: { id } });
         const holder = await tx.user.findUnique({ where: { id: active.userId } });
         const releasedAt = now();
-        const rental = computeRentalCost(active.checkedOutAt, releasedAt, holder?.workerType, eq?.dailyRate ?? null);
+        const groupId = (active as any).groupId as string | null;
+        // For per-job mode, fetch the formal-crew (or solo) jobs whose
+        // completedAt falls in the rental window and bucket them by ET
+        // day. Skipped (passed as null) when the piece is on the legacy
+        // flat-daily model — the cost helper ignores buckets in that case.
+        const jobsByDay =
+          active.checkedOutAt && eq?.equivalentJobs != null && eq.equivalentJobs > 0
+            ? await fetchJobsByDayForCheckout(tx, {
+                userId: active.userId,
+                groupId,
+                checkedOutAt: active.checkedOutAt,
+                releasedAt,
+              })
+            : null;
+        const rental = computeRentalCost(
+          active.checkedOutAt,
+          releasedAt,
+          eq?.dailyRate ?? null,
+          eq?.equivalentJobs ?? null,
+          jobsByDay,
+        );
+        // First write rentalDays + the per-day breakdown. The breakdown is
+        // load-bearing for receipts + worker money tab — without it the
+        // worker just sees a total with no audit trail. rentalCost is
+        // overwritten below by the solo / group billing logic.
         const checkout = await tx.checkout.update({
           where: { id: active.id },
           data: {
             releasedAt,
-            ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
+            ...(rental ? { rentalDays: rental.rentalDays, rentalBreakdown: rental.breakdown as any } : {}),
           },
         });
-        if ((active as any).groupId && rental?.rentalCost) {
-          await writeCheckoutSplits(tx, {
-            checkoutId: checkout.id,
-            groupId: (active as any).groupId as string,
-            rentalCost: rental.rentalCost,
-          });
+        if (rental) {
+          if (groupId) {
+            const { contractorTotal } = await writeCheckoutSplits(tx, {
+              checkoutId: checkout.id,
+              groupId,
+              rentalCost: rental.rentalCost,
+            });
+            // Checkout.rentalCost stores the *actual* billed total — sum
+            // of contractor splits, not the notional pre-split cost. That
+            // way the QB Income export can keep reading the parent row.
+            await tx.checkout.update({
+              where: { id: checkout.id },
+              data: { rentalCost: contractorTotal },
+            });
+          } else {
+            // Solo: only contractors (or unclassified, treated as
+            // contractor for billing) actually pay. Employees + trainees
+            // get rentalCost = 0 even though rentalDays is recorded.
+            const wt = holder?.workerType ?? null;
+            const billable = wt === "CONTRACTOR" || wt === null;
+            await tx.checkout.update({
+              where: { id: checkout.id },
+              data: { rentalCost: billable ? rental.rentalCost : 0 },
+            });
+          }
         }
         const updated = await tx.equipment.update({
           where: { id },
@@ -530,6 +761,9 @@ export const equipment: ServicesEquipment = {
         await writeAudit(tx, AUDIT.EQUIPMENT.FORCE_RELEASED, currentUserId, {
           equipmentRecord: updated,
           checkoutRecord: checkout,
+          // Carry the per-day breakdown so the audit log lets an admin
+          // reconstruct any charge (per issue #17 from the design doc).
+          rentalBreakdown: rental?.breakdown ?? null,
         });
       }
       return { released: true };
@@ -755,27 +989,54 @@ export const equipment: ServicesEquipment = {
         );
       }
 
-      // 3) Mark returned + compute rental cost
+      // 3) Mark returned + compute rental cost. Same dance as release()
+      // above: fetch jobs for per-job mode, compute notional, split or
+      // direct-bill, write actual contractor total to Checkout.rentalCost.
       const now = new Date();
       const holder = await tx.user.findUnique({ where: { id: userId } });
-      const rental = computeRentalCost(active.checkedOutAt, now, holder?.workerType, eq.dailyRate);
+      const groupId = (active as any).groupId as string | null;
+      const jobsByDay =
+        active.checkedOutAt && eq.equivalentJobs != null && eq.equivalentJobs > 0
+          ? await fetchJobsByDayForCheckout(tx, {
+              userId: active.userId,
+              groupId,
+              checkedOutAt: active.checkedOutAt,
+              releasedAt: now,
+            })
+          : null;
+      const rental = computeRentalCost(
+        active.checkedOutAt,
+        now,
+        eq.dailyRate,
+        eq.equivalentJobs ?? null,
+        jobsByDay,
+      );
       const returned = await tx.checkout.update({
         where: { id: active.id },
         data: {
           releasedAt: now,
-          ...(rental ? { rentalDays: rental.rentalDays, rentalCost: rental.rentalCost } : {}),
+          ...(rental ? { rentalDays: rental.rentalDays, rentalBreakdown: rental.breakdown as any } : {}),
         },
       });
-      // Group rentals: materialize per-worker shares now that the total
-      // is known. Falls back to even-split when group percents aren't set
-      // or don't sum to 100 (defensive — the group's lock-while-in-flight
-      // rule should keep the math consistent).
-      if ((active as any).groupId && rental?.rentalCost) {
-        await writeCheckoutSplits(tx, {
-          checkoutId: returned.id,
-          groupId: (active as any).groupId as string,
-          rentalCost: rental.rentalCost,
-        });
+      if (rental) {
+        if (groupId) {
+          const { contractorTotal } = await writeCheckoutSplits(tx, {
+            checkoutId: returned.id,
+            groupId,
+            rentalCost: rental.rentalCost,
+          });
+          await tx.checkout.update({
+            where: { id: returned.id },
+            data: { rentalCost: contractorTotal },
+          });
+        } else {
+          const wt = holder?.workerType ?? null;
+          const billable = wt === "CONTRACTOR" || wt === null;
+          await tx.checkout.update({
+            where: { id: returned.id },
+            data: { rentalCost: billable ? rental.rentalCost : 0 },
+          });
+        }
       }
 
       // 4) Flip equipment status back to AVAILABLE (adjust if your app uses a different state machine)
@@ -787,6 +1048,7 @@ export const equipment: ServicesEquipment = {
       await writeAudit(tx, AUDIT.EQUIPMENT.RETURNED, currentUserId, {
         equipmentRecord: { ...updated },
         checkoutRecord: { ...returned },
+        rentalBreakdown: rental?.breakdown ?? null,
       });
 
       return { released: true };
@@ -855,28 +1117,35 @@ export const equipment: ServicesEquipment = {
       if (params.from) dateRange.gte = etMidnight(params.from);
       if (params.to) dateRange.lte = etEndOfDay(params.to);
       const hasDate = !!(params.from || params.to);
-      // Solo rentals for this user (no groupId set, rentalCost recorded).
+      // Solo rentals for this user (no groupId set). We filter to
+      // `rentalCost: { gt: 0 }` so solo employee rentals (which now record
+      // rentalCost = 0 since employees don't pay) don't surface as a
+      // confusing "$0 charge" line in the worker money tab.
       const solo = await prisma.checkout.findMany({
         where: {
           userId,
           groupId: null,
-          rentalCost: { not: null },
+          rentalCost: { gt: 0 },
           ...(hasDate ? { releasedAt: dateRange } : {}),
           ...cutoffWhere("Checkout", cutoff),
         },
         orderBy: { releasedAt: "desc" },
         include: {
-          equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
+          equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true, equivalentJobs: true } },
           user: { select: { id: true, displayName: true, email: true, workerType: true } },
           group: { select: { id: true, name: true } },
         },
       });
-      // Group rentals where this user has a CheckoutSplit.
+      // Group rentals where this user has a CheckoutSplit. We require
+      // `amount: { gt: 0 }` so employee/trainee splits (which the splitter
+      // zeros out — usage covered by their business margin) stay out of
+      // the money tab. Their audit-trail row still exists on the parent
+      // Checkout; we just don't surface it as a charge to the user.
       const splits = await prisma.checkoutSplit.findMany({
         where: {
           userId,
+          amount: { gt: 0 },
           checkout: {
-            rentalCost: { not: null },
             ...(hasDate ? { releasedAt: dateRange } : {}),
             ...cutoffWhere("Checkout", cutoff),
           },
@@ -885,7 +1154,7 @@ export const equipment: ServicesEquipment = {
         include: {
           checkout: {
             include: {
-              equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true } },
+              equipment: { select: { id: true, shortDesc: true, brand: true, model: true, dailyRate: true, equivalentJobs: true } },
               user: { select: { id: true, displayName: true, email: true, workerType: true } },
               group: { select: { id: true, name: true } },
             },
@@ -904,6 +1173,10 @@ export const equipment: ServicesEquipment = {
           releasedAt: c.releasedAt,
           rentalDays: c.rentalDays,
           rentalCost: c.rentalCost,
+          // Per-day breakdown — shape matches RentalBreakdownLine. The
+          // worker money tab can render this verbatim for an audit trail
+          // of how each day's charge was computed.
+          rentalBreakdown: (c as any).rentalBreakdown ?? null,
           shareAmount: c.rentalCost ?? 0,
           sharePercent: 100,
           isGroupRental: false,
@@ -917,6 +1190,7 @@ export const equipment: ServicesEquipment = {
           releasedAt: s.checkout.releasedAt,
           rentalDays: s.checkout.rentalDays,
           rentalCost: s.checkout.rentalCost,
+          rentalBreakdown: (s.checkout as any).rentalBreakdown ?? null,
           shareAmount: s.amount,
           sharePercent: s.percent,
           isGroupRental: true,

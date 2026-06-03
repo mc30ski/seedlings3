@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, Heading, Input, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Card, HStack, Heading, Input, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiTrash2 } from "react-icons/fi";
 import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
+import { usePersistedState } from "@/src/lib/usePersistedState";
 
 type Cadence = "WEEKLY" | "BIWEEKLY" | "MONTHLY";
 
@@ -156,6 +157,12 @@ export default function ExportsTab() {
   // file can still get to it without leaving the tab.
   const [showGustoIndividual, setShowGustoIndividual] = useState(false);
   const [showQbIndividual, setShowQbIndividual] = useState(false);
+  // When ON (default) the server stores an ExportRun row so the bytes are
+  // re-downloadable from history. When OFF, the download is delivered but
+  // not persisted — useful for spot-check / scratch exports the operator
+  // doesn't want polluting the audit history. Persisted so the operator's
+  // preference survives reloads.
+  const [saveHistory, setSaveHistory] = usePersistedState<boolean>("exports_saveHistory", true);
   const [history, setHistory] = useState<HistoryRow[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   // Two-stage delete flow. Stage 1 asks "Delete this entry?"; stage 2 asks
@@ -247,10 +254,18 @@ export default function ExportsTab() {
     const fn = `${slug}-${start}_${end}.${ext}`;
     setBusyKey(slug);
     try {
-      await apiDownload(`/api/admin/exports/${slug}.${ext}?start=${start}&end=${end}`, fn);
-      publishInlineMessage({ type: "SUCCESS", text: `${label} downloaded.` });
-      // Re-fetch so the new row shows up at the top of the history table.
-      refreshHistory();
+      // saveHistory=false tells the server to deliver the bytes without
+      // creating an ExportRun row, so the audit history stays clean for
+      // ad-hoc spot-check downloads. Default ON.
+      const qs = `start=${start}&end=${end}${saveHistory ? "" : "&saveHistory=0"}`;
+      await apiDownload(`/api/admin/exports/${slug}.${ext}?${qs}`, fn);
+      publishInlineMessage({
+        type: "SUCCESS",
+        text: saveHistory ? `${label} downloaded.` : `${label} downloaded (not saved to history).`,
+      });
+      // Re-fetch only if we actually saved to history — otherwise the
+      // table won't change.
+      if (saveHistory) refreshHistory();
     } catch (err) {
       publishInlineMessage({ type: "ERROR", text: getErrorMessage(`${label} download failed.`, err) });
     } finally {
@@ -379,6 +394,31 @@ export default function ExportsTab() {
                   {p.label}
                 </Button>
               ))}
+            </HStack>
+            {/* Save-to-history toggle. Default ON so the audit trail keeps
+                building automatically. Operators flip it off when they're
+                grabbing a one-off spot-check file they don't want stored. */}
+            <HStack justify="space-between" gap={3} pt={1}>
+              <Box flex="1" minW={0}>
+                <Text fontSize="sm" fontWeight="medium">
+                  Save to history
+                </Text>
+                <Text fontSize="xs" color="fg.muted">
+                  {saveHistory
+                    ? "Each download is stored so you can re-download the exact same file later from the history table below."
+                    : "Downloads will NOT be recorded. Useful for ad-hoc spot-checks; the file is not retrievable from history later."}
+                </Text>
+              </Box>
+              <Switch.Root
+                checked={saveHistory}
+                onCheckedChange={(e) => setSaveHistory(!!e.checked)}
+                colorPalette="green"
+              >
+                <Switch.HiddenInput />
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Root>
             </HStack>
           </VStack>
         </Card.Body>

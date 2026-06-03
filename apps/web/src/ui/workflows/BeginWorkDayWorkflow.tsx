@@ -19,6 +19,7 @@ import { buildMailtoHref, buildSmsHref, fetchCommsCc } from "@/src/lib/comms";
 import { publishInlineMessage, getErrorMessage } from "@/src/ui/components/InlineMessage";
 import { type WorkerOccurrence } from "@/src/lib/types";
 import { fmtDate, bizDateKey, clientLabel, jobTypeLabel } from "@/src/lib/lib";
+import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { MapLink } from "@/src/ui/helpers/Link";
 import { StatusBadge } from "@/src/ui/components/StatusBadge";
 
@@ -580,10 +581,18 @@ export default function BeginWorkDayWorkflow({ active, onDone, myId, myWorkerTyp
                             </VStack>
                             {/* Daily-rate cost is contractor-only — employees
                                 and trainees use company equipment at no
-                                charge, so showing a cost there is misleading. */}
-                            {eq.dailyRate != null && myWorkerType === "CONTRACTOR" && (
-                              <Text fontSize="xs" fontWeight="medium" color="orange.700" flexShrink={0}>${eq.dailyRate.toFixed(2)}/day</Text>
-                            )}
+                                charge, so showing a cost there is misleading.
+                                Chip text comes from shortBillingChip so it
+                                reflects the new per-job-with-cap model when
+                                the piece has equivalentJobs set. */}
+                            {myWorkerType === "CONTRACTOR" && (() => {
+                              const chip = shortBillingChip(
+                                resolveBillingMode((eq as any).dailyRate, (eq as any).equivalentJobs),
+                              );
+                              return chip ? (
+                                <Text fontSize="xs" fontWeight="medium" color="orange.700" flexShrink={0}>{chip}</Text>
+                              ) : null;
+                            })()}
                           </HStack>
                         ))}
                       </VStack>
