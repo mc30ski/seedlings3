@@ -48,7 +48,7 @@ type WorkerStat = {
 type OpsData = {
   jobs: { scheduled: number; inProgress: number; completed: number; canceled: number; overdue: number; unclaimed: number };
   financial: { totalRevenue: number; totalExpenses: number; netRevenue: number; totalPlatformFees: number; totalBusinessMargin: number; avgJobPrice: number; paymentsByMethod: Record<string, number> };
-  team: { activeWorkers: number; workersByType: Record<string, number>; topWorkers: { name: string; jobs: number; earnings: number }[]; workersWithJobs: number; workersIdle: number };
+  team: { activeInWindow: number; workersByTypeInWindow: Record<string, number>; topWorkers: { name: string; jobs: number; earnings: number }[] };
   equipment: {
     total: number; available: number; checkedOut: number; reserved: number; inMaintenance: number;
     // Window-scoped usage (anchored on Checkout.checkedOutAt inside the
@@ -70,7 +70,7 @@ type OpsData = {
     }[];
   };
   estimates: { pending: number; accepted: number; rejected: number };
-  clients: { active: number; paused: number; archived: number; vip: number };
+  clients: { workedWithInWindow: number; newInWindow: number; vipWithWorkInWindow: number };
   unclaimedItems: UnclaimedItem[];
   workerStats: WorkerStat[];
   recentAudit: { id: string; scope: string; verb: string; action?: string | null; actorName: string; createdAt: string; metadata?: any }[];
@@ -507,21 +507,13 @@ export default function OperationsTab() {
           <CollapsibleSection title="Worker Performance" open={isOpen("workers")} onToggle={() => toggleSection("workers")}>
           <HStack gap={2} wrap="wrap" mb={2}>
             <Badge colorPalette="blue" variant="solid" fontSize="sm" px="3" borderRadius="full">
-              {data.team.activeWorkers} Workers
+              {data.team.activeInWindow} Active in window
             </Badge>
-            {Object.entries(data.team.workersByType).map(([type, count]) => (
+            {Object.entries(data.team.workersByTypeInWindow).map(([type, count]) => (
               <Badge key={type} colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">
                 {prettyStatus(type)}: {count}
               </Badge>
             ))}
-            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-              Working: {data.team.workersWithJobs}
-            </Badge>
-            {data.team.workersIdle > 0 && (
-              <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                Idle: {data.team.workersIdle}
-              </Badge>
-            )}
           </HStack>
 
           {data.workerStats.length > 0 && (() => {
@@ -683,12 +675,13 @@ export default function OperationsTab() {
 
           {/* Equipment */}
           <CollapsibleSection title="Equipment" open={isOpen("equipment")} onToggle={() => toggleSection("equipment")}>
-            {/* "Right now" snapshot — current state of the fleet, NOT
-                scoped to the date range. Kept as a thin strip above the
-                timeframe data so the operator can answer both "what's out
-                this minute?" and "what's earning its keep this period?"
-                without switching screens. */}
-            <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mb={1} px={1}>Right Now</Text>
+            {/* "Today" snapshot — current state of the fleet, NOT scoped
+                to the date range. Kept as a thin strip above the timeframe
+                data so the operator can answer both "what's out today?"
+                and "what's earned its keep this period?" without switching
+                screens. The label is explicit so there's no ambiguity that
+                this strip is time-of-load, not window-scoped. */}
+            <Text fontSize="2xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" mb={1} px={1}>Today</Text>
             <HStack gap={2} wrap="wrap" mb={3}>
               <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Available: {data.equipment.available}</Badge>
               <Badge colorPalette="blue" variant="subtle" fontSize="xs" px="2" borderRadius="full">Checked Out: {data.equipment.checkedOut}</Badge>
@@ -888,13 +881,23 @@ export default function OperationsTab() {
             </CollapsibleSection>
           )}
 
-          {/* Clients */}
+          {/* Clients — window-scoped: who got worked with, who's new,
+              and how many VIPs were among the worked-with set. */}
           <CollapsibleSection title="Clients" open={isOpen("clients")} onToggle={() => toggleSection("clients")}>
             <HStack gap={2} wrap="wrap" mb={2}>
-              <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">Active: {data.clients.active}</Badge>
-              {data.clients.vip > 0 && <Badge colorPalette="yellow" variant="solid" fontSize="xs" px="2" borderRadius="full">VIP: {data.clients.vip}</Badge>}
-              {data.clients.paused > 0 && <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">Paused: {data.clients.paused}</Badge>}
-              {data.clients.archived > 0 && <Badge colorPalette="gray" variant="subtle" fontSize="xs" px="2" borderRadius="full">Archived: {data.clients.archived}</Badge>}
+              <Badge colorPalette="blue" variant="solid" fontSize="sm" px="3" borderRadius="full">
+                Worked with: {data.clients.workedWithInWindow}
+              </Badge>
+              {data.clients.vipWithWorkInWindow > 0 && (
+                <Badge colorPalette="yellow" variant="solid" fontSize="xs" px="2" borderRadius="full">
+                  VIP: {data.clients.vipWithWorkInWindow}
+                </Badge>
+              )}
+              {data.clients.newInWindow > 0 && (
+                <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                  New: {data.clients.newInWindow}
+                </Badge>
+              )}
             </HStack>
           </CollapsibleSection>
 

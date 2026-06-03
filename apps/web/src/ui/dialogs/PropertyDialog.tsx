@@ -188,6 +188,17 @@ export default function PropertyDialog({
     () => createListCollection({ items: contactItems }),
     [contactItems]
   );
+  const lotUnitCollection = useMemo(
+    () => createListCollection({
+      items: [
+        { label: "sq ft", value: "sqft" },
+        { label: "acres", value: "acres" },
+        { label: "hectares", value: "hectares" },
+        { label: "sq m", value: "sqm" },
+      ],
+    }),
+    [],
+  );
 
   function ableToSave() {
     return (
@@ -679,22 +690,31 @@ export default function PropertyDialog({
                       size="sm"
                       flex="1"
                     />
-                    <select
-                      value={lotSizeUnit}
-                      onChange={(e) => setLotSizeUnit(e.target.value)}
-                      style={{
-                        fontSize: "0.875rem",
-                        padding: "0.3rem 0.5rem",
-                        borderRadius: "0.375rem",
-                        border: "1px solid var(--chakra-colors-border)",
-                        background: "var(--chakra-colors-bg)",
+                    <Select.Root
+                      collection={lotUnitCollection}
+                      value={[lotSizeUnit]}
+                      onValueChange={(e) => {
+                        if (e.value[0]) setLotSizeUnit(e.value[0]);
                       }}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                      css={{ width: "auto", flex: "0 0 auto" }}
                     >
-                      <option value="sqft">sq ft</option>
-                      <option value="acres">acres</option>
-                      <option value="hectares">hectares</option>
-                      <option value="sqm">sq m</option>
-                    </select>
+                      <Select.Control>
+                        <Select.Trigger w="auto" minW="0" px="2">
+                          <Select.ValueText />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {lotUnitCollection.items.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
                   </HStack>
                 </div>
                 <div>
