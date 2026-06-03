@@ -1044,7 +1044,8 @@ export default async function workerRoutes(app: FastifyInstance) {
   // Equipment-usage dashboard — scoped to the requesting worker's own checkouts.
   app.get("/equipment-usage", workerGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    return services.equipment.listUsage({ from, to, userId: req.user.id });
+    const cutoff = await resolveCutoff(req);
+    return services.equipment.listUsage({ from, to, userId: req.user.id, cutoff });
   });
 
   app.post("/equipment/:id/reserve", workerGuard, async (req: any) => {

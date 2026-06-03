@@ -195,7 +195,13 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
     if (action?.startsWith("EQUIPMENT_")) {
       const eq = md.equipmentRecord;
       if (!eq) return "";
-      return `${eq.shortDesc ?? ""} (${eq.qrSlug ?? ""})`;
+      const base = `${eq.shortDesc ?? ""} (${eq.qrSlug ?? ""})`;
+      // Super on-behalf-of marker — set by equipment.ts when actor != target.
+      // Renders inline so an operator scanning the feed sees the override.
+      const onBehalfOf = md.actedOnBehalfOfUserId
+        ? (userMap[md.actedOnBehalfOfUserId] || md.actedOnBehalfOfUserId)
+        : null;
+      return onBehalfOf ? `${base} — on behalf of ${onBehalfOf}` : base;
     }
 
     // User

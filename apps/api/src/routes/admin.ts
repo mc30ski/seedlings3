@@ -86,6 +86,62 @@ export default async function adminRoutes(app: FastifyInstance) {
     return services.users.listHoldings();
   });
 
+  // ─── Super "act on behalf of a worker" equipment routes ──────────────────
+  // The Super Equipment Inventory tab is the same as the Admin tab plus the
+  // ability for a Super to perform any worker action (reserve, cancel,
+  // checkout, return) on behalf of a worker who's stuck or doesn't know
+  // the flow. The userId of the worker being acted FOR is passed in the
+  // request body. The audit actor remains the calling Super so the trail
+  // shows who pulled the lever.
+  app.post("/super/equipment/:id/reserve-for", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = (req.body || {}) as { userId?: string; groupId?: string | null };
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
+    return services.equipment.reserve(
+      await currentUserId(req),
+      id,
+      String(b.userId),
+      { groupId: b.groupId ?? null },
+    );
+  });
+
+  app.post("/super/equipment/:id/reserve-for/cancel", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = (req.body || {}) as { userId?: string };
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
+    return services.equipment.cancelReservation(
+      await currentUserId(req),
+      id,
+      String(b.userId),
+    );
+  });
+
+  app.post("/super/equipment/:id/checkout-for/verify", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = (req.body || {}) as { userId?: string; slug?: string };
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
+    const slug = String(b.slug ?? "").trim();
+    return services.equipment.checkoutWithQr(
+      await currentUserId(req),
+      id,
+      String(b.userId),
+      slug,
+    );
+  });
+
+  app.post("/super/equipment/:id/return-for/verify", superGuard, async (req: any) => {
+    const id = String(req.params.id);
+    const b = (req.body || {}) as { userId?: string; slug?: string };
+    if (!b.userId) throw app.httpErrors.badRequest("userId is required.");
+    const slug = String(b.slug ?? "").trim();
+    return services.equipment.returnWithQr(
+      await currentUserId(req),
+      id,
+      String(b.userId),
+      slug,
+    );
+  });
+
   app.get("/admin/audit", adminGuard, async (req: any) => {
     const q = (req.query || {}) as {
       page?: string;
@@ -1695,7 +1751,8 @@ export default async function adminRoutes(app: FastifyInstance) {
   // Equipment-usage dashboard — every worker's checkouts in a date range.
   app.get("/admin/equipment-usage", adminGuard, async (req: any) => {
     const { from, to } = (req.query || {}) as { from?: string; to?: string };
-    return services.equipment.listUsage({ from, to });
+    const cutoff = await resolveCutoff(req);
+    return services.equipment.listUsage({ from, to, cutoff });
   });
 
   // ── Admin Expenses ──
