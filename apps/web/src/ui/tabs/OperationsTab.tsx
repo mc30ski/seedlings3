@@ -60,6 +60,10 @@ type OpsData = {
     leaderboard: {
       id: string; shortDesc: string | null; brand: string | null; model: string | null; type: string | null;
       checkouts: number; daysOut: number; income: number; utilizationPct: number;
+      // Sum of jobs billed across the window, derived from per-checkout
+      // rentalBreakdown lines. Null when this piece's recent rentals were
+      // all on flat-daily billing (the model isn't job-driven).
+      jobsBilled: number | null;
     }[];
     idle: {
       id: string; shortDesc: string | null; brand: string | null; model: string | null; type: string | null; status: string;
@@ -197,7 +201,7 @@ export default function OperationsTab() {
   // disclosure inside the equipment section.
   const [equipmentView, setEquipmentView] = usePersistedState<"table" | "chart">("ops_equipmentView", "table");
   const [equipmentChartMetric, setEquipmentChartMetric] = usePersistedState<
-    "daysOut" | "checkouts" | "income" | "utilizationPct"
+    "daysOut" | "checkouts" | "income" | "utilizationPct" | "jobsBilled"
   >("ops_equipmentChartMetric", "daysOut");
   const [equipmentIdleOpen, setEquipmentIdleOpen] = useState(false);
 
@@ -709,6 +713,7 @@ export default function OperationsTab() {
             {data.equipment.leaderboard.length > 0 && (() => {
               const EQ_METRICS = [
                 { key: "daysOut",        label: "Days Out",    color: "#3182CE", getter: (e: typeof data.equipment.leaderboard[number]) => e.daysOut,        tip: (v: number) => `${v}d` },
+                { key: "jobsBilled",     label: "Jobs Billed", color: "#319795", getter: (e: typeof data.equipment.leaderboard[number]) => e.jobsBilled ?? 0,tip: (v: number) => `${v}` },
                 { key: "checkouts",      label: "Checkouts",   color: "#805AD5", getter: (e: typeof data.equipment.leaderboard[number]) => e.checkouts,      tip: (v: number) => `${v}` },
                 { key: "income",         label: "Income",      color: "#38A169", getter: (e: typeof data.equipment.leaderboard[number]) => Math.round(e.income * 100) / 100, tip: (v: number) => `$${v.toFixed(2)}` },
                 { key: "utilizationPct", label: "Utilization", color: "#D69E2E", getter: (e: typeof data.equipment.leaderboard[number]) => e.utilizationPct, tip: (v: number) => `${v}%` },
@@ -769,6 +774,10 @@ export default function OperationsTab() {
                         <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
                           <Text flex="1" minW={0}>Equipment</Text>
                           <Text w="55px" textAlign="right">Days</Text>
+                          {/* Jobs Billed — only meaningful for per-job
+                              pieces. Shown as "—" for flat-daily rows
+                              (jobsBilled is null on the server). */}
+                          <Text w="50px" textAlign="right" display={{ base: "none", sm: "block" }} title="Number of billed jobs across the window (per-job billing)">Jobs</Text>
                           <Text w="55px" textAlign="right">Rentals</Text>
                           <Text w="70px" textAlign="right" display={{ base: "none", md: "block" }}>Income</Text>
                           <Text w="55px" textAlign="right">Util %</Text>
@@ -786,6 +795,9 @@ export default function OperationsTab() {
                               )}
                             </VStack>
                             <Text w="55px" textAlign="right" color="blue.600" fontWeight="medium">{e.daysOut}</Text>
+                            <Text w="50px" textAlign="right" color="teal.600" display={{ base: "none", sm: "block" }}>
+                              {e.jobsBilled != null ? e.jobsBilled : "—"}
+                            </Text>
                             <Text w="55px" textAlign="right" color="fg.muted">{e.checkouts}</Text>
                             <Text w="70px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmt(e.income)}</Text>
                             <Text w="55px" textAlign="right" color={e.utilizationPct >= 50 ? "green.600" : e.utilizationPct > 0 ? "orange.600" : "fg.muted"}>{e.utilizationPct}%</Text>

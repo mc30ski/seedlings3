@@ -364,6 +364,12 @@ type PaymentMethodRow = {
   supportsOnSite: boolean;
   deepLinkTemplate: string | null;
   instructions: string | null;
+  // "Where to send" target for methods without a deep link (e.g.
+  // Zelle, Cash App). When set, the public pay page renders a big
+  // orange button that opens a modal showing this target instead of
+  // the deep-link app-open behavior. See pages/pay/[token].tsx and
+  // services/paymentMethods.ts.
+  payToTarget: string | null;
   active: boolean;
   preferred: boolean;
 };
@@ -390,6 +396,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       supportsOnSite: !!r.supportsOnSite,
       deepLinkTemplate: r.deepLinkTemplate == null ? null : String(r.deepLinkTemplate),
       instructions: r.instructions == null ? null : String(r.instructions),
+      payToTarget: r.payToTarget == null ? null : String(r.payToTarget),
       active: r.active !== false,
       preferred: r.preferred === true,
     }));
@@ -417,6 +424,7 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
       supportsOnSite: true,
       deepLinkTemplate: null,
       instructions: null,
+      payToTarget: null,
       active: true,
       preferred: false,
     };
@@ -524,6 +532,18 @@ function PaymentMethodsEditor({ value, onChange, onSave, onCancel, saving, origi
                   value={row.deepLinkTemplate ?? ""}
                   onChange={(e) => update(idx, { deepLinkTemplate: e.target.value || null })}
                   placeholder="venmo://paycharge?txn=pay&recipients={VENMO_BUSINESS_HANDLE}&amount={{amount}}&note={{note}}"
+                  fontFamily="mono"
+                />
+              </Box>
+              <Box>
+                <Text fontSize="2xs" color="fg.muted" mb={1}>
+                  Pay-to target — where to send the payment, for methods without a deep link (e.g. Zelle email/phone, Cash App tag). When set AND no deep-link template, the public pay page shows a big orange button that opens a modal with this target in large text + a copy button. Placeholders work the same as Instructions.
+                </Text>
+                <Input
+                  size="sm"
+                  value={row.payToTarget ?? ""}
+                  onChange={(e) => update(idx, { payToTarget: e.target.value || null })}
+                  placeholder="{ZELLE_ADDRESS}"
                   fontFamily="mono"
                 />
               </Box>

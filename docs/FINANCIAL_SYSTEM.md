@@ -314,6 +314,75 @@ job and a non-owner-worked job can be compared apples-to-apples).
 
 ---
 
+## 8a. Equipment rental billing
+
+Equipment owned by the LLC is rented by contractors when they use it on jobs;
+the charge is rental **income** to the business (not an expense). Employees
+and trainees use the same equipment at no cost — their usage is already
+covered by the higher business margin charged on their jobs, so there's no
+actual loss to the business when an employee handles a tool; it's an
+accounting note that the equipment cost is paid for elsewhere.
+
+Two billing models coexist, selected per piece of equipment via
+`Equipment.equivalentJobs`:
+
+### Flat daily (legacy)
+When `equivalentJobs IS NULL`. Charge =
+`rentalDays × dailyRate`, where `rentalDays` is the inclusive count of
+Eastern-Time calendar days between `checkedOutAt` and `releasedAt`.
+
+### Per-job with per-day cap
+When `equivalentJobs > 0`. For each ET calendar day in the rental window:
+
+```
+perJob       = dailyRate / equivalentJobs
+daySubtotal  = min(jobsCompletedThatDay × perJob, dailyRate)
+rentalCost   = Σ daySubtotal
+```
+
+Jobs that count are formal-crew or solo `JobOccurrence`s with
+`workflow ∈ {STANDARD, ONE_OFF}` and a finished status
+(`COMPLETED / CLOSED / PENDING_PAYMENT`), whose `completedAt` falls within
+`[checkedOutAt, releasedAt]`. Estimates, tasks, reminders, events,
+followups, and announcements never count. Days with zero jobs cost
+nothing. Days where many jobs would exceed the daily rate are capped
+exactly at the daily rate.
+
+### Mixed-crew policy
+
+`writeCheckoutSplits` (`services/equipment.ts`) materializes per-worker
+`CheckoutSplit` rows at release time using each `GroupMember`'s
+`equipmentCostPercent` (when every worker has one summing to 100) or
+even-split. After allocation, EMPLOYEE / TRAINEE shares are **zeroed**
+(audit-trail rows are preserved with `amount = 0`). Unbilled shares are
+**not redistributed** to remaining contractors.
+
+`Checkout.rentalCost` stores the sum of contractor billings (= actual
+income from this checkout), not the notional pre-split total. For solo
+contractors that's the contractor's full amount; for solo employees it's
+`0`; for groups it's the sum of contractor splits.
+
+### Audit trail
+
+Each release stores a `Checkout.rentalBreakdown` JSON column with one
+entry per ET day:
+```
+[{ day: "YYYY-MM-DD", jobs: number|null, subtotal: number, capped: boolean }]
+```
+`jobs` is `null` for flat-daily billing, a count for per-job. The
+worker money tab and admin receipts render this verbatim so any charge
+is reconstructable.
+
+### Tax export
+
+The QB Income export emits **one row per contractor `CheckoutSplit`** for
+group rentals (account `Equipment Rental Income`, Schedule C Line 1 by
+default, ref `RENT-{checkoutId}-{userId}`) and a single row per checkout
+for solo rentals. Employee/trainee splits never appear (their `amount`
+is 0, filtered by the export's Prisma where clause).
+
+---
+
 ## 9. Business expenses & the Earnings vs Expenses dashboard
 
 **Business Expenses tab** holds manually-entered, out-of-pocket business

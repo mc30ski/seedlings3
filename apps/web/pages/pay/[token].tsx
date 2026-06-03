@@ -22,12 +22,14 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
   HStack,
+  Portal,
   SimpleGrid,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { AlertTriangle, Check, CheckCircle, ChevronLeft, ChevronRight, ExternalLink, Loader, X } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle, ChevronLeft, ChevronRight, Copy, ExternalLink, Loader, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
@@ -42,6 +44,10 @@ type ResolvedPaymentMethod = {
   preferred: boolean;
   instructions: string | null;
   deepLink: string | null;
+  /** Where to send the payment, for methods without a deep link (e.g.
+   *  Zelle address, Cash App tag). Shown in large text in a modal when
+   *  the client taps the orange button. Server resolves placeholders. */
+  payToTarget: string | null;
 };
 
 type ResolveResponse = {
@@ -761,6 +767,25 @@ function PaymentMethodCard({
    *  parent's confirm modal. */
   onSent: () => void;
 }) {
+  // Manual-pay modal state. Only meaningful for methods that have
+  // `payToTarget` but no `deepLink` (e.g. Zelle, where there's no
+  // universal app deep link but we want the same prominent CTA as
+  // Venmo). Tapping the orange button opens the modal; the modal shows
+  // the target in large text with a copy button + the instructions.
+  const [manualPayOpen, setManualPayOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const hasDeepLink = !!config.deepLink;
+  const hasManualPay = !hasDeepLink && !!config.payToTarget;
+  async function copyTarget() {
+    if (!config.payToTarget) return;
+    try {
+      await navigator.clipboard.writeText(config.payToTarget);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked — copy button stays "Copy", user can long-press the text instead */
+    }
+  }
   return (
     <Card.Root
       variant="outline"
@@ -808,14 +833,13 @@ function PaymentMethodCard({
             {config.instructions ?? `Pay $${amountDue.toFixed(2)} via ${config.label}.`}
           </Text>
 
-          {/* Deep-link button — always rendered when the method has one
-              configured. We used to gate on a UA sniff for mobile, but it
-              misfired on iPadOS desktop-mode Safari and devtools emulators,
-              hiding the button for clients who could actually use it. On a
-              real desktop browser tapping a venmo:// link is a no-op (or
-              the browser asks once); harmless. Better to always offer the
-              tap-through than gate it behind brittle device detection. */}
-          {config.deepLink && (
+          {/* Big orange CTA — same button for two flavors:
+              (1) `deepLink` set → open the app (Venmo / Cash App).
+              (2) `payToTarget` set but no deep link → open the manual-pay
+                  modal (Zelle / mailing a check). Both flavors look
+                  identical to the client; the difference is what happens
+                  on tap. Methods with neither hide the button. */}
+          {(hasDeepLink || hasManualPay) && (
             <Button
               size="md"
               variant={selected ? "solid" : "outline"}
@@ -831,11 +855,109 @@ function PaymentMethodCard({
               onClick={(e) => {
                 e.stopPropagation();
                 if (!selected) onSelect();
-                window.location.href = config.deepLink!;
+                if (hasDeepLink) {
+                  window.location.href = config.deepLink!;
+                } else {
+                  setManualPayOpen(true);
+                }
               }}
             >
-              <ExternalLink size={18} /> Open {config.label}
+              <ExternalLink size={18} />{" "}
+              {hasDeepLink
+                ? `Open ${config.label}`
+                : `Pay with ${config.label}`}
             </Button>
+          )}
+
+          {/* Manual-pay modal — only mounted when this method has
+              `payToTarget`. Shows the target in big text with a copy
+              button, plus the instructions as the smaller explainer. */}
+          {hasManualPay && (
+            <Dialog.Root
+              open={manualPayOpen}
+              onOpenChange={(e) => setManualPayOpen(e.open)}
+              placement="center"
+            >
+              <Portal>
+                <Dialog.Backdrop />
+                <Dialog.Positioner>
+                  <Dialog.Content
+                    mx="4"
+                    maxW="md"
+                    w="full"
+                    rounded="2xl"
+                    p="0"
+                    shadow="xl"
+                  >
+                    <Dialog.Header pt="4" px="4" pb="0">
+                      <Dialog.Title fontSize="lg" fontWeight="bold">
+                        Send via {config.label}
+                      </Dialog.Title>
+                    </Dialog.Header>
+                    <Dialog.Body p="4">
+                      <VStack align="stretch" gap={3}>
+                        <Text fontSize="xs" color="fg.muted" textTransform="uppercase" letterSpacing="wide" fontWeight="semibold">
+                          Send ${amountDue.toFixed(2)} to:
+                        </Text>
+                        {/* Target — large, copy-friendly, selectable. */}
+                        <Box
+                          p={3}
+                          bg="gray.50"
+                          borderWidth="1px"
+                          borderColor="gray.300"
+                          rounded="lg"
+                        >
+                          <Text
+                            fontSize="xl"
+                            fontWeight="bold"
+                            wordBreak="break-all"
+                            userSelect="all"
+                            textAlign="center"
+                            lineHeight="1.3"
+                          >
+                            {config.payToTarget}
+                          </Text>
+                        </Box>
+                        <Button
+                          size="md"
+                          colorPalette="teal"
+                          variant="solid"
+                          onClick={copyTarget}
+                        >
+                          {copied ? <Check size={16} /> : <Copy size={16} />}
+                          {copied ? "Copied!" : "Copy"}
+                        </Button>
+                        {config.instructions && (
+                          <Text fontSize="sm" color="fg.muted" lineHeight="1.5">
+                            {config.instructions}
+                          </Text>
+                        )}
+                        <Box
+                          p={2.5}
+                          bg="orange.50"
+                          borderWidth="1px"
+                          borderColor="orange.200"
+                          rounded="md"
+                        >
+                          <Text fontSize="xs" color="orange.800">
+                            {config.label} can&apos;t open automatically like Venmo. Open your bank&apos;s {config.label} feature, paste the recipient above, and send <b>${amountDue.toFixed(2)}</b>.
+                          </Text>
+                        </Box>
+                      </VStack>
+                    </Dialog.Body>
+                    <Dialog.Footer px="4" pb="4" pt="0">
+                      <Button
+                        w="full"
+                        variant="outline"
+                        onClick={() => setManualPayOpen(false)}
+                      >
+                        Close
+                      </Button>
+                    </Dialog.Footer>
+                  </Dialog.Content>
+                </Dialog.Positioner>
+              </Portal>
+            </Dialog.Root>
           )}
 
           {/* Step-2 reminder — only when selected. The deep-link button +

@@ -38,6 +38,17 @@ export default function QRScannerDialog({
   const [manual, setManual] = useState("");
   const [hasCamera, setHasCamera] = useState<boolean>(false);
 
+  // Reset the manual-entry field every time the dialog opens. The dialog
+  // component stays mounted between opens (the parent controls visibility
+  // via `open`), so without this the last-entered code lingers as the
+  // pre-filled value on the next open — confusing when re-scanning.
+  useEffect(() => {
+    if (open) {
+      setManual("");
+      setError(null);
+    }
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
 

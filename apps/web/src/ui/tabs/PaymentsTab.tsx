@@ -24,6 +24,7 @@ import DateInput from "@/src/ui/components/DateInput";
 import CurrencyInput from "@/src/ui/components/CurrencyInput";
 import { apiGet, apiPatch, apiDelete, apiPost } from "@/src/lib/api";
 import { determineRoles, prettyStatus, clientLabel, fmtDate, bizDateKey } from "@/src/lib/lib";
+import { resolveBillingMode, shortBillingChip } from "@/src/lib/equipmentBilling";
 import { usePaymentMethodLabels } from "@/src/lib/usePaymentMethodLabels";
 import {
   type TabPropsType,
@@ -798,10 +799,33 @@ function WorkerPayments({
                         {c.equipment.brand ? `${c.equipment.brand} ` : ""}
                         {c.equipment.model ?? ""}
                       </Text>
-                      <Text fontSize="xs" color="fg.muted">
-                        {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
-                        {c.equipment.dailyRate ? ` @ $${c.equipment.dailyRate.toFixed(2)}/day` : ""}
-                      </Text>
+                      {(() => {
+                        // Equipment chip — same helper the reserve flow
+                        // uses, so the worker sees consistent billing copy.
+                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs);
+                        const chip = shortBillingChip(mode);
+                        return (
+                          <Text fontSize="xs" color="fg.muted">
+                            {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
+                            {chip ? ` · ${chip}` : ""}
+                          </Text>
+                        );
+                      })()}
+                      {/* Per-day breakdown — surfaces the math behind the
+                          charge. Only renders when stored (recent
+                          checkouts; legacy data has null). */}
+                      {c.rentalBreakdown && c.rentalBreakdown.length > 0 && (
+                        <VStack align="start" gap={0} mt={1}>
+                          {c.rentalBreakdown.map((line) => (
+                            <Text key={line.day} fontSize="2xs" color="fg.muted">
+                              {fmtDate(line.day)}
+                              {line.jobs != null ? ` · ${line.jobs} job${line.jobs === 1 ? "" : "s"}` : ""}
+                              {" → "}${line.subtotal.toFixed(2)}
+                              {line.capped && line.jobs != null && line.jobs > 0 ? " (capped)" : ""}
+                            </Text>
+                          ))}
+                        </VStack>
+                      )}
                       {c.releasedAt && (
                         <Text fontSize="xs" color="fg.muted">
                           Returned {fmtDate(c.releasedAt)}

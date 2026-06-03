@@ -30,6 +30,7 @@ import {
 } from "@/src/lib/lib";
 import { TabPropsType, EquipmentStatus, Equipment } from "@/src/lib/types";
 import { onEventSearchRun } from "@/src/lib/bus";
+import { resolveBillingMode, shortBillingChip, instructiveBillingText } from "@/src/lib/equipmentBilling";
 import {
   publishInlineMessage,
   getErrorMessage,
@@ -1733,15 +1734,16 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.brand ? `${e.brand} ` : ""}
                     {e.model ? `${e.model} ` : ""}
                   </Text>
-                  {forAdmin && (
-                    <HStack gap={1}>
-                      {e.dailyRate != null && e.dailyRate > 0 && (
-                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor rate">
-                          ${e.dailyRate.toFixed(2)}/day
+                  {forAdmin && (() => {
+                    const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs));
+                    return chip ? (
+                      <HStack gap={1}>
+                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">
+                          {chip}
                         </Badge>
-                      )}
-                    </HStack>
-                  )}
+                      </HStack>
+                    ) : null;
+                  })()}
                 </HStack>
               </Card.Body>
             ) : (
@@ -1788,41 +1790,50 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                     {e.energy}
                   </Text>
                 )}
-                {forAdmin ? (
-                  <VStack align="start" gap={1} mt={0.5} fontSize="xs">
-                    <HStack gap={2}>
-                      <Text color="fg.muted">Contractor:</Text>
-                      {e.dailyRate != null && e.dailyRate > 0 ? (
-                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
-                          ${e.dailyRate.toFixed(2)}/day
-                        </Badge>
-                      ) : (
-                        <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
-                      )}
+                {(() => {
+                  const mode = resolveBillingMode(e.dailyRate, e.equivalentJobs);
+                  const chip = shortBillingChip(mode);
+                  if (forAdmin) {
+                    return (
+                      <VStack align="start" gap={1} mt={0.5} fontSize="xs">
+                        <HStack gap={2}>
+                          <Text color="fg.muted">Contractor:</Text>
+                          {chip ? (
+                            <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">
+                              {chip}
+                            </Badge>
+                          ) : (
+                            <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                          )}
+                        </HStack>
+                        <HStack gap={2}>
+                          <Text color="fg.muted">Employee:</Text>
+                          <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                        </HStack>
+                      </VStack>
+                    );
+                  }
+                  if (me?.workerType === "TRAINEE") return (
+                    <HStack gap={2} mt={0.5} wrap="wrap">
+                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        No charge — trainees cannot reserve equipment
+                      </Badge>
                     </HStack>
-                    <HStack gap={2}>
-                      <Text color="fg.muted">Employee:</Text>
-                      <Badge colorPalette="green" variant="subtle" fontSize="xs" px="1.5" borderRadius="full">No charge</Badge>
+                  );
+                  if (me?.workerType === "EMPLOYEE") return (
+                    <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
+                  );
+                  return chip ? (
+                    <HStack gap={2} mt={0.5}>
+                      <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
+                        {chip}
+                      </Badge>
+                      <Text fontSize="xs" color="orange.500">rental cost</Text>
                     </HStack>
-                  </VStack>
-                ) : me?.workerType === "TRAINEE" ? (
-                  <HStack gap={2} mt={0.5} wrap="wrap">
-                    <Badge colorPalette="green" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                      No charge — trainees cannot reserve equipment
-                    </Badge>
-                  </HStack>
-                ) : me?.workerType === "EMPLOYEE" ? (
-                  <Text fontSize="xs" color="blue.500" mt={0.5}>No rental cost</Text>
-                ) : e.dailyRate != null && e.dailyRate > 0 ? (
-                  <HStack gap={2} mt={0.5}>
-                    <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="2" borderRadius="full">
-                      ${e.dailyRate.toFixed(2)}/day
-                    </Badge>
-                    <Text fontSize="xs" color="orange.500">rental cost</Text>
-                  </HStack>
-                ) : (
-                  <Text fontSize="xs" color="orange.500" mt={0.5}>No rental cost</Text>
-                )}
+                  ) : (
+                    <Text fontSize="xs" color="orange.500" mt={0.5}>No rental cost</Text>
+                  );
+                })()}
                 {/* Minimal collapsible for details */}
                 <ItemTile item={e} isMine={isMine(e)} />
                 {unavailableMessage(e)}
@@ -2192,16 +2203,22 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {(() => {
                         const wt = me?.workerType;
                         // Only contractors are charged. Employees + trainees
-                        // see a green "no charge" message.
-                        const rate = wt === "CONTRACTOR" ? reserveConfirmEquip.dailyRate : null;
-                        if (rate != null && rate > 0) {
+                        // see a green "no charge" message. Billing mode +
+                        // copy come from the shared helper so this matches
+                        // every other equipment surface.
+                        const mode = resolveBillingMode(
+                          reserveConfirmEquip.dailyRate,
+                          reserveConfirmEquip.equivalentJobs,
+                        );
+                        const isContractor = wt === "CONTRACTOR" || !wt;
+                        if (mode.kind !== "free" && isContractor) {
                           return (
                             <Box mt={1} p={2} bg="orange.50" rounded="md" borderWidth="1px" borderColor="orange.300">
                               <Text fontSize="sm" color="orange.800" fontWeight="semibold">
-                                Rental charge: ${rate.toFixed(2)}/day
+                                Rental charge: {shortBillingChip(mode)}
                               </Text>
-                              <Text fontSize="xs" color="orange.600" mt={0.5}>
-                                This amount will be deducted from your payout for each day the equipment is reserved.
+                              <Text fontSize="xs" color="orange.700" mt={0.5}>
+                                {instructiveBillingText(mode)}
                               </Text>
                             </Box>
                           );
@@ -2209,8 +2226,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         return (
                           <Box mt={1} p={2} bg="green.50" rounded="md">
                             <Text fontSize="xs" color="green.700" fontWeight="medium">
-                              {wt === "EMPLOYEE" ? "No charge — employees use equipment at no cost"
-                                : wt === "TRAINEE" ? "No charge — trainees use equipment at no cost"
+                              {wt === "EMPLOYEE" ? "No charge — covered by your business margin"
+                                : wt === "TRAINEE" ? "No charge — covered by your business margin"
                                 : "No rental charge for this equipment"}
                             </Text>
                           </Box>
@@ -2234,21 +2251,11 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       </Box>
                     )}
 
-                    {(() => {
-                      const wt = me?.workerType;
-                      // Only contractors get the rental-deduction notice.
-                      if (wt !== "CONTRACTOR") return null;
-                      const rate = reserveConfirmEquip.dailyRate;
-                      if (rate == null || rate <= 0) return null;
-                      return (
-                        <Box p={2} bg="blue.50" rounded="md" borderWidth="1px" borderColor="blue.200">
-                          <Text fontSize="sm" color="blue.700">
-                            This equipment has a rental rate of <b>${rate.toFixed(2)} per day</b>.
-                            Rental charges will be calculated based on the duration of your checkout and deducted from your earnings.
-                          </Text>
-                        </Box>
-                      );
-                    })()}
+                    {/* Per-mode pricing recap moved into the orange chip
+                        above (which now reads from `instructiveBillingText`),
+                        so the duplicate blue panel that always said
+                        "rental rate $X/day" is dropped. The chip handles
+                        both flat-daily and per-job-with-cap modes. */}
 
                     <Checkbox.Root
                       checked={reserveChecked}

@@ -23,6 +23,13 @@ export type PaymentMethodConfig = {
   deepLinkTemplate: string | null;
   /** Optional human instructions with {SETTING_KEY} and {{runtimeValue}} placeholders. */
   instructions: string | null;
+  /** Optional "where to send the payment" target shown in large text on the
+   *  manual-pay modal (e.g. a Zelle address, Cash App tag, PayPal handle).
+   *  Used when a method has no `deepLinkTemplate` but still benefits from a
+   *  prominent CTA — tapping the orange button opens a modal showing this
+   *  target plus the `instructions` text. Same `{SETTING_KEY}` /
+   *  `{{runtimeValue}}` placeholder resolution as the other text fields. */
+  payToTarget: string | null;
   /** When false, hidden everywhere; historical records preserved. */
   active: boolean;
   /** Flagged as a preferred method — badged and floated to the top on the
@@ -41,6 +48,7 @@ const ALLOWED_KEYS = new Set([
   "supportsOnSite",
   "deepLinkTemplate",
   "instructions",
+  "payToTarget",
   "active",
   "preferred",
 ]);
@@ -85,6 +93,7 @@ export function parsePaymentMethodsSetting(raw: string | null | undefined): Paym
       supportsOnSite: !!row.supportsOnSite,
       deepLinkTemplate: row.deepLinkTemplate == null ? null : String(row.deepLinkTemplate),
       instructions: row.instructions == null ? null : String(row.instructions),
+      payToTarget: row.payToTarget == null ? null : String(row.payToTarget),
       active: row.active !== false, // default true if omitted
       preferred: row.preferred === true, // default false if omitted
     };

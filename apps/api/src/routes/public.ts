@@ -536,6 +536,10 @@ export default async function publicRoutes(app: FastifyInstance) {
       deepLink: m.deepLinkTemplate
         ? resolvePlaceholders(m.deepLinkTemplate, settings, runtime)
         : null,
+      // Manual-pay target shown in the modal when a method has no deep link
+      // (e.g. Zelle). Resolved same as the other text fields so
+      // `{ZELLE_ADDRESS}` etc. flow through.
+      payToTarget: m.payToTarget ? resolvePlaceholders(m.payToTarget, settings, runtime) : null,
     }));
 
     // Best-effort audit row (don't fail the response if it errors).

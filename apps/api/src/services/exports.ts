@@ -502,6 +502,13 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
   // Both are raw cash-flow fields. No derived values participate.
   const [payments, equipmentRentals, rentalIncomeConfig] = await Promise.all([
     loadConfirmedPayments(start, end),
+    // Pull every checkout released in the window with a positive billed
+    // total — but also fetch the per-worker CheckoutSplit rows so we can
+    // attribute group-rental income to each individual contractor. Solo
+    // rentals have no splits and emit a single row at Checkout.rentalCost
+    // (= the solo contractor's full amount, or 0 for solo employees).
+    // Group rentals emit one row per contractor split (amount > 0); the
+    // employee/trainee splits have amount = 0 and are filtered out.
     prisma.checkout.findMany({
       where: {
         rentalCost: { gt: 0 },
@@ -510,6 +517,10 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
       include: {
         equipment: { select: { id: true, shortDesc: true, brand: true, model: true } },
         user: { select: { id: true, displayName: true, email: true } },
+        splits: {
+          where: { amount: { gt: 0 } },
+          include: { user: { select: { id: true, displayName: true, email: true } } },
+        },
       },
       orderBy: { releasedAt: "asc" },
     }),
@@ -562,40 +573,73 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
     );
     total += p.amountPaid;
   }
-  // Equipment rental income rows. Customer column carries the contractor's
-  // name (they're the "customer" for the rental); Account name is fixed to
-  // "Equipment Rental Income" so QB routes it to the right chart entry on
-  // import. Reference ID uses RENT- prefix (distinct from PAY-) for dedup.
+  // Equipment rental income rows. For solo rentals (no splits), emit one
+  // row per checkout with the holder as Customer. For group rentals
+  // (CheckoutSplit rows present), emit one row PER CONTRACTOR SPLIT —
+  // each contractor's portion of the rental shows up as its own income
+  // line with that contractor as Customer. Employee/trainee splits have
+  // amount=0 (filtered by the Prisma query above) so they don't appear.
+  // Account name is fixed to "Equipment Rental Income" so QB routes
+  // every line to the right chart entry on import. Reference ID uses
+  // RENT- prefix; for group splits we suffix with the userId so each
+  // contractor's row dedupes independently on re-import.
   for (const c of equipmentRentals) {
-    // Defensive double-guard. The Prisma query already filters
-    // `rentalCost > 0`, but a stale or hand-edited row that slips past
-    // (or future code that adds a different loader) must not produce a
-    // zero-dollar income line.
-    if (!c.releasedAt || c.rentalCost == null || c.rentalCost <= 0) continue;
+    if (!c.releasedAt) continue;
     const eqLabel = [c.equipment.brand, c.equipment.model].filter(Boolean).join(" ") || c.equipment.shortDesc;
-    const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
-    lines.push(
-      csvRow([
-        toQbDate(c.releasedAt),
-        `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`,
-        round2(c.rentalCost).toFixed(2),
-        // QB chart-of-accounts entry + Schedule C line both come from
-        // the EQUIPMENT_RENTAL_INCOME_CONFIG setting so the CPA can
-        // change them without a code deploy. See the loader above for
-        // the fallback defaults.
-        rentalIncomeConfig.qbAccount,
-        `RENT-${c.id}`,
-        "",
-        rentalIncomeConfig.scheduleCLine,
-        contractorName,
-        "",
-        "",
-        "",
-        "",
-        "",
-      ]),
-    );
-    total += c.rentalCost;
+    const descPrefix = `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`;
+
+    if (c.splits.length > 0) {
+      // Group rental → one row per contractor split. Trust the splitter:
+      // any non-contractor share was zeroed at materialization time and
+      // already filtered by the `amount: { gt: 0 }` predicate above.
+      for (const sp of c.splits) {
+        if (sp.amount == null || sp.amount <= 0) continue;
+        const contractorName = sp.user.displayName ?? sp.user.email ?? sp.user.id;
+        lines.push(
+          csvRow([
+            toQbDate(c.releasedAt),
+            descPrefix,
+            round2(sp.amount).toFixed(2),
+            rentalIncomeConfig.qbAccount,
+            `RENT-${c.id}-${sp.userId}`,
+            "",
+            rentalIncomeConfig.scheduleCLine,
+            contractorName,
+            "",
+            "",
+            "",
+            "",
+            "",
+          ]),
+        );
+        total += sp.amount;
+      }
+    } else {
+      // Solo rental → one row, Checkout.rentalCost is already the
+      // actual billed total (zero for solo employees, full for solo
+      // contractors). The Prisma where clause filters out rentalCost ≤ 0,
+      // but defensive double-guard anyway.
+      if (c.rentalCost == null || c.rentalCost <= 0) continue;
+      const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
+      lines.push(
+        csvRow([
+          toQbDate(c.releasedAt),
+          descPrefix,
+          round2(c.rentalCost).toFixed(2),
+          rentalIncomeConfig.qbAccount,
+          `RENT-${c.id}`,
+          "",
+          rentalIncomeConfig.scheduleCLine,
+          contractorName,
+          "",
+          "",
+          "",
+          "",
+          "",
+        ]),
+      );
+      total += c.rentalCost;
+    }
   }
   lines.push(
     csvRow([
@@ -614,10 +658,16 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
       "",
     ]),
   );
-  // rowCount = body data rows actually written (matches the convention
-  // used by the other CSV builders). Defensive-skipped rentals don't
-  // contribute to the count.
-  const writtenRentalCount = equipmentRentals.filter((c) => c.releasedAt && c.rentalCost != null && c.rentalCost > 0).length;
+  // rowCount = body data rows actually written. For solo rentals that's
+  // one row per checkout; for group rentals it's one row per contractor
+  // split, so we tally the actual emitted rows instead of checkout count.
+  const writtenRentalCount = equipmentRentals.reduce((sum, c) => {
+    if (!c.releasedAt) return sum;
+    if (c.splits.length > 0) {
+      return sum + c.splits.filter((sp) => sp.amount != null && sp.amount > 0).length;
+    }
+    return sum + (c.rentalCost != null && c.rentalCost > 0 ? 1 : 0);
+  }, 0);
   return { csv: lines.join("\n") + "\n", rowCount: payments.length + writtenRentalCount, total: round2(total) };
 }
 
