@@ -2485,6 +2485,9 @@ Respond ONLY with valid JSON in this exact format:
         assignees: { select: { userId: true, role: true } },
         payment: paymentIncludeWithCutoff(cutoff, { include: { splits: true } }),
         expenses: expensesIncludeWithCutoff(cutoff),
+        // Pulled in so the Clients section can derive "worked-with in window"
+        // + "VIP among those" without a second roundtrip.
+        job: { select: { property: { select: { client: { select: { id: true, isVip: true } } } } } },
       },
     });
 
@@ -2527,12 +2530,6 @@ Respond ONLY with valid JSON in this exact format:
       select: { id: true, displayName: true, workerType: true },
     });
 
-    const workersByType: Record<string, number> = {};
-    for (const w of workers) {
-      const t = w.workerType ?? "UNASSIGNED";
-      workersByType[t] = (workersByType[t] ?? 0) + 1;
-    }
-
     // Top workers by jobs completed in range
     const workerJobCounts = new Map<string, { name: string; jobs: number; earnings: number }>();
     for (const o of occurrences.filter((oc) => oc.status === "CLOSED" || oc.status === "PENDING_PAYMENT")) {
@@ -2553,8 +2550,18 @@ Respond ONLY with valid JSON in this exact format:
       .sort((a, b) => b.jobs - a.jobs)
       .slice(0, 5);
 
+    // Window-scoped team metrics. `workersWithJobs` = the set of workers
+    // that appear as a non-observer assignee on any in-window occurrence;
+    // that's our definition of "active in window." Type breakdown is the
+    // same restricted to that set, so the badges answer "who did real
+    // work this period?" instead of "how big is the org chart right now?"
     const workersWithJobs = new Set(occurrences.flatMap((o) => o.assignees.filter((a) => a.role !== "observer").map((a) => a.userId)));
-    const workersIdle = workers.filter((w) => !workersWithJobs.has(w.id)).length;
+    const workersByTypeInWindow: Record<string, number> = {};
+    for (const w of workers) {
+      if (!workersWithJobs.has(w.id)) continue;
+      const t = w.workerType ?? "UNASSIGNED";
+      workersByTypeInWindow[t] = (workersByTypeInWindow[t] ?? 0) + 1;
+    }
 
     // Equipment summary — current snapshot (state right now, not scoped to
     // the date range).
@@ -2684,18 +2691,33 @@ Respond ONLY with valid JSON in this exact format:
     const estMap: Record<string, number> = {};
     for (const e of estimates) estMap[e.status] = e._count;
 
-    // Client summary
-    const clientCounts = await prisma.client.groupBy({
-      by: ["status"],
-      _count: true,
+    // Client summary — window-scoped. Three numbers that all answer
+    // "what's happening this period?":
+    //   workedWithInWindow  — distinct clients with at least one in-window
+    //                         occurrence (any status), derived in-memory
+    //                         from the already-fetched occurrences.
+    //   vipWithWorkInWindow — subset of workedWithInWindow that are VIP.
+    //   newInWindow         — clients created during the window.
+    const workedClientIds = new Set<string>();
+    const vipWorkedClientIds = new Set<string>();
+    for (const o of occurrences) {
+      const c = (o as any).job?.property?.client as { id: string; isVip: boolean } | null | undefined;
+      if (!c) continue;
+      workedClientIds.add(c.id);
+      if (c.isVip) vipWorkedClientIds.add(c.id);
+    }
+    const newClientsInWindow = await prisma.client.count({
+      where: { createdAt: { gte: dateFrom, lte: dateTo } },
     });
-    const clientMap: Record<string, number> = {};
-    for (const cc of clientCounts) clientMap[cc.status] = cc._count;
-    const vipClients = await prisma.client.count({ where: { isVip: true, status: "ACTIVE" } });
 
-    // Recent audit events — also gated by the Business Start Date cutoff.
+    // Recent audit events — scoped to the selected date range so the section
+    // answers "what happened in this period?" instead of "what's most recent
+    // overall." BSD cutoff still layered for defense-in-depth.
     const recentAudit = await prisma.auditEvent.findMany({
-      where: { ...cutoffWhere("AuditEvent", cutoff) },
+      where: {
+        createdAt: { gte: dateFrom, lte: dateTo },
+        ...cutoffWhere("AuditEvent", cutoff),
+      },
       orderBy: { createdAt: "desc" },
       take: 10,
       include: { actor: { select: { displayName: true } } },
@@ -2796,11 +2818,11 @@ Respond ONLY with valid JSON in this exact format:
         paymentsByMethod,
       },
       team: {
-        activeWorkers: workers.length,
-        workersByType,
+        // Window-scoped counts: workers that had at least one in-window
+        // occurrence, broken down by type. See workersWithJobs above.
+        activeInWindow: workersWithJobs.size,
+        workersByTypeInWindow,
         topWorkers,
-        workersWithJobs: workersWithJobs.size,
-        workersIdle,
       },
       equipment: {
         total: totalEquipment,
@@ -2823,10 +2845,9 @@ Respond ONLY with valid JSON in this exact format:
         rejected: estMap["REJECTED"] ?? 0,
       },
       clients: {
-        active: clientMap["ACTIVE"] ?? 0,
-        paused: clientMap["PAUSED"] ?? 0,
-        archived: clientMap["ARCHIVED"] ?? 0,
-        vip: vipClients,
+        workedWithInWindow: workedClientIds.size,
+        newInWindow: newClientsInWindow,
+        vipWithWorkInWindow: vipWorkedClientIds.size,
       },
       unclaimedItems,
       workerStats: allWorkerStats,

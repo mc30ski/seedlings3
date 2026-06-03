@@ -305,6 +305,16 @@ export default function BusinessExpensesTab() {
   // user-controlled (persisted) so the choice survives reloads. page resets
   // to 1 whenever a filter changes.
   const [pageSize, setPageSize] = usePersistedState<number>("be_pageSize", 20);
+  const pageSizeCollection = useMemo(
+    () => createListCollection({
+      items: [
+        { label: "20", value: "20" },
+        { label: "50", value: "50" },
+        { label: "100", value: "100" },
+      ],
+    }),
+    [],
+  );
   // Collapsible "When to capitalize vs expense" reference panel. Default
   // closed so the tab opens clean; opens once per user-preference (persisted
   // localStorage) for operators who want it visible while logging.
@@ -1189,21 +1199,32 @@ export default function BusinessExpensesTab() {
               )}
               <HStack gap={1}>
                 <Text color="fg.muted" fontSize="xs">Per page:</Text>
-                <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  style={{
-                    padding: "2px 6px",
-                    fontSize: "12px",
-                    border: "1px solid var(--chakra-colors-gray-200)",
-                    borderRadius: "4px",
-                    background: "white",
+                <Select.Root
+                  collection={pageSizeCollection}
+                  value={[String(pageSize)]}
+                  onValueChange={(e) => {
+                    const n = Number(e.value[0]);
+                    if (Number.isFinite(n) && n > 0) setPageSize(n);
                   }}
+                  size="xs"
+                  positioning={{ strategy: "fixed", hideWhenDetached: true }}
+                  css={{ width: "auto", flex: "0 0 auto" }}
                 >
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
+                  <Select.Control>
+                    <Select.Trigger w="auto" minW="0" px="2">
+                      <Select.ValueText />
+                    </Select.Trigger>
+                  </Select.Control>
+                  <Select.Positioner>
+                    <Select.Content>
+                      {pageSizeCollection.items.map((it) => (
+                        <Select.Item key={it.value} item={it.value}>
+                          <Select.ItemText>{it.label}</Select.ItemText>
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Positioner>
+                </Select.Root>
               </HStack>
             </HStack>
           </HStack>

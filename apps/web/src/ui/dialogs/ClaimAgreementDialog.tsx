@@ -163,10 +163,14 @@ export default function ClaimAgreementDialog({
                 {isContractor ? (
                   <Box>
                     <Text fontSize="sm" color="fg.muted" mb={2}>
-                      As an independent contractor, you acknowledge that you are responsible for your own
-                      taxes, insurance, and compliance with all applicable laws. You are not an employee
-                      and are not entitled to employee benefits. A {commissionPercent}% commission will be
-                      deducted from your earnings on this job.
+                      I acknowledge that I have read, understood, and signed the Seedlings Lawn Care, LLC
+                      Independent Contractor Agreement, a signed copy of which I have provided to the
+                      Company. I agree to perform all services as an independent contractor in accordance
+                      with that agreement, including but not limited to: my status as an independent
+                      contractor and not an employee; my responsibility for my own taxes; my acceptance of
+                      contingent payment terms (I am only paid when the client pays); my agreement not to
+                      solicit Company clients directly; and my liability for damage caused by my own
+                      actions.
                     </Text>
                   </Box>
                 ) : (

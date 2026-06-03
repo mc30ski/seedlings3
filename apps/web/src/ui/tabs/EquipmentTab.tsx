@@ -1748,7 +1748,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               toggleCard();
             }}
           >
-            {isCardCompact && !forAdmin ? (
+            {isCardCompact ? (
               <HStack align="center" gap={3} py="2" px="3">
                 <EquipmentThumbnail equipmentId={e.id} hasPhotos={e.hasPhotos} />
                 <VStack align="stretch" gap={1} flex="1" minW={0}>
@@ -1815,7 +1815,17 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                       {e.brand ? `${e.brand} ` : ""}
                       {e.model ? `${e.model} ` : ""}
                     </Text>
-                    {(() => {
+                    {forAdmin ? (() => {
+                      // Admin view — show the contractor-billing chip
+                      // (matches the non-compact admin card) so admins see
+                      // the rate/cap mode at a glance.
+                      const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs));
+                      return chip ? (
+                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">
+                          {chip}
+                        </Badge>
+                      ) : null;
+                    })() : (() => {
                       const wt = me?.workerType;
                       // Only contractors are charged. Employees + trainees
                       // always see "No charge."
@@ -1842,14 +1852,7 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
             <Card.Header py="2" px="3" pb="0">
               <HStack justify="space-between" alignItems="flex-start" gap={2}>
               <Box display="flex" flexDirection="column" gap={1} flex="1" minW={0}>
-                <Text
-                  fontSize={isCardCompact ? "sm" : "md"}
-                  fontWeight="semibold"
-                  whiteSpace={isCardCompact ? "nowrap" : undefined}
-                  overflow={isCardCompact ? "hidden" : undefined}
-                  textOverflow={isCardCompact ? "ellipsis" : undefined}
-                  title={isCardCompact ? e.shortDesc : undefined}
-                >{e.shortDesc}</Text>
+                <Text fontSize="md" fontWeight="semibold">{e.shortDesc}</Text>
                 <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" flexShrink={0} mb={1}>
                   <StatusBadge
                     status={e.status ?? ""}
@@ -1867,26 +1870,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
               <ActionIcons equipmentId={e.id} />
               </HStack>
             </Card.Header>
-            {isCardCompact ? (
-              <Card.Body py="2" px="3" pt="0">
-                <HStack gap={2} fontSize="xs" color="fg.muted">
-                  <Text>
-                    {e.brand ? `${e.brand} ` : ""}
-                    {e.model ? `${e.model} ` : ""}
-                  </Text>
-                  {forAdmin && (() => {
-                    const chip = shortBillingChip(resolveBillingMode(e.dailyRate, e.equivalentJobs));
-                    return chip ? (
-                      <HStack gap={1}>
-                        <Badge colorPalette="orange" variant="subtle" fontSize="xs" px="1.5" borderRadius="full" title="Contractor billing">
-                          {chip}
-                        </Badge>
-                      </HStack>
-                    ) : null;
-                  })()}
-                </HStack>
-              </Card.Body>
-            ) : (
             <Card.Body py="2" px="3" pt="0">
               <VStack align="start" gap={0}>
                 <Text fontSize="sm" color="fg.muted">
@@ -1979,8 +1962,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 {unavailableMessage(e)}
               </VStack>
             </Card.Body>
-            )}
-            {!isCardCompact && (
             <Card.Footer py="2" px="3" pt="0">
               <HStack gap={2} wrap="wrap">
                 {forAdmin && (
@@ -2196,7 +2177,6 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                 )}
               </HStack>
             </Card.Footer>
-            )}
             </>
             )}
             {(e.instructions ?? []).length > 0 && (
@@ -2421,8 +2401,8 @@ export default function EquipmenTab({ me, purpose = "WORKER" }: TabPropsType) {
                         return (
                           <Box mt={1} p={2} bg="green.50" rounded="md">
                             <Text fontSize="xs" color="green.700" fontWeight="medium">
-                              {wt === "EMPLOYEE" ? "No charge — covered by your business margin"
-                                : wt === "TRAINEE" ? "No charge — covered by your business margin"
+                              {wt === "EMPLOYEE" ? "No charge  — equipment covered for employees"
+                                : wt === "TRAINEE" ? "No charge  — equipment covered for employees"
                                 : "No rental charge for this equipment"}
                             </Text>
                           </Box>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Box,
@@ -8,9 +8,11 @@ import {
   Card,
   HStack,
   Input,
+  Select,
   Spinner,
   Text,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { apiGet, apiPatch, apiPost } from "@/src/lib/api";
 import { usePersistedState } from "@/src/lib/usePersistedState";
@@ -187,6 +189,10 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
   // Routing provider
   const [routingProvider, setRoutingProvider] = usePersistedState("preview_routingProvider", "mapbox");
   const providerOptions = [{ value: "mapbox", label: "Mapbox" }];
+  const providerCollection = useMemo(
+    () => createListCollection({ items: providerOptions }),
+    [],
+  );
 
   const [homeBase, setHomeBase] = useState("");
   const [profileHomeBase, setProfileHomeBase] = useState("");
@@ -516,21 +522,31 @@ export default function PreviewRoutesTab({ userId }: Props = {}) {
           </Text>
           <HStack gap={1} flexShrink={0} align="center">
             <Text fontSize="xs" color="fg.muted">Map:</Text>
-            <select
-              value={routingProvider}
-              onChange={(e) => setRoutingProvider(e.target.value)}
-              style={{
-                fontSize: "12px",
-                padding: "2px 6px",
-                borderRadius: "4px",
-                border: "1px solid #e2e8f0",
-                background: "#fff",
+            <Select.Root
+              collection={providerCollection}
+              value={[routingProvider]}
+              onValueChange={(e) => {
+                if (e.value[0]) setRoutingProvider(e.value[0]);
               }}
+              size="xs"
+              positioning={{ strategy: "fixed", hideWhenDetached: true }}
+              css={{ width: "auto", flex: "0 0 auto" }}
             >
-              {providerOptions.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
+              <Select.Control>
+                <Select.Trigger w="auto" minW="0" px="2">
+                  <Select.ValueText />
+                </Select.Trigger>
+              </Select.Control>
+              <Select.Positioner>
+                <Select.Content>
+                  {providerOptions.map((o) => (
+                    <Select.Item key={o.value} item={o.value}>
+                      <Select.ItemText>{o.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Select.Root>
           </HStack>
         </HStack>
       </Box>

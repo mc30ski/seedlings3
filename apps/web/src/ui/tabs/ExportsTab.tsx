@@ -141,9 +141,14 @@ function ytdRange(): { from: string; to: string } {
 
 export default function ExportsTab() {
   const [cadence, setCadence] = useState<Cadence>("WEEKLY");
-  const initial = periodFor("WEEKLY", "last");
-  const [start, setStart] = useState(initial.from);
-  const [end, setEnd] = useState(initial.to);
+  // Default to "last week total" = today minus 7 days through today, so a
+  // freshly-opened tab shows the most-recently-relevant operational window.
+  // Cadence presets ("Last week", "This week", etc.) still snap to calendar
+  // boundaries when clicked; only the initial state is rolling.
+  const initialEnd = new Date();
+  const initialStart = addDays(initialEnd, -7);
+  const [start, setStart] = useState(dateKey(initialStart));
+  const [end, setEnd] = useState(dateKey(initialEnd));
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -361,7 +366,16 @@ export default function ExportsTab() {
                 <Input
                   type="date"
                   value={start}
-                  onChange={(e) => setStart(e.target.value)}
+                  // max=end enforces Start ≤ End at the picker level. The
+                  // onChange guard handles the typed-value path (some
+                  // browsers still emit the value even when it violates max).
+                  max={end || undefined}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) { setStart(v); return; }
+                    setStart(v);
+                    if (end && v > end) setEnd(v);
+                  }}
                   size="sm"
                   w="160px"
                 />
@@ -373,7 +387,14 @@ export default function ExportsTab() {
                 <Input
                   type="date"
                   value={end}
-                  onChange={(e) => setEnd(e.target.value)}
+                  // min=start enforces End ≥ Start at the picker level.
+                  min={start || undefined}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) { setEnd(v); return; }
+                    setEnd(v);
+                    if (start && v < start) setStart(v);
+                  }}
                   size="sm"
                   w="160px"
                 />

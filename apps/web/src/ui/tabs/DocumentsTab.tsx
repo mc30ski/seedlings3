@@ -25,6 +25,8 @@ import {
   FileText,
   Filter,
   Link2,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   RefreshCw,
@@ -295,6 +297,53 @@ export default function DocumentsTab({ isSuper = false }: Props) {
       }
       return next;
     });
+  }
+
+  // Master expand/collapse across BOTH visual axes:
+  //   - `expanded`        — per-doc-card version-history reveal
+  //   - `collapsedTypes`  — per-multi-instance-group fold (hides member cards)
+  // "Anything open" = at least one doc card expanded OR at least one
+  // multi-instance group un-folded. The button toggles between fully open
+  // (cards expanded + groups un-folded) and fully closed (cards collapsed +
+  // groups re-folded). Scoped by filter so chips narrow the action — clicking
+  // "Expand all" while filtered to one type only touches that type. Details
+  // for un-loaded docs are fetched on expand, mirroring toggleExpanded.
+  function toggleAllExpanded(filteredDocs: CompanyDocument[]) {
+    const filteredIds = filteredDocs.map((d) => d.id);
+    const visibleTypeKeys = new Set(filteredDocs.map((d) => d.type));
+    const multiInstanceTypes = types.filter(
+      (t) => !t.singleton && visibleTypeKeys.has(t.key),
+    );
+    const anyCardExpanded = filteredIds.some((id) => expanded.has(id));
+    const anyGroupOpen = multiInstanceTypes.some((t) => !collapsedTypes.has(t.key));
+    const anythingOpen = anyCardExpanded || anyGroupOpen;
+
+    if (anythingOpen) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const id of filteredIds) next.delete(id);
+        return next;
+      });
+      setCollapsedTypes((prev) => {
+        const next = new Set(prev);
+        for (const t of multiInstanceTypes) next.add(t.key);
+        return next;
+      });
+    } else {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const id of filteredIds) next.add(id);
+        return next;
+      });
+      setCollapsedTypes((prev) => {
+        const next = new Set(prev);
+        for (const t of multiInstanceTypes) next.delete(t.key);
+        return next;
+      });
+      for (const id of filteredIds) {
+        if (!details[id]) void loadDetail(id);
+      }
+    }
   }
 
   // True for text documents we render in-app (markdown / plain text). Detected
@@ -607,6 +656,35 @@ export default function DocumentsTab({ isSuper = false }: Props) {
             </Select.Content>
           </Select.Positioner>
         </Select.Root>
+        {(() => {
+          // Master expand/collapse for every visible doc. Reads filtered to
+          // know what's on screen, so action scope matches the chips above.
+          // "Anything open" combines both visual axes (cards + groups) so
+          // the icon mirrors what the click will actually do.
+          const visibleTypeKeys = new Set(filtered.map((d) => d.type));
+          const multiInstanceTypes = types.filter(
+            (t) => !t.singleton && visibleTypeKeys.has(t.key),
+          );
+          const anyCardExpanded = filtered.some((d) => expanded.has(d.id));
+          const anyGroupOpen = multiInstanceTypes.some((t) => !collapsedTypes.has(t.key));
+          const anythingOpen = anyCardExpanded || anyGroupOpen;
+          return (
+            <Button
+              size="sm"
+              variant="ghost"
+              px="2"
+              minW="0"
+              flexShrink={0}
+              onClick={() => toggleAllExpanded(filtered)}
+              disabled={filtered.length === 0}
+              title={anythingOpen ? "Collapse all documents" : "Expand all documents"}
+              aria-label={anythingOpen ? "Collapse all documents" : "Expand all documents"}
+              css={{ background: "var(--chakra-colors-gray-100)" }}
+            >
+              {anythingOpen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </Button>
+          );
+        })()}
         {isSuper && (
           <Button
             size="sm"

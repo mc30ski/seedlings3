@@ -9,6 +9,8 @@ import {
   Badge,
   Table,
   HStack,
+  Select,
+  createListCollection,
   useBreakpointValue,
 } from "@chakra-ui/react";
 import { apiGet } from "@/src/lib/api";
@@ -76,6 +78,16 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
+  const pageSizeCollection = useMemo(
+    () => createListCollection({
+      items: [
+        { label: "25/page", value: "25" },
+        { label: "50/page", value: "50" },
+        { label: "100/page", value: "100" },
+      ],
+    }),
+    [],
+  );
 
   // simple, Activity-style text search (client-side)
   const [q, setQ] = useState("");
@@ -432,22 +444,32 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
           <Text fontSize="sm" color="gray.600">
             Items per page:
           </Text>
-          <select
-            value={pageSize}
-            onChange={(e) => onChangePageSize(Number(e.currentTarget.value))}
-            style={{
-              padding: "8px",
-              borderRadius: "8px",
-              border: "1px solid var(--chakra-colors-border)",
+          <Select.Root
+            collection={pageSizeCollection}
+            value={[String(pageSize)]}
+            onValueChange={(e) => {
+              const n = Number(e.value[0]);
+              if (Number.isFinite(n) && n > 0) onChangePageSize(n);
             }}
-            title="Rows per page"
+            size="sm"
+            positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            css={{ width: "auto", flex: "0 0 auto" }}
           >
-            {[25, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n}/page
-              </option>
-            ))}
-          </select>
+            <Select.Control>
+              <Select.Trigger w="auto" minW="0" px="2" title="Rows per page">
+                <Select.ValueText />
+              </Select.Trigger>
+            </Select.Control>
+            <Select.Positioner>
+              <Select.Content>
+                {pageSizeCollection.items.map((it) => (
+                  <Select.Item key={it.value} item={it.value}>
+                    <Select.ItemText>{it.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Positioner>
+          </Select.Root>
         </HStack>
 
         <Button

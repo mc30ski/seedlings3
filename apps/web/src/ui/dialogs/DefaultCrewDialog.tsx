@@ -8,8 +8,10 @@ import {
   Dialog,
   HStack,
   Portal,
+  Select,
   Text,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import {
@@ -53,6 +55,18 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
   // default group server-side). Without this the orange "default group X
   // is set" warning would stay visible until the dialog was reopened.
   const [activeGroup, setActiveGroup] = useState<{ id: string; name: string } | null>(null);
+
+  const groupCollection = useMemo(
+    () => createListCollection({
+      items: groups
+        .filter((g) => !g.archivedAt)
+        .map((g) => ({
+          value: g.id,
+          label: `${g.name} (${g.members.length + 1} member${g.members.length === 0 ? "" : "s"}, claimer: ${g.claimer.displayName ?? g.claimer.email})`,
+        })),
+    }),
+    [groups],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -206,22 +220,28 @@ export default function DefaultCrewDialog({ open, onOpenChange, jobId, currentAs
                     <Text fontSize="xs" color="fg.muted">
                       Pick a saved crew. Setting a group will clear any individual default assignees — the two modes are mutually exclusive.
                     </Text>
-                    <select
-                      value={selectedGroupId}
-                      onChange={(e) => setSelectedGroupId(e.target.value)}
-                      style={{
-                        padding: "6px 8px", fontSize: "14px",
-                        border: "1px solid var(--chakra-colors-gray-200)",
-                        borderRadius: "6px", width: "100%",
-                      }}
+                    <Select.Root
+                      collection={groupCollection}
+                      value={selectedGroupId ? [selectedGroupId] : []}
+                      onValueChange={(e) => setSelectedGroupId(e.value[0] ?? "")}
+                      size="sm"
+                      positioning={{ strategy: "fixed", hideWhenDetached: true }}
                     >
-                      <option value="">— pick a group —</option>
-                      {groups.filter((g) => !g.archivedAt).map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.name} ({g.members.length + 1} member{g.members.length === 0 ? "" : "s"}, claimer: {g.claimer.displayName ?? g.claimer.email})
-                        </option>
-                      ))}
-                    </select>
+                      <Select.Control>
+                        <Select.Trigger w="full">
+                          <Select.ValueText placeholder="— pick a group —" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {groupCollection.items.map((it) => (
+                            <Select.Item key={it.value} item={it.value}>
+                              <Select.ItemText>{it.label}</Select.ItemText>
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
                     {activeGroup && (
                       <Box p={2} bg="purple.50" rounded="md" borderWidth="1px" borderColor="purple.200">
                         <HStack justify="space-between">
