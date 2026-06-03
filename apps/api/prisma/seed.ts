@@ -1842,7 +1842,7 @@ async function seedDatabase() {
           supportsClientRequest: true,
           supportsOnSite: true,
           deepLinkTemplate: null,
-          instructions: "Open your bank's Zelle, paste the address above as the recipient, and send the amount. Then come back here and tap \"I've sent the payment\" so we know to look for it.",
+          instructions: "Tap below to view our Zelle recipient. Send the amount via Zelle from your bank's app, then come back here and tap \"I've sent the payment\" so we know to look for it.",
           // payToTarget drives the manual-pay modal — same big orange button
           // as Venmo, but tapping opens a modal showing this address in big
           // text with a copy button (Zelle has no universal deep link).

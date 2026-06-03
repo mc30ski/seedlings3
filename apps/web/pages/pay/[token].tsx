@@ -927,11 +927,13 @@ function PaymentMethodCard({
                           {copied ? <Check size={16} /> : <Copy size={16} />}
                           {copied ? "Copied!" : "Copy"}
                         </Button>
-                        {config.instructions && (
-                          <Text fontSize="sm" color="fg.muted" lineHeight="1.5">
-                            {config.instructions}
-                          </Text>
-                        )}
+                        {/* `instructions` deliberately NOT shown here — it's
+                            the card-context text (rendered before the user
+                            taps the button). Inside the modal the recipient
+                            is right above and the orange callout below
+                            already explains what to do; duplicating
+                            `instructions` here only adds redundant text
+                            that doesn't fit this context. */}
                         <Box
                           p={2.5}
                           bg="orange.50"
