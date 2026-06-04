@@ -717,9 +717,6 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                     {noInsurance && (
                       <Badge colorPalette="red" variant="solid">No Insurance</Badge>
                     )}
-                    {isContractor && u.contractorAgreedAt && (
-                      <Badge colorPalette="teal" variant="subtle">Agreement Signed</Badge>
-                    )}
                     {isContractor && u.w9Collected && (
                       <Badge colorPalette="teal" variant="subtle">W-9</Badge>
                     )}

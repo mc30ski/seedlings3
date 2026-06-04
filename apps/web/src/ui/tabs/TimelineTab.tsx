@@ -821,6 +821,7 @@ export default function TimelineTab({ isSuper = false }: Props) {
       {isSuper && (
         <>
           <TimelineEventDialog
+            key={editingEvent?.id ?? "new"}
             open={dialogOpen}
             onOpenChange={setDialogOpen}
             event={editingEvent}

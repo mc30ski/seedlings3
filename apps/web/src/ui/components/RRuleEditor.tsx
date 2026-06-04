@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   HStack,
@@ -106,6 +106,29 @@ export default function RRuleEditor({ value, onChange, anchorDate }: Props) {
   const [byMonth, setByMonth] = useState<number | undefined>(initial.byMonth);
   const [byMonthDay, setByMonthDay] = useState<number | undefined>(initial.byMonthDay);
 
+  // Resync internal state when the `value` prop changes externally (e.g. the
+  // parent dialog reopens with a different event). Without this, the editor
+  // keeps the prior event's state across opens because Chakra's Dialog.Root
+  // doesn't fully unmount its content. Bug fix: previously editing a repeating
+  // event and then opening a new entry would silently apply the prior event's
+  // recurrence rule to the new save.
+  //
+  // We compare against the last value we EMITTED rather than the raw value
+  // prop, so we don't loop when the parent passes our own emit back to us.
+  // The "external change" signal is: incoming value differs from what we last
+  // emitted upward.
+  const lastEmittedRef = useRef<string>(value);
+  useEffect(() => {
+    if (lastEmittedRef.current === value) return;
+    lastEmittedRef.current = value;
+    const parsed = parseRRule(value);
+    setFreq(parsed.freq);
+    setIntervalState(parsed.interval);
+    setByDay(parsed.byDay);
+    setByMonth(parsed.byMonth);
+    setByMonthDay(parsed.byMonthDay);
+  }, [value]);
+
   // When the anchor changes, seed defaults for YEARLY / MONTHLY based on it
   // so the user doesn't have to type them in. Only fires when the field is
   // empty — never overwrites a value the user picked manually.
@@ -130,9 +153,13 @@ export default function RRuleEditor({ value, onChange, anchorDate }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freq, anchorDate]);
 
-  // Emit changes upward whenever any state piece moves.
+  // Emit changes upward whenever any state piece moves. Record what we
+  // emitted so the value-sync effect above can distinguish our own echo
+  // from a genuine external prop change.
   useEffect(() => {
-    onChange(buildRRule({ freq, interval, byDay, byMonth, byMonthDay }));
+    const built = buildRRule({ freq, interval, byDay, byMonth, byMonthDay });
+    lastEmittedRef.current = built;
+    onChange(built);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freq, interval, byDay, byMonth, byMonthDay]);
 
