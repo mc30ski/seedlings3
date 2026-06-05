@@ -572,7 +572,11 @@ export const paymentRequests = {
         ...(opts?.claimerUserId
           ? {
               assignees: {
-                some: { userId: opts.claimerUserId, role: { not: "observer" } },
+                // SQL NULL-safety on role (see equipment.ts comment).
+                some: {
+                  userId: opts.claimerUserId,
+                  OR: [{ role: null }, { role: { not: "observer" } }],
+                },
               },
             }
           : {}),
@@ -598,7 +602,8 @@ export const paymentRequests = {
           },
         },
         assignees: {
-          where: { role: { not: "observer" } },
+          // SQL NULL-safety on role (see equipment.ts comment).
+          where: { OR: [{ role: null }, { role: { not: "observer" } }] },
           select: {
             userId: true,
             assignedById: true,

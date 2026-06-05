@@ -1290,6 +1290,58 @@ export const jobs: ServicesJobs = {
         await tx.jobOccurrenceAssignee.deleteMany({ where: { occurrenceId } });
       }
 
+      // Re-evaluate payroll hours approval if a payroll-input field changed
+      // on a completed occurrence with unapproved hours. Without this, an
+      // admin or worker editing estimate/start/end/pause time AFTER the
+      // initial completion leaves hoursApprovedAt = null forever even when
+      // the new variance is well within threshold — exactly the scenario
+      // the Review-hours dialog promises ("the row auto-approves when the
+      // corrected time falls within the variance threshold"). Only fires
+      // when the row is currently in a completed payroll state and the
+      // change actually involved one of the variance inputs.
+      const isCompletedState =
+        updated.status === JobOccurrenceStatus.PENDING_PAYMENT ||
+        updated.status === JobOccurrenceStatus.CLOSED;
+      const touchedPayrollInput =
+        "estimatedMinutes" in patch ||
+        "startedAt" in patch ||
+        "completedAt" in patch ||
+        "totalPausedMs" in patch;
+      if (
+        isCompletedState &&
+        !updated.hoursApprovedAt &&
+        touchedPayrollInput &&
+        updated.completedAt
+      ) {
+        const workflow = (updated as any).workflow ?? "STANDARD";
+        const activeAssignees = await tx.jobOccurrenceAssignee.count({
+          // SQL NULL-safety on role (see services/equipment.ts comment).
+          where: { occurrenceId, OR: [{ role: null }, { role: { not: "observer" } }] },
+        });
+        const varianceThreshold = await loadHoursApprovalVarianceThreshold();
+        const approval = evaluateHoursApproval({
+          workflow,
+          estimatedMinutes: updated.estimatedMinutes,
+          startedAt: updated.startedAt,
+          completedAt: updated.completedAt,
+          totalPausedMs: updated.totalPausedMs ?? 0,
+          workerCount: Math.max(1, activeAssignees),
+          currentUserId,
+          varianceThreshold,
+        });
+        if (approval.hoursApprovedAt) {
+          await tx.jobOccurrence.update({
+            where: { id: occurrenceId },
+            data: {
+              hoursApprovedAt: approval.hoursApprovedAt,
+              hoursApprovedById: approval.hoursApprovedById,
+            },
+          });
+          updated.hoursApprovedAt = approval.hoursApprovedAt;
+          updated.hoursApprovedById = approval.hoursApprovedById;
+        }
+      }
+
       // Inventory hooks: hold lifecycle follows the occurrence's status.
       if (data.status) {
         if (data.status === JobOccurrenceStatus.CANCELED) {

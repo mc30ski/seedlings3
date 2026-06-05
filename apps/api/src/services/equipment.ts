@@ -160,7 +160,18 @@ export async function fetchJobsByDayForCheckout(
     ? { assignedGroupId: ctx.groupId }
     : {
         assignedGroupId: null,
-        assignees: { some: { userId: ctx.userId, role: { not: "observer" } } },
+        // "role is not observer" must explicitly include NULL roles.
+        // SQL: `role != 'observer'` evaluates to NULL (not TRUE) when role
+        // IS NULL, which silently drops every assignee row that doesn't have
+        // a role string set — making their per-job equipment checkouts bill
+        // $0 even when they did billable jobs. Most assignee rows in the
+        // wild have a NULL role; only crew memberships consistently set one.
+        assignees: {
+          some: {
+            userId: ctx.userId,
+            OR: [{ role: null }, { role: { not: "observer" } }],
+          },
+        },
       };
   const jobs = await tx.jobOccurrence.findMany({
     where: { ...baseWhere, ...scopeWhere },
