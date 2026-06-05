@@ -285,6 +285,10 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     void load();
   }, [load]);
 
+  // General filters applied to every section (Pending / Team / Clients).
+  // Worker-specific filters (workerTypeFilter, guaranteedPayoutFilter) are
+  // applied AFTER segmenting, only to the Team subset — they don't make
+  // sense for clients or pending users.
   const filtered = useMemo(() => {
     let rows = items;
     // Read-only mode: pending users hidden entirely. Admins (non-super)
@@ -298,27 +302,6 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     if (accessRole === "client") {
       rows = rows.filter((u) => u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN"));
     }
-    if (workerTypeFilter !== "all") {
-      if (workerTypeFilter === "unclassified") {
-        rows = rows.filter((u) => !u.workerType && u.roles.some((r) => r.role === "WORKER"));
-      } else {
-        rows = rows.filter((u) => u.workerType === workerTypeFilter);
-      }
-    }
-    // Guaranteed-payout filter. "active" = currently in a window;
-    // "expiring" = active AND ≤ 7 days from expiration. Computed
-    // client-side from guaranteedPayoutUntil so the chip in the toolbar
-    // stays in sync with the row count without an extra round-trip.
-    if (guaranteedPayoutFilter !== "all") {
-      const now = Date.now();
-      const sevenDaysOut = now + 7 * 86400000;
-      rows = rows.filter((u) => {
-        if (!u.guaranteedPayoutUntil) return false;
-        const untilMs = new Date(u.guaranteedPayoutUntil).getTime();
-        if (guaranteedPayoutFilter === "active") return untilMs > now;
-        return untilMs > now && untilMs <= sevenDaysOut;
-      });
-    }
     const qlc = q.trim().toLowerCase();
     if (qlc) {
       rows = rows.filter((u) => {
@@ -328,7 +311,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
       });
     }
     return rows;
-  }, [items, q, workerTypeFilter, guaranteedPayoutFilter, accessRole, readOnly]);
+  }, [items, q, accessRole, readOnly]);
 
   // Section predicates. Each user lands in exactly one of Pending / Team /
   // Clients (the three are mutually exclusive and exhaustive).
@@ -342,7 +325,30 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
     u.isApproved && !u.roles.some((r) => r.role === "WORKER" || r.role === "ADMIN");
 
   const pendingUsers = useMemo(() => filtered.filter(isPendingUser), [filtered]);
-  const teamUsers = useMemo(() => filtered.filter(isTeamUser), [filtered]);
+  // Team gets the worker-specific filters layered on top. Clients and pending
+  // users are never narrowed by workerType or guaranteed-payout — those are
+  // worker-only concepts.
+  const teamUsers = useMemo(() => {
+    let rows = filtered.filter(isTeamUser);
+    if (workerTypeFilter !== "all") {
+      if (workerTypeFilter === "unclassified") {
+        rows = rows.filter((u) => !u.workerType && u.roles.some((r) => r.role === "WORKER"));
+      } else {
+        rows = rows.filter((u) => u.workerType === workerTypeFilter);
+      }
+    }
+    if (guaranteedPayoutFilter !== "all") {
+      const now = Date.now();
+      const sevenDaysOut = now + 7 * 86400000;
+      rows = rows.filter((u) => {
+        if (!u.guaranteedPayoutUntil) return false;
+        const untilMs = new Date(u.guaranteedPayoutUntil).getTime();
+        if (guaranteedPayoutFilter === "active") return untilMs > now;
+        return untilMs > now && untilMs <= sevenDaysOut;
+      });
+    }
+    return rows;
+  }, [filtered, workerTypeFilter, guaranteedPayoutFilter]);
   const clientUsers = useMemo(() => filtered.filter(isClientUser), [filtered]);
 
   async function approve(userId: string) {
