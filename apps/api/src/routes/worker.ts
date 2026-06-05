@@ -2093,12 +2093,20 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
           workflow: { in: ["STANDARD", "ONE_OFF"] },
-          OR: [
-            { payment: { is: null } },
-            { payment: { confirmed: false } },
-          ],
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
-          ...occurrenceWorkDateCutoff(cutoff),
+          // Composing two OR-emitting clauses (payment-state + BSD cutoff)
+          // via AND. Plain spread of `occurrenceWorkDateCutoff(cutoff)` would
+          // overwrite the payment-state OR when BSD is enabled — silently
+          // letting fully-paid jobs into the projection.
+          AND: [
+            {
+              OR: [
+                { payment: { is: null } },
+                { payment: { confirmed: false } },
+              ],
+            },
+            ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
+          ],
         },
         select: {
           id: true,
@@ -2344,12 +2352,17 @@ export default async function workerRoutes(app: FastifyInstance) {
         where: {
           status: { in: ["SCHEDULED", "IN_PROGRESS", "PAUSED", "COMPLETED", "PENDING_PAYMENT"] },
           workflow: { in: ["STANDARD", "ONE_OFF"] },
-          OR: [
-            { payment: { is: null } },
-            { payment: { confirmed: false } },
-          ],
           assignees: { some: { userId: uid, OR: [{ role: null }, { role: { not: "observer" } }] } },
-          ...occurrenceWorkDateCutoff(cutoff),
+          // Same OR-overwrite avoidance as the earlier query in this file.
+          AND: [
+            {
+              OR: [
+                { payment: { is: null } },
+                { payment: { confirmed: false } },
+              ],
+            },
+            ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
+          ],
         },
         select: {
           id: true,

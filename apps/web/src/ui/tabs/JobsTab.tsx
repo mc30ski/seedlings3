@@ -3728,7 +3728,7 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
               // is what the operator scans for as "waiting on someone else's action".
               // Both states previously resolved to gray.50 and were indistinguishable.
               : cardColorBase === "gray" && (isClosed || isAcceptedEstimate || isRejectedEstimate) ? undefined
-              : cardColorBase === "gray" && isAssignedToOthers ? "gray.50"
+              : cardColorBase === "gray" && isAssignedToOthers ? "gray.100"
               : cardColorBase === "yellow" ? "yellow.50"
               : cardColorBase === "green" ? "green.100"
               : cardColorBase && cardColorBase !== "gray" ? `${cardColorBase}.50`
