@@ -2701,10 +2701,38 @@ function AdminPayments({ forAdmin, isSuper }: { forAdmin: boolean; isSuper: bool
                           {(c.user as any).workerType === "EMPLOYEE" ? "W-2" : (c.user as any).workerType === "TRAINEE" ? "Trainee" : (c.user as any).workerType === "CONTRACTOR" ? "1099" : "Unclassified"}
                         </Badge>
                       </HStack>
-                      <Text fontSize="xs" color="fg.muted">
-                        {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
-                        {c.equipment.dailyRate ? ` @ $${c.equipment.dailyRate.toFixed(2)}/day` : ""}
-                      </Text>
+                      {(() => {
+                        // Show the same per-job-aware billing chip the worker
+                        // view uses. Without this, per-job-billed equipment
+                        // confusingly shows "X days @ $Y/day" (the legacy
+                        // flat-daily format) on a checkout whose actual
+                        // billing was per-completed-job — making a $0 charge
+                        // look like a bug instead of "the contractor didn't
+                        // complete a billable job during the window."
+                        const mode = resolveBillingMode(c.equipment.dailyRate, c.equipment.equivalentJobs);
+                        const chip = shortBillingChip(mode);
+                        return (
+                          <Text fontSize="xs" color="fg.muted">
+                            {c.rentalDays} day{c.rentalDays !== 1 ? "s" : ""}
+                            {chip ? ` · ${chip}` : ""}
+                          </Text>
+                        );
+                      })()}
+                      {/* Per-day breakdown — same as worker view. Surfaces
+                          the "0 jobs → $0" math when per-job billing kicks
+                          in. Only rendered when stored (recent checkouts). */}
+                      {c.rentalBreakdown && c.rentalBreakdown.length > 0 && (
+                        <VStack align="start" gap={0} mt={1}>
+                          {c.rentalBreakdown.map((line) => (
+                            <Text key={line.day} fontSize="2xs" color="fg.muted">
+                              {fmtDate(line.day)}
+                              {line.jobs != null ? ` · ${line.jobs} job${line.jobs === 1 ? "" : "s"}` : ""}
+                              {" → "}${line.subtotal.toFixed(2)}
+                              {line.capped && line.jobs != null && line.jobs > 0 ? " (capped)" : ""}
+                            </Text>
+                          ))}
+                        </VStack>
+                      )}
                       {c.releasedAt && (
                         <Text fontSize="xs" color="fg.muted">
                           Returned {fmtDate(c.releasedAt)}

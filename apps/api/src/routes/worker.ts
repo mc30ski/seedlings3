@@ -1482,7 +1482,8 @@ export default async function workerRoutes(app: FastifyInstance) {
     //     claimer dispatches from their own device.
     if (isJobWorkflow) {
       const claimerAssignee = await prisma.jobOccurrenceAssignee.findFirst({
-        where: { occurrenceId, NOT: { role: "observer" } },
+        // SQL NULL-safety on role (see services/equipment.ts comment).
+        where: { occurrenceId, OR: [{ role: null }, { role: { not: "observer" } }] },
         orderBy: { assignedAt: "asc" },
         select: { userId: true },
       });
@@ -3111,11 +3112,23 @@ export default async function workerRoutes(app: FastifyInstance) {
     const body = req.body || {};
 
     if (!body.key) throw app.httpErrors.badRequest("key is required");
+    const r2Key = String(body.key);
+
+    // Idempotent: if a row already exists for this (occurrence, r2Key) pair,
+    // return it instead of creating a duplicate. Retries from the offline
+    // executor, page reloads mid-confirm, or network blips can fire confirm
+    // multiple times for the same uploaded object — without this guard,
+    // every retry creates another DB row pointing at the same R2 object,
+    // inflating the visible photo count while the underlying image is one.
+    const existing = await prisma.jobOccurrencePhoto.findFirst({
+      where: { occurrenceId, r2Key },
+    });
+    if (existing) return existing;
 
     const photo = await prisma.jobOccurrencePhoto.create({
       data: {
         occurrenceId,
-        r2Key: String(body.key),
+        r2Key,
         fileName: body.fileName ? String(body.fileName) : null,
         contentType: body.contentType ? String(body.contentType) : null,
         uploadedById: uid,

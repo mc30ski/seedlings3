@@ -704,7 +704,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
             </Badge>
           )}
           {guaranteedPayoutFilter !== "all" && (
-            <Badge size="sm" colorPalette={guaranteedPayoutFilter === "expiring" ? "yellow" : "purple"} variant="solid">
+            <Badge size="sm" colorPalette={guaranteedPayoutFilter === "expiring" ? "yellow" : "blue"} variant="solid">
               {guaranteedPayoutFilter === "expiring" ? "Guaranteed payout expiring (≤7d)" : "Guaranteed payout active"}
             </Badge>
           )}
@@ -833,7 +833,7 @@ export default function UsersTab({ role = "worker", readOnly = false }: TabRoleP
                     )}
                     {isContractor && guaranteedPayoutActive && (
                       <Badge
-                        colorPalette={guaranteedPayoutDaysLeft <= 7 ? "yellow" : "purple"}
+                        colorPalette={guaranteedPayoutDaysLeft <= 7 ? "yellow" : "blue"}
                         variant="solid"
                         title={`Guaranteed payout period — payroll work-anchored through ${fmtDate(u.guaranteedPayoutUntil)}. ${guaranteedPayoutDaysLeft <= 7 ? "Approaching expiration — confirm transition with the contractor." : ""}`}
                       >

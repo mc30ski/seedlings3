@@ -1954,7 +1954,8 @@ export const payments: ServicesPayments = {
               },
             },
             assignees: {
-              where: { role: { not: "observer" } },
+              // SQL NULL-safety on role (see equipment.ts comment).
+              where: { OR: [{ role: null }, { role: { not: "observer" } }] },
               select: { userId: true, user: { select: { displayName: true, email: true } } },
             },
           },

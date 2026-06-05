@@ -2068,7 +2068,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
           if ((occ as any)._isReminderGhost) return false;
           const w = occ.workflow;
           const claimable = w === "STANDARD" || w === "ONE_OFF" || w === "ESTIMATE" || !w;
-          return claimable && !hasAssignees;
+          // "Unclaimed" = no NON-OBSERVER assignee. An observer is just
+          // watching — they haven't claimed the work. Must match the chip's
+          // count source (`/admin/operations` jobsUnclaimed) which uses the
+          // same predicate; otherwise the title-bar "N Unclaimed" badge and
+          // the page list disagree on observer-only jobs (badge counts them,
+          // page hides them — looks like "the chip lied" to the operator).
+          const hasNonObserverAssignee = (occ.assignees ?? []).some((a) => a.role !== "observer");
+          return claimable && !hasNonObserverAssignee;
         }
         if (sf === "FINISHED") {
           // FINISHED = completed *real jobs* (STANDARD/ONE_OFF/ESTIMATE) only. Tasks,

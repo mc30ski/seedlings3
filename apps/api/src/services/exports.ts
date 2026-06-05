@@ -388,7 +388,12 @@ async function loadGpAdvanceCandidates(
       workflow: { in: ["STANDARD", "ONE_OFF"] as any },
       assignees: {
         some: {
-          role: { not: "observer" },
+          // SQL NULL-safety: `role != 'observer'` evaluates to NULL when
+          // role IS NULL, dropping the row. Most assignees have NULL role
+          // (only crew membership sets one) — without this OR, NULL-role
+          // contractor jobs silently disappear from the Gusto Contractors
+          // export and the contractor doesn't get paid.
+          OR: [{ role: null }, { role: { not: "observer" } }],
           user: { workerType: "CONTRACTOR" },
         },
       },
