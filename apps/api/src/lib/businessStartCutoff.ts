@@ -61,6 +61,12 @@ const MODEL_DATE_FIELD = {
   Checkout: "releasedAt",
   AuditEvent: "createdAt",
   SupplyPurchase: "date",
+  // Guaranteed-payout advances anchor on exportedAt — the moment the
+  // operator committed to paying the contractor out-of-band for the
+  // referenced occurrence. This is the cash-flow date for both 1099
+  // and QB Expenses reporting, matching how Payment.createdAt anchors
+  // confirmed splits.
+  GuaranteedPayoutAdvance: "exportedAt",
 } as const;
 
 export type CutoffModel = keyof typeof MODEL_DATE_FIELD;

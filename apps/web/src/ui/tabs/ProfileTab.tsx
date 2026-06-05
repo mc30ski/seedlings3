@@ -21,6 +21,7 @@ import {
   getErrorMessage,
 } from "@/src/ui/components/InlineMessage";
 import { type Me, type Role } from "@/src/lib/types";
+import { fmtDate as fmtDateLib } from "@/src/lib/lib";
 import { useOffline } from "@/src/lib/offline";
 import { getAllActions, deleteAction, retryAction, clearAllActions, subscribeQueue, type QueuedAction } from "@/src/lib/offlineQueue";
 import { usePushNotifications } from "@/src/lib/usePushNotifications";
@@ -462,6 +463,31 @@ export default function ProfileTab({ me, isAdmin, purpose, onProfileUpdated }: P
                     {workerTypeLabel(targetUser?.workerType)}
                   </Badge>
                 </HStack>
+                {/* Self-view only: contractor's guaranteed payout period.
+                    During the window, the contractor is paid for completed
+                    work regardless of client payment timing. Only renders
+                    while the period is active. */}
+                {isSelf && me?.workerType === "CONTRACTOR" && me?.guaranteedPayoutUntil && (() => {
+                  const untilDate = new Date(me.guaranteedPayoutUntil);
+                  const active = untilDate.getTime() > Date.now();
+                  if (!active) return null;
+                  const daysLeft = Math.max(0, Math.ceil((untilDate.getTime() - Date.now()) / 86400000));
+                  return (
+                    <HStack fontSize="sm" align="flex-start">
+                      <Text color="fg.muted" w="80px">Payout:</Text>
+                      <Box flex="1">
+                        <Badge colorPalette={daysLeft <= 7 ? "yellow" : "purple"} variant="solid">
+                          Guaranteed through {fmtDateLib(me.guaranteedPayoutUntil)} · {daysLeft}d left
+                        </Badge>
+                        <Text fontSize="xs" color="fg.muted" mt={1}>
+                          During this onboarding window the Company pays you for completed jobs regardless of
+                          client payment timing. After {fmtDateLib(me.guaranteedPayoutUntil)}, the standing
+                          contingent-payment terms in your Independent Contractor Agreement apply.
+                        </Text>
+                      </Box>
+                    </HStack>
+                  );
+                })()}
               </VStack>
             </Card.Body>
           </Card.Root>

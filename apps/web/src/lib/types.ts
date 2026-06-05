@@ -88,6 +88,11 @@ export type Me = {
   insuranceExpiresAt?: string | null;
   contractorAgreedAt?: string | null;
   w9Collected?: boolean;
+  // Guaranteed payout onboarding period (contractors only). Active when
+  // guaranteedPayoutUntil > now. Surfaced on ProfileTab so the contractor
+  // can see their own period and remaining days.
+  guaranteedPayoutUntil?: string | null;
+  guaranteedPayoutStartedAt?: string | null;
   // Override columns: null means "follow workerType default"; true/false is explicit.
   canPullInventoryOverride?: boolean | null;
   canChargeBusinessExpensesOverride?: boolean | null;
@@ -492,6 +497,12 @@ export type PaymentSplitItem = {
   // True when this split belongs to the LLC owner. UI renders these as
   // "Owner Earnings" instead of "Worker payout" to distinguish them.
   ownerEarnings?: boolean;
+  // Set when the split's user was on a guaranteed-payout period at work
+  // completion AND was advance-paid for this occurrence. The cash was
+  // already disbursed via the GP advance row; this PaymentSplit exists
+  // for audit + 1099 trace but doesn't trigger another disbursement.
+  // UI labels these as "Advance paid" so admins don't pay twice.
+  guaranteedPayoutPaidAt?: string | null;
   user: { id: string; displayName?: string | null; email?: string | null; workerType?: string | null };
 };
 

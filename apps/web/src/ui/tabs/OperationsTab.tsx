@@ -13,7 +13,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react";
-import { BarChart3, CalendarRange, ChevronDown, ChevronRight, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
+import { AlertTriangle, BarChart3, CalendarRange, ChevronDown, ChevronRight, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -43,6 +43,15 @@ type WorkerStat = {
   jobsCompleted: number; scheduledJobs: number;
   totalEarnings: number; totalExpenses: number; netEarnings: number;
   totalActualMinutes: number; totalEstimatedMinutes: number; efficiency: number;
+  // Wage compliance metrics. wageHours is wall-clock per-worker (pause time
+  // excluded). wageGross prefers the promised payout snapshot, falling back
+  // to actual payment splits for legacy occurrences. avgHourlyRate is null
+  // when the worker hadn't clocked any hours in the window.
+  wageHours: number; wageGross: number; avgHourlyRate: number | null;
+  // True when this worker is a contractor in an active guaranteed payout
+  // period. Used to suffix below-floor warnings so the operator understands
+  // the company is currently underwriting the timing risk by choice.
+  guaranteedPayoutActive: boolean;
 };
 
 type OpsData = {
@@ -74,6 +83,8 @@ type OpsData = {
   unclaimedItems: UnclaimedItem[];
   workerStats: WorkerStat[];
   recentAudit: { id: string; scope: string; verb: string; action?: string | null; actorName: string; createdAt: string; metadata?: any }[];
+  minWagePerHour: number;
+  unapprovedHoursInWindow: number;
 };
 
 const presetItems = [
@@ -595,6 +606,92 @@ export default function OperationsTab() {
                 {workerView === "table" && (
                   <Card.Root variant="outline">
                     <Card.Body py="2" px="0">
+                      {/* Pending-hours warning. The $/hr averages below still
+                          include occurrences with unapproved hours so the
+                          operator sees the full picture, but if those hours
+                          are wrong on review the averages will shift. Deep
+                          link mirrors the Exports tab pattern — jumps to
+                          Admin Jobs filtered to unapproved-hours rows. */}
+                      {data.unapprovedHoursInWindow > 0 && (
+                        <Box mx={3} my={2} p={2} bg="yellow.50" borderWidth="1px" borderColor="yellow.300" rounded="md">
+                          <HStack justify="space-between" gap={2} wrap="wrap">
+                            <Text fontSize="xs" color="yellow.900">
+                              <Text as="span" fontWeight="semibold">
+                                {data.unapprovedHoursInWindow} occurrence
+                                {data.unapprovedHoursInWindow === 1 ? "" : "s"}
+                              </Text>
+                              {" "}have unapproved hours. The $/hr averages below include their logged hours,
+                              so the rates may shift once those hours are reviewed.
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorPalette="yellow"
+                              onClick={() => {
+                                try {
+                                  localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
+                                } catch {}
+                                window.dispatchEvent(new CustomEvent("navigate:adminTab", { detail: { tab: "admin-jobs", remount: true } }));
+                                setTimeout(() => {
+                                  window.dispatchEvent(new CustomEvent("adminJobs:showUnapprovedHours"));
+                                }, 100);
+                              }}
+                            >
+                              Review now
+                            </Button>
+                          </HStack>
+                        </Box>
+                      )}
+                      {(() => {
+                        // Wage compliance banner. Counts employees + trainees
+                        // below the configured floor (legal exposure) and
+                        // contractors below the floor (reclassification risk
+                        // signal, not a legal violation). Contractors split
+                        // into "in active guaranteed payout" (Company is
+                        // currently underwriting the timing risk by choice)
+                        // and "standard" (the more concerning bucket).
+                        // Banner only renders when there's something to flag.
+                        const floor = data.minWagePerHour;
+                        const belowEmp = data.workerStats.filter(
+                          (w) => w.avgHourlyRate != null && w.avgHourlyRate < floor &&
+                            (w.workerType === "EMPLOYEE" || w.workerType === "TRAINEE"),
+                        );
+                        const belowCon = data.workerStats.filter(
+                          (w) => w.avgHourlyRate != null && w.avgHourlyRate < floor &&
+                            w.workerType === "CONTRACTOR",
+                        );
+                        const belowConGuaranteed = belowCon.filter((w) => w.guaranteedPayoutActive);
+                        const belowConStandard = belowCon.filter((w) => !w.guaranteedPayoutActive);
+                        if (belowEmp.length === 0 && belowCon.length === 0) return null;
+                        // Build the count phrases as a flat array and join
+                        // with "; ". Avoids the double-space JSX whitespace
+                        // bug from inline fragment concatenation.
+                        const parts: string[] = [];
+                        if (belowEmp.length > 0) {
+                          parts.push(`${belowEmp.length} W-2 worker${belowEmp.length === 1 ? "" : "s"}`);
+                        }
+                        if (belowConStandard.length > 0) {
+                          parts.push(`${belowConStandard.length} contractor${belowConStandard.length === 1 ? "" : "s"} (reclassification risk)`);
+                        }
+                        if (belowConGuaranteed.length > 0) {
+                          parts.push(`${belowConGuaranteed.length} contractor${belowConGuaranteed.length === 1 ? "" : "s"} (guaranteed payout)`);
+                        }
+                        return (
+                          <Box mx={3} my={2} p={2} bg="red.50" borderWidth="1px" borderColor="red.300" rounded="md">
+                            <Text fontSize="xs" color="red.900" fontWeight="semibold">
+                              Below ${floor.toFixed(2)}/hr floor in window: {parts.join("; ")}
+                            </Text>
+                            <Text fontSize="2xs" color="red.800" mt={0.5}>
+                              W-2 below the floor is a legal compliance issue. Contractors below the floor aren't a legal violation
+                              if they're truly independent — but a persistently low effective rate is the kind of signal the DOL/IRS
+                              cite when reclassifying contractors as employees.{" "}
+                              {belowConGuaranteed.length > 0 && (
+                                <>Contractors marked "guaranteed payout" are currently in an active onboarding period — the Company is voluntarily underwriting their timing risk, but the rate signal is still worth watching for when the period ends.</>
+                              )}
+                            </Text>
+                          </Box>
+                        );
+                      })()}
                       {/* Header */}
                       <HStack px={3} py={1} borderBottomWidth="1px" borderColor="gray.200" fontSize="xs" fontWeight="semibold" color="fg.muted" gap={2}>
                         <Text flex="1" minW={0}>Worker</Text>
@@ -602,15 +699,51 @@ export default function OperationsTab() {
                         <Text w="50px" textAlign="right">Sched</Text>
                         <Text w="65px" textAlign="right" display={{ base: "none", md: "block" }}>Earned</Text>
                         <Text w="50px" textAlign="right" display={{ base: "none", md: "block" }}>Time</Text>
+                        <Text w="55px" textAlign="right" title={`Effective $/hr vs $${data.minWagePerHour.toFixed(2)} floor`}>$/hr</Text>
                         <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}>Eff</Text>
                       </HStack>
                       {/* Rows */}
-                      {(showAllWorkers ? data.workerStats : data.workerStats.slice(0, 5)).map((w) => (
+                      {(showAllWorkers ? data.workerStats : data.workerStats.slice(0, 5)).map((w) => {
+                        // Color band for the $/hr cell. Green ≥ floor, yellow
+                        // within $2 of floor, red below, gray when there's
+                        // no hours in the window (rate undefined).
+                        const floor = data.minWagePerHour;
+                        const rate = w.avgHourlyRate;
+                        const rateColor =
+                          rate == null ? "fg.muted"
+                            : rate < floor ? "red.600"
+                            : rate < floor + 2 ? "orange.600"
+                            : "green.600";
+                        return (
                         <HStack key={w.id} px={3} py={1.5} borderBottomWidth="1px" borderColor="gray.50" fontSize="xs" gap={2}
                           _hover={{ bg: "gray.50" }}
                         >
                           <VStack align="start" gap={0} flex="1" minW={0}>
-                            <Text fontWeight="medium">{w.name}</Text>
+                            <HStack gap={1} alignItems="center" minW={0}>
+                              {/* Per-row min-wage warning. Shown when the
+                                  worker's effective $/hr in this window is
+                                  below the configured floor. Color follows
+                                  the legal weight: red triangle = W-2 below
+                                  floor (compliance violation), orange =
+                                  contractor below floor (reclassification
+                                  risk, not a violation). Tooltip surfaces
+                                  the specifics so it's not a mystery icon. */}
+                              {rate != null && rate < floor && (
+                                <Box
+                                  as="span"
+                                  flexShrink={0}
+                                  display="inline-flex"
+                                  alignItems="center"
+                                  color={w.workerType === "CONTRACTOR" ? "orange.600" : "red.600"}
+                                  title={w.workerType === "CONTRACTOR"
+                                    ? `Effective rate $${rate.toFixed(2)}/hr is below the $${floor.toFixed(2)}/hr floor. Contractors aren't legally bound by minimum wage, but a persistently low rate is a DOL/IRS reclassification-risk signal.${w.guaranteedPayoutActive ? " This contractor is currently in an active guaranteed payout period — the Company is voluntarily underwriting timing risk." : ""}`
+                                    : `Effective rate $${rate.toFixed(2)}/hr is below the $${floor.toFixed(2)}/hr minimum wage floor. This is a compliance issue — review hours logged or pay computation for this worker.`}
+                                >
+                                  <AlertTriangle size={12} />
+                                </Box>
+                              )}
+                              <Text fontWeight="medium" truncate minW={0}>{w.name}</Text>
+                            </HStack>
                             <Badge colorPalette={w.workerType === "CONTRACTOR" ? "orange" : w.workerType === "TRAINEE" ? "purple" : "blue"} variant="subtle" fontSize="2xs" px="1" borderRadius="full">
                               {w.workerType === "CONTRACTOR" ? "1099" : w.workerType === "TRAINEE" ? "Trainee" : "W-2"}
                             </Badge>
@@ -619,6 +752,17 @@ export default function OperationsTab() {
                           <Text w="50px" textAlign="right" color="fg.muted">{w.scheduledJobs}</Text>
                           <Text w="65px" textAlign="right" color="green.600" display={{ base: "none", md: "block" }}>{fmt(w.totalEarnings)}</Text>
                           <Text w="50px" textAlign="right" color="fg.muted" display={{ base: "none", md: "block" }}>{w.totalActualMinutes > 0 ? formatDuration(w.totalActualMinutes) : "—"}</Text>
+                          <Text
+                            w="55px"
+                            textAlign="right"
+                            color={rateColor}
+                            fontWeight={rate != null && rate < floor ? "semibold" : "normal"}
+                            title={rate == null
+                              ? "No clocked hours in window"
+                              : `$${rate.toFixed(2)}/hr · floor $${floor.toFixed(2)}${w.workerType === "CONTRACTOR" && rate < floor ? (w.guaranteedPayoutActive ? " · guaranteed payout" : " · reclassification risk") : ""}`}
+                          >
+                            {rate == null ? "—" : `$${rate.toFixed(2)}`}
+                          </Text>
                           <Text w="40px" textAlign="right" display={{ base: "none", md: "block" }}
                             color={w.efficiency >= 100 ? "green.600" : w.efficiency > 0 ? "orange.600" : "fg.muted"}
                             fontWeight={w.efficiency > 0 ? "medium" : "normal"}
@@ -626,7 +770,8 @@ export default function OperationsTab() {
                             {w.efficiency > 0 ? `${w.efficiency}%` : "—"}
                           </Text>
                         </HStack>
-                      ))}
+                        );
+                      })}
                       {data.workerStats.length > 5 && (
                         <Box px={3} py={1}>
                           <Text

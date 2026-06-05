@@ -1,5 +1,11 @@
 import { prisma } from "../db/prisma";
 import { loadQbAccountMap, loadScheduleCLineMap } from "./expenseCategories";
+import {
+  computeBreakdown,
+  loadRates,
+  wasUserInGuaranteedPayoutAt,
+  type WorkerInput,
+} from "./payments";
 
 // Returned by every CSV builder. `rowCount` counts data rows only (excludes
 // header + TOTALS); `total` is the dollar figure on the TOTALS line. The
@@ -354,10 +360,171 @@ export async function gustoW2Csv(start: Date, end: Date): Promise<CsvResult> {
   return { csv: lines.join("\n") + "\n", rowCount: rows.length, total: round2(totalGross) };
 }
 
+// Computes the work-anchored GP advance candidates for a window WITHOUT
+// writing any advance rows. Shared by gustoContractorsCsv (which then
+// inserts the rows) and exportPreview (read-only — just needs the totals
+// for the Exports tab UI). Returns one entry per (user × occurrence)
+// that would receive an advance on this export run.
+//
+// Eligibility = active OR historical GP period covers occurrence.completedAt
+//   AND no GuaranteedPayoutAdvance exists yet for this (user, occurrence)
+//   AND no PaymentSplit exists for this user on this occurrence's payment
+//       (client hasn't paid → standard payment-anchored flow doesn't cover it)
+export type GpAdvanceCandidate = {
+  userId: string;
+  occurrenceId: string;
+  amount: number;
+  contractor: { id: string; displayName: string | null; email: string | null };
+};
+
+async function loadGpAdvanceCandidates(
+  start: Date,
+  end: Date,
+): Promise<GpAdvanceCandidate[]> {
+  const occs = await prisma.jobOccurrence.findMany({
+    where: {
+      completedAt: { gte: start, lte: end },
+      status: { in: ["COMPLETED", "CLOSED", "PENDING_PAYMENT"] as any },
+      workflow: { in: ["STANDARD", "ONE_OFF"] as any },
+      assignees: {
+        some: {
+          role: { not: "observer" },
+          user: { workerType: "CONTRACTOR" },
+        },
+      },
+    },
+    include: {
+      assignees: {
+        select: {
+          userId: true,
+          role: true,
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              email: true,
+              workerType: true,
+              guaranteedPayoutUntil: true,
+              guaranteedPayoutStartedAt: true,
+              guaranteedPayoutHistory: true,
+            },
+          },
+        },
+      },
+      addons: { select: { price: true } },
+      expenses: { select: { cost: true } },
+      payment: { include: { splits: { select: { userId: true } } } },
+    },
+  });
+
+  if (occs.length === 0) return [];
+  const rates = await loadRates(prisma);
+  const out: GpAdvanceCandidate[] = [];
+
+  for (const occ of occs) {
+    if (!occ.completedAt) continue;
+    const completedAt = occ.completedAt; // narrow once for closure capture
+    const active = occ.assignees.filter((a) => a.role !== "observer");
+    if (active.length === 0) continue;
+
+    const qualifying = active.filter(
+      (a) =>
+        a.user.workerType === "CONTRACTOR" &&
+        wasUserInGuaranteedPayoutAt(
+          {
+            guaranteedPayoutUntil: a.user.guaranteedPayoutUntil,
+            guaranteedPayoutStartedAt: a.user.guaranteedPayoutStartedAt,
+            guaranteedPayoutHistory: a.user.guaranteedPayoutHistory,
+          },
+          completedAt,
+        ),
+    );
+    if (qualifying.length === 0) continue;
+
+    const existingAdvances = await prisma.guaranteedPayoutAdvance.findMany({
+      where: {
+        occurrenceId: occ.id,
+        userId: { in: qualifying.map((q) => q.userId) },
+      },
+      select: { userId: true },
+    });
+    const advancedUserIds = new Set(existingAdvances.map((a) => a.userId));
+    const splitUserIds = new Set(
+      (occ.payment?.splits ?? []).map((s: any) => s.userId),
+    );
+    const eligible = qualifying.filter(
+      (q) => !advancedUserIds.has(q.userId) && !splitUserIds.has(q.userId),
+    );
+    if (eligible.length === 0) continue;
+
+    const completionSplits = (occ as any).completionSplits as
+      | Array<{ userId: string; percent: number }>
+      | null
+      | undefined;
+    const splitPctById = new Map<string, number>(
+      Array.isArray(completionSplits)
+        ? completionSplits.map((s: any) => [s.userId, Number(s.percent) || 0])
+        : [],
+    );
+    const fallbackPct = active.length > 0 ? 100 / active.length : 0;
+    const workersList: WorkerInput[] = active.map((a) => ({
+      userId: a.userId,
+      splitPercent: splitPctById.get(a.userId) ?? fallbackPct,
+      workerType: a.user.workerType,
+    }));
+    const priceTotal =
+      ((occ as any).price ?? (occ as any).proposalAmount ?? 0) +
+      (occ.addons ?? []).reduce((s, a) => s + (a.price ?? 0), 0);
+    const expTotal = (occ.expenses ?? []).reduce(
+      (s, e) => s + (e.cost ?? 0),
+      0,
+    );
+    const promised = computeBreakdown(priceTotal, expTotal, workersList, rates);
+
+    for (const q of eligible) {
+      const promisedRow = promised.find((r) => r.userId === q.userId);
+      if (!promisedRow || promisedRow.net <= 0) continue;
+      out.push({
+        userId: q.userId,
+        occurrenceId: occ.id,
+        amount: round2(promisedRow.net),
+        contractor: {
+          id: q.user.id,
+          displayName: q.user.displayName,
+          email: q.user.email,
+        },
+      });
+    }
+  }
+
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Gusto Contractors CSV — one row per 1099 contractor with total paid.
+//
+// Two sources of pay aggregated per contractor:
+//   (a) Payment-anchored: confirmed PaymentSplits in window, EXCLUDING any
+//       flagged with guaranteedPayoutPaidAt (those splits were already
+//       disbursed via a prior GP advance and re-counting them would
+//       double-pay).
+//   (b) Work-anchored GP advance: for any contractor with an active OR
+//       historical GP period covering an occurrence's completedAt, find
+//       completed-in-window occurrences they were active assignee on
+//       where no PaymentSplit exists yet (client hasn't paid) AND no
+//       prior GuaranteedPayoutAdvance exists. Compute promised net via
+//       canonical computeBreakdown, ADD to CSV total, INSERT advance row.
+//
+// The advance INSERT is what makes the next client-payment cycle reconcile
+// correctly: payments.ts split-creation hooks find the advance and stamp
+// guaranteedPayoutPaidAt on the resulting split, taking it out of the
+// payment-anchored bucket above. See feature memo `feature_guaranteed_payout`.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function gustoContractorsCsv(start: Date, end: Date): Promise<CsvResult> {
+export async function gustoContractorsCsv(
+  start: Date,
+  end: Date,
+  exportedByUserId?: string | null,
+): Promise<CsvResult> {
   const payments = await loadConfirmedPayments(start, end);
 
   type Agg = {
@@ -370,9 +537,13 @@ export async function gustoContractorsCsv(start: Date, end: Date): Promise<CsvRe
   };
   const byWorker = new Map<string, Agg>();
 
+  // (a) Payment-anchored part: confirmed PaymentSplits, minus GP-flagged.
   for (const p of payments) {
     for (const sp of p.splits) {
       if (isEmployeeClass(sp.user.workerType)) continue;
+      // Skip splits already disbursed via GP advance — the contractor
+      // received this money out-of-band on a prior payroll cycle.
+      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
       const k = sp.user.id;
       const cur = byWorker.get(k);
       const { first, last } = splitName(sp.user.displayName);
@@ -386,6 +557,43 @@ export async function gustoContractorsCsv(start: Date, end: Date): Promise<CsvRe
           last,
           email: sp.user.email ?? "",
           total: sp.amount,
+          jobs: 1,
+        });
+      }
+    }
+  }
+
+  // (b) Work-anchored GP advance part. Use the shared candidate finder
+  // (preview also uses it for read-only totals), then persist each
+  // candidate as a GuaranteedPayoutAdvance row + roll into byWorker.
+  // Unique constraint on (userId, occurrenceId) is the idempotency
+  // belt-and-suspenders.
+  const candidates = await loadGpAdvanceCandidates(start, end);
+  if (candidates.length > 0) {
+    const exportedAtNow = new Date();
+    for (const c of candidates) {
+      await prisma.guaranteedPayoutAdvance.create({
+        data: {
+          userId: c.userId,
+          occurrenceId: c.occurrenceId,
+          amount: c.amount,
+          exportedAt: exportedAtNow,
+          exportedByUserId: exportedByUserId ?? null,
+        },
+      });
+
+      const cur = byWorker.get(c.userId);
+      const { first, last } = splitName(c.contractor.displayName);
+      if (cur) {
+        cur.total += c.amount;
+        cur.jobs += 1;
+      } else {
+        byWorker.set(c.userId, {
+          userId: c.userId,
+          first,
+          last,
+          email: c.contractor.email ?? "",
+          total: c.amount,
           jobs: 1,
         });
       }
@@ -885,11 +1093,16 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     );
     total += p.processorFeeAmount ?? 0;
   }
-  // Append Contract Labor rows — one per contractor PaymentSplit on a
-  // confirmed payment. Vendor is the contractor's display name so the
-  // CPA's 1099 workflow can group by payee. Owner-earnings splits are
-  // already excluded by loadConfirmedPayments; W-2 (employee/trainee)
-  // splits are filtered here because their wages flow through Gusto, not QB.
+  // Append Contract Labor rows — one per non-flagged contractor PaymentSplit
+  // on a confirmed payment, PLUS one per GuaranteedPayoutAdvance whose
+  // exportedAt falls in window. Together these reflect actual cash
+  // disbursed to contractors. Flagged splits (guaranteedPayoutPaidAt set)
+  // are skipped — they were counted as advance rows already; including
+  // them too would double-count Contract Labor for tax reporting.
+  // Vendor is the contractor's display name so the CPA's 1099 workflow
+  // can group by payee. Owner-earnings splits are already excluded by
+  // loadConfirmedPayments; W-2 (employee/trainee) splits are filtered
+  // here because their wages flow through Gusto, not QB.
   let contractRowCount = 0;
   for (const p of payments) {
     const prop = p.occurrence?.job?.property;
@@ -899,6 +1112,9 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
       : "";
     for (const sp of p.splits) {
       if (isEmployeeClass(sp.user.workerType)) continue;
+      // Skip splits already disbursed via GP advance — counted in the
+      // advance-rows loop below instead.
+      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
       const vendor = sp.user.displayName ?? sp.user.email ?? "";
       const desc = `Contractor payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
       lines.push(
@@ -921,6 +1137,64 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
       total += sp.amount;
       contractRowCount += 1;
     }
+  }
+
+  // GP advance rows — one per GuaranteedPayoutAdvance with exportedAt in
+  // window. Dated on the advance (= cash-out date for the business).
+  // Vendor = contractor; same QB Contract Labor account and Schedule C
+  // line as the standard contractor splits so the bookkeeping is uniform.
+  const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
+    where: { exportedAt: { gte: start, lte: end } },
+    include: {
+      user: { select: { displayName: true, email: true } },
+      occurrence: {
+        select: {
+          id: true,
+          job: {
+            select: {
+              property: {
+                select: {
+                  displayName: true,
+                  street1: true,
+                  city: true,
+                  state: true,
+                  client: { select: { displayName: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: { exportedAt: "asc" },
+  });
+  for (const adv of gpAdvances) {
+    const prop = adv.occurrence?.job?.property;
+    const clientName = prop?.client?.displayName ?? "";
+    const propLabel = prop
+      ? [prop.displayName, prop.street1, prop.city, prop.state].filter(Boolean).join(" — ")
+      : "";
+    const vendor = adv.user?.displayName ?? adv.user?.email ?? "";
+    const desc = `Contractor advance (guaranteed payout) to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
+    lines.push(
+      csvRow([
+        toQbDate(adv.exportedAt),
+        desc,
+        round2(adv.amount).toFixed(2),
+        qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped",
+        `GPA-${adv.id}`,
+        CONTRACT_LABOR_CATEGORY,
+        lineMap[CONTRACT_LABOR_CATEGORY] ?? "11",
+        clientName,
+        propLabel,
+        "",
+        vendor,
+        "",
+        adv.occurrenceId,
+      ]),
+    );
+    total += adv.amount;
+    contractRowCount += 1;
   }
   lines.push(
     csvRow([
@@ -1231,6 +1505,9 @@ export async function findUnmappedExpenseRows(
     for (const p of payments) {
       for (const sp of p.splits) {
         if (isEmployeeClass(sp.user.workerType)) continue;
+        // Splits already disbursed via GP advance get a `GPA-` ref row
+        // separately (below); don't double-count.
+        if ((sp as any).guaranteedPayoutPaidAt != null) continue;
         unmapped.push({
           ref: `CL-${sp.id}`,
           date: p.confirmedAt ? toQbDate(p.confirmedAt) : "",
@@ -1239,6 +1516,22 @@ export async function findUnmappedExpenseRows(
           amount: round2(sp.amount),
         });
       }
+    }
+    // GP advances also land in Contract Labor; warn the same way if the
+    // category is unmapped so the operator doesn't ship an "Unmapped"
+    // row to QB.
+    const advances = await prisma.guaranteedPayoutAdvance.findMany({
+      where: { exportedAt: { gte: start, lte: end } },
+      include: { user: { select: { displayName: true, email: true } } },
+    });
+    for (const adv of advances) {
+      unmapped.push({
+        ref: `GPA-${adv.id}`,
+        date: toQbDate(adv.exportedAt),
+        description: `Contractor advance (guaranteed payout) to ${adv.user?.displayName ?? adv.user?.email ?? ""}`,
+        category: CONTRACT_LABOR_CATEGORY,
+        amount: round2(adv.amount),
+      });
     }
   }
   return unmapped;
@@ -1310,20 +1603,54 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
   });
 
   // Contractors stay payment-anchored — sum their splits on confirmed payments.
-  // Same scan also tallies the Contract Labor rows that show up in the QB
-  // Expenses CSV (one CSV row per contractor split). Tracking rows and total
-  // here avoids re-querying payments downstream.
-  const contractorWorkers = new Set<string>();
-  let contractorGross = 0;
-  let contractLaborRows = 0;
+  // Contractor numbers split two ways:
+  //   gustoContractor*  = what the next Gusto Contractors CSV will show
+  //                       (non-flagged splits in window + GP candidates
+  //                        this run would CREATE). Prior advances aren't
+  //                        included because they appeared on a prior CSV.
+  //   qbContractLabor*  = what the QB Expenses CSV's Contract Labor
+  //                       section will show (non-flagged splits + GP
+  //                       candidates + prior advances dated in window —
+  //                        all three are Contract Labor expense events).
+  // The two were equivalent before Slice 2; Slice 2's reconciliation
+  // bookkeeping splits them.
+  const gustoContractorWorkers = new Set<string>();
+  let gustoContractorGross = 0;
+  let qbContractLaborRows = 0;
+  let qbContractLaborTotal = 0;
   for (const p of payments) {
     for (const sp of p.splits) {
-      if (!isEmployeeClass(sp.user.workerType)) {
-        contractorWorkers.add(sp.user.id);
-        contractorGross += sp.amount;
-        contractLaborRows += 1;
-      }
+      if (isEmployeeClass(sp.user.workerType)) continue;
+      // Flagged splits don't appear in either CSV — they're already
+      // counted via the matching advance row (in window or prior).
+      if ((sp as any).guaranteedPayoutPaidAt != null) continue;
+      gustoContractorWorkers.add(sp.user.id);
+      gustoContractorGross += sp.amount;
+      qbContractLaborRows += 1;
+      qbContractLaborTotal += sp.amount;
     }
+  }
+  // GP candidates this run WOULD create — read-only here, so preview
+  // matches what the actual export will produce. Goes into both Gusto
+  // (this period's payout) and QB (this period's Contract Labor).
+  const gpCandidates = await loadGpAdvanceCandidates(start, end);
+  for (const c of gpCandidates) {
+    gustoContractorWorkers.add(c.userId);
+    gustoContractorGross += c.amount;
+    qbContractLaborRows += 1;
+    qbContractLaborTotal += c.amount;
+  }
+  // Prior advance rows with exportedAt in window — only on QB (already
+  // paid via the previous run's CSV, so they don't re-appear on Gusto).
+  // The candidate query filters out already-advanced (userId,
+  // occurrenceId) pairs so these don't overlap with gpCandidates.
+  const priorAdvances = await prisma.guaranteedPayoutAdvance.findMany({
+    where: { exportedAt: { gte: start, lte: end } },
+    select: { amount: true },
+  });
+  for (const a of priorAdvances) {
+    qbContractLaborRows += 1;
+    qbContractLaborTotal += a.amount;
   }
 
   const qbIncomeTotal = payments.reduce((s, p) => s + p.amountPaid, 0);
@@ -1370,21 +1697,21 @@ export async function exportPreview(start: Date, end: Date): Promise<ExportPrevi
       unapprovedOccurrences: unapprovedW2Occurrences,
     },
     gustoContractors: {
-      workers: contractorWorkers.size,
-      gross: round2(contractorGross),
+      workers: gustoContractorWorkers.size,
+      gross: round2(gustoContractorGross),
     },
     qbIncome: {
       rows: payments.length,
       total: round2(qbIncomeTotal),
     },
     qbExpenses: {
-      rows: operatingExpenses.length + processorFeeRows + contractLaborRows,
-      total: round2(businessExpenseTotal + processorFeeTotal + contractorGross),
+      rows: operatingExpenses.length + processorFeeRows + qbContractLaborRows,
+      total: round2(businessExpenseTotal + processorFeeTotal + qbContractLaborTotal),
       // Sub-totals exposed for the Exports tab preview
       // ("$X expenses + $Y fees + $Z contractor labor").
       businessExpenseTotal: round2(businessExpenseTotal),
       processorFeeTotal: round2(processorFeeTotal),
-      contractLaborTotal: round2(contractorGross),
+      contractLaborTotal: round2(qbContractLaborTotal),
       unmappedRows,
     },
     qbEquity: {

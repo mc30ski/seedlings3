@@ -10,6 +10,8 @@ export const AUDIT = {
     INSURANCE_UPLOADED: [AuditScope.USER, AuditVerb.INSURANCE_UPLOADED] as const,
     CONTRACTOR_AGREED: [AuditScope.USER, AuditVerb.CONTRACTOR_AGREED] as const,
     W9_COLLECTED: [AuditScope.USER, AuditVerb.W9_COLLECTED] as const,
+    GUARANTEED_PAYOUT_STARTED: [AuditScope.USER, AuditVerb.GUARANTEED_PAYOUT_STARTED] as const,
+    GUARANTEED_PAYOUT_ENDED: [AuditScope.USER, AuditVerb.GUARANTEED_PAYOUT_ENDED] as const,
     // Reusing UPDATED for privilege flips — the metadata payload carries
     // which privilege changed and to what. Keeps schema enums small.
     PRIVILEGES_UPDATED: [AuditScope.USER, AuditVerb.UPDATED] as const,

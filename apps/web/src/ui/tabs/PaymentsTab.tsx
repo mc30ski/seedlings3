@@ -640,6 +640,11 @@ function WorkerPayments({
                               <Text key={sp.userId} fontSize="xs" color="fg.muted">
                                 {sp.user?.displayName ?? sp.user?.email ?? sp.userId}
                                 {pct != null ? ` (${pct}%)` : ""}: ${sp.amount.toFixed(2)}
+                                {sp.guaranteedPayoutPaidAt && (
+                                  <Text as="span" ml={1} fontSize="2xs" color="purple.700" fontWeight="semibold">
+                                    · Advance paid
+                                  </Text>
+                                )}
                               </Text>
                             );
                           })}

@@ -1514,6 +1514,39 @@ export default function HomePage() {
     void loadAwaitingClientPayment();
   }, [loadAwaitingClientPayment]);
 
+  // Guaranteed-payout summary (super-only). `active` = currently in an
+  // open period; `expiringSoon` = active AND ≤ 7 days from expiration —
+  // the bucket the title-bar alert chip surfaces so an operator gets a
+  // proactive nudge to decide renew-or-let-expire before the natural
+  // transition. Doesn't fire until super is logged in (route is super-
+  // gated). The active count surfaces inside the Users tab; this state
+  // exists in the shell only because the alert chip lives in the shell.
+  const [guaranteedPayoutActiveCount, setGuaranteedPayoutActiveCount] = useState<number>(0);
+  const [guaranteedPayoutExpiringCount, setGuaranteedPayoutExpiringCount] = useState<number>(0);
+  const loadGuaranteedPayoutSummary = useCallback(async () => {
+    if (!isSuper) {
+      setGuaranteedPayoutActiveCount(0);
+      setGuaranteedPayoutExpiringCount(0);
+      markAlertLoaded("guaranteedPayout");
+      return;
+    }
+    try {
+      const res = await apiGet<{ active: number; expiringSoon: number }>(
+        "/api/admin/users/guaranteed-payout-summary",
+      );
+      setGuaranteedPayoutActiveCount(res?.active ?? 0);
+      setGuaranteedPayoutExpiringCount(res?.expiringSoon ?? 0);
+    } catch {
+      setGuaranteedPayoutActiveCount(0);
+      setGuaranteedPayoutExpiringCount(0);
+    }
+    markAlertLoaded("guaranteedPayout");
+  }, [isSuper]);
+
+  useEffect(() => {
+    void loadGuaranteedPayoutSummary();
+  }, [loadGuaranteedPayoutSummary]);
+
   // Overdue count for admin header badge — matches Admin Jobs tab overdue logic
   const [overdueCount, setOverdueCount] = useState(0);
   const loadOverdue = useCallback(async () => {
@@ -1697,7 +1730,7 @@ export default function HomePage() {
     return () => { clearTimeout(timer); document.removeEventListener("click", close); };
   }, [alertDropdownOpen]);
   const [alertsLoaded, setAlertsLoaded] = useState<Record<string, boolean>>({});
-  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours);
+  const alertsReady = !!(alertsLoaded.pending && alertsLoaded.overdue && alertsLoaded.unclaimed && alertsLoaded.announcements && alertsLoaded.planning && alertsLoaded.pendingPayments && alertsLoaded.awaitingClientPayment && alertsLoaded.changeRequests && alertsLoaded.estimateFollowups && alertsLoaded.unapprovedHours && alertsLoaded.guaranteedPayout);
   const markAlertLoaded = useCallback((key: string) => setAlertsLoaded((prev) => prev[key] ? prev : { ...prev, [key]: true }), []);
   const loadAnnouncementCount = useCallback(async () => {
     if (!me?.isApproved) { setAnnouncementCount(0); if (me) markAlertLoaded("announcements"); return; }
@@ -2555,6 +2588,26 @@ export default function HomePage() {
     }, 100);
   }, []);
 
+  const goToGuaranteedPayoutExpiring = useCallback(() => {
+    // Title-bar "Guaranteed payout expiring" alert chip routes here —
+    // Super → Directory → Users with the guaranteed-payout filter set to
+    // "expiring" so the operator sees only the contractors needing
+    // attention in the next 7 days.
+    window.sessionStorage.setItem(
+      "admin:usersOpenOnce",
+      JSON.stringify({ guaranteedPayoutFilter: "expiring" }),
+    );
+    setTopTab("super");
+    setSuperInnerTab("users");
+    setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("admin:openUsers", {
+          detail: { guaranteedPayoutFilter: "expiring" as const },
+        }),
+      );
+    }, 100);
+  }, []);
+
   const goToPaymentApprovals = useCallback(() => {
     setTopTab("super");
     setSuperInnerTab("payments");
@@ -2752,6 +2805,14 @@ export default function HomePage() {
               const alerts: { label: string; count: number; bg: string; color: string; dotColor: string; onClick: () => void }[] = [];
               if (isAdmin && overdueCount > 0) alerts.push({ label: "Overdue", count: overdueCount, bg: "#FEE2E2", color: "#991B1B", dotColor: "#EF4444", onClick: goToOverdue });
               if (isSuper && pending > 0) alerts.push({ label: "Pending Users", count: pending, bg: "#FFEDD5", color: "#9A3412", dotColor: "#FB923C", onClick: goToApprovals });
+              if (isSuper && guaranteedPayoutExpiringCount > 0) alerts.push({
+                label: "Guaranteed payout expiring",
+                count: guaranteedPayoutExpiringCount,
+                bg: "#FEF3C7",
+                color: "#854D0E",
+                dotColor: "#EAB308",
+                onClick: goToGuaranteedPayoutExpiring,
+              });
               if (isSuper && pendingPayments > 0) alerts.push({ label: "Pending Payments", count: pendingPayments, bg: "#DCFCE7", color: "#14532D", dotColor: "#16A34A", onClick: goToPaymentApprovals });
               if (isSuper && awaitingClientPaymentCount > 0) alerts.push({
                 label: "Awaiting payment",
