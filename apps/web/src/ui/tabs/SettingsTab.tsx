@@ -91,6 +91,13 @@ const NUMERIC_SETTINGS: Record<string, NumericSettingConfig> = {
     step: 0.05,
     hint: "Must be a number between 0.1 and 1.0 (e.g., 0.8 for the typical balance, 0.6 for smaller files).",
   },
+  MIN_WAGE_PER_HOUR: {
+    kind: "float",
+    min: 0,
+    max: 200,
+    step: 0.01,
+    hint: "Dollars per hour (e.g., 15.49). The Operations → Worker Performance compliance check uses this as the floor.",
+  },
 };
 
 /** Setting keys whose value is a boolean toggle (stored as "true"/"false").
@@ -1027,6 +1034,7 @@ export default function SettingsTab({ me, purpose = "ADMIN" }: TabPropsType) {
       const SETTINGS_ORDER = [
         "CONTRACTOR_PLATFORM_FEE_PERCENT",
         "EMPLOYEE_BUSINESS_MARGIN_PERCENT",
+        "MIN_WAGE_PER_HOUR",
         "PAYMENT_METHODS",
         "HIGH_VALUE_JOB_THRESHOLD",
         "EQUIPMENT_KINDS",

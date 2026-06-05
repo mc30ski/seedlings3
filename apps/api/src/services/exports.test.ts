@@ -41,6 +41,12 @@ const { prismaMock } = vi.hoisted(() => {
     // as "Equipment Rental Income". See
     // memory/project_equipment_rental_income.md for the policy.
     checkout: { findMany: vi.fn() },
+    // GP advance reconciliation (Slice 2). Default empty for every test;
+    // tests that exercise the GP path stub returns explicitly.
+    guaranteedPayoutAdvance: {
+      findMany: vi.fn(async () => []),
+      create: vi.fn(async () => ({ id: "stub", amount: 0 })),
+    },
   };
   return { prismaMock: mock };
 });
@@ -863,6 +869,77 @@ describe("gustoContractorsCsv — 1099 integrity", () => {
 // concatenated output for forbidden tokens. Catch-all for "did anyone
 // accidentally introduce a derived column in one of these exports?".
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("Slice 2 — Guaranteed payout reconciliation", () => {
+  it("non-flagged contractor splits appear in Gusto Contractors CSV (no-GP path unchanged)", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    prismaMock.jobOccurrence.findMany.mockResolvedValue([]);
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+
+    const result = await gustoContractorsCsv(RANGE_START, RANGE_END);
+    // Two payments → one row for Carla (split sums across both payments).
+    expect(result.csv).toContain("Carla,Contractor");
+    expect(result.csv).toContain("100.00"); // 80 + 20 = $100 total
+    expect(result.rowCount).toBe(1);
+  });
+
+  it("flagged splits (guaranteedPayoutPaidAt set) are EXCLUDED from Gusto Contractors CSV", async () => {
+    const payments = makeConfirmedPayments();
+    // Flag Carla's split on the first payment.
+    (payments[0].splits[0] as any).guaranteedPayoutPaidAt = new Date(
+      "2026-06-05T12:00:00.000Z",
+    );
+    prismaMock.payment.findMany.mockResolvedValue(payments);
+    prismaMock.jobOccurrence.findMany.mockResolvedValue([]);
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+
+    const result = await gustoContractorsCsv(RANGE_START, RANGE_END);
+    // Only the second payment's $20 split counts now (first was advance-paid).
+    expect(result.csv).toContain("Carla,Contractor");
+    expect(result.csv).toContain("20.00");
+    // The $100 from the flagged split must NOT appear in totals.
+    expect(result.csv).not.toContain("100.00");
+  });
+
+  it("GuaranteedPayoutAdvance rows in window emit Contract Labor lines in QB Expenses CSV", async () => {
+    prismaMock.payment.findMany.mockResolvedValue([]);
+    prismaMock.businessExpense.findMany.mockResolvedValue([]);
+    prismaMock.jobOccurrence.findMany.mockResolvedValue([]);
+    prismaMock.setting.findUnique.mockResolvedValue({ value: "20" });
+    prismaMock.guaranteedPayoutAdvance.findMany.mockResolvedValue([
+      {
+        id: "adv-1",
+        userId: "c1",
+        occurrenceId: "occ-x",
+        amount: 50,
+        exportedAt: new Date("2026-06-12T15:00:00.000Z"),
+        user: { displayName: "Carla Contractor", email: "carla@example.com" },
+        occurrence: {
+          id: "occ-x",
+          job: {
+            property: {
+              displayName: "Home — Test",
+              street1: "1 X",
+              city: "City",
+              state: "ST",
+              client: { displayName: "Test Client" },
+            },
+          },
+        },
+      },
+    ]);
+
+    const result = await qbExpensesCsv(RANGE_START, RANGE_END);
+    // Advance row gets a GPA- ref (vs CL- for confirmed-payment splits)
+    // and lands in the Contract Labor category.
+    expect(result.csv).toContain("GPA-adv-1");
+    expect(result.csv).toContain("Contract labor");
+    expect(result.csv).toContain("50.00");
+    expect(result.csv).toContain("Contractor advance");
+  });
+});
 
 describe("All tax exports — forbidden-field guard", () => {
   it("none of the tax/payroll exports leak derived reporting fields", async () => {

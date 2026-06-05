@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Button, Card, HStack, Heading, Input, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
+import { Box, Button, Card, Checkbox, Dialog, HStack, Heading, Input, Portal, Spinner, Switch, Text, VStack } from "@chakra-ui/react";
 import { FiDownload, FiTrash2 } from "react-icons/fi";
 import { apiGet, apiDownload, apiDelete } from "@/src/lib/api";
 import { getErrorMessage, publishInlineMessage } from "@/src/ui/components/InlineMessage";
@@ -179,6 +179,21 @@ export default function ExportsTab() {
   const [deleteStage, setDeleteStage] = useState<1 | 2>(1);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Unapproved-hours gate. When the W-2 portion of the selected window has
+  // occurrences whose hours haven't been admin-approved, those wages will
+  // be silently excluded from the CSV — AND because the W-2 query is anchored
+  // on `completedAt`, a later approval won't make them surface in a future
+  // window's export either (the work date doesn't move). So we double-confirm
+  // before letting the operator pull the W-2 CSV or the Gusto Bundle, forcing
+  // an explicit ack that they'll need to re-export this period later.
+  // Contractors-only download (payment-anchored, unaffected) bypasses this.
+  const [pendingPayrollDownload, setPendingPayrollDownload] = useState<{
+    slug: string;
+    label: string;
+    ext: "csv" | "zip";
+  } | null>(null);
+  const [payrollAck, setPayrollAck] = useState(false);
+
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -250,6 +265,20 @@ export default function ExportsTab() {
     ],
     [cadence],
   );
+
+  // Wrapper for W-2-touching downloads. Routes through the unapproved-hours
+  // confirm dialog when the current window has occurrences with hours that
+  // haven't been admin-approved yet. Non-W-2 downloads (Contractors-only,
+  // QB exports) call `download` directly — they aren't affected.
+  function tryPayrollDownload(slug: string, label: string, ext: "csv" | "zip" = "csv") {
+    const unapproved = preview?.gustoW2.unapprovedOccurrences ?? 0;
+    if (unapproved > 0) {
+      setPayrollAck(false);
+      setPendingPayrollDownload({ slug, label, ext });
+      return;
+    }
+    void download(slug, label, ext);
+  }
 
   async function download(slug: string, label: string, ext: "csv" | "zip" = "csv") {
     if (!start || !end || end < start) {
@@ -366,10 +395,10 @@ export default function ExportsTab() {
                 <Input
                   type="date"
                   value={start}
-                  // max=end enforces Start ≤ End at the picker level. The
-                  // onChange guard handles the typed-value path (some
-                  // browsers still emit the value even when it violates max).
-                  max={end || undefined}
+                  // No `max` constraint — picking a Start past the current
+                  // End auto-bumps End forward via the handler below. The
+                  // picker stays freely selectable; the invariant is
+                  // maintained in onChange, not by blocking at the input.
                   onChange={(e) => {
                     const v = e.target.value;
                     if (!v) { setStart(v); return; }
@@ -911,7 +940,7 @@ export default function ExportsTab() {
               colorPalette="blue"
               size="sm"
               loading={busyKey === "gusto-bundle"}
-              onClick={() => download("gusto-bundle", "Gusto Bundle (zip)", "zip")}
+              onClick={() => tryPayrollDownload("gusto-bundle", "Gusto Bundle (zip)", "zip")}
               title="W-2 + Contractors CSVs in a single zip"
             >
               <FiDownload /> Download Gusto Bundle (zip)
@@ -933,7 +962,7 @@ export default function ExportsTab() {
                   colorPalette="blue"
                   size="sm"
                   loading={busyKey === "gusto-w2"}
-                  onClick={() => download("gusto-w2", "Gusto W-2 CSV")}
+                  onClick={() => tryPayrollDownload("gusto-w2", "Gusto W-2 CSV")}
                 >
                   <FiDownload /> Download W-2 CSV
                 </Button>
@@ -1352,6 +1381,131 @@ export default function ExportsTab() {
       {/* Two-stage delete confirmation. Stage 1 is the normal "you sure?";
           Stage 2 is the "REALLY sure?" with stronger warning copy and the
           destructive button label. Both must pass before the row goes. */}
+      {/* Unapproved-hours gate. Renders only when the operator has tried to
+          pull a W-2-touching export for a window with unapproved occurrences.
+          The dialog enumerates the consequence (silent exclusion + permanent
+          loss unless this same window is re-exported later) and requires an
+          explicit checkbox ack before the Download button enables. */}
+      <Dialog.Root
+        open={!!pendingPayrollDownload}
+        role="alertdialog"
+        onOpenChange={(e) => {
+          if (!e.open) {
+            setPendingPayrollDownload(null);
+            setPayrollAck(false);
+          }
+        }}
+        placement="center"
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content mx="4" maxW="lg" w="full" rounded="2xl" p="4" shadow="lg">
+              <Dialog.CloseTrigger />
+              <Dialog.Header>
+                <Dialog.Title>
+                  Unapproved hours — payroll will be incomplete
+                </Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <VStack align="stretch" gap={3}>
+                  <Box
+                    p={3}
+                    bg="red.50"
+                    borderWidth="1px"
+                    borderColor="red.300"
+                    borderLeftWidth="4px"
+                    borderLeftColor="red.500"
+                    rounded="md"
+                  >
+                    <Text fontSize="sm" color="red.900" fontWeight="semibold" mb={1}>
+                      {preview?.gustoW2.unapprovedOccurrences ?? 0} occurrence
+                      {(preview?.gustoW2.unapprovedOccurrences ?? 0) === 1 ? "" : "s"}
+                      {" "}in {start} → {end} have unapproved hours.
+                    </Text>
+                    <Text fontSize="sm" color="red.900">
+                      The wages for those occurrences will be silently excluded from
+                      this {pendingPayrollDownload?.label ?? "export"} — the affected
+                      employees will be short-paid for this period.
+                    </Text>
+                  </Box>
+
+                  <Box
+                    p={3}
+                    bg="orange.50"
+                    borderWidth="1px"
+                    borderColor="orange.300"
+                    rounded="md"
+                  >
+                    <Text fontSize="sm" color="orange.900" fontWeight="semibold" mb={1}>
+                      They will NOT auto-appear in the next export either.
+                    </Text>
+                    <Text fontSize="xs" color="orange.900">
+                      The W-2 export is anchored on each occurrence's <b>completedAt</b> date,
+                      not on when the hours get approved. Once you approve those hours later,
+                      they don't shift into a future window — they stay attached to this period.
+                      The only way to get those wages onto a payroll is to come back here later
+                      and <b>re-export this exact date range</b> after the hours are approved.
+                    </Text>
+                  </Box>
+
+                  <Box
+                    p={2}
+                    bg="blue.50"
+                    borderWidth="1px"
+                    borderColor="blue.300"
+                    rounded="md"
+                  >
+                    <Text fontSize="xs" color="blue.900">
+                      The recommended path is to <b>Cancel</b>, jump to Admin → Jobs (use the
+                      "Review now" link on the orange banner), approve all flagged hours, then
+                      run the export. That ships a complete payroll in one pass.
+                    </Text>
+                  </Box>
+
+                  <Checkbox.Root
+                    checked={payrollAck}
+                    onCheckedChange={(e) => setPayrollAck(!!e.checked)}
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label fontSize="sm">
+                      I understand these wages will be missing from this payroll and I am
+                      responsible for re-exporting this date range after the hours are approved.
+                    </Checkbox.Label>
+                  </Checkbox.Root>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer>
+                <HStack justify="flex-end" w="full" gap={2} wrap="wrap">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setPendingPayrollDownload(null);
+                      setPayrollAck(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    colorPalette="red"
+                    disabled={!payrollAck}
+                    onClick={() => {
+                      const t = pendingPayrollDownload;
+                      setPendingPayrollDownload(null);
+                      setPayrollAck(false);
+                      if (t) void download(t.slug, t.label, t.ext);
+                    }}
+                  >
+                    Download anyway
+                  </Button>
+                </HStack>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
       {deleteTarget && deleteStage === 1 && (
         <ConfirmDialog
           open={true}

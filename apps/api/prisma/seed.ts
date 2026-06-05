@@ -141,6 +141,7 @@ const SETTING_SECTIONS: Record<string, string> = {
   PAYROLL_PERIOD_CADENCE: "payments",
   HIGH_VALUE_JOB_THRESHOLD: "payments",
   HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT: "payments",
+  MIN_WAGE_PER_HOUR: "payments",
   FIXED_ASSET_MIN_COST: "payments",
   // Client Payment Requests
   BUSINESS_NAME: "client_requests",
@@ -1818,6 +1819,7 @@ async function seedDatabase() {
     { key: "EMPLOYEE_BUSINESS_MARGIN_PERCENT", value: "30", description: "Business margin percentage retained from employee (W-2) and trainee payment splits" },
     { key: "HIGH_VALUE_JOB_THRESHOLD", value: "200", description: "Jobs at or above this price require insurance for contractors to claim" },
     { key: "HOURS_APPROVAL_VARIANCE_THRESHOLD_PERCENT", value: "30", description: "Percent variance (over OR under the estimate) that auto-approves logged hours for payroll. Anything outside this window leaves hoursApprovedAt null and surfaces in the 'Hours awaiting review' alert until an admin reviews. Same threshold drives the visual '⚠ X% over estimate' warning on the JobsTab card." },
+    { key: "MIN_WAGE_PER_HOUR", value: "7.25", description: "Minimum wage floor (USD/hour) used by the Operations → Worker Performance compliance check. Defaults to the federal FLSA minimum ($7.25) which is what applies in NC (no state-level higher floor). If you operate in a state with a higher minimum (e.g., NJ, NY, CA), bump this to match. Drives color coding on the per-worker $/hr column; contractors are shown for reclassification-risk monitoring (the floor is not a legal requirement for true 1099 workers)." },
     { key: "FIXED_ASSET_MIN_COST", value: "500", description: "Capitalization threshold (USD). BusinessExpense purchases at or above this cost, dated on/after the policy start date, are treated as Fixed Assets — excluded from qb-expenses.csv and emitted into qb-fixed-assets.csv instead. Policy start date is currently hardcoded in code; only the dollar threshold is editable here." },
     { key: "PAYROLL_PERIOD_CADENCE", value: "WEEKLY", description: "How often you run payroll. Sets the default date range on the Exports tab." },
     {
@@ -3333,6 +3335,153 @@ async function seedPaymentsActive() {
 // read-time WHERE-clause, not a destructive operation. If you find yourself
 // tempted to use this pattern outside seeds, stop and re-read the helper.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Guaranteed Payout (Slice 2) fixtures
+//
+// Wires CONTRACTOR_ID into an active GP period and produces three
+// occurrences spanning the three states Slice 2 has to handle:
+//
+//   1. UNADVANCED + UNPAID  → work-anchored part of the next contractor
+//      payroll export will INCLUDE this; advance row will be CREATED at
+//      export time. After downloading the CSV the operator should see
+//      Carla on the Gusto Contractors output and a GuaranteedPayoutAdvance
+//      row materializes in the DB.
+//
+//   2. ALREADY-ADVANCED + UNPAID → simulates "operator ran a prior export
+//      and advanced this job last week." The GuaranteedPayoutAdvance row
+//      pre-exists; the work-anchored part should SKIP it (idempotency
+//      check). Carla should still see this advance in her money tab
+//      (bucketed at exportedAt).
+//
+//   3. ALREADY-ADVANCED + CLIENT-PAID → simulates "client eventually paid
+//      after we advanced." Both a GuaranteedPayoutAdvance row AND a
+//      confirmed Payment with reconciled PaymentSplit exist. The
+//      PaymentSplit carries `guaranteedPayoutPaidAt` so the payment-
+//      anchored part SKIPS it (otherwise we'd double-pay). The QB
+//      Expenses CSV emits one Contract Labor row per advance, NOT per
+//      flagged split — verifies the reconciliation flag works end to end.
+// ─────────────────────────────────────────────────────────────────────────────
+async function seedPaymentsGuaranteedPayout() {
+  console.log("  Creating GUARANTEED PAYOUT validation dataset...");
+  const { adamsJob, banksJob, cohenJob } = await seedPaymentsBase();
+
+  // Put CONTRACTOR_ID on an active guaranteed-payout period (60 days out).
+  // Also stamp a `startedAt` ~ 2 weeks ago so any occurrence completed in
+  // the recent past falls inside the active period boundaries.
+  const gpStartedAt = daysAgo(14);
+  const gpUntil = daysFromNow(60, 23); // ~end-of-day-ish today+60
+  await prisma.user.update({
+    where: { id: CONTRACTOR_ID },
+    data: {
+      guaranteedPayoutStartedAt: gpStartedAt,
+      guaranteedPayoutUntil: gpUntil,
+      guaranteedPayoutHistory: [] as any,
+    },
+  });
+  console.log(`    CONTRACTOR_ID on active GP through ${gpUntil.toISOString().slice(0, 10)}`);
+
+  // Helper that creates a PENDING_PAYMENT occurrence with Carla as sole
+  // active assignee. Returns the occurrence + the per-worker promised
+  // payouts snapshot.
+  async function makeGpOcc(jobId: string, completedDaysAgo: number, opts: { skipSplits?: boolean } = {}) {
+    const price = 80.0;
+    const completionSplits = [{ userId: CONTRACTOR_ID, percent: 100 }];
+    const promised = opts.skipSplits
+      ? null
+      : await computePromisedPayoutsForSeed(price, 0, completionSplits);
+    const occ = await prisma.jobOccurrence.create({
+      data: {
+        jobId,
+        kind: "SINGLE_ADDRESS",
+        startAt: daysAgo(completedDaysAgo, 8),
+        endAt: daysAgo(completedDaysAgo, 9),
+        status: "PENDING_PAYMENT",
+        workflow: "STANDARD",
+        jobTags: '["MOW"]',
+        price,
+        estimatedMinutes: 45,
+        startedAt: daysAgo(completedDaysAgo, 8),
+        completedAt: daysAgo(completedDaysAgo, 9),
+        isClientConfirmed: true,
+        completionSplits: opts.skipSplits ? undefined : (completionSplits as any),
+        promisedPayouts: opts.skipSplits ? undefined : (promised as any),
+        hoursApprovedAt: daysAgo(completedDaysAgo, 10), // pre-approved so it's eligible
+      },
+    });
+    await prisma.jobOccurrenceAssignee.create({
+      data: {
+        occurrenceId: occ.id,
+        userId: CONTRACTOR_ID,
+        role: "primary",
+        assignedById: CONTRACTOR_ID,
+      },
+    });
+    return { occ, promisedNet: opts.skipSplits ? 0 : (promised?.[0]?.net ?? 0) };
+  }
+
+  console.log("    Scenario 1: unadvanced + unpaid (next export will create the advance)");
+  await makeGpOcc(adamsJob.id, 3);
+
+  console.log("    Scenario 2: already-advanced + unpaid (prior export, advance row pre-exists)");
+  const { occ: occ2, promisedNet: net2 } = await makeGpOcc(banksJob.id, 7);
+  await prisma.guaranteedPayoutAdvance.create({
+    data: {
+      userId: CONTRACTOR_ID,
+      occurrenceId: occ2.id,
+      amount: net2,
+      exportedAt: daysAgo(6), // simulates "operator ran payroll 6 days ago"
+      exportedByUserId: MICHAEL_ID,
+    },
+  });
+
+  console.log("    Scenario 3: already-advanced + client-paid (flagged split shows in PaymentsTab)");
+  const { occ: occ3, promisedNet: net3 } = await makeGpOcc(cohenJob.id, 10);
+  await prisma.guaranteedPayoutAdvance.create({
+    data: {
+      userId: CONTRACTOR_ID,
+      occurrenceId: occ3.id,
+      amount: net3,
+      exportedAt: daysAgo(9),
+      exportedByUserId: MICHAEL_ID,
+    },
+  });
+  const payment3 = await prisma.payment.create({
+    data: {
+      occurrenceId: occ3.id,
+      amountPaid: 80.0,
+      method: "ZELLE",
+      collectedById: MICHAEL_ID,
+      confirmed: true,
+      confirmedAt: daysAgo(2),
+      confirmedById: MICHAEL_ID,
+      createdAt: daysAgo(2),
+      grossCharged: 80.0,
+      netReceived: 80.0,
+    },
+  });
+  await prisma.paymentSplit.create({
+    data: {
+      paymentId: payment3.id,
+      userId: CONTRACTOR_ID,
+      amount: net3,
+      grossAmount: 80.0,
+      ratePercent: 20,
+      feeAmount: 16.0,
+      netAmount: net3,
+      // Reconciliation flag — Slice 2 split-creation hooks set this when
+      // an advance exists for (userId, occurrenceId). The seed pre-flags
+      // it so the PaymentsTab badge + export exclusions can be validated
+      // without re-running the actual confirmation flow.
+      guaranteedPayoutPaidAt: daysAgo(9),
+    },
+  });
+
+  console.log("  Done. Try: Super → Money → Exports → Gusto Contractors CSV.");
+  console.log("    Expected: 2 jobs for Carla (scenarios 1 + 2 visible).");
+  console.log("    Scenario 1 will create a new advance row on download.");
+  console.log("    Scenario 3 should NOT appear (flagged split + existing advance).");
+}
+
 async function seedBusinessStartCutoffFixtures() {
   console.log("    Business Start Date backdated fixtures...");
   const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -3734,9 +3883,14 @@ async function main() {
       console.log("Seeding (payments-active — 5 pending approvals queued)...");
       await seedPaymentsActive();
       break;
+    case "payments-guaranteed-payout":
+    case "payments-gp":
+      console.log("Seeding (payments-guaranteed-payout — GP advance + reconciliation fixtures)...");
+      await seedPaymentsGuaranteedPayout();
+      break;
     default:
       console.error(
-        `Unknown template: ${template}. Available: default, payments-clean, payments-active`,
+        `Unknown template: ${template}. Available: default, payments-clean, payments-active, payments-guaranteed-payout`,
       );
       process.exit(1);
   }

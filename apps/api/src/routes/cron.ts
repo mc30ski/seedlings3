@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../db/prisma";
 import { notifyWorker } from "../lib/notifications";
 import { etMidnight, etToday, etTomorrow } from "../lib/dates";
+import { AUDIT } from "../lib/auditActions";
 
 /**
  * Cron job routes — called by Vercel Cron.
@@ -153,6 +154,115 @@ export default async function cronRoutes(app: FastifyInstance) {
       failed: results.filter((r) => !r.ok).length,
       results,
     };
+  });
+
+  /**
+   * Guaranteed-payout natural expirations.
+   *
+   * Finds contractors whose `guaranteedPayoutUntil` is in the past AND for
+   * whom there's no GUARANTEED_PAYOUT_ENDED audit row dated after the
+   * expiration. Writes the audit row + clears the column. Idempotent —
+   * re-running the same day is a no-op.
+   *
+   * Scheduled daily ~1am ET so the audit row's createdAt lands on the day
+   * AFTER the period ended, which matches the calendar-day boundary
+   * operators care about.
+   */
+  app.get("/cron/guaranteed-payout-expirations", async (req, reply) => {
+    const secret = process.env.CRON_SECRET;
+    const authHeader = req.headers["authorization"];
+    if (secret && authHeader !== `Bearer ${secret}`) {
+      app.log.warn({ cron: "guaranteed-payout-expirations", reason: "Unauthorized request blocked" });
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+    if (!secret && process.env.NODE_ENV === "production") {
+      app.log.warn({ cron: "guaranteed-payout-expirations", reason: "CRON_SECRET not set in production" });
+    }
+
+    const now = new Date();
+    const candidates = await prisma.user.findMany({
+      where: {
+        guaranteedPayoutUntil: { lt: now, not: null },
+        workerType: "CONTRACTOR",
+      },
+      select: {
+        id: true,
+        displayName: true,
+        email: true,
+        guaranteedPayoutUntil: true,
+        guaranteedPayoutStartedAt: true,
+        guaranteedPayoutHistory: true,
+      },
+    });
+
+    let processed = 0;
+    for (const u of candidates) {
+      // Idempotency: skip if we've already written an END row covering this
+      // expiration (createdAt > the expiration timestamp). Belt-and-suspenders
+      // against the row also being cleared below — re-running the cron the
+      // next day after a fresh start wouldn't process this user again.
+      const existingEnd = await prisma.auditEvent.findFirst({
+        where: {
+          scope: "USER",
+          verb: "GUARANTEED_PAYOUT_ENDED",
+          createdAt: { gte: u.guaranteedPayoutUntil! },
+          metadata: { path: ["targetUserId"], equals: u.id },
+        },
+        select: { id: true },
+      });
+      if (existingEnd) continue;
+
+      await prisma.$transaction(async (tx) => {
+        // Append the closing period to history before clearing the active
+        // columns. Reconciliation + work-anchored payroll queries read
+        // history to find contractors who completed work during a past
+        // GP period after the active columns have expired.
+        const prevHistory = Array.isArray(u.guaranteedPayoutHistory)
+          ? (u.guaranteedPayoutHistory as any[])
+          : [];
+        const newHistory = u.guaranteedPayoutStartedAt
+          ? [
+              ...prevHistory,
+              {
+                startedAt: u.guaranteedPayoutStartedAt.toISOString(),
+                endedAt: u.guaranteedPayoutUntil!.toISOString(),
+                endedEarly: false,
+                endedActorUserId: null,
+              },
+            ]
+          : prevHistory;
+        await tx.user.update({
+          where: { id: u.id },
+          data: {
+            guaranteedPayoutUntil: null,
+            guaranteedPayoutStartedAt: null,
+            guaranteedPayoutHistory: newHistory as any,
+          },
+        });
+        // actorUserId is null for cron-written rows — there's no human
+        // actor. writeAudit's signature requires `string`, so we write
+        // directly to the audit table here instead.
+        await tx.auditEvent.create({
+          data: {
+            scope: AUDIT.USER.GUARANTEED_PAYOUT_ENDED[0],
+            verb: AUDIT.USER.GUARANTEED_PAYOUT_ENDED[1],
+            action: `${AUDIT.USER.GUARANTEED_PAYOUT_ENDED[0]}_${AUDIT.USER.GUARANTEED_PAYOUT_ENDED[1]}`,
+            actorUserId: null,
+            metadata: {
+              targetUserId: u.id,
+              targetName: u.displayName ?? u.email ?? null,
+              previousUntil: u.guaranteedPayoutUntil!.toISOString(),
+              previousStartedAt: u.guaranteedPayoutStartedAt?.toISOString() ?? null,
+              endedEarly: false,
+              writtenByCron: true,
+            } as any,
+          },
+        });
+      });
+      processed++;
+    }
+
+    return { ok: true, candidates: candidates.length, processed };
   });
 
   /**

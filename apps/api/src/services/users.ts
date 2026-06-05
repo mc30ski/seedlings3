@@ -410,6 +410,11 @@ export const users: ServicesUsers = {
       insuranceExpiresAt: user!.insuranceExpiresAt?.toISOString() ?? null,
       contractorAgreedAt: user!.contractorAgreedAt?.toISOString() ?? null,
       w9Collected: !!user!.w9Collected,
+      // Guaranteed payout period (contractors only). Surfaced so the
+      // contractor can see their own period and remaining days on
+      // ProfileTab. UI computes "active" from `guaranteedPayoutUntil > now`.
+      guaranteedPayoutUntil: user!.guaranteedPayoutUntil?.toISOString() ?? null,
+      guaranteedPayoutStartedAt: user!.guaranteedPayoutStartedAt?.toISOString() ?? null,
       // Override columns (for the user-edit UI to show explicit grants/denies)
       canPullInventoryOverride: user!.canPullInventory ?? null,
       canChargeBusinessExpensesOverride: user!.canChargeBusinessExpenses ?? null,

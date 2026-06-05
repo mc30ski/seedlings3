@@ -218,6 +218,29 @@ export default function HistoryTab({ role = "worker" }: TabRolePropType) {
 
     // User
     if (action?.startsWith("USER_")) {
+      // Guaranteed-payout period events — render the target contractor
+      // and the period boundary so the summary actually says something.
+      // The route writes targetUserId/targetName/until in metadata;
+      // targetName is the at-write-time display name (handles deleted
+      // users gracefully). The cron-written natural-expiration row carries
+      // endedEarly: false; ones written by the route on operator early-end
+      // carry endedEarly: true.
+      if (action === "USER_GUARANTEED_PAYOUT_STARTED") {
+        const who = md.targetName || (md.targetUserId && userMap[md.targetUserId]) || md.targetUserId || "";
+        const until = md.until ? fmtDateTime(md.until).split(",")[0] : "—";
+        const extension = md.extension ? " (extended)" : "";
+        return who
+          ? `Guaranteed payout through ${until}${extension} — ${who}`
+          : `Guaranteed payout through ${until}${extension}`;
+      }
+      if (action === "USER_GUARANTEED_PAYOUT_ENDED") {
+        const who = md.targetName || (md.targetUserId && userMap[md.targetUserId]) || md.targetUserId || "";
+        const previousUntil = md.previousUntil ? fmtDateTime(md.previousUntil).split(",")[0] : "";
+        const earlySuffix = md.endedEarly ? " ended early" : " auto-expired";
+        return who
+          ? `Guaranteed payout${earlySuffix}${previousUntil ? ` (was: ${previousUntil})` : ""} — ${who}`
+          : `Guaranteed payout${earlySuffix}${previousUntil ? ` (was: ${previousUntil})` : ""}`;
+      }
       const email = md.userRecord?.email ?? "";
       const role = md.roleRecord?.role;
       return role ? `${role} — ${email}` : email;

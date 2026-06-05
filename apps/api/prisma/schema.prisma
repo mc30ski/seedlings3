@@ -77,6 +77,8 @@ enum AuditVerb {
   OWNER_EARNINGS_RECORDED
   FEE_APPLIED
   PAYMENT_METHOD_UPDATED
+  GUARANTEED_PAYOUT_STARTED
+  GUARANTEED_PAYOUT_ENDED
   // add new verbs as needed
 }
 
@@ -120,6 +122,32 @@ model User {
   w9Collected              Boolean   @default(false)
   w9CollectedAt            DateTime?
 
+  // Contractor onboarding "guaranteed payout period." When
+  // `guaranteedPayoutUntil` is in the future, contractor payroll for this
+  // worker is work-anchored (paid for completed jobs regardless of client
+  // payment timing) instead of payment-anchored. Auto-expires when the
+  // date passes — no further action required (a daily cron writes the
+  // GUARANTEED_PAYOUT_ENDED audit row for natural expirations and clears
+  // these columns).
+  // `guaranteedPayoutStartedAt` records when the current period began for
+  // UI display ("X days left of N"). Both null = standard contingent-
+  // payment terms apply. See onboarding addendum for the contractual
+  // position; reclassification-risk discussion in user memo.
+  // NOTE: this concept is distinct from the "made whole" terminology used
+  // in payments.ts (which refers to employees being made whole when a
+  // client underpays). That's about AMOUNT; this is about TIMING.
+  //
+  // `guaranteedPayoutHistory` is an append-only JSON array of past periods:
+  //   [{ startedAt: ISO, endedAt: ISO, endedEarly: bool, endedActorUserId: string|null }]
+  // Written on early-end (route) and natural expiration (cron) so split-
+  // reconciliation and work-anchored payroll exports can answer "was the
+  // contractor in a GP period at this occurrence's completedAt?" even
+  // after the active columns have been cleared. Empty array on a fresh
+  // user; never NULL once initialized.
+  guaranteedPayoutUntil      DateTime?
+  guaranteedPayoutStartedAt  DateTime?
+  guaranteedPayoutHistory    Json      @default("[]")
+
   // LLC-owner flag. At most one user may have this set to true (enforced via
   // partial unique index in the migration). Additive to ADMIN/SUPER role —
   // does not replace it. The owner participates in jobs like any worker;
@@ -152,6 +180,8 @@ model User {
   paymentsAdjusted        Payment[]       @relation("PaymentAdjuster")
   paymentsWrittenOff      Payment[]       @relation("PaymentWriteOff")
   paymentSplits           PaymentSplit[]
+  guaranteedPayoutAdvances   GuaranteedPayoutAdvance[]
+  guaranteedPayoutAdvancesExported GuaranteedPayoutAdvance[] @relation("AdvanceExporter")
   expenses                Expense[]
   photos                  JobOccurrencePhoto[]
   settingsUpdated         Setting[]
@@ -826,6 +856,7 @@ model JobOccurrence {
 
   assignees        JobOccurrenceAssignee[]
   payment          Payment?
+  guaranteedPayoutAdvances GuaranteedPayoutAdvance[]
   expenses         Expense[]
   businessExpenses BusinessExpense[]
   supplyHolds      SupplyHold[]
@@ -1012,6 +1043,58 @@ model Payment {
   @@index([processorFeeAmount, createdAt])
 }
 
+// Records a single guaranteed-payout advance disbursement to a contractor
+// for one occurrence. Created when the contractor payroll export's
+// work-anchored part emits a row for them — that's the moment the
+// operator commits to paying the contractor out-of-band (Zelle/Venmo)
+// for that specific job, regardless of client payment timing.
+//
+// Serves three purposes simultaneously:
+//   1. Source of truth for what was advanced (1099 year-end input).
+//   2. Reconciliation lookup — at PaymentSplit creation, if an advance
+//      exists for (userId, occurrenceId), the new split is flagged as
+//      already-paid via `guaranteedPayoutPaidAt`, so future payroll
+//      exports skip it.
+//   3. Idempotency — re-running the same export window finds existing
+//      advances via the unique constraint and skips them.
+//
+// Append-only — operator workflow doesn't include un-advancing. If an
+// occurrence is later canceled or adjusted, the advance row stays
+// (contractor was actually paid; no clawback). The eventual PaymentSplit
+// row (when client pays) absorbs any delta via the existing reconcile
+// logic; business absorbs underpayment shortfalls. See feature memo
+// `feature_guaranteed_payout.md`.
+model GuaranteedPayoutAdvance {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  occurrenceId String
+  occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // The contractor's promised net at advance time — computed via the same
+  // computeBreakdown formula used for promisedPayouts snapshots. Stored
+  // here verbatim so a later price/expense edit doesn't change history.
+  amount Float
+
+  // When the GP export run that included this advance emitted the row.
+  // Used as the PaymentSplit.guaranteedPayoutPaidAt timestamp when the
+  // client eventually pays.
+  exportedAt DateTime @default(now())
+
+  // Operator who ran the export. Useful for the audit trail; nullable so
+  // a deleted user doesn't break advance rows.
+  exportedByUserId String?
+  exportedBy       User?   @relation("AdvanceExporter", fields: [exportedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, occurrenceId])
+  @@index([userId, exportedAt])
+  @@index([occurrenceId])
+}
+
 model PaymentSplit {
   id String @id @default(cuid())
 
@@ -1042,11 +1125,21 @@ model PaymentSplit {
   // from Gusto/payroll exports — the owner takes a draw, not a paycheck.
   ownerEarnings Boolean @default(false)
 
+  // Guaranteed-payout reconciliation. Set when this split's user was on a
+  // guaranteed-payout period at the time of work completion AND received
+  // advance payment for this occurrence on the corresponding payroll
+  // cycle. When the client eventually pays and this row is generated,
+  // payroll/QB exports must exclude guaranteed-payout-paid rows so the
+  // contractor isn't disbursed twice. See services/exports.ts
+  // gustoContractorsCsv.
+  guaranteedPayoutPaidAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@unique([paymentId, userId])
   @@index([userId, createdAt])
   @@index([ownerEarnings, createdAt])
+  @@index([guaranteedPayoutPaidAt])
 }
 
 model Expense {
