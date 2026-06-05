@@ -2675,15 +2675,27 @@ Respond ONLY with valid JSON in this exact format:
     // every spread becomes a no-op and behavior matches pre-feature exactly.
     const cutoff = await resolveCutoff(req);
 
-    // Jobs summary
+    // Jobs summary.
+    //
+    // Composing the date-range OR with the BSD cutoff via AND: both helpers
+    // emit { OR: [...] }, and Prisma's plain spread would silently overwrite
+    // the date-range OR with the cutoff OR when BSD is enabled — making the
+    // `from`/`to` filter a no-op and every count (jobsUnclaimed in
+    // particular) reflect the entire post-cutoff history instead of just the
+    // requested window. That's the bug that made the "N Unclaimed" chip
+    // disagree with the JobsTab list. AND[] is the safe combinator.
     const occurrences = await prisma.jobOccurrence.findMany({
       where: {
         workflow: { notIn: ["TASK"] },
-        OR: [
-          { startAt: { gte: dateFrom, lte: dateTo } },
-          { completedAt: { gte: dateFrom, lte: dateTo } },
+        AND: [
+          {
+            OR: [
+              { startAt: { gte: dateFrom, lte: dateTo } },
+              { completedAt: { gte: dateFrom, lte: dateTo } },
+            ],
+          },
+          ...(cutoff ? [occurrenceWorkDateCutoff(cutoff)] : []),
         ],
-        ...occurrenceWorkDateCutoff(cutoff),
       },
       include: {
         assignees: { select: { userId: true, role: true } },
