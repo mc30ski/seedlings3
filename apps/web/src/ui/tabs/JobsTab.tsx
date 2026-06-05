@@ -4893,16 +4893,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                   <Card.Body py="2" px="3" pt="1" overflow="hidden">
                     <VStack align="start" gap={1} fontSize="xs">
                       {/* Event time */}
-                      {isEvent && occ.startAt && (() => {
-                        const d = new Date(occ.startAt);
-                        const h = d.getHours(); const m = d.getMinutes();
-                        if (h === 9 && m === 0) return null;
-                        return (
-                          <Text fontSize="sm" fontWeight="bold" color="#B45309">
-                            {d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                          </Text>
-                        );
-                      })()}
+                      {isEvent && occ.startAt && (
+                        <Text fontSize="sm" fontWeight="bold" color="#B45309">
+                          {new Date(occ.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        </Text>
+                      )}
                       {/* Followup attachments (compact) */}
                       {isFollowup && ((occ as any).followupClients?.length > 0 || (occ as any).followupJobs?.length > 0) && (
                         <Box display="flex" gap="4px" flexWrap="wrap">
@@ -5129,16 +5124,11 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                       </Box>
                     )}
                     {/* Event time — prominent */}
-                    {isEvent && occ.startAt && (() => {
-                      const d = new Date(occ.startAt);
-                      const h = d.getHours(); const m = d.getMinutes();
-                      if (h === 9 && m === 0) return null;
-                      return (
-                        <Text fontSize="md" fontWeight="bold" color="#B45309">
-                          {d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                        </Text>
-                      );
-                    })()}
+                    {isEvent && occ.startAt && (
+                      <Text fontSize="md" fontWeight="bold" color="#B45309">
+                        {new Date(occ.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                      </Text>
+                    )}
                     {isLightEstimate && occ.estimateAddress && (
                       <Box fontSize="xs"><MapLink address={occ.estimateAddress} /></Box>
                     )}
