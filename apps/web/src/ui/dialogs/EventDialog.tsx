@@ -57,7 +57,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => bizDateKey(new Date()));
   const [notes, setNotes] = useState("");
-  const [eventTime, setEventTime] = useState("");
+  const [eventTime, setEventTime] = useState("09:00");
   const [isRepeating, setIsRepeating] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"weekly" | "monthly" | "yearly" | "custom">("weekly");
   const [customDays, setCustomDays] = useState("14");
@@ -69,18 +69,13 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
     if (editEvent) {
       setTitle(editEvent.title ?? "");
       setDate(editEvent.startAt ? bizDateKey(editEvent.startAt) : bizDateKey(new Date()));
-      // Extract time if it's not the default 09:00
       if (editEvent.startAt) {
         const d = new Date(editEvent.startAt);
         const h = d.getHours();
         const m = d.getMinutes();
-        if (h !== 9 || m !== 0) {
-          setEventTime(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-        } else {
-          setEventTime("");
-        }
+        setEventTime(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
       } else {
-        setEventTime("");
+        setEventTime("09:00");
       }
       setNotes(editEvent.notes ?? "");
       const freq = editEvent.frequencyDays;
@@ -97,19 +92,19 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
     setTitle("");
     setDate(bizDateKey(new Date()));
     setNotes("");
-    setEventTime("");
+    setEventTime("09:00");
     setIsRepeating(false);
     setRepeatMode("weekly");
     setCustomDays("14");
   }
 
   async function handleSave() {
-    if (!title.trim() || !date) return;
+    if (!title.trim() || !date || !eventTime) return;
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
-        startAt: new Date(date + "T" + (eventTime || "09:00")).toISOString(),
+        startAt: new Date(date + "T" + eventTime).toISOString(),
         notes: notes.trim() || null,
         frequencyDays: isRepeating ? modeToDays(repeatMode, customDays) : null,
       };
@@ -169,21 +164,14 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
                   <DateInput value={date} onChange={setDate} />
                 </Box>
                 <Box>
-                  <Text fontSize="sm" fontWeight="medium" mb={1}>Time <Text as="span" fontSize="xs" color="fg.muted" fontWeight="normal">(optional)</Text></Text>
-                  <HStack gap={2}>
-                    <Input
-                      type="time"
-                      size="sm"
-                      value={eventTime}
-                      onChange={(e) => setEventTime(e.target.value)}
-                      w="140px"
-                    />
-                    {eventTime && (
-                      <Button size="xs" variant="ghost" colorPalette="gray" onClick={() => setEventTime("")}>
-                        Clear
-                      </Button>
-                    )}
-                  </HStack>
+                  <Text fontSize="sm" fontWeight="medium" mb={1}>Time *</Text>
+                  <Input
+                    type="time"
+                    size="md"
+                    value={eventTime}
+                    onChange={(e) => setEventTime(e.target.value)}
+                    w="160px"
+                  />
                 </Box>
                 <Box>
                   <Text fontSize="sm" fontWeight="medium" mb={1}>Notes</Text>
@@ -247,7 +235,7 @@ export default function EventDialog({ open, onOpenChange, onCreated, editEvent }
                 <Button ref={cancelRef} variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button
                   colorPalette="orange"
-                  disabled={!title.trim() || !date || saving}
+                  disabled={!title.trim() || !date || !eventTime || saving}
                   onClick={() => void handleSave()}
                 >
                   {saving ? <Spinner size="sm" /> : isEdit ? "Save Event" : "Create Event"}
