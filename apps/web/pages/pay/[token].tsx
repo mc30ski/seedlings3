@@ -226,14 +226,23 @@ function PaymentPageInner() {
     return [...list].sort((a, b) => (b.preferred ? 1 : 0) - (a.preferred ? 1 : 0));
   }, [data?.paymentMethods]);
 
-  // Seed the selection with the client's preferred method once data loads,
-  // so they don't have to re-pick if they're a returning customer.
+  // Seed the selection once data loads. Honor the client's saved preference
+  // ONLY when it's still on the business's preferred list — otherwise default
+  // to the first business-preferred method, falling back to the first
+  // available method when nothing is flagged preferred. This prevents a prior
+  // "Other" self-report from sticking forever as the auto-selected choice
+  // and overriding the business's actual preferred methods.
   useEffect(() => {
     if (selectedMethod) return;
+    const list = data?.paymentMethods ?? [];
+    if (list.length === 0) return;
     const preferred = data?.preferredMethod;
-    if (preferred && (data?.paymentMethods ?? []).some((m) => m.key === preferred)) {
-      setSelectedMethod(preferred);
-    }
+    const savedIsBusinessPreferred =
+      preferred && list.some((m) => m.key === preferred && m.preferred);
+    const target = savedIsBusinessPreferred
+      ? preferred
+      : (list.find((m) => m.preferred) ?? list[0]).key;
+    if (target) setSelectedMethod(target);
   }, [data?.preferredMethod, data?.paymentMethods, selectedMethod]);
 
   const selectedLabel = useMemo(
