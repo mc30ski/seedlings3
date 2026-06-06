@@ -49,6 +49,67 @@ function toQbDate(d: Date): string {
   return `${m}/${day}/${y}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// QuickBooks Online journal-entry import format.
+//
+// The QB income and expenses CSVs both use the canonical 10-column journal-
+// entry shape so the operator can import them straight into QB Online's
+// "Journal Entries" importer without re-shaping. Every source transaction
+// emits a balanced pair of rows (debit + credit) sharing the same JournalNo;
+// the second row's JournalDate is blank (QB groups by adjacent JournalNo and
+// expects the date only on the leader row).
+//
+// Counter-account for both directions is `APP_CLEARING_ACCOUNT` — a clearing
+// account the operator sets up in QB. Income debits clearing, then credits
+// the income account; expenses debit the expense account, then credit
+// clearing. When a real bank deposit/withdrawal lands in QB, it offsets the
+// clearing balance, and the operator reconciles the two sides.
+// ─────────────────────────────────────────────────────────────────────────────
+const JOURNAL_HEADER = [
+  "*JournalNo",
+  "*JournalDate",
+  "*AccountName",
+  "*Debits",
+  "*Credits",
+  "Description",
+  "Name",
+  "Currency",
+  "Location",
+  "Class",
+];
+
+const APP_CLEARING_ACCOUNT = "App Clearing Account";
+
+function incomeJournalRows(
+  journalNo: string,
+  dateStr: string,
+  incomeAccount: string,
+  amount: number,
+  description: string,
+  name: string,
+): string[] {
+  const amt = round2(amount).toFixed(2);
+  return [
+    csvRow([journalNo, dateStr, APP_CLEARING_ACCOUNT, amt, "", description, name, "", "", ""]),
+    csvRow([journalNo, "", incomeAccount, "", amt, description, name, "", "", ""]),
+  ];
+}
+
+function expenseJournalRows(
+  journalNo: string,
+  dateStr: string,
+  expenseAccount: string,
+  amount: number,
+  description: string,
+  name: string,
+): string[] {
+  const amt = round2(amount).toFixed(2);
+  return [
+    csvRow([journalNo, dateStr, expenseAccount, amt, "", description, name, "", "", ""]),
+    csvRow([journalNo, "", APP_CLEARING_ACCOUNT, "", amt, description, name, "", "", ""]),
+  ];
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -740,148 +801,90 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
     loadEquipmentRentalIncomeConfig(),
   ]);
 
-  const header = [
-    "Date",
-    "Description",
-    "Amount",
-    "Account",
-    "Reference ID",
-    "Category",
-    "Tax Line",
-    "Customer",
-    "Property",
-    "Method",
-    "Vendor",
-    "Invoice #",
-    "Job ID",
-  ];
-  const lines: string[] = [csvRow(header)];
+  // Journal-entry format: every source transaction emits a balanced
+  // debit/credit pair. Income flow:
+  //   Row 1: debit  App Clearing Account
+  //   Row 2: credit the configured income account
+  // Both rows share JournalNo; only Row 1 carries JournalDate. No TOTALS
+  // row — QB rejects rows it can't categorize as journal lines.
+  const lines: string[] = [csvRow(JOURNAL_HEADER)];
   let total = 0;
-  // Job-payment income rows.
+  let transactionCount = 0;
+
+  const SERVICE_INCOME_ACCOUNT = "Services";
+
+  // Job-payment income.
   for (const p of payments) {
     const prop = p.occurrence.job?.property;
-    const propLabel = [prop?.displayName, prop?.street1, prop?.city, prop?.state]
-      .filter(Boolean)
-      .join(" — ");
     const customer = prop?.client?.displayName ?? "";
     const description =
       p.note?.trim() ||
       `Service payment${customer ? ` — ${customer}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
+    const dateStr = p.confirmedAt ? toQbDate(p.confirmedAt) : "";
     lines.push(
-      csvRow([
-        p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-        description,
-        round2(p.amountPaid).toFixed(2),
-        "Services",
+      ...incomeJournalRows(
         `PAY-${p.id}`,
-        "",
-        "1",
+        dateStr,
+        SERVICE_INCOME_ACCOUNT,
+        p.amountPaid,
+        description,
         customer,
-        propLabel,
-        p.method ?? "",
-        "",
-        "",
-        p.occurrence.id,
-      ]),
+      ),
     );
     total += p.amountPaid;
+    transactionCount += 1;
   }
-  // Equipment rental income rows. For solo rentals (no splits), emit one
-  // row per checkout with the holder as Customer. For group rentals
-  // (CheckoutSplit rows present), emit one row PER CONTRACTOR SPLIT —
-  // each contractor's portion of the rental shows up as its own income
-  // line with that contractor as Customer. Employee/trainee splits have
-  // amount=0 (filtered by the Prisma query above) so they don't appear.
-  // Account name is fixed to "Equipment Rental Income" so QB routes
-  // every line to the right chart entry on import. Reference ID uses
-  // RENT- prefix; for group splits we suffix with the userId so each
-  // contractor's row dedupes independently on re-import.
+
+  // Equipment rental income. Solo rentals → one journal per checkout;
+  // group rentals → one journal per contractor split. The Name column
+  // carries the contractor (the party who actually paid the rental fee
+  // to the LLC) — that's what makes the entry useful for reconciliation,
+  // even though the literal "Customer" in the legacy export was the
+  // contractor too (solo rental's holder, group rental's split user).
   for (const c of equipmentRentals) {
     if (!c.releasedAt) continue;
     const eqLabel = [c.equipment.brand, c.equipment.model].filter(Boolean).join(" ") || c.equipment.shortDesc;
     const descPrefix = `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`;
+    const dateStr = toQbDate(c.releasedAt);
 
     if (c.splits.length > 0) {
-      // Group rental → one row per contractor split. Trust the splitter:
-      // any non-contractor share was zeroed at materialization time and
-      // already filtered by the `amount: { gt: 0 }` predicate above.
       for (const sp of c.splits) {
         if (sp.amount == null || sp.amount <= 0) continue;
         const contractorName = sp.user.displayName ?? sp.user.email ?? sp.user.id;
         lines.push(
-          csvRow([
-            toQbDate(c.releasedAt),
-            descPrefix,
-            round2(sp.amount).toFixed(2),
-            rentalIncomeConfig.qbAccount,
+          ...incomeJournalRows(
             `RENT-${c.id}-${sp.userId}`,
-            "",
-            rentalIncomeConfig.scheduleCLine,
+            dateStr,
+            rentalIncomeConfig.qbAccount,
+            sp.amount,
+            descPrefix,
             contractorName,
-            "",
-            "",
-            "",
-            "",
-            "",
-          ]),
+          ),
         );
         total += sp.amount;
+        transactionCount += 1;
       }
     } else {
-      // Solo rental → one row, Checkout.rentalCost is already the
-      // actual billed total (zero for solo employees, full for solo
-      // contractors). The Prisma where clause filters out rentalCost ≤ 0,
-      // but defensive double-guard anyway.
       if (c.rentalCost == null || c.rentalCost <= 0) continue;
       const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
       lines.push(
-        csvRow([
-          toQbDate(c.releasedAt),
-          descPrefix,
-          round2(c.rentalCost).toFixed(2),
-          rentalIncomeConfig.qbAccount,
+        ...incomeJournalRows(
           `RENT-${c.id}`,
-          "",
-          rentalIncomeConfig.scheduleCLine,
+          dateStr,
+          rentalIncomeConfig.qbAccount,
+          c.rentalCost,
+          descPrefix,
           contractorName,
-          "",
-          "",
-          "",
-          "",
-          "",
-        ]),
+        ),
       );
       total += c.rentalCost;
+      transactionCount += 1;
     }
   }
-  lines.push(
-    csvRow([
-      "TOTALS",
-      "",
-      round2(total).toFixed(2),
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-    ]),
-  );
-  // rowCount = body data rows actually written. For solo rentals that's
-  // one row per checkout; for group rentals it's one row per contractor
-  // split, so we tally the actual emitted rows instead of checkout count.
-  const writtenRentalCount = equipmentRentals.reduce((sum, c) => {
-    if (!c.releasedAt) return sum;
-    if (c.splits.length > 0) {
-      return sum + c.splits.filter((sp) => sp.amount != null && sp.amount > 0).length;
-    }
-    return sum + (c.rentalCost != null && c.rentalCost > 0 ? 1 : 0);
-  }, 0);
-  return { csv: lines.join("\n") + "\n", rowCount: payments.length + writtenRentalCount, total: round2(total) };
+
+  // rowCount = source transaction count (NOT line count) so downstream
+  // displays still read "N payments + M rentals" rather than 2× that.
+  return { csv: lines.join("\n") + "\n", rowCount: transactionCount, total: round2(total) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1002,152 +1005,102 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     loadConfirmedPayments(start, end),
   ]);
 
-  // Schedule C line + QB chart-of-accounts mapping come from the
-  // EXPENSE_CATEGORIES taxonomy — the single source of truth, editable in
-  // Settings with no code change. A category whose qbAccount is null lands
-  // as "Unmapped" so the operator re-categorizes inside QB after import.
-  const [lineMap, qbAccountMap, fixedAssetMinCost] = await Promise.all([
-    loadScheduleCLineMap(),
+  // QB chart-of-accounts mapping comes from the EXPENSE_CATEGORIES taxonomy
+  // (Settings-editable). A category whose qbAccount is null lands as
+  // "Unmapped" so the operator re-categorizes inside QB after import.
+  // Schedule C line numbers no longer ride along on the journal-entry
+  // format (journal entries route purely by AccountName), but the line
+  // mapping is still used by the unmapped-rows preflight elsewhere.
+  const [qbAccountMap, fixedAssetMinCost] = await Promise.all([
     loadQbAccountMap(),
     loadFixedAssetMinCost(),
   ]);
 
-  // Column shape (7 core spec columns + trailing extras QB ignores):
-  //   Date, Description, Amount, Account, Reference ID, Category, Tax Line,
-  //   Customer, Property, Method, Vendor, Invoice #, Job ID
-  //
-  // Reference ID: BusinessExpense → `EXP-{id}`; processor-fee rows
-  // synthesized from Payment → `FEE-{paymentId}`. Stable across re-exports
-  // so QB dedupes on re-import.
-  const header = [
-    "Date",
-    "Description",
-    "Amount",
-    "Account",
-    "Reference ID",
-    "Category",
-    "Tax Line",
-    "Customer",
-    "Property",
-    "Method",
-    "Vendor",
-    "Invoice #",
-    "Job ID",
-  ];
-  const lines: string[] = [csvRow(header)];
+  // Journal-entry format. Each source transaction emits a balanced pair:
+  //   Row 1: debit  the mapped expense account (sub-accounts use colon)
+  //   Row 2: credit App Clearing Account
+  // No TOTALS row — QB rejects unbalanced footer rows.
+  const lines: string[] = [csvRow(JOURNAL_HEADER)];
   let total = 0;
-  // Fixed-asset purchases (cost ≥ FIXED_ASSET_MIN_COST setting, on/after the
-  // policy start date) are skipped here and emitted in qb-fixed-assets.csv
-  // instead — they hit a Fixed Asset account on the balance sheet, not the P&L.
+  let transactionCount = 0;
+
+  // Fixed-asset purchases are excluded — they belong on the balance sheet
+  // (qb-fixed-assets export) not the P&L journal.
   const expenseRows = rows.filter((r) => !isFixedAsset(r, fixedAssetMinCost));
   for (const r of expenseRows) {
     const category = r.category ?? "Other";
     const account = qbAccountMap[category] ?? "Unmapped";
     const prop = r.occurrence?.job?.property;
-    const propLabel = prop
-      ? [prop.displayName, prop.street1, prop.city, prop.state].filter(Boolean).join(" — ")
-      : "";
+    const clientName = prop?.client?.displayName ?? "";
+    // Name = vendor when present, else customer/client. Vendor is the more
+    // useful party for an expense row (1099 lookup, AP reconciliation).
+    const name = (r.vendor ?? "").trim() || clientName;
     lines.push(
-      csvRow([
-        toQbDate(r.date),
-        r.description ?? "",
-        round2(r.cost).toFixed(2),
-        account,
+      ...expenseJournalRows(
         `EXP-${r.id}`,
-        category,
-        lineMap[category] ?? "",
-        prop?.client?.displayName ?? "",
-        propLabel,
-        "",
-        r.vendor ?? "",
-        r.invoiceNumber ?? "",
-        r.occurrence?.id ?? "",
-      ]),
+        toQbDate(r.date),
+        account,
+        r.cost,
+        r.description ?? "",
+        name,
+      ),
     );
     total += r.cost;
+    transactionCount += 1;
   }
-  // Append processor-fee rows. Vendor is the payment method (e.g. "Venmo") so
-  // the CPA can see which processor charged what. Description includes the
-  // Payment ID for traceability back to the source transaction. These rows
-  // use the "Payment Processing Fees" category; its Schedule C line + QB
-  // account come from the EXPENSE_CATEGORIES taxonomy like any other category.
+
+  // Processor-fee journals. Name = payment method (the processor — Venmo,
+  // Stripe, etc.) since that's the vendor-equivalent for an AP reconciliation.
   for (const p of feePayments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
     const propName = prop?.displayName ?? "";
-    const propLabel = prop
-      ? [prop.displayName, prop.street1, prop.city, prop.state].filter(Boolean).join(" — ")
-      : "";
     const desc = `${p.method} fee on ${clientName}${propName ? ` — ${propName}` : ""} (gross $${round2(p.grossCharged ?? 0).toFixed(2)}, payment ${p.id})`;
+    const account = qbAccountMap[PROCESSOR_FEE_CATEGORY] ?? "Unmapped";
     lines.push(
-      csvRow([
-        p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-        desc,
-        round2(p.processorFeeAmount ?? 0).toFixed(2),
-        qbAccountMap[PROCESSOR_FEE_CATEGORY] ?? "Unmapped",
+      ...expenseJournalRows(
         `FEE-${p.id}`,
-        PROCESSOR_FEE_CATEGORY,
-        lineMap[PROCESSOR_FEE_CATEGORY] ?? "10",
-        clientName,
-        propLabel,
+        p.confirmedAt ? toQbDate(p.confirmedAt) : "",
+        account,
+        p.processorFeeAmount ?? 0,
+        desc,
         p.method ?? "",
-        p.method ?? "",
-        "",
-        p.occurrence?.id ?? "",
-      ]),
+      ),
     );
     total += p.processorFeeAmount ?? 0;
+    transactionCount += 1;
   }
-  // Append Contract Labor rows — one per non-flagged contractor PaymentSplit
-  // on a confirmed payment, PLUS one per GuaranteedPayoutAdvance whose
-  // exportedAt falls in window. Together these reflect actual cash
-  // disbursed to contractors. Flagged splits (guaranteedPayoutPaidAt set)
-  // are skipped — they were counted as advance rows already; including
-  // them too would double-count Contract Labor for tax reporting.
-  // Vendor is the contractor's display name so the CPA's 1099 workflow
-  // can group by payee. Owner-earnings splits are already excluded by
-  // loadConfirmedPayments; W-2 (employee/trainee) splits are filtered
-  // here because their wages flow through Gusto, not QB.
-  let contractRowCount = 0;
+
+  // Contract Labor journals — one balanced pair per non-flagged contractor
+  // PaymentSplit. Name = contractor (vendor) so the CPA's 1099 workflow
+  // groups by payee. Flagged splits (guaranteedPayoutPaidAt set) are
+  // covered by the GP advance loop below — including them here would
+  // double-count Contract Labor.
+  const contractLaborAccount = qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped";
   for (const p of payments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
-    const propLabel = prop
-      ? [prop.displayName, prop.street1, prop.city, prop.state].filter(Boolean).join(" — ")
-      : "";
     for (const sp of p.splits) {
       if (isEmployeeClass(sp.user.workerType)) continue;
-      // Skip splits already disbursed via GP advance — counted in the
-      // advance-rows loop below instead.
       if ((sp as any).guaranteedPayoutPaidAt != null) continue;
       const vendor = sp.user.displayName ?? sp.user.email ?? "";
       const desc = `Contractor payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
       lines.push(
-        csvRow([
-          p.confirmedAt ? toQbDate(p.confirmedAt) : "",
-          desc,
-          round2(sp.amount).toFixed(2),
-          qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped",
+        ...expenseJournalRows(
           `CL-${sp.id}`,
-          CONTRACT_LABOR_CATEGORY,
-          lineMap[CONTRACT_LABOR_CATEGORY] ?? "11",
-          clientName,
-          propLabel,
-          "",
+          p.confirmedAt ? toQbDate(p.confirmedAt) : "",
+          contractLaborAccount,
+          sp.amount,
+          desc,
           vendor,
-          "",
-          p.occurrence?.id ?? "",
-        ]),
+        ),
       );
       total += sp.amount;
-      contractRowCount += 1;
+      transactionCount += 1;
     }
   }
 
-  // GP advance rows — one per GuaranteedPayoutAdvance with exportedAt in
-  // window. Dated on the advance (= cash-out date for the business).
-  // Vendor = contractor; same QB Contract Labor account and Schedule C
-  // line as the standard contractor splits so the bookkeeping is uniform.
+  // GP advance journals.
   const gpAdvances = await prisma.guaranteedPayoutAdvance.findMany({
     where: { exportedAt: { gte: start, lte: end } },
     include: {
@@ -1160,9 +1113,6 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
               property: {
                 select: {
                   displayName: true,
-                  street1: true,
-                  city: true,
-                  state: true,
                   client: { select: { displayName: true } },
                 },
               },
@@ -1176,54 +1126,29 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
   for (const adv of gpAdvances) {
     const prop = adv.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
-    const propLabel = prop
-      ? [prop.displayName, prop.street1, prop.city, prop.state].filter(Boolean).join(" — ")
-      : "";
     const vendor = adv.user?.displayName ?? adv.user?.email ?? "";
     const desc = `Contractor advance (guaranteed payout) to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
     lines.push(
-      csvRow([
-        toQbDate(adv.exportedAt),
-        desc,
-        round2(adv.amount).toFixed(2),
-        qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped",
+      ...expenseJournalRows(
         `GPA-${adv.id}`,
-        CONTRACT_LABOR_CATEGORY,
-        lineMap[CONTRACT_LABOR_CATEGORY] ?? "11",
-        clientName,
-        propLabel,
-        "",
+        toQbDate(adv.exportedAt),
+        contractLaborAccount,
+        adv.amount,
+        desc,
         vendor,
-        "",
-        adv.occurrenceId,
-      ]),
+      ),
     );
     total += adv.amount;
-    contractRowCount += 1;
+    transactionCount += 1;
   }
-  lines.push(
-    csvRow([
-      "TOTALS",
-      "",
-      round2(total).toFixed(2),
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-    ]),
-  );
+
   return {
     csv: lines.join("\n") + "\n",
-    rowCount: expenseRows.length + feePayments.length + contractRowCount,
+    rowCount: transactionCount,
     total: round2(total),
   };
 }
+
 
 // QuickBooks Equity export — owner capital contributions and owner draws.
 // These are equity-account movements (balance-sheet), not P&L. The CPA imports

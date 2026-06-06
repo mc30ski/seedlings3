@@ -403,45 +403,75 @@ function parseCsv(csv: string): string[][] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("qbIncomeCsv — tax integrity", () => {
-  it("locks in the column header (any new column requires updating this test)", async () => {
+  it("locks in the journal-entry column header (any new column requires updating this test)", async () => {
     prismaMock.payment.findMany.mockResolvedValue([]);
     const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
     const rows = parseCsv(csv);
     expect(rows[0]).toEqual([
-      "Date",
+      "*JournalNo",
+      "*JournalDate",
+      "*AccountName",
+      "*Debits",
+      "*Credits",
       "Description",
-      "Amount",
-      "Account",
-      "Reference ID",
-      "Category",
-      "Tax Line",
-      "Customer",
-      "Property",
-      "Method",
-      "Vendor",
-      "Invoice #",
-      "Job ID",
+      "Name",
+      "Currency",
+      "Location",
+      "Class",
     ]);
   });
 
-  it("Amount column uses Payment.amountPaid — NOT a derived field", async () => {
+  it("Debits/Credits use Payment.amountPaid — NOT a derived field", async () => {
     prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
     const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
     const rows = parseCsv(csv);
-    const adamsRow = rows.find((r) => r.some((c) => c.includes("PAY-pmt-1")));
-    const banksRow = rows.find((r) => r.some((c) => c.includes("PAY-pmt-2")));
-    expect(adamsRow?.[2]).toBe("100.00"); // = amountPaid, NOT splits sum (80)
-    expect(banksRow?.[2]).toBe("60.00"); // = amountPaid (the underpaid amount),
-                                          // NOT promised ($100) or splits sum ($55)
+    // Journal-entry pair per payment: row 1 debits clearing, row 2 credits
+    // the income account. Both rows share JournalNo (col 0). Each pair must
+    // carry amountPaid verbatim — NOT splits sum, NOT promised.
+    const pmt1Pair = rows.filter((r) => r[0] === "PAY-pmt-1");
+    const pmt2Pair = rows.filter((r) => r[0] === "PAY-pmt-2");
+    expect(pmt1Pair).toHaveLength(2);
+    expect(pmt2Pair).toHaveLength(2);
+    // Row 1 (debit clearing): Debits col = amount, Credits col = ""
+    expect(pmt1Pair[0][3]).toBe("100.00"); // Debits
+    expect(pmt1Pair[0][4]).toBe(""); // Credits
+    // Row 2 (credit income account): Debits col = "", Credits col = amount
+    expect(pmt1Pair[1][3]).toBe(""); // Debits
+    expect(pmt1Pair[1][4]).toBe("100.00"); // Credits
+    // Same shape for pmt-2 — amountPaid (60), NOT promised ($100), NOT splits sum ($55).
+    expect(pmt2Pair[0][3]).toBe("60.00");
+    expect(pmt2Pair[1][4]).toBe("60.00");
   });
 
-  it("TOTALS row equals sum of amountPaid values", async () => {
+  it("no TOTALS row — journal format only accepts balanced debit/credit pairs", async () => {
     prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
     const { csv, total } = await qbIncomeCsv(RANGE_START, RANGE_END);
     const rows = parseCsv(csv);
-    const totalsRow = rows.find((r) => r[0] === "TOTALS");
-    expect(totalsRow?.[2]).toBe("160.00"); // 100 + 60
-    expect(total).toBe(160);
+    // The legacy "TOTALS" footer would crash QB's journal import (QB tries
+    // to parse it as a journal line). The total field on the CsvResult is
+    // still populated for in-app eyeball verification, but no row carries it.
+    expect(rows.find((r) => r[0] === "TOTALS")).toBeUndefined();
+    expect(total).toBe(160); // 100 + 60
+    // Every body row must have a JournalNo (no orphan/footer rows).
+    for (const r of rows.slice(1)) expect(r[0]).not.toBe("");
+  });
+
+  it("each payment emits exactly two journal rows sharing a JournalNo, date only on row 1", async () => {
+    prismaMock.payment.findMany.mockResolvedValue(makeConfirmedPayments());
+    const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
+    const rows = parseCsv(csv).slice(1); // skip header
+    // Group by JournalNo — every group must be exactly 2 rows.
+    const byJournal = new Map<string, string[][]>();
+    for (const r of rows) {
+      const arr = byJournal.get(r[0]) ?? [];
+      arr.push(r);
+      byJournal.set(r[0], arr);
+    }
+    for (const [_journalNo, pair] of byJournal) {
+      expect(pair).toHaveLength(2);
+      expect(pair[0][1]).not.toBe(""); // row 1 has a date
+      expect(pair[1][1]).toBe(""); // row 2 date is blank
+    }
   });
 
   it("NEVER includes derived columns (shortfall / overage / topup / margin / fee)", async () => {
@@ -523,17 +553,15 @@ describe("qbIncomeCsv — tax integrity", () => {
     const { csv } = await qbIncomeCsv(RANGE_START, RANGE_END);
     expect(csv).toContain("Equipment Rental Revenue");
     expect(csv).not.toContain("Equipment Rental Income");
-    // Schedule C line 6 appears in the Tax Line column for rental rows.
-    // We can't directly grep a single digit "6" reliably (job-payment rows
-    // also have a "1" in that column), so look for the rental row's
-    // RENT- prefix on the same line as "6".
-    const lines = csv.split("\n");
-    const rentalLines = lines.filter((l) => l.includes("RENT-"));
-    expect(rentalLines.length).toBeGreaterThan(0);
-    for (const line of rentalLines) {
-      // CSV columns: Date, Description, Amount, Account, RefID, Category, TaxLine, ...
-      const cells = line.split(",");
-      expect(cells[6]).toBe("6"); // Tax Line column
+    // In the journal-entry format the Schedule C line number column is gone
+    // (journals route purely by AccountName). Verify the AccountName column
+    // (index 2) of every credit-side rental row carries the overridden
+    // qbAccount string verbatim.
+    const rows = parseCsv(csv).slice(1);
+    const rentalCreditRows = rows.filter((r) => r[0].startsWith("RENT-") && r[4] !== "");
+    expect(rentalCreditRows.length).toBeGreaterThan(0);
+    for (const r of rentalCreditRows) {
+      expect(r[2]).toBe("Equipment Rental Revenue");
     }
   });
 
@@ -625,26 +653,26 @@ describe("qbIncomeCsv — tax integrity", () => {
       },
     ]);
     const { csv, total, rowCount } = await qbIncomeCsv(RANGE_START, RANGE_END);
-    const lines = csv.split("\n");
-    const rentalLines = lines.filter((l) => l.includes("RENT-"));
-    // Two CSV rows — one per contractor split.
-    expect(rentalLines.length).toBe(2);
-    // Each row carries its own contractor as Customer.
+    const rows = parseCsv(csv).slice(1);
+    // Each contractor gets its own journal-entry pair (2 rows). Two
+    // contractors → 4 lines total, all carrying a RENT- JournalNo.
+    const rentalLines = rows.filter((r) => r[0].startsWith("RENT-"));
+    expect(rentalLines.length).toBe(4);
+    // Per-contractor JournalNos must be distinct so QB dedupes correctly
+    // on re-import.
+    const journalNos = new Set(rentalLines.map((r) => r[0]));
+    expect(journalNos.has("RENT-co-group-1-c1")).toBe(true);
+    expect(journalNos.has("RENT-co-group-1-c2")).toBe(true);
+    // The plain "RENT-co-group-1" without the user suffix must NOT appear
+    // (would imply a single per-checkout pair collapsing both contractors).
+    expect(journalNos.has("RENT-co-group-1")).toBe(false);
+    // Each contractor's name appears on its own pair.
     expect(csv).toContain("Carla Contractor");
     expect(csv).toContain("Carl Contractor");
-    // Each row carries the user-specific RENT- ref so QB dedupes per
-    // contractor on re-import.
-    expect(csv).toContain("RENT-co-group-1-c1");
-    expect(csv).toContain("RENT-co-group-1-c2");
-    // The plain "RENT-co-group-1" without the user suffix must NOT appear
-    // (would imply a single per-checkout row collapsing both contractors).
-    for (const line of rentalLines) {
-      expect(line).toMatch(/RENT-co-group-1-c[12]/);
-    }
-    // Each row's Amount = the contractor's CheckoutSplit.amount, not the
-    // parent's rentalCost.
+    // Per-split amount ($30) — not parent rentalCost.
     expect(csv).toContain("30.00");
     expect(total).toBe(60); // sum of the two splits
+    // rowCount = source transactions (2 splits), NOT 4 emitted lines.
     expect(rowCount).toBe(2);
   });
 
@@ -719,25 +747,22 @@ describe("qbIncomeCsv — tax integrity", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("qbExpensesCsv — tax integrity", () => {
-  it("locks in the column header", async () => {
+  it("locks in the journal-entry column header", async () => {
     prismaMock.businessExpense.findMany.mockResolvedValue([]);
     prismaMock.payment.findMany.mockResolvedValue([]);
     const { csv } = await qbExpensesCsv(RANGE_START, RANGE_END);
     const rows = parseCsv(csv);
     expect(rows[0]).toEqual([
-      "Date",
+      "*JournalNo",
+      "*JournalDate",
+      "*AccountName",
+      "*Debits",
+      "*Credits",
       "Description",
-      "Amount",
-      "Account",
-      "Reference ID",
-      "Category",
-      "Tax Line",
-      "Customer",
-      "Property",
-      "Method",
-      "Vendor",
-      "Invoice #",
-      "Job ID",
+      "Name",
+      "Currency",
+      "Location",
+      "Class",
     ]);
   });
 
@@ -932,12 +957,23 @@ describe("Slice 2 — Guaranteed payout reconciliation", () => {
     ]);
 
     const result = await qbExpensesCsv(RANGE_START, RANGE_END);
-    // Advance row gets a GPA- ref (vs CL- for confirmed-payment splits)
-    // and lands in the Contract Labor category.
+    // Advance journal pair gets a GPA- JournalNo (vs CL- for confirmed-
+    // payment splits) and routes to the Contract Labor QB account on the
+    // debit side. Category column is gone in the journal-entry format —
+    // QB routes by AccountName alone — so we check the AccountName column
+    // (index 2) on the debit row carries the resolved account string.
     expect(result.csv).toContain("GPA-adv-1");
-    expect(result.csv).toContain("Contract labor");
     expect(result.csv).toContain("50.00");
     expect(result.csv).toContain("Contractor advance");
+    const rows = parseCsv(result.csv).slice(1);
+    const advancePair = rows.filter((r) => r[0] === "GPA-adv-1");
+    expect(advancePair).toHaveLength(2);
+    // Debit row: AccountName = contract-labor account (the mock's
+    // qbAccountMap returns "Unmapped" by default since no override is set
+    // for the CONTRACT_LABOR_CATEGORY in this test).
+    expect(advancePair[0][3]).toBe("50.00"); // Debits
+    expect(advancePair[1][2]).toBe("App Clearing Account"); // credit-side account
+    expect(advancePair[1][4]).toBe("50.00"); // Credits
   });
 });
 
