@@ -210,8 +210,12 @@ export default function ExportsTab() {
     refreshHistory();
   }, [refreshHistory]);
 
-  // Pull cadence setting on mount; if it changes the user can override via the
-  // preset buttons. Default range stays whatever was set on first render.
+  // Pull cadence setting on mount so the preset buttons ("Last weekly",
+  // "This weekly", etc.) match the configured pay-period cadence. The
+  // initial date range stays at the rolling "today-7 → today" set above —
+  // do NOT snap to `periodFor(cadence, "last")` here; the user has
+  // explicitly asked for the rolling default and snapping creates the
+  // confusing experience where the dates fight the initial state.
   useEffect(() => {
     apiGet<Array<{ key: string; value: string }>>("/api/settings")
       .then((rows) => {
@@ -220,9 +224,6 @@ export default function ExportsTab() {
         const v = row?.value as Cadence | undefined;
         if (v === "WEEKLY" || v === "BIWEEKLY" || v === "MONTHLY") {
           setCadence(v);
-          const r = periodFor(v, "last");
-          setStart(r.from);
-          setEnd(r.to);
         }
       })
       .catch(() => {

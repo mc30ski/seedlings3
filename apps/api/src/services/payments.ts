@@ -6,6 +6,7 @@ import type { ServicesPayments } from "../types/services";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { writeAudit } from "../lib/auditLogger";
 import { AUDIT } from "../lib/auditActions";
+import { generateLedgerId } from "../lib/ledgerId";
 import {
   loadPaymentMethods,
   getProcessorFee,
@@ -591,6 +592,7 @@ export const payments: ServicesPayments = {
       // before approval too.
       const payment = await tx.payment.create({
         data: {
+          ledgerId: generateLedgerId(),
           occurrenceId,
           amountPaid,
           method,
@@ -1355,6 +1357,7 @@ export const payments: ServicesPayments = {
 
       const payment = await tx.payment.create({
         data: {
+          ledgerId: generateLedgerId(),
           occurrenceId,
           amountPaid,
           method,

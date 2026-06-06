@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma";
 import { loadQbAccountMap, loadScheduleCLineMap } from "./expenseCategories";
+import { generateLedgerId } from "../lib/ledgerId";
 import {
   computeBreakdown,
   loadRates,
@@ -640,6 +641,7 @@ export async function gustoContractorsCsv(
     for (const c of candidates) {
       await prisma.guaranteedPayoutAdvance.create({
         data: {
+          ledgerId: generateLedgerId(),
           userId: c.userId,
           occurrenceId: c.occurrenceId,
           amount: c.amount,
@@ -813,7 +815,9 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
 
   const SERVICE_INCOME_ACCOUNT = "Services";
 
-  // Job-payment income.
+  // Job-payment income. JournalNo = Payment.ledgerId (SLC-YYMMDD-XXXX).
+  // Legacy `PAY-{cuid}` is the defensive fallback only for rows that
+  // somehow escaped backfill — should never happen post-backfill.
   for (const p of payments) {
     const prop = p.occurrence.job?.property;
     const customer = prop?.client?.displayName ?? "";
@@ -823,7 +827,7 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
     const dateStr = p.confirmedAt ? toQbDate(p.confirmedAt) : "";
     lines.push(
       ...incomeJournalRows(
-        `PAY-${p.id}`,
+        (p as any).ledgerId ?? `PAY-${p.id}`,
         dateStr,
         SERVICE_INCOME_ACCOUNT,
         p.amountPaid,
@@ -835,25 +839,29 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
     transactionCount += 1;
   }
 
-  // Equipment rental income. Solo rentals → one journal per checkout;
-  // group rentals → one journal per contractor split. The Name column
-  // carries the contractor (the party who actually paid the rental fee
-  // to the LLC) — that's what makes the entry useful for reconciliation,
-  // even though the literal "Customer" in the legacy export was the
-  // contractor too (solo rental's holder, group rental's split user).
+  // Equipment rental income. Solo rentals → one journal per checkout
+  // (JournalNo = Checkout.ledgerId). Group rentals → one journal per
+  // contractor split; the split's JournalNo derives from the parent
+  // Checkout's ledgerId + last 4 chars of the userId (uppercased) so
+  // the entry stays distinct per contractor and fits under QB's 21-char
+  // JournalNo limit.
   for (const c of equipmentRentals) {
     if (!c.releasedAt) continue;
     const eqLabel = [c.equipment.brand, c.equipment.model].filter(Boolean).join(" ") || c.equipment.shortDesc;
     const descPrefix = `Equipment rental — ${eqLabel}${c.rentalDays ? ` (${c.rentalDays}d)` : ""}`;
     const dateStr = toQbDate(c.releasedAt);
+    const parentLedger = (c as any).ledgerId as string | null | undefined;
 
     if (c.splits.length > 0) {
       for (const sp of c.splits) {
         if (sp.amount == null || sp.amount <= 0) continue;
         const contractorName = sp.user.displayName ?? sp.user.email ?? sp.user.id;
+        const journalNo = parentLedger
+          ? `${parentLedger}-${sp.userId.slice(-4).toUpperCase()}`
+          : `RENT-${c.id}-${sp.userId}`;
         lines.push(
           ...incomeJournalRows(
-            `RENT-${c.id}-${sp.userId}`,
+            journalNo,
             dateStr,
             rentalIncomeConfig.qbAccount,
             sp.amount,
@@ -869,7 +877,7 @@ export async function qbIncomeCsv(start: Date, end: Date): Promise<CsvResult> {
       const contractorName = c.user.displayName ?? c.user.email ?? c.user.id;
       lines.push(
         ...incomeJournalRows(
-          `RENT-${c.id}`,
+          parentLedger ?? `RENT-${c.id}`,
           dateStr,
           rentalIncomeConfig.qbAccount,
           c.rentalCost,
@@ -1026,6 +1034,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
 
   // Fixed-asset purchases are excluded — they belong on the balance sheet
   // (qb-fixed-assets export) not the P&L journal.
+  // Operating expenses. JournalNo = BusinessExpense.ledgerId.
   const expenseRows = rows.filter((r) => !isFixedAsset(r, fixedAssetMinCost));
   for (const r of expenseRows) {
     const category = r.category ?? "Other";
@@ -1037,7 +1046,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     const name = (r.vendor ?? "").trim() || clientName;
     lines.push(
       ...expenseJournalRows(
-        `EXP-${r.id}`,
+        (r as any).ledgerId ?? `EXP-${r.id}`,
         toQbDate(r.date),
         account,
         r.cost,
@@ -1049,17 +1058,19 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     transactionCount += 1;
   }
 
-  // Processor-fee journals. Name = payment method (the processor — Venmo,
-  // Stripe, etc.) since that's the vendor-equivalent for an AP reconciliation.
+  // Processor-fee journals. No DB row — JournalNo derives from the parent
+  // Payment.ledgerId with a `-F` suffix (e.g. SLC-260605-X7K2-F = 17 chars).
   for (const p of feePayments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
     const propName = prop?.displayName ?? "";
     const desc = `${p.method} fee on ${clientName}${propName ? ` — ${propName}` : ""} (gross $${round2(p.grossCharged ?? 0).toFixed(2)}, payment ${p.id})`;
     const account = qbAccountMap[PROCESSOR_FEE_CATEGORY] ?? "Unmapped";
+    const parentLedger = (p as any).ledgerId as string | null | undefined;
+    const journalNo = parentLedger ? `${parentLedger}-F` : `FEE-${p.id}`;
     lines.push(
       ...expenseJournalRows(
-        `FEE-${p.id}`,
+        journalNo,
         p.confirmedAt ? toQbDate(p.confirmedAt) : "",
         account,
         p.processorFeeAmount ?? 0,
@@ -1071,23 +1082,27 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     transactionCount += 1;
   }
 
-  // Contract Labor journals — one balanced pair per non-flagged contractor
-  // PaymentSplit. Name = contractor (vendor) so the CPA's 1099 workflow
-  // groups by payee. Flagged splits (guaranteedPayoutPaidAt set) are
-  // covered by the GP advance loop below — including them here would
-  // double-count Contract Labor.
+  // Contract Labor journals — one per non-flagged contractor PaymentSplit.
+  // JournalNo derives from the parent Payment.ledgerId + last 4 chars of
+  // the contractor's userId (uppercased). Unique per (payment, contractor)
+  // and survives split delete+recreate at reconciliation — the parent
+  // payment's ledgerId is stable.
   const contractLaborAccount = qbAccountMap[CONTRACT_LABOR_CATEGORY] ?? "Unmapped";
   for (const p of payments) {
     const prop = p.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
+    const parentLedger = (p as any).ledgerId as string | null | undefined;
     for (const sp of p.splits) {
       if (isEmployeeClass(sp.user.workerType)) continue;
       if ((sp as any).guaranteedPayoutPaidAt != null) continue;
       const vendor = sp.user.displayName ?? sp.user.email ?? "";
       const desc = `Contractor payout to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
+      const journalNo = parentLedger
+        ? `${parentLedger}-${sp.userId.slice(-4).toUpperCase()}`
+        : `CL-${sp.id}`;
       lines.push(
         ...expenseJournalRows(
-          `CL-${sp.id}`,
+          journalNo,
           p.confirmedAt ? toQbDate(p.confirmedAt) : "",
           contractLaborAccount,
           sp.amount,
@@ -1130,7 +1145,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     const desc = `Contractor advance (guaranteed payout) to ${vendor}${clientName ? ` for ${clientName}` : ""}${prop?.displayName ? ` (${prop.displayName})` : ""}`;
     lines.push(
       ...expenseJournalRows(
-        `GPA-${adv.id}`,
+        (adv as any).ledgerId ?? `GPA-${adv.id}`,
         toQbDate(adv.exportedAt),
         contractLaborAccount,
         adv.amount,
