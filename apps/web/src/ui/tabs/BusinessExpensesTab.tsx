@@ -193,6 +193,12 @@ type Comparison = {
   earnings: number;
   expenses: number;
   processingFees: number;
+  // Fixed-asset purchases (cost >= FIXED_ASSET_MIN_COST setting, dated
+  // on/after the policy start). Capitalized on the QB balance sheet —
+  // not operating expense — so they're surfaced as their own line and
+  // EXCLUDED from `expenses` above. Still subtract from netCashChange
+  // because they leave the bank account.
+  fixedAssetPurchases?: number;
   // Legacy field — equals operatingNet, kept for backward compat.
   net: number;
   operatingNet: number;
@@ -910,6 +916,19 @@ export default function BusinessExpensesTab() {
                     {operatingNet < 0 ? "−" : ""}{fmtUSD(Math.abs(operatingNet))}
                   </Text>
                 </HStack>
+                {/* Fixed-asset purchases (cost >= threshold). Capitalized on
+                    the QB balance sheet — not part of Operating net (P&L), but
+                    they DO leave the bank account so they subtract from Net
+                    cash change. Only renders when there's activity. */}
+                {(comparison.fixedAssetPurchases ?? 0) > 0 && (
+                  <HStack justify="space-between" py={1.5} mt={2} pl={3} borderLeftWidth="2px" borderColor="purple.300" bg="purple.50" borderRadius="md">
+                    <Box>
+                      <Text fontSize="xs" color="purple.700" fontWeight="semibold">Fixed asset purchases</Text>
+                      <Text fontSize="2xs" color="fg.muted">Capitalized — not in Operating net. Reduces cash on hand.</Text>
+                    </Box>
+                    <Text fontWeight="semibold" color="purple.700">−{fmtUSD(comparison.fixedAssetPurchases ?? 0)}</Text>
+                  </HStack>
+                )}
 
                 {showEquity && (
                   <>

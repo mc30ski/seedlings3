@@ -914,7 +914,7 @@ const FIXED_ASSET_MIN_COST_DEFAULT = 500;
  * setting is missing, blank, non-numeric, or non-positive — a malformed
  * value should not silently disable the capitalization split.
  */
-async function loadFixedAssetMinCost(
+export async function loadFixedAssetMinCost(
   client: typeof prisma | any = prisma,
 ): Promise<number> {
   const row = await client.setting.findUnique({ where: { key: "FIXED_ASSET_MIN_COST" } });
@@ -922,7 +922,7 @@ async function loadFixedAssetMinCost(
   return Number.isFinite(n) && n > 0 ? n : FIXED_ASSET_MIN_COST_DEFAULT;
 }
 
-function isFixedAsset(be: { cost: number; date: Date }, minCost: number): boolean {
+export function isFixedAsset(be: { cost: number; date: Date }, minCost: number): boolean {
   return be.cost >= minCost && be.date.getTime() >= FIXED_ASSET_START_DATE.getTime();
 }
 
