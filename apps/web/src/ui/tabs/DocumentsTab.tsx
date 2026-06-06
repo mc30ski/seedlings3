@@ -164,13 +164,15 @@ function ExpandableText({
         {text}
       </Text>
       {truncated && (
-        <Text
-          as="button"
-          type="button"
-          fontSize={fontSize}
+        <Button
+          variant="plain"
+          size="xs"
           color="blue.600"
           fontWeight="medium"
           mt={0.5}
+          h="auto"
+          minH="0"
+          px={0}
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((p) => !p);
@@ -178,7 +180,7 @@ function ExpandableText({
           _hover={{ textDecoration: "underline" }}
         >
           {expanded ? "Less" : "More"}
-        </Text>
+        </Button>
       )}
     </Box>
   );
