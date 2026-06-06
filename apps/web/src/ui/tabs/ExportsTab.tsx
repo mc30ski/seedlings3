@@ -362,24 +362,6 @@ export default function ExportsTab() {
           The W-2 export is work-anchored (completion date + promised net),
           which is a deliberate departure from cash-basis. See
           docs/FINANCIAL_SYSTEM.md §12. */}
-      <Box
-        bg="red.50"
-        borderWidth="2px"
-        borderColor="red.400"
-        borderRadius="md"
-        p={3}
-      >
-        <Text fontSize="sm" fontWeight="bold" color="red.700">
-          ⚠ NOT YET CPA-VERIFIED — confirm before using for real payroll/tax filing
-        </Text>
-        <Text fontSize="xs" color="red.700" mt={1}>
-          The W-2 export is anchored on job-completion date with each worker's
-          promised net (work-anchored), not on payment confirmation. The 1099
-          and QuickBooks exports stay on payment date. Have your CPA confirm
-          this matches how payroll and taxes should be filed, then remove this
-          banner. Details: docs/FINANCIAL_SYSTEM.md §12.
-        </Text>
-      </Box>
       <Box>
         <Heading size="md" mb={1}>
           Exports
@@ -912,9 +894,9 @@ export default function ExportsTab() {
               export. The banner only renders when there's something to flag;
               the deep-link jumps into the Jobs tab filtered to those rows. */}
           {preview && preview.gustoW2.unapprovedOccurrences > 0 && (
-            <Box mb={2} p={2} bg="orange.50" borderWidth="1px" borderColor="orange.300" borderRadius="md">
+            <Box mb={2} p={2} bg="red.50" borderWidth="1px" borderColor="red.300" borderRadius="md">
               <HStack justify="space-between" gap={2} wrap="wrap">
-                <Text fontSize="xs" color="orange.800">
+                <Text fontSize="xs" color="red.800">
                   <Text as="span" fontWeight="semibold">
                     {preview.gustoW2.unapprovedOccurrences} occurrence
                     {preview.gustoW2.unapprovedOccurrences === 1 ? "" : "s"}
@@ -925,7 +907,7 @@ export default function ExportsTab() {
                 <Button
                   size="xs"
                   variant="outline"
-                  colorPalette="orange"
+                  colorPalette="red"
                   onClick={() => {
                     try {
                       localStorage.setItem("seedlings_adminJobs_showUnapprovedHours", "1");
