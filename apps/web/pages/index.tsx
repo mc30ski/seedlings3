@@ -22,6 +22,7 @@ import SuperUnclaimedTab from "@/src/ui/tabs/SuperUnclaimedTab";
 import OperationsTab from "@/src/ui/tabs/OperationsTab";
 import AuditTab from "@/src/ui/tabs/AuditTab";
 import BusinessExpensesTab from "@/src/ui/tabs/BusinessExpensesTab";
+import PnLReportTab from "@/src/ui/tabs/PnLReportTab";
 import SuppliesTab from "@/src/ui/tabs/SuppliesTab";
 import DocumentsTab from "@/src/ui/tabs/DocumentsTab";
 import TimelineTab from "@/src/ui/tabs/TimelineTab";
@@ -1069,6 +1070,19 @@ export default function HomePage() {
           label: "Accounting",
           icon: FiBook,
           content: wrapWithInlineMessage(<BusinessExpensesTab />),
+          category: "Money",
+          categoryIcon: TfiMoney,
+        },
+        {
+          // P&L Report — structured Profit & Loss view for a date range,
+          // designed to reconcile against QuickBooks Online's P&L report.
+          // Same source data as the QB Income + QB Expenses CSVs, same
+          // filters, same ET-anchored boundaries. See PnLReportTab.tsx +
+          // services/pnlReport.ts.
+          value: "pnl-report",
+          label: "P&L Report",
+          icon: FiBarChart2,
+          content: wrapWithInlineMessage(<PnLReportTab />),
           category: "Money",
           categoryIcon: TfiMoney,
         },

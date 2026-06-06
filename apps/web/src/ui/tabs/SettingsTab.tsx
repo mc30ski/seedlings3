@@ -10,9 +10,11 @@ import {
   HStack,
   Input,
   Portal,
+  Select,
   Spinner,
   Text,
   VStack,
+  createListCollection,
 } from "@chakra-ui/react";
 import { ChevronDown, ChevronRight, DollarSign, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiGet, apiPatch, apiPost, apiDelete } from "@/src/lib/api";
@@ -587,11 +589,21 @@ type JsonArrayItem = {
  *  the QB Expenses CSV's "Unmapped" account so the operator re-categorizes
  *  on the QB side after import. The editor treats an empty input as null
  *  so the user never has to type the word "null". */
+type PlSection = "COGS" | "OPERATING_EXPENSE" | "EXCLUDE_FROM_PNL";
+
 type ExpenseCategoryRow = {
   label: string;
   scheduleCLine: string;
   qbAccount: string | null;
   selectable: boolean;
+  /** Which section this category rolls into on the P&L Report tab.
+   *    COGS              — above Gross Profit (e.g. Supplies for a service business)
+   *    OPERATING_EXPENSE — below Gross Profit (everything else)
+   *    EXCLUDE_FROM_PNL  — hidden from the report entirely. Default for
+   *                        newly-added categories — the operator must
+   *                        proactively classify a category before it
+   *                        appears on the P&L. */
+  plSection: PlSection;
 };
 
 // Empty input → null. Whitespace also collapses to null so a stray space
@@ -600,6 +612,17 @@ function normalizeQbAccount(raw: string): string | null {
   const trimmed = raw.trim();
   return trimmed === "" ? null : trimmed;
 }
+
+// List collection for the plSection picker. Defined once at module scope —
+// re-creating it per render would invalidate Chakra's Select internal state.
+// "Exclude from P&L" is the safer-by-default option for new categories.
+const PL_SECTION_COLLECTION = createListCollection({
+  items: [
+    { label: "Exclude", value: "EXCLUDE_FROM_PNL" },
+    { label: "Operating Expense", value: "OPERATING_EXPENSE" },
+    { label: "Cost of Goods Sold", value: "COGS" },
+  ],
+});
 
 function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: {
   value: string;
@@ -621,11 +644,22 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
       if (typeof r.qbAccount === "string") {
         qbAccount = normalizeQbAccount(r.qbAccount);
       }
+      // plSection defaults to EXCLUDE_FROM_PNL if missing or unrecognized
+      // — matches the backend loader's fall-through so the editor and the
+      // server agree on every read. Forces explicit classification before
+      // a category contributes to the P&L.
+      const plSection: PlSection =
+        r.plSection === "COGS"
+          ? "COGS"
+          : r.plSection === "OPERATING_EXPENSE"
+            ? "OPERATING_EXPENSE"
+            : "EXCLUDE_FROM_PNL";
       return {
         label: String(r.label ?? ""),
         scheduleCLine: String(r.scheduleCLine ?? ""),
         qbAccount,
         selectable: r.selectable !== false,
+        plSection,
       };
     });
   } catch (e: any) {
@@ -640,8 +674,12 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
   }
   function add() {
     // New rows default to qbAccount: null — operator picks a QB account
-    // before this category can land cleanly in qb-expenses.csv.
-    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true }]));
+    // before this category can land cleanly in qb-expenses.csv. plSection
+    // defaults to EXCLUDE_FROM_PNL — operator must proactively switch
+    // to COGS or Operating Expense for the category to show up on the
+    // P&L Report tab. Safer than silently lumping a new category into a
+    // P&L section the operator hasn't reviewed.
+    onChange(JSON.stringify([...items, { label: "", scheduleCLine: "", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" }]));
   }
 
   if (parseError) {
@@ -656,9 +694,14 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
   return (
     <VStack align="stretch" gap={2} w="full">
       <Text fontSize="2xs" color="fg.muted">
-        Maps each expense category to its Schedule C line and its QuickBooks
-        chart-of-accounts name. <Text as="span" fontWeight="semibold">QB Account</Text> must match
-        the account name in QuickBooks exactly (capitalization + spacing) — leave it blank to land
+        Maps each expense category to its Schedule C line, its QuickBooks
+        chart-of-accounts name, and its P&L section (Cost of Goods Sold,
+        Operating Expense, or Exclude — drives the in-app P&L Report tab's
+        grouping). New categories default to <Text as="span" fontWeight="semibold">Exclude</Text> — you must
+        proactively switch a category to COGS or Operating Expense before
+        it appears on the report.
+        <Text as="span" fontWeight="semibold"> QB Account</Text> must match the account name in
+        QuickBooks exactly (capitalization + spacing) — leave it blank to land
         rows in this category as "Unmapped" in the QB Expenses CSV (the operator re-categorizes
         them inside QB after import). Uncheck "Selectable" for export-only synthetic categories
         (e.g. Payment Processing Fees) — they stay in the export but are hidden from the
@@ -666,15 +709,16 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
       </Text>
       <HStack gap={2} fontSize="2xs" color="fg.muted" fontWeight="medium" px={1}>
         <Text flex="1">Category label</Text>
-        <Text w="80px" textAlign="center">Sch. C line</Text>
+        <Text w="70px" textAlign="center">Sch. C line</Text>
         <Text flex="1">QB Account</Text>
+        <Text w="170px">P&L Category</Text>
         <Text w="70px" textAlign="center">Selectable</Text>
         <Box w="32px" />
       </HStack>
       {items.map((row, idx) => (
         <HStack key={idx} gap={2}>
           <Input size="sm" flex="1" value={row.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Advertising" />
-          <Input size="sm" w="80px" textAlign="center" value={row.scheduleCLine} onChange={(e) => update(idx, { scheduleCLine: e.target.value })} placeholder="8" />
+          <Input size="sm" w="70px" textAlign="center" value={row.scheduleCLine} onChange={(e) => update(idx, { scheduleCLine: e.target.value })} placeholder="8" />
           <Input
             size="sm"
             flex="1"
@@ -688,6 +732,35 @@ function ExpenseCategoriesEditor({ value, onChange, onSave, onCancel, saving }: 
             onChange={(e) => update(idx, { qbAccount: e.target.value })}
             placeholder="Unmapped"
           />
+          <Box w="170px">
+            <Select.Root
+              collection={PL_SECTION_COLLECTION}
+              value={[row.plSection]}
+              onValueChange={(e) => {
+                const v = e.value[0];
+                if (v === "COGS" || v === "OPERATING_EXPENSE" || v === "EXCLUDE_FROM_PNL") {
+                  update(idx, { plSection: v });
+                }
+              }}
+              size="sm"
+              positioning={{ strategy: "fixed", hideWhenDetached: true }}
+            >
+              <Select.Control>
+                <Select.Trigger>
+                  <Select.ValueText />
+                </Select.Trigger>
+              </Select.Control>
+              <Select.Positioner>
+                <Select.Content>
+                  {PL_SECTION_COLLECTION.items.map((it) => (
+                    <Select.Item key={it.value} item={it.value}>
+                      <Select.ItemText>{it.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Select.Root>
+          </Box>
           <Box w="70px" textAlign="center">
             <input type="checkbox" checked={row.selectable} onChange={(e) => update(idx, { selectable: e.target.checked })} />
           </Box>
