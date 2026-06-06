@@ -980,6 +980,11 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
       },
       select: {
         id: true,
+        // Parent ledgerId is required — the processor-fee JournalNo derives
+        // from it as `{ledgerId}-F`. Without this select, ledgerId comes
+        // through as undefined and the export falls back to the legacy
+        // FEE-{cuid} format which exceeds QB's 21-char doc_num limit.
+        ledgerId: true,
         method: true,
         confirmedAt: true,
         processorFeeAmount: true,
@@ -1041,17 +1046,23 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
     const account = qbAccountMap[category] ?? "Unmapped";
     const prop = r.occurrence?.job?.property;
     const clientName = prop?.client?.displayName ?? "";
-    // Name = vendor when present, else customer/client. Vendor is the more
-    // useful party for an expense row (1099 lookup, AP reconciliation).
-    const name = (r.vendor ?? "").trim() || clientName;
+    // Name column intentionally blank on expense rows. QB's journal-entry
+    // importer rejects a Name that isn't already on the Vendor/Customer
+    // list; with the column blank, every row imports cleanly without the
+    // operator pre-creating every vendor. Vendor + client name are still
+    // surfaced in the Description column for traceability.
+    const vendorTrace = (r.vendor ?? "").trim() || clientName;
+    const descWithVendor = vendorTrace
+      ? `${r.description ?? ""}${r.description ? " · " : ""}${vendorTrace}`
+      : (r.description ?? "");
     lines.push(
       ...expenseJournalRows(
         (r as any).ledgerId ?? `EXP-${r.id}`,
         toQbDate(r.date),
         account,
         r.cost,
-        r.description ?? "",
-        name,
+        descWithVendor,
+        "",
       ),
     );
     total += r.cost;
@@ -1075,7 +1086,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
         account,
         p.processorFeeAmount ?? 0,
         desc,
-        p.method ?? "",
+        "", // Name intentionally blank — see operating-expense loop above.
       ),
     );
     total += p.processorFeeAmount ?? 0;
@@ -1107,7 +1118,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
           contractLaborAccount,
           sp.amount,
           desc,
-          vendor,
+          "", // Name intentionally blank — see operating-expense loop above.
         ),
       );
       total += sp.amount;
@@ -1150,7 +1161,7 @@ export async function qbExpensesCsv(start: Date, end: Date): Promise<CsvResult> 
         contractLaborAccount,
         adv.amount,
         desc,
-        vendor,
+        "", // Name intentionally blank — see operating-expense loop above.
       ),
     );
     total += adv.amount;
