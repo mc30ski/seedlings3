@@ -6094,7 +6094,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbIncomeCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-income", result, readSaveHistory(req));
+    return deliverCsv(reply, await currentUserId(req), "QB_INCOME", { start: effectiveStart, end, startStr, endStr }, "qb-journal-income", result, readSaveHistory(req));
   });
 
   app.get("/admin/exports/qb-expenses.csv", superGuard, async (req: any, reply: FastifyReply) => {
@@ -6104,7 +6104,7 @@ Respond ONLY with valid JSON in this exact format:
     const startStr = String(req.query.start);
     const endStr = String(req.query.end);
     const result = await qbExpensesCsv(effectiveStart, end);
-    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-expenses", result, readSaveHistory(req));
+    return deliverCsv(reply, await currentUserId(req), "QB_EXPENSES", { start: effectiveStart, end, startStr, endStr }, "qb-journal-expenses", result, readSaveHistory(req));
   });
 
   // Equity export — capital contributions + owner draws. Separate file from
@@ -6187,8 +6187,8 @@ Respond ONLY with valid JSON in this exact format:
       qbFixedAssetsCsv(effectiveStart, end),
     ]);
     const zip = new JSZip();
-    zip.file(`qb-income-${startStr}_${endStr}.csv`, income.csv);
-    zip.file(`qb-expenses-${startStr}_${endStr}.csv`, expenses.csv);
+    zip.file(`qb-journal-income-${startStr}_${endStr}.csv`, income.csv);
+    zip.file(`qb-journal-expenses-${startStr}_${endStr}.csv`, expenses.csv);
     zip.file(`qb-equity-${startStr}_${endStr}.csv`, equity.csv);
     zip.file(`qb-fixed-assets-${startStr}_${endStr}.csv`, fixedAssets.csv);
     const bytes = await zip.generateAsync({ type: "nodebuffer" });
