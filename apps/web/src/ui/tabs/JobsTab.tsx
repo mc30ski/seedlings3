@@ -6674,7 +6674,23 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
                           setBusyId={setStatusButtonBusyId}
                         />
                       )}
-                      {!isAnnouncement && (isClaimer || (forAdmin && (isAdmin || isSuper))) && occ.status !== "PENDING_PAYMENT" && !occ.startedAt && (
+                      {/* Manage Team — two paths:
+                          (1) Pre-start: claimer OR admin/super, before the
+                              job has started. Original behavior.
+                          (2) Post-completion in PENDING_PAYMENT: admin/super
+                              only. Used to correct the as-built team when
+                              a listed worker didn't actually work (e.g.
+                              sick day). Backend blocks if any Payment row
+                              already exists — operator must reject/revert
+                              the payment first. Snapshot fields
+                              (completionSplits, promisedPayouts) are auto-
+                              cleared by setOccurrenceAssignees so the next
+                              "Initiate Payment" regenerates them against
+                              the corrected team. */}
+                      {!isAnnouncement && (
+                        ((isClaimer || (forAdmin && (isAdmin || isSuper))) && !occ.startedAt)
+                        || (forAdmin && (isAdmin || isSuper) && occ.status === "PENDING_PAYMENT" && !occ.payment)
+                      ) && (
                         <StatusButton
                           id="occ-manage-team"
                           itemId={occ.id}

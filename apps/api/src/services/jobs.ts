@@ -1450,6 +1450,41 @@ export const jobs: ServicesJobs = {
 
   async setOccurrenceAssignees(currentUserId, occurrenceId, input) {
     return prisma.$transaction(async (tx) => {
+      // Load the occurrence with its Payment row so we can guard the
+      // PENDING_PAYMENT case before mutating anything. Status + payment
+      // existence drive the policy below.
+      const occ = await tx.jobOccurrence.findUnique({
+        where: { id: occurrenceId },
+        select: { status: true, payment: { select: { id: true, confirmed: true } } },
+      });
+      if (!occ) throw new ServiceError("NOT_FOUND", "Occurrence not found.", 404);
+
+      // PENDING_PAYMENT policy: team changes are allowed by admins (the
+      // common case is correcting an as-built team after work is done —
+      // e.g. a worker was sick and didn't actually show up). But if a
+      // Payment row already exists, blocking is the safer move:
+      //
+      //   • Splits + promised-payout snapshot were computed against the
+      //     OLD team. Silently rewriting them would surprise the operator.
+      //   • The existing Reject / Revert flows already do exactly the
+      //     right cleanup (delete Payment + PaymentSplit), and surface
+      //     in the audit log as their own distinct event.
+      //
+      // We block on ANY Payment row (confirmed or not) for the same
+      // reason — there's no path where rewriting splits in place is
+      // less surprising than asking the operator to reject + re-record.
+      // Edge case: revert from CLOSED → PENDING_PAYMENT already deletes
+      // the Payment row, so this guard never fires on a freshly-reverted
+      // occurrence.
+      if (occ.status === JobOccurrenceStatus.PENDING_PAYMENT && occ.payment) {
+        const action = occ.payment.confirmed ? "revert" : "reject";
+        throw new ServiceError(
+          "PAYMENT_EXISTS",
+          `Cannot change the team while a payment record exists for this occurrence. Please ${action} the payment first, then change the team.`,
+          409,
+        );
+      }
+
       // validate role constraint
       for (const uid of input.assigneeUserIds) {
         await assertWorkerAssignable(tx, uid);
@@ -1481,6 +1516,28 @@ export const jobs: ServicesJobs = {
         })),
         skipDuplicates: true,
       });
+
+      // PENDING_PAYMENT snapshot reset. completionSplits + promisedPayouts
+      // are written when the operator hits "Initiate Payment" OR when a
+      // payment request is sent (paymentRequests.recordClaimerHandoff /
+      // sendForOccurrence). In either case the snapshot is tied to the
+      // OLD team's userIds / workerTypes / shares. Clearing both makes
+      // the next "Initiate Payment" run regenerate them from the new
+      // team, and makes the W-2 export fall through to its even-split
+      // fallback (live assignees) instead of a stale snapshot. Hours
+      // and hoursApprovedAt are intentionally left untouched — hours
+      // are duration-based, not headcount-based.
+      //
+      // The pay-link token (paymentRequestToken) is also left intact:
+      // it just collects a dollar amount from the client; the team-
+      // dependent math runs on submit, against whatever team the
+      // occurrence has at that moment.
+      if (occ.status === JobOccurrenceStatus.PENDING_PAYMENT) {
+        await tx.jobOccurrence.update({
+          where: { id: occurrenceId },
+          data: { completionSplits: Prisma.JsonNull, promisedPayouts: Prisma.JsonNull },
+        });
+      }
 
       await writeAudit(tx, AUDIT.JOB.ASSIGNEES_UPDATED, currentUserId, {
         occurrenceId,

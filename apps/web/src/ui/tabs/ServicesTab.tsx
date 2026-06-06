@@ -103,7 +103,7 @@ export default function ServicesTab({
   me,
   purpose = "ADMIN",
 }: TabPropsType) {
-  const { isAvail, forAdmin, isSuper } = determineRoles(me, purpose);
+  const { isAvail, forAdmin, isSuper, isAdmin } = determineRoles(me, purpose);
   const { labelFor: methodLabel } = usePaymentMethodLabels();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -2226,7 +2226,19 @@ export default function ServicesTab({
                                 setBusyId={setStatusButtonBusyId}
                               />
                             )}
-                            {occ.status !== "PENDING_PAYMENT" && occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                            {/* Manage Team — usable in any state except CLOSED
+                                / ARCHIVED. The PENDING_PAYMENT case is admin/
+                                super only and only when no Payment row exists
+                                (operator must reject/revert the payment first
+                                if there is one). Used to correct the as-built
+                                team when a listed worker didn't actually work
+                                (e.g. sick). Backend clears completionSplits +
+                                promisedPayouts so the next "Initiate Payment"
+                                regenerates them against the new team. */}
+                            {occ.status !== "CLOSED" && occ.status !== "ARCHIVED" && (
+                              occ.status !== "PENDING_PAYMENT"
+                              || (forAdmin && (isSuper || isAdmin) && !occ.payment)
+                            ) && (
                               <StatusButton
                                 id="occ-assignees"
                                 itemId={occ.id}
