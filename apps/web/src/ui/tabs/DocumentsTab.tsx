@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -120,6 +120,68 @@ function expBadgeColor(status: CompanyDocument["expirationStatus"]): string {
   if (status === "expired") return "red";
   if (status === "expiring") return "yellow";
   return "green";
+}
+
+// Description text with an inline "More / Less" toggle. Renders clamped to
+// `clamp` lines by default; if the content overflows, an inline button
+// reveals the rest. The truncation flag persists once detected, so the
+// "Less" button stays visible while expanded. The button stops click
+// propagation so toggling doesn't also expand/collapse the parent card.
+function ExpandableText({
+  text,
+  clamp = 2,
+  fontSize = "xs",
+  color = "fg.muted",
+}: {
+  text: string;
+  clamp?: number;
+  fontSize?: string;
+  color?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const ref = useRef<HTMLParagraphElement | null>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Only measure when clamped — when expanded the element matches its
+    // own scrollHeight so the check would always be false.
+    if (!expanded) {
+      setTruncated(el.scrollHeight > el.clientHeight + 1);
+    }
+  }, [text, clamp, expanded]);
+
+  return (
+    <Box>
+      <Text
+        ref={ref}
+        fontSize={fontSize}
+        color={color}
+        lineClamp={expanded ? undefined : clamp}
+        whiteSpace="pre-wrap"
+      >
+        {text}
+      </Text>
+      {truncated && (
+        <Text
+          as="button"
+          type="button"
+          fontSize={fontSize}
+          color="blue.600"
+          fontWeight="medium"
+          mt={0.5}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((p) => !p);
+          }}
+          _hover={{ textDecoration: "underline" }}
+        >
+          {expanded ? "Less" : "More"}
+        </Text>
+      )}
+    </Box>
+  );
 }
 
 export default function DocumentsTab({ isSuper = false }: Props) {
@@ -843,10 +905,10 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                       type-level description; multi-instance docs use their
                       own per-doc description. */}
                   {singleton && documentTypeDescription(d.type, types) && (
-                    <Text fontSize="xs" color="fg.muted" lineClamp={2}>{documentTypeDescription(d.type, types)}</Text>
+                    <ExpandableText text={documentTypeDescription(d.type, types) ?? ""} />
                   )}
                   {d.description && !singleton && (
-                    <Text fontSize="xs" color="fg.muted" lineClamp={2}>{d.description}</Text>
+                    <ExpandableText text={d.description} />
                   )}
 
                   {isExpanded && (
@@ -996,7 +1058,7 @@ export default function DocumentsTab({ isSuper = false }: Props) {
                         </HStack>
                       )}
                       {opts.headerDescription && (
-                        <Text fontSize="xs" color="fg.muted" lineClamp={2}>{opts.headerDescription}</Text>
+                        <ExpandableText text={opts.headerDescription} />
                       )}
                     </VStack>
                     <HStack gap={0.5} flexShrink={0}>

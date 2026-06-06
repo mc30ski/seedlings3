@@ -4314,13 +4314,12 @@ Respond ONLY with valid JSON in this exact format:
     };
     const where: any = {};
     if (q.from || q.to) {
+      // ET-anchored boundaries (etMidnight / etEndOfDay) — match the QB
+      // exports and the vs-revenue endpoint exactly. See vs-revenue for the
+      // UTC-vs-ET divergence this prevents.
       where.date = {};
-      if (q.from) where.date.gte = new Date(q.from);
-      if (q.to) {
-        const t = new Date(q.to);
-        t.setHours(23, 59, 59, 999);
-        where.date.lte = t;
-      }
+      if (q.from) where.date.gte = etMidnight(q.from);
+      if (q.to) where.date.lte = etEndOfDay(q.to);
     }
     if (q.category) where.category = q.category;
     if (q.type) {
@@ -4615,10 +4614,17 @@ Respond ONLY with valid JSON in this exact format:
    */
   app.get("/admin/business-expenses/vs-revenue", superGuard, async (req: any) => {
     // Scoped to the from/to range selected on the Accounting tab — same
-    // range that drives the summary, list, and export. No range = all time.
+    // range that drives the summary, list, and export.
+    //
+    // Date bounds are ET-anchored (etMidnight / etEndOfDay) to match the
+    // QB Income + QB Expenses exports exactly. Naive `new Date(str)` would
+    // parse as UTC midnight, which lets payments confirmed Saturday-night ET
+    // (= early Sunday UTC) leak into Sunday's bucket on the Accounting tab
+    // while staying in Saturday's bucket on the exports — same data, two
+    // different totals. ET boundaries fix the divergence.
     const q = (req.query || {}) as { from?: string; to?: string };
-    const from = q.from ? new Date(q.from) : null;
-    const to = q.to ? (() => { const t = new Date(q.to as string); t.setHours(23, 59, 59, 999); return t; })() : null;
+    const from = q.from ? etMidnight(q.from) : null;
+    const to = q.to ? etEndOfDay(q.to) : null;
     const inRange = (d: Date) => (!from || d >= from) && (!to || d <= to);
 
     // Business Start Date filter — pre-cutoff rows excluded from the P&L
@@ -4724,13 +4730,13 @@ Respond ONLY with valid JSON in this exact format:
     // breakdown and totals are only meaningful for operating cash-out.
     const where: any = { type: "EXPENSE" };
     if (q.from || q.to) {
+      // ET-anchored boundaries — same rationale as the list + vs-revenue
+      // endpoints. Keeps the summary card on the Accounting tab consistent
+      // with the by-category breakdown, the export totals, and the
+      // Cash Flow numbers.
       where.date = {};
-      if (q.from) where.date.gte = new Date(q.from);
-      if (q.to) {
-        const t = new Date(q.to);
-        t.setHours(23, 59, 59, 999);
-        where.date.lte = t;
-      }
+      if (q.from) where.date.gte = etMidnight(q.from);
+      if (q.to) where.date.lte = etEndOfDay(q.to);
     }
     // Business Start Date filter — pre-cutoff rows excluded from totals.
     const summaryCutoff = await resolveCutoff(req);

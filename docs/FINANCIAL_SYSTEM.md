@@ -7,7 +7,13 @@ processor fees, owner earnings, business expenses, and tax exports work.
 this document, this document describes the *intended* behavior — treat a
 mismatch as a bug to investigate, not a new normal.
 
-Last updated: 2026-05-20.
+**Companion document:** [TAX_AND_PAYROLL_PICTURE.md](./TAX_AND_PAYROLL_PICTURE.md)
+is the big-picture business-owner view of how the three financial systems
+(this app, Gusto, QuickBooks) work together. Start there if you're trying to
+understand the WORKFLOW; come here for the technical detail of the app's
+internal math, lifecycle, and export formats.
+
+Last updated: 2026-06-06.
 
 ---
 
@@ -21,10 +27,10 @@ Last updated: 2026-05-20.
 6. [Configurable payment methods](#6-configurable-payment-methods-payment_methods-setting) — the `PAYMENT_METHODS` taxonomy + placeholders
 7. [The two payment contexts](#7-the-two-payment-contexts) — client request / on-site + the Request Payment toggle
 8. [Owner earnings](#8-owner-earnings) — tracked like a worker, taken as a draw
-9. [Business expenses & the Earnings vs Expenses dashboard](#9-business-expenses--the-earnings-vs-expenses-dashboard)
+9. [Business expenses & the Accounting tab Cash Flow view](#9-business-expenses--the-accounting-tab-cash-flow-view)
 10. [Tax integrity rules](#10-tax-integrity-rules) — the five must-holds
 11. [Settings reference](#11-settings-reference) — all financial settings + defaults
-12. [Exports](#12-exports-super--money--exports) — Gusto + QuickBooks, file by file; W-2 work-anchored vs 1099 payment-anchored
+12. [Exports](#12-exports-super--money--exports) — Gusto + QuickBooks; QB journal-entry format, ledgerId, App Clearing Account
 13. [Worker earnings views](#13-worker-earnings-views--home-tile--payments-tab) — Home tile & Payments tab anchors, worker-type split
 14. [Audit events](#14-audit-events) — every payment/setting verb
 15. [Glossary](#15-glossary)
@@ -306,7 +312,10 @@ a **draw**, not a paycheck.
   takes a draw from the bank; payroll never sees it.
 - **QuickBooks Income export still includes the full payment** — the client
   paid that amount regardless of who earned it. The owner's *draw* is captured
-  by the bank feed in QuickBooks, not by this app.
+  outside this app — recorded directly in QuickBooks when the owner moves
+  money out of the business bank account (manual journal entry, or via the
+  QB Equity export when the draw is logged as a `BusinessExpense` with
+  `type = OWNER_DRAW`).
 
 The payout math is intentionally unchanged for the owner: applying the normal
 margin/commission keeps job-profitability comparisons honest (an owner-worked
@@ -383,7 +392,7 @@ is 0, filtered by the export's Prisma where clause).
 
 ---
 
-## 9. Business expenses & the Earnings vs Expenses dashboard
+## 9. Business expenses & the Accounting tab Cash Flow view
 
 **Business Expenses tab** holds manually-entered, out-of-pocket business
 expenses (fuel, supplies, dump fees, etc.), each categorized to a Schedule C
@@ -393,20 +402,56 @@ records.
 **Processor fees are NOT BusinessExpense entries** — they live on Payment
 records and are reported separately.
 
-The **Earnings vs Expenses** summary table (Super → Money → Expenses) is a
-**management view, not a tax document**. Its rows:
+The **Accounting tab Cash Flow** view (Super → Money → Accounting) is a
+**management view, not a tax document**. It uses the **same filters as the
+QB Income / QB Expenses exports** so the two reconcile to the penny:
 
-| Row | What it is |
-|---|---|
-| Platform fees (contractors) | Commission the business retained from contractor splits |
-| Margin (employees/trainees) | Margin the business retained from employee/trainee splits |
-| Equipment rentals | Rental charges recovered from worker payouts |
-| **Earnings (total)** | Sum of the three above |
-| Business expenses | Manually-entered out-of-pocket expenses (negative) |
-| Processing fees | Sum of processor fees across payments (negative; row hidden if all zero) |
-| **Net** | Earnings − Business expenses − Processing fees |
+- Confirmed payments only (`confirmed: true`, `writtenOff: false`), anchored on `confirmedAt`
+- Fixed-asset purchases (cost ≥ `FIXED_ASSET_MIN_COST` setting, dated on/after the policy start) are split out of "Business expenses" into their own line, matching the QB Fixed Assets export's treatment
 
-This table carries the footnote *"Management view only. For tax reporting use
+### Operating section
+
+| Row | What it is | Reconciles with |
+|---|---|---|
+| Platform fees (contractors) | Commission the business retained from contractor splits | `Payment.platformFeeAmount` sum |
+| Margin (employees/trainees) | Margin the business retained from employee/trainee splits | `Payment.businessMarginAmount` sum |
+| Equipment rentals | Rental charges from contractor checkouts in window | QB Income equipment-rental rows |
+| **Earnings (total)** | Sum of the three above — what the business retained from job operations | — |
+| Business expenses | Operating expenses (EXCLUDES fixed-asset purchases) | QB Expenses BusinessExpense rows |
+| Processing fees | Sum of `Payment.processorFeeAmount` (confirmed payments) | QB Expenses `*-F` processor-fee rows |
+| **Operating net** | Earnings − Business expenses − Processing fees | QB P&L net (after the wage layer is added via Gusto integration) |
+| Fixed asset purchases | Cost of capitalized purchases (≥ threshold) — shown separately because they don't hit the P&L | QB Fixed Assets export total |
+
+### Equity section
+
+| Row | What it is | Reconciles with |
+|---|---|---|
+| Capital contributions | `BusinessExpense.type = CAPITAL_CONTRIBUTION` in window | QB Equity contributions |
+| Owner draws | `BusinessExpense.type = OWNER_DRAW` in window | QB Equity draws |
+| **Equity net** | Contributions − Draws | — |
+
+### Net cash change
+
+```
+Net cash change = Operating net + Equity net − Fixed asset purchases
+```
+
+Fixed asset purchases subtract from net cash change because they DO leave the
+bank account, even though they don't hit operating P&L.
+
+### What's NOT on the Accounting tab
+
+- **Gross W-2 wages.** The app doesn't track gross wages (it only knows
+  promised net — what the worker is owed before withholding). For complete
+  P&L, layer Gusto's QB integration on top so the wage expense + employer
+  payroll taxes flow into QB directly. See
+  [TAX_AND_PAYROLL_PICTURE.md §10](./TAX_AND_PAYROLL_PICTURE.md#10-recommended-setup-for-a-complete-qb-picture).
+- **1099 Contract Labor as a separate line.** The Accounting tab nets
+  contractor pay into "Platform fees" (which is what the business retains
+  *after* paying the contractor's share). QB shows the same data with a
+  Contract Labor expense line. Same underlying math, different presentation.
+
+This view carries the footnote *"Management view only. For tax reporting use
 QuickBooks exports + Gusto."* The "Platform fees" and "Margin" lines are
 internal allocations — they are **not** Schedule C line items.
 
@@ -429,7 +474,9 @@ These rules MUST hold. Violating them corrupts the tax picture.
    that never arrived — cash basis already reflects it. There is no separate
    expense entry.
 5. **Owner earnings are a draw,** not payroll and not a labor expense in
-   QuickBooks. Excluded from Gusto; the bank feed captures the draw.
+   QuickBooks. Excluded from Gusto; the draw is recorded directly in QB
+   (via the QB Equity export when logged as `BusinessExpense.type = OWNER_DRAW`,
+   or via a manual journal entry when the owner moves money out).
 
 ---
 
@@ -445,10 +492,13 @@ hardcoded.
 | `HIGH_VALUE_JOB_THRESHOLD` | `200` | Jobs ≥ this price require contractor insurance to claim |
 | `PAYMENT_METHODS` | (4 methods) | The payment-methods taxonomy — see §6 |
 | `REQUEST_PAYMENT_FROM_CLIENT_ENABLED` | `false` | Enables the Request Payment path — see §7a |
-| `PAYROLL_PERIOD_CADENCE` | `WEEKLY` | Pay-period cadence; sets default date range on the Exports tab. `WEEKLY` / `BIWEEKLY` / `MONTHLY` |
+| `PAYROLL_PERIOD_CADENCE` | `WEEKLY` | Pay-period cadence; drives the cadence preset buttons on the Exports tab (`WEEKLY` / `BIWEEKLY` / `MONTHLY`). NOT the default date range — that's always this calendar week's Mon–Sun |
+| `FIXED_ASSET_MIN_COST` | `500` | BusinessExpense rows ≥ this cost (and dated on/after `FIXED_ASSET_START_DATE` in code, 2026-05-28) are capitalized as fixed assets — excluded from operating expenses, shown on a separate Accounting tab line, routed to the QB Fixed Assets export instead of QB Expenses |
+| `EQUIPMENT_RENTAL_INCOME_CONFIG` | `{ qbAccount: "Equipment Rental Income", scheduleCLine: "1" }` | JSON config for how equipment rental income lines are labeled in the QB Income export |
 | `VENMO_BUSINESS_HANDLE` | — | Business Venmo handle; referenced by the taxonomy |
 | `ZELLE_ADDRESS` | — | Business Zelle address; referenced by the taxonomy |
 | `DEFAULT_PAYMENT_COMMUNICATIONS_MODE` | `SERVER` | Whether payment-request comms are sent by the server or handed off to the claimer's device |
+| `BUSINESS_START_DATE_ENABLED` / `BUSINESS_START_DATE` | `false` / — | Operator-controlled cutoff: when enabled, financial-event rows dated before the cutoff are hidden from every view and export. See `lib/businessStartCutoff.ts` |
 
 ---
 
@@ -457,15 +507,31 @@ hardcoded.
 CSV downloads for verifying payroll and bookkeeping before importing into Gusto
 and QuickBooks.
 
+### Default date range
+
+The Exports tab defaults to **this calendar week's Mon–Sun** (the week
+containing today). The operator's standard workflow is to open the tab
+mid-week or on weekends to upload what's happened so far; the calendar
+boundary makes the "Last weekly" preset a one-click adjacent-week swap.
+
+The cadence-loading useEffect reads `PAYROLL_PERIOD_CADENCE` for the preset
+buttons but never overwrites the default date range (this was a regression
+caught twice in the past — see the `feedback_exports_default_range` memory
+note).
+
+### Anchor logic
+
 **Each export uses the anchor that's correct for what it represents** — they
 are *not* all on one date field:
 
-| File | One row per | Date anchor | Amount |
+| File | One row per (logical) | Date anchor | Amount |
 |---|---|---|---|
-| `gusto-w2` | W-2 worker (employees + trainees) | **Job completion date** (`completedAt`) | **Promised net** for jobs they completed in the window |
+| `gusto-w2` | W-2 worker (employees + trainees) | **Job completion date** (`JobOccurrence.completedAt`) | **Promised net** for jobs they completed in the window |
 | `gusto-contractors` | 1099 contractor | **Payment confirmation** (`Payment.confirmedAt`) | Reconciled `PaymentSplit.amount` (post pro-rata) |
-| `qb-income` | Confirmed Payment | `Payment.confirmedAt` | Full `grossCharged` as income, regardless of who earned it or fees |
-| `qb-expenses` | BusinessExpense **+** processor-fee rows | `BusinessExpense.date` / `Payment.confirmedAt` | Processor fees appear as a "Payment Processing Fees" category (Schedule C line 17), sourced from Payment records, not BusinessExpense |
+| `qb-journal-income` | Confirmed payment / equipment rental | `Payment.confirmedAt` / `Checkout.releasedAt` | Full `Payment.amountPaid` or `Checkout.rentalCost` |
+| `qb-journal-expenses` | BusinessExpense (operating) + processor fee + contract labor + GP advance | `BusinessExpense.date` / `Payment.confirmedAt` / `GuaranteedPayoutAdvance.exportedAt` | Raw cost / fee / split amount |
+| `qb-equity` | BusinessExpense with type CAPITAL_CONTRIBUTION or OWNER_DRAW | `BusinessExpense.date` | `cost` |
+| `qb-fixed-assets` | BusinessExpense with type EXPENSE AND `cost ≥ FIXED_ASSET_MIN_COST` AND date on/after `FIXED_ASSET_START_DATE` | `BusinessExpense.date` | `cost` |
 
 **Why the W-2 export is work-anchored, not payment-anchored.** A W-2
 employee's wages accrue when they do the work and must be paid on the regular
@@ -474,21 +540,109 @@ until the customer pays (§4). So `gusto-w2` is driven by **jobs completed in
 the window**, using each worker's **promised net** — independent of whether a
 payment has been recorded or confirmed. The `gusto-contractors` export stays
 payment-anchored because a contractor genuinely *is* paid out of the client's
-payment. Both exports **exclude owner earnings** (the owner takes a draw).
+payment.
 
-`qb-income` and `qb-expenses` remain cash-basis on `confirmedAt` — that's
-correct for bookkeeping. Only the W-2 *payroll* export diverges, and it must.
+Both Gusto exports **exclude owner earnings** (the owner takes a draw).
+All confirmed-payment-anchored queries filter `confirmed: true` AND
+`writtenOff: false`.
 
-Every CSV ends with a TOTALS row for eyeball verification against the Admin
-Money tab.
+### QuickBooks Online journal-entry format
 
-Every CSV ends with a TOTALS row for eyeball verification against the Admin
-Money tab.
+The two QB exports (`qb-journal-income`, `qb-journal-expenses`) emit
+**balanced double-entry journal entries** matching QB Online's journal
+importer column shape. Both files have the same header:
 
-**The boundary:** This app exports wage/contractor data to Gusto and
-revenue/expense data to QuickBooks. Gusto's own QuickBooks integration pushes
-payroll journal entries into QB — this app does not duplicate that. A CPA pulls
-from Gusto + QuickBooks; there is no separate "CPA export" from this app.
+```
+*JournalNo,*JournalDate,*AccountName,*Debits,*Credits,Description,Name,Currency,Location,Class
+```
+
+Every source transaction emits **two CSV rows** sharing the same `JournalNo`:
+
+- **Income**: Row 1 debits `App Clearing Account`; Row 2 credits the configured income account (e.g., `Services`, `Equipment Rental Income`)
+- **Expense**: Row 1 debits the mapped expense account (e.g., `Supplies`, `Contract labor`, `Other business expenses:Payment processing fees`); Row 2 credits `App Clearing Account`
+
+The second row's `JournalDate` is **blank** (QB groups by adjacent JournalNo
+and expects the date only on the leader row). There is **no TOTALS footer
+row** — QB rejects unbalanced footer lines.
+
+### Ledger IDs — short stable JournalNos
+
+Every financial-event row carries a `ledgerId` of the form **`SLC-YYMMDD-XXXX`**
+(14 chars), stamped at creation time. The ledger ID is used as the QB
+`JournalNo` on export. Models with their own column:
+
+- `Payment.ledgerId` → drives `JournalNo` for income rows + parent ID for derived fee rows
+- `Checkout.ledgerId` → solo equipment rental income rows
+- `BusinessExpense.ledgerId` → operating expense, equity, fixed-asset rows
+- `GuaranteedPayoutAdvance.ledgerId` → GP advance rows
+
+**Derived JournalNos** (split rows + processor fees) compose the parent's
+ledgerId with a short suffix to stay under QB's 21-char `doc_num` limit:
+
+- **Processor fee** → `{Payment.ledgerId}-F` (e.g., `SLC-260605-X7K2-F`)
+- **Contract labor (PaymentSplit)** → `{Payment.ledgerId}-{last4(userId).toUpperCase()}` (e.g., `SLC-260605-X7K2-CMG2`)
+- **Group equipment rental (CheckoutSplit)** → `{Checkout.ledgerId}-{last4(userId).toUpperCase()}`
+
+PaymentSplit and CheckoutSplit do NOT have their own ledger column — their
+JournalNos derive from the parent at export time. This sidesteps the
+split-delete-and-recreate problem at reconciliation: the parent's ledgerId
+is stable, so the derived JournalNo stays stable across adjustments.
+
+**Audit / cross-system lookup.** Given a QB JournalNo cell, find the row by
+querying the parent ledgerId column directly:
+
+```sql
+SELECT * FROM "Payment" WHERE "ledgerId" = 'SLC-260605-X7K2';
+-- For a fee or contract-labor row, strip the -F or -XXXX suffix first.
+```
+
+### Field-by-field of a QB journal row
+
+| Column | Source |
+|---|---|
+| `*JournalNo` | Stable ledger ID (parent or derived) |
+| `*JournalDate` | `confirmedAt` / `releasedAt` / `date` / `exportedAt` formatted as `MM/DD/YYYY` (UTC). **Row 2 blank.** |
+| `*AccountName` | Mapped QB chart-of-accounts entry (income: hardcoded "Services" + `EQUIPMENT_RENTAL_INCOME_CONFIG.qbAccount`; expenses: `EXPENSE_CATEGORIES` taxonomy `qbAccount`; clearing: literal "App Clearing Account") |
+| `*Debits` / `*Credits` | The source amount; one side filled, the other blank, per row |
+| `Description` | The legacy reference (`Service payment — Doe (Home)`, `Contractor payout to Mark for Doe`, etc.) |
+| `Name` | **Income**: Customer (client display name). **Expense**: blank (QB rejects journal entries with Names that don't exist as Vendors/Customers — vendor identity stays in the Description for traceability) |
+| `Currency` / `Location` / `Class` | Always blank (single-currency, single-location, no class tracking) |
+
+### Filenames
+
+| Endpoint | Downloaded filename |
+|---|---|
+| `/admin/exports/qb-income.csv` | `qb-journal-income-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/admin/exports/qb-expenses.csv` | `qb-journal-expenses-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` |
+| `/admin/exports/qb-equity.csv` | `qb-equity-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` (legacy 13-col format) |
+| `/admin/exports/qb-fixed-assets.csv` | `qb-fixed-assets-{YYYY-MM-DD}_{YYYY-MM-DD}.csv` (legacy 13-col format) |
+| `/admin/exports/qb-bundle.zip` | All four CSVs in one zip |
+
+### Idempotent re-import
+
+QB Online dedupes journal entries on `JournalNo`. Re-importing a CSV with
+JournalNos already in QB causes the existing entries to be skipped/rejected
+as duplicates; any NEW entries (e.g., from a row that failed the prior
+import) land cleanly. Since ledgerIds are stable per source row, you can
+safely re-pull and re-import the same window after fixing data without
+creating duplicate journal entries.
+
+### The boundary — what this app does NOT export
+
+This app exports **wage/contractor data to Gusto** and **revenue/expense data
+to QuickBooks**. It does NOT emit:
+
+- Gross W-2 wage journal entries (Gusto's QB integration handles those)
+- Employer-side payroll taxes (Gusto)
+- Bank account transactions (reconciled manually against Chase statements — the bank feed is intentionally disconnected to avoid double-counting; see TAX_AND_PAYROLL_PICTURE.md §10)
+- Equity earnings withdrawals as separate payroll events (those are direct bank events recorded via manual journal entries when needed)
+
+A CPA at year-end pulls from QB (income, expenses, contract labor, equity)
++ Gusto (W-2 wages, employer payroll taxes, 1099-NEC issuance). There is no
+separate "CPA export" from this app.
+
+See [TAX_AND_PAYROLL_PICTURE.md §9–10](./TAX_AND_PAYROLL_PICTURE.md#9-the-three-systems-architecture)
+for the full three-systems architecture and recommended QB ↔ Gusto integration setup.
 
 ---
 
