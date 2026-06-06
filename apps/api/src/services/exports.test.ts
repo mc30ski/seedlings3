@@ -789,6 +789,44 @@ describe("qbExpensesCsv — tax integrity", () => {
     expect(csv.toLowerCase()).not.toContain("top-up");
     expect(csv.toLowerCase()).not.toContain("bad debt");
   });
+
+  // ── Regression: JournalNo uses the short ledgerId, NOT the full cuid ──
+  // The original bug this guards against: the processor-fee query loads
+  // Payment rows via `select` (not `include`), and ledgerId was missing
+  // from that select — so every fee row's parentLedger came through
+  // undefined and the export fell back to `FEE-{cuid}` (29 chars), which
+  // QuickBooks rejects on import (the doc_num field is capped at 21 chars).
+  // If this test fails because a JournalNo starts with FEE- in production
+  // data, someone has dropped `ledgerId: true` from a Prisma select again.
+  it("processor-fee JournalNo derives from parent Payment.ledgerId with -F suffix (NOT FEE-{cuid})", async () => {
+    prismaMock.businessExpense.findMany.mockResolvedValue([]);
+    prismaMock.payment.findMany.mockResolvedValue([
+      {
+        id: "pmt-fee-x",
+        ledgerId: "SLC-260605-X7K2",
+        method: "VENMO",
+        confirmedAt: new Date("2026-06-05T15:00:00.000Z"),
+        processorFeeAmount: 1.75,
+        grossCharged: 100,
+        splits: [],
+        occurrence: {
+          id: "occ-fee",
+          job: { property: { displayName: "Test", street1: "1 X", city: "C", state: "S", client: { displayName: "Doe" } } },
+        },
+      },
+    ]);
+    const { csv } = await qbExpensesCsv(RANGE_START, RANGE_END);
+    // Short journal-no path: derived from parent ledgerId, under 21 chars.
+    expect(csv).toContain("SLC-260605-X7K2-F");
+    // Long-cuid fallback must NOT appear when ledgerId is present.
+    expect(csv).not.toContain("FEE-pmt-fee-x");
+    // Length sanity: every JournalNo on every row must fit under QB's
+    // doc_num limit. This catches any other long-cuid fallback path too.
+    const rows = parseCsv(csv).slice(1); // skip header
+    for (const r of rows) {
+      expect(r[0].length).toBeLessThanOrEqual(21);
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
