@@ -6,6 +6,7 @@ import { writeAudit } from "../lib/auditLogger";
 import { etMidnight, etEndOfDay } from "../lib/dates";
 import { ServiceError } from "../lib/errors";
 import { deleteObject } from "../lib/r2";
+import { generateLedgerId } from "../lib/ledgerId";
 import { cutoffWhere } from "../lib/businessStartCutoff";
 
 type Tx = Prisma.TransactionClient;
@@ -856,7 +857,7 @@ export const equipment: ServicesEquipment = {
       }
 
       const reserve = await tx.checkout.create({
-        data: { equipmentId: id, userId, groupId },
+        data: { equipmentId: id, userId, groupId, ledgerId: generateLedgerId() },
       });
       await tx.equipment.update({
         where: { id },

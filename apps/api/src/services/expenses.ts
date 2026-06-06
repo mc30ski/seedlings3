@@ -4,6 +4,7 @@ import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
 import type { ServicesExpenses, ExpenseInput, ExpensePatchInput } from "../types/services";
 import { loadCategoryLabels } from "./expenseCategories";
+import { generateLedgerId } from "../lib/ledgerId";
 
 // Categories are validated against the EXPENSE_CATEGORIES taxonomy (the single
 // source of truth, editable in Settings). Default "Supplies" matches the bias
@@ -92,6 +93,7 @@ export const expenses: ServicesExpenses = {
     return prisma.$transaction(async (tx) => {
       const businessExpense = await tx.businessExpense.create({
         data: {
+          ledgerId: generateLedgerId(),
           createdById: currentUserId,
           date,
           cost,
@@ -241,6 +243,7 @@ export const expenses: ServicesExpenses = {
     return prisma.$transaction(async (tx) => {
       const businessExpense = await tx.businessExpense.create({
         data: {
+          ledgerId: generateLedgerId(),
           createdById: currentUserId,
           date,
           cost,

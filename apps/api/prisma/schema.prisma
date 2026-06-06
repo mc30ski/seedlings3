@@ -316,6 +316,10 @@ model EquipmentPhoto {
 
 model Checkout {
   id           String    @id @default(cuid())
+  // Accounting-system-agnostic ledger ID — SLC-YYMMDD-XXXX. Stamped at row
+  // creation, used as the QuickBooks JournalNo. Nullable in the schema for
+  // the brief backfill window; every row carries a value post-backfill.
+  ledgerId     String?   @unique
   equipmentId  String
   userId       String
   reservedAt   DateTime  @default(now())
@@ -954,6 +958,9 @@ enum PaymentCommsMode {
 model Payment {
   id String @id @default(cuid())
 
+  // Accounting-system-agnostic ledger ID. See Checkout.ledgerId.
+  ledgerId String? @unique
+
   occurrenceId String        @unique
   occurrence   JobOccurrence @relation(fields: [occurrenceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
@@ -1066,6 +1073,9 @@ model Payment {
 // `feature_guaranteed_payout.md`.
 model GuaranteedPayoutAdvance {
   id String @id @default(cuid())
+
+  // Accounting-system-agnostic ledger ID. See Checkout.ledgerId.
+  ledgerId String? @unique
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -1209,6 +1219,12 @@ model Expense {
 // into any export — no derived margin/shortfall fields ever appear.
 model BusinessExpense {
   id String @id @default(cuid())
+
+  // Accounting-system-agnostic ledger ID. See Checkout.ledgerId.
+  // One ledgerId covers EXPENSE, OWNER_DRAW, and CAPITAL_CONTRIBUTION
+  // uniformly — the type discriminator routes which QB export the row
+  // ends up in, but the ID format is identical.
+  ledgerId String? @unique
 
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)

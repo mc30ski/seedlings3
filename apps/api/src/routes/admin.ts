@@ -13,6 +13,7 @@ import {
   JobOccurrenceStatus,
 } from "@prisma/client";
 import { normalizePhone } from "../lib/phone";
+import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
 import {
   resolveCutoff,
@@ -4434,6 +4435,7 @@ Respond ONLY with valid JSON in this exact format:
     }
     return prisma.businessExpense.create({
       data: {
+        ledgerId: generateLedgerId(),
         createdById: uid,
         type: type as any,
         description: String(b.description).trim(),

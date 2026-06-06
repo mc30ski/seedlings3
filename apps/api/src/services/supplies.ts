@@ -3,6 +3,7 @@ import { ServiceError } from "../lib/errors";
 import { parseUserDate } from "../lib/dates";
 import { resolvePrivileges } from "../lib/privileges";
 import { loadCategoryLabels } from "./expenseCategories";
+import { generateLedgerId } from "../lib/ledgerId";
 import type {
   ServicesSupplies,
   SupplyCreateInput,
@@ -313,6 +314,7 @@ export const supplies: ServicesSupplies = {
     return prisma.$transaction(async (tx) => {
       const businessExpense = await tx.businessExpense.create({
         data: {
+          ledgerId: generateLedgerId(),
           createdById: currentUserId,
           date,
           cost: totalCost,
