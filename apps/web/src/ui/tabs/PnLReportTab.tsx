@@ -27,12 +27,13 @@ type PnLExpenseGroup = {
   children: PnLRow[];
   subtotal: number;
 };
+type PnLBucket = { groups: PnLExpenseGroup[]; flat: PnLRow[]; total: number };
 type PnLReport = {
   range: { from: string; to: string };
   income: { rows: PnLRow[]; total: number };
-  cogs: { rows: PnLRow[]; total: number };
+  cogs: PnLBucket;
   grossProfit: number;
-  expenses: { groups: PnLExpenseGroup[]; flat: PnLRow[]; total: number };
+  expenses: PnLBucket;
   netOperatingIncome: number;
 };
 
@@ -256,13 +257,14 @@ export default function PnLReportTab() {
               )}
               <TotalRow label="Total Income" amount={report.income.total} />
 
-              {/* Cost of Goods Sold section (only when there's activity). */}
-              {report.cogs.rows.length > 0 && (
+              {/* Cost of Goods Sold section — uses the same parent:child
+                  grouping logic as Expenses so colon-delimited account
+                  names like "Cost of goods sold:Direct supplies & materials"
+                  render with proper indentation + subtotals. */}
+              {(report.cogs.flat.length > 0 || report.cogs.groups.length > 0) && (
                 <>
                   <SectionHeader label="Cost of Goods Sold" />
-                  {report.cogs.rows.map((r) => (
-                    <Row key={r.qbAccount} label={r.qbAccount} amount={r.total} indent={1} />
-                  ))}
+                  <BucketRows bucket={report.cogs} />
                   <TotalRow label="Total Cost of Goods Sold" amount={report.cogs.total} />
                 </>
               )}
@@ -287,52 +289,11 @@ export default function PnLReportTab() {
                 </Text>
               </HStack>
 
-              {/* Expenses section. */}
+              {/* Expenses section. Same render path as COGS via BucketRows. */}
               {(report.expenses.flat.length > 0 || report.expenses.groups.length > 0) && (
                 <>
                   <SectionHeader label="Expenses" />
-                  {/* Flat single-account rows first (sorted alphabetically by
-                      backend), then grouped parent:child blocks. Mixing both
-                      maintains alphabetical reading order at top level. */}
-                  {mergeExpenseRows(report.expenses).map((entry) =>
-                    entry.kind === "flat" ? (
-                      <Row key={`flat:${entry.row.qbAccount}`} label={entry.row.qbAccount} amount={entry.row.total} indent={1} />
-                    ) : (
-                      <Box key={`group:${entry.group.parent}`}>
-                        {/* Parent row with direct total (only if > 0). */}
-                        <Row
-                          label={entry.group.parent}
-                          amount={entry.group.directTotal}
-                          indent={1}
-                          showAmount={entry.group.directTotal !== 0}
-                          bold
-                        />
-                        {entry.group.children.map((c) => (
-                          <Row
-                            key={c.qbAccount}
-                            label={leafName(c.qbAccount)}
-                            amount={c.total}
-                            indent={2}
-                          />
-                        ))}
-                        <HStack
-                          justify="space-between"
-                          pl={6}
-                          pr={3}
-                          py={1.5}
-                          borderTopWidth="1px"
-                          borderColor="gray.100"
-                        >
-                          <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
-                            Total for {entry.group.parent}
-                          </Text>
-                          <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
-                            {fmtUSD(entry.group.subtotal)}
-                          </Text>
-                        </HStack>
-                      </Box>
-                    ),
-                  )}
+                  <BucketRows bucket={report.expenses} />
                   <TotalRow label="Total Expenses" amount={report.expenses.total} />
                 </>
               )}
@@ -372,10 +333,69 @@ export default function PnLReportTab() {
 // ── Render helpers ───────────────────────────────────────────────────────────
 
 function SectionHeader({ label }: { label: string }) {
+  // Slightly darker than the rest of the table so section boundaries stand
+  // out at a glance, without being heavy. TotalRow below each section and
+  // the Gross Profit / NOI rows use the lighter bg="gray.50" tier.
   return (
-    <HStack px={3} py={1.5} bg="gray.100" borderTopWidth="1px" borderColor="gray.200">
+    <HStack
+      px={3}
+      py={2}
+      bg="gray.200"
+      borderTopWidth="1px"
+      borderColor="gray.300"
+    >
       <Text fontSize="sm" fontWeight="semibold">{label}</Text>
     </HStack>
+  );
+}
+
+/**
+ * Render a P&L bucket (COGS or Operating Expenses) — flat rows + parent:child
+ * grouped blocks, alphabetized across both. Used by both sections so the
+ * colon-parsed hierarchy behaves identically.
+ */
+function BucketRows({ bucket }: { bucket: PnLBucket }) {
+  return (
+    <>
+      {mergeBucketEntries(bucket).map((entry) =>
+        entry.kind === "flat" ? (
+          <Row key={`flat:${entry.row.qbAccount}`} label={entry.row.qbAccount} amount={entry.row.total} indent={1} />
+        ) : (
+          <Box key={`group:${entry.group.parent}`}>
+            <Row
+              label={entry.group.parent}
+              amount={entry.group.directTotal}
+              indent={1}
+              showAmount={entry.group.directTotal !== 0}
+              bold
+            />
+            {entry.group.children.map((c) => (
+              <Row
+                key={c.qbAccount}
+                label={leafName(c.qbAccount)}
+                amount={c.total}
+                indent={2}
+              />
+            ))}
+            <HStack
+              justify="space-between"
+              pl={6}
+              pr={3}
+              py={1.5}
+              borderTopWidth="1px"
+              borderColor="gray.100"
+            >
+              <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
+                Total for {entry.group.parent}
+              </Text>
+              <Text fontSize="xs" fontWeight="semibold" color="fg.muted">
+                {fmtUSD(entry.group.subtotal)}
+              </Text>
+            </HStack>
+          </Box>
+        ),
+      )}
+    </>
   );
 }
 
@@ -429,17 +449,19 @@ function EmptyRow({ label }: { label: string }) {
   );
 }
 
-// Interleave flat rows + grouped rows into one sortable list so the
-// rendered expense section reads alphabetically by parent at the top
-// level. (The backend already sorts each subset; we just zipper-merge.)
-type ExpenseEntry =
+// Interleave flat rows + grouped rows from a P&L bucket (COGS or Expenses)
+// into one alphabetically-sorted list. The backend already sorts each
+// subset; this is just a zipper-merge so the rendered section reads in
+// strict alphabetical order at the top level regardless of which entries
+// happen to have children.
+type BucketEntry =
   | { kind: "flat"; key: string; row: PnLRow }
   | { kind: "group"; key: string; group: PnLExpenseGroup };
 
-function mergeExpenseRows(expenses: { groups: PnLExpenseGroup[]; flat: PnLRow[] }): ExpenseEntry[] {
-  const entries: ExpenseEntry[] = [];
-  for (const r of expenses.flat) entries.push({ kind: "flat", key: r.qbAccount, row: r });
-  for (const g of expenses.groups) entries.push({ kind: "group", key: g.parent, group: g });
+function mergeBucketEntries(bucket: { groups: PnLExpenseGroup[]; flat: PnLRow[] }): BucketEntry[] {
+  const entries: BucketEntry[] = [];
+  for (const r of bucket.flat) entries.push({ kind: "flat", key: r.qbAccount, row: r });
+  for (const g of bucket.groups) entries.push({ kind: "group", key: g.parent, group: g });
   entries.sort((a, b) => a.key.localeCompare(b.key));
   return entries;
 }

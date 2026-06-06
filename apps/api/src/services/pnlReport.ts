@@ -50,20 +50,21 @@ export type PnLExpenseGroup = {
   subtotal: number;
 };
 
+/** A bucket of rows for one section (COGS or Operating Expenses), pre-grouped
+ *  by colon-delimited parent so the renderer can show parent:child hierarchy
+ *  with subtotals. `flat` holds single-account rows with no colon. */
+export type PnLBucket = {
+  groups: PnLExpenseGroup[];
+  flat: PnLRow[];
+  total: number;
+};
+
 export type PnLReport = {
   range: { from: string; to: string };
   income: { rows: PnLRow[]; total: number };
-  cogs: { rows: PnLRow[]; total: number };
+  cogs: PnLBucket;
   grossProfit: number;
-  expenses: {
-    /** Multi-account groups (a parent with children, or a parent with its
-     *  own direct expenses and children). Rendered with sub-account
-     *  indentation and a "Total for {parent}" subtotal. */
-    groups: PnLExpenseGroup[];
-    /** Single-account rows with no colon — rendered flat at top level. */
-    flat: PnLRow[];
-    total: number;
-  };
+  expenses: PnLBucket;
   netOperatingIncome: number;
 };
 
@@ -239,33 +240,56 @@ export async function buildPnLReport(
     );
   }
 
-  // Split COGS vs OPERATING_EXPENSE.
-  const cogsRows: PnLRow[] = [];
-  const expenseAccounts: PnLRow[] = [];
+  // Split COGS vs OPERATING_EXPENSE, then group each side by colon-parsed
+  // parent so QB-style hierarchical accounts ("Cost of goods sold:Direct
+  // supplies & materials", "Other business expenses:Payment processing
+  // fees") render with proper parent → child indentation and subtotals.
+  const cogsRaw: PnLRow[] = [];
+  const expenseRaw: PnLRow[] = [];
   for (const [qbAccount, { total, section }] of byAccount) {
     const row = { qbAccount, total: round2(total) };
-    if (section === "COGS") cogsRows.push(row);
-    else expenseAccounts.push(row);
+    if (section === "COGS") cogsRaw.push(row);
+    else expenseRaw.push(row);
   }
-  cogsRows.sort((a, b) => a.qbAccount.localeCompare(b.qbAccount));
 
-  // Group operating-expense rows by colon-parsed parent.
-  //
-  //   "Other business expenses"                       → parent (direct)
-  //   "Other business expenses:Payment processing fees" → child of "Other business expenses"
-  //   "Insurance"                                     → flat (no colon)
-  //
-  // A parent group emits only when there's > 1 row sharing the parent
-  // (parent direct + 1 child, or two children). A single-row parent stays
-  // flat so the report doesn't show useless one-line groups with subtotals.
+  const cogs = groupByParent(cogsRaw);
+  const expenses = groupByParent(expenseRaw);
+
+  const grossProfit = round2(incomeTotal - cogs.total);
+  const netOperatingIncome = round2(grossProfit - expenses.total);
+
+  return {
+    range: { from: options.fromStr, to: options.toStr },
+    income: { rows: incomeRows, total: incomeTotal },
+    cogs,
+    grossProfit,
+    expenses,
+    netOperatingIncome,
+  };
+}
+
+/**
+ * Group a flat list of {qbAccount, total} rows into parent:child buckets,
+ * preserving non-hierarchical entries as flat rows at the top level.
+ *
+ *   "Other business expenses"                          → flat OR a parent
+ *                                                        with a direct total
+ *                                                        when a child is
+ *                                                        also present
+ *   "Other business expenses:Payment processing fees"  → child under
+ *                                                        "Other business
+ *                                                        expenses"
+ *   "Insurance"                                        → flat (no colon)
+ *
+ * Single-account parents with no children stay flat — no point in showing
+ * a "Total for X" subtotal when X has a single line.
+ */
+function groupByParent(rows: PnLRow[]): PnLBucket {
   type AccBucket = { directTotal: number; children: PnLRow[] };
   const buckets = new Map<string, AccBucket>();
-  for (const row of expenseAccounts) {
+  for (const row of rows) {
     const colon = row.qbAccount.indexOf(":");
     if (colon < 0) {
-      // No colon — candidate parent. Track as a bucket with no children
-      // yet; if a child shows up later, it joins. If not, this becomes a
-      // flat row at render time.
       const bucket = buckets.get(row.qbAccount) ?? { directTotal: 0, children: [] };
       bucket.directTotal += row.total;
       buckets.set(row.qbAccount, bucket);
@@ -282,10 +306,8 @@ export async function buildPnLReport(
   for (const [parent, bucket] of buckets) {
     bucket.children.sort((a, b) => a.qbAccount.localeCompare(b.qbAccount));
     if (bucket.children.length === 0) {
-      // Pure top-level row, no sub-accounts seen.
       flat.push({ qbAccount: parent, total: round2(bucket.directTotal) });
     } else {
-      // Parent with children — render as a grouped block.
       const childrenTotal = sum(bucket.children.map((c) => c.total));
       groups.push({
         parent,
@@ -297,22 +319,8 @@ export async function buildPnLReport(
   }
   groups.sort((a, b) => a.parent.localeCompare(b.parent));
   flat.sort((a, b) => a.qbAccount.localeCompare(b.qbAccount));
-
-  const cogsTotal = round2(sum(cogsRows.map((r) => r.total)));
-  const expensesTotal = round2(
-    sum(flat.map((r) => r.total)) + sum(groups.map((g) => g.subtotal)),
-  );
-  const grossProfit = round2(incomeTotal - cogsTotal);
-  const netOperatingIncome = round2(grossProfit - expensesTotal);
-
-  return {
-    range: { from: options.fromStr, to: options.toStr },
-    income: { rows: incomeRows, total: incomeTotal },
-    cogs: { rows: cogsRows, total: cogsTotal },
-    grossProfit,
-    expenses: { groups, flat, total: expensesTotal },
-    netOperatingIncome,
-  };
+  const total = round2(sum(flat.map((r) => r.total)) + sum(groups.map((g) => g.subtotal)));
+  return { groups, flat, total };
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
