@@ -4771,6 +4771,33 @@ Respond ONLY with valid JSON in this exact format:
     };
   });
 
+  /**
+   * P&L Report — structured Profit & Loss view for a date range, used to
+   * reconcile against QuickBooks Online's Profit and Loss report. Filters
+   * and date anchors mirror the QB Income + QB Expenses exports exactly so
+   * the totals tie out to the penny.
+   *
+   * Section assignment (COGS vs Operating Expense) is driven by the
+   * EXPENSE_CATEGORIES taxonomy's plSection field; synthetic categories
+   * (Processor Fees, Contract Labor) come from SYNTHETIC_PL_CATEGORIES.
+   * Account hierarchy (QB-style "parent:child" naming) is parsed inside
+   * buildPnLReport so the UI can render grouped subtotals matching QB.
+   */
+  app.get("/admin/business-expenses/pnl-report", superGuard, async (req: any) => {
+    const q = (req.query || {}) as { from?: string; to?: string };
+    if (!q.from || !q.to) {
+      throw app.httpErrors.badRequest("from and to query params required (YYYY-MM-DD).");
+    }
+    // ET-anchored boundaries — same as the QB exports + vs-revenue endpoint.
+    let start = etMidnight(q.from);
+    const end = etEndOfDay(q.to);
+    // Business Start Date filter — pre-cutoff data hidden from every view.
+    const cutoff = await resolveCutoff(req);
+    if (cutoff && cutoff > start) start = cutoff;
+    const { buildPnLReport } = await import("../services/pnlReport");
+    return buildPnLReport(start, end, { fromStr: q.from, toStr: q.to });
+  });
+
   // Recurring-expense suggestions. Groups freestanding (non-job, non-supply)
   // BEs flagged with a recurrence by (description, vendor); for each group
   // the most recent row drives the next-expected date. Anything overdue or

@@ -5,6 +5,22 @@ import { prisma } from "../db/prisma";
 // the single source of truth for both business-expense categories and the
 // Schedule C line numbers used in the QuickBooks export — no hardcoded maps.
 
+/** P&L report section. QB's chart of accounts has an "Account Type"
+ *  that determines whether an account rolls into Cost of Goods Sold or
+ *  Expenses on the P&L; this is the app's mirror of that decision.
+ *
+ *    COGS              — Cost of Goods Sold (above Gross Profit on the P&L)
+ *    OPERATING_EXPENSE — Operating Expenses (below Gross Profit)
+ *    EXCLUDE_FROM_PNL  — category does not appear on the P&L at all.
+ *                        Default for newly-added categories — the operator
+ *                        must proactively classify a category as COGS or
+ *                        Operating Expense before it shows up on the report.
+ *                        Safer default than silently lumping rows into a
+ *                        section the operator hasn't reviewed. */
+export type PlSection = "COGS" | "OPERATING_EXPENSE" | "EXCLUDE_FROM_PNL";
+
+const PL_SECTION_VALUES: PlSection[] = ["COGS", "OPERATING_EXPENSE", "EXCLUDE_FROM_PNL"];
+
 export type ExpenseCategoryConfig = {
   /** Display label, stored verbatim on BusinessExpense.category / Supply.category. */
   label: string;
@@ -13,15 +29,23 @@ export type ExpenseCategoryConfig = {
   /** QuickBooks chart-of-accounts name this category posts to on import.
    *  Null or empty → row lands in "Unmapped" in the QB CSV so the operator
    *  re-categorizes after import. Must match QB exactly (capitalization /
-   *  spacing). */
+   *  spacing). A colon-delimited name like "Other business expenses:Payment
+   *  processing fees" signals a QB parent:child account; the P&L renderer
+   *  parses this to group children under their parent. */
   qbAccount: string | null;
   /** Selectable in expense-logging pickers. false = export-only synthetic
    *  category (e.g. "Payment Processing Fees", which is sourced from Payment
    *  rows, never hand-logged). */
   selectable: boolean;
+  /** Which section of the P&L report this category rolls into. Optional in
+   *  storage so a live taxonomy that predates this field still validates;
+   *  the loader defaults missing values to OPERATING_EXPENSE. Only Supplies
+   *  (and any other COGS line you configure) ends up under Cost of Goods
+   *  Sold on the P&L. */
+  plSection: PlSection;
 };
 
-const ALLOWED_KEYS = new Set(["label", "scheduleCLine", "qbAccount", "selectable"]);
+const ALLOWED_KEYS = new Set(["label", "scheduleCLine", "qbAccount", "selectable", "plSection"]);
 
 /**
  * Parse the raw JSON value of the EXPENSE_CATEGORIES setting into a typed
@@ -64,11 +88,28 @@ export function parseExpenseCategoriesSetting(raw: string | null | undefined): E
       const trimmed = row.qbAccount.trim();
       qbAccount = trimmed === "" ? null : trimmed;
     }
+    // plSection is optional in storage. Missing / unknown values default
+    // to EXCLUDE_FROM_PNL — the operator must proactively classify a
+    // category as COGS or OPERATING_EXPENSE before it appears on the P&L.
+    // This is the safer default: a category whose section hasn't been
+    // reviewed silently disappears from the report rather than getting
+    // lumped into a section that might be wrong. Validate only when
+    // present so a typo can't silently swap a section.
+    let plSection: PlSection = "EXCLUDE_FROM_PNL";
+    if (row.plSection != null) {
+      if (typeof row.plSection !== "string" || !PL_SECTION_VALUES.includes(row.plSection as PlSection)) {
+        throw new Error(
+          `EXPENSE_CATEGORIES[${idx}].plSection must be one of: ${PL_SECTION_VALUES.join(", ")}.`,
+        );
+      }
+      plSection = row.plSection as PlSection;
+    }
     return {
       label: row.label,
       scheduleCLine: row.scheduleCLine,
       qbAccount,
       selectable: row.selectable !== false, // default true if omitted
+      plSection,
     };
   });
 }
@@ -134,3 +175,41 @@ export async function loadCategoryLabels(
   const cats = await loadExpenseCategories(client);
   return new Set(cats.map((c) => c.label));
 }
+
+/** Map of category label → P&L section. Backward-compatible: a category
+ *  with no plSection set in the live setting defaults to OPERATING_EXPENSE
+ *  via the loader. The P&L endpoint calls this once per request. */
+export async function loadPlSectionMap(
+  client: typeof prisma | any = prisma,
+): Promise<Record<string, PlSection>> {
+  const cats = await loadExpenseCategories(client);
+  const map: Record<string, PlSection> = {};
+  for (const c of cats) map[c.label] = c.plSection;
+  return map;
+}
+
+/**
+ * Synthetic P&L categories that don't live in the EXPENSE_CATEGORIES taxonomy
+ * because they're not hand-logged BusinessExpense rows — they're computed
+ * from Payment / PaymentSplit data at export time. The exports pipeline
+ * already hardcodes these qbAccount names; the P&L endpoint reads from this
+ * same constant so both stay in sync.
+ *
+ *   PROCESSOR_FEES   — sourced from Payment.processorFeeAmount.
+ *                      Sub-account of "Other business expenses" in QB
+ *                      (colon-delimited → renders indented under its parent).
+ *   CONTRACT_LABOR   — sourced from contractor PaymentSplit.amount
+ *                      (excluding GP-flagged splits) + GP advance disbursements.
+ */
+export const SYNTHETIC_PL_CATEGORIES = {
+  PROCESSOR_FEES: {
+    label: "Payment Processing Fees",
+    qbAccount: "Other business expenses:Payment processing fees",
+    plSection: "OPERATING_EXPENSE" as PlSection,
+  },
+  CONTRACT_LABOR: {
+    label: "Contract labor",
+    qbAccount: "Contract labor",
+    plSection: "OPERATING_EXPENSE" as PlSection,
+  },
+} as const;

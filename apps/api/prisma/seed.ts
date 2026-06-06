@@ -1880,32 +1880,53 @@ async function seedDatabase() {
     {
       key: "EXPENSE_CATEGORIES",
       value: JSON.stringify([
-        { label: "Advertising", scheduleCLine: "8", qbAccount: "Advertising & marketing", selectable: true },
+        // plSection drives the P&L Report tab grouping. Only Supplies rolls
+        // into Cost of Goods Sold; every other category here is an Operating
+        // Expense. Mirrors QB Online's Account Type → P&L section logic.
+        // Field is optional in storage: a row without plSection defaults to
+        // EXCLUDE_FROM_PNL at load time — the operator must proactively
+        // classify a new category as COGS or OPERATING_EXPENSE before it
+        // shows up on the report. Safer than silently lumping rows into a
+        // section that hasn't been reviewed.
+        { label: "Advertising", scheduleCLine: "8", qbAccount: "Advertising & marketing", selectable: true, plSection: "OPERATING_EXPENSE" },
         // "Car and truck expenses" was a single category; split into Fuel +
         // Vehicle Maintenance to match the QB chart of accounts which
         // tracks them separately under the Vehicle & Auto parent.
-        { label: "Fuel", scheduleCLine: "9", qbAccount: "Fuel", selectable: true },
-        { label: "Vehicle Maintenance", scheduleCLine: "9", qbAccount: "Vehicle Maintenance & Repairs", selectable: true },
-        { label: "Contract labor", scheduleCLine: "11", qbAccount: "Contract Labor", selectable: true },
-        { label: "Depreciation", scheduleCLine: "13", qbAccount: null, selectable: true },
-        { label: "Insurance", scheduleCLine: "15", qbAccount: "Insurance", selectable: true },
-        { label: "Legal and professional services", scheduleCLine: "17", qbAccount: "Legal & Professional Fees", selectable: true },
-        { label: "Office expense", scheduleCLine: "18", qbAccount: "Software & Subscriptions", selectable: true },
-        { label: "Rent or lease — vehicles/equipment", scheduleCLine: "20a", qbAccount: null, selectable: true },
-        { label: "Rent or lease — other business property", scheduleCLine: "20b", qbAccount: null, selectable: true },
-        { label: "Repairs and maintenance", scheduleCLine: "21", qbAccount: "Vehicle Maintenance & Repairs", selectable: true },
-        { label: "Supplies", scheduleCLine: "22", qbAccount: "Direct Supplies and Materials", selectable: true },
-        { label: "Taxes and licenses", scheduleCLine: "23", qbAccount: "Taxes & Licenses", selectable: true },
-        { label: "Travel", scheduleCLine: "24a", qbAccount: null, selectable: true },
-        { label: "Meals", scheduleCLine: "24b", qbAccount: null, selectable: true },
-        { label: "Utilities", scheduleCLine: "25", qbAccount: null, selectable: true },
+        { label: "Fuel", scheduleCLine: "9", qbAccount: "Fuel", selectable: true, plSection: "OPERATING_EXPENSE" },
+        { label: "Vehicle Maintenance", scheduleCLine: "9", qbAccount: "Vehicle Maintenance & Repairs", selectable: true, plSection: "OPERATING_EXPENSE" },
+        { label: "Contract labor", scheduleCLine: "11", qbAccount: "Contract Labor", selectable: true, plSection: "OPERATING_EXPENSE" },
+        // Depreciation isn't logged manually in this app (fixed assets are
+        // capitalized via the QB Fixed Assets export, depreciation lives in
+        // QB itself). Default to EXCLUDE so the row doesn't show as "Unmapped"
+        // on the P&L if accidentally used; operator can flip it later.
+        { label: "Depreciation", scheduleCLine: "13", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        { label: "Insurance", scheduleCLine: "15", qbAccount: "Insurance", selectable: true, plSection: "OPERATING_EXPENSE" },
+        { label: "Legal and professional services", scheduleCLine: "17", qbAccount: "Legal & Professional Fees", selectable: true, plSection: "OPERATING_EXPENSE" },
+        { label: "Office expense", scheduleCLine: "18", qbAccount: "Software & Subscriptions", selectable: true, plSection: "OPERATING_EXPENSE" },
+        // Rent / lease categories carry no QB account by default — operator
+        // adds one + flips plSection to OPERATING_EXPENSE the first time
+        // they actually rent something. Until then, EXCLUDE keeps the P&L clean.
+        { label: "Rent or lease — vehicles/equipment", scheduleCLine: "20a", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        { label: "Rent or lease — other business property", scheduleCLine: "20b", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        { label: "Repairs and maintenance", scheduleCLine: "21", qbAccount: "Vehicle Maintenance & Repairs", selectable: true, plSection: "OPERATING_EXPENSE" },
+        // The ONLY COGS line in the default taxonomy. Materials consumed in
+        // providing the service land here; the QB P&L renders this under
+        // Cost of Goods Sold above Gross Profit.
+        { label: "Supplies", scheduleCLine: "22", qbAccount: "Direct Supplies and Materials", selectable: true, plSection: "COGS" },
+        { label: "Taxes and licenses", scheduleCLine: "23", qbAccount: "Taxes & Licenses", selectable: true, plSection: "OPERATING_EXPENSE" },
+        // Travel / Meals / Utilities: same pattern — no default QB routing,
+        // so default to EXCLUDE. Operator flips to OPERATING_EXPENSE the
+        // first time they use them.
+        { label: "Travel", scheduleCLine: "24a", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        { label: "Meals", scheduleCLine: "24b", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
+        { label: "Utilities", scheduleCLine: "25", qbAccount: null, selectable: true, plSection: "EXCLUDE_FROM_PNL" },
         // Synthetic, export-only — sourced from Payment rows, never hand-logged.
-        { label: "Payment Processing Fees", scheduleCLine: "10", qbAccount: "Payment Processing Fees", selectable: false },
+        { label: "Payment Processing Fees", scheduleCLine: "10", qbAccount: "Payment Processing Fees", selectable: false, plSection: "OPERATING_EXPENSE" },
         // Catch-all. qbAccount = null routes rows to "Unmapped" in the QB CSV
         // so the operator re-categorizes in QB after import.
-        { label: "Other", scheduleCLine: "27a", qbAccount: null, selectable: true },
+        { label: "Other", scheduleCLine: "27a", qbAccount: null, selectable: true, plSection: "OPERATING_EXPENSE" },
       ]),
-      description: "Expense-category taxonomy. Each entry maps a category to (a) its Schedule C line for the CPA-facing CSV and (b) its QuickBooks chart-of-accounts name for the QB import CSV. Editing here needs no code change. Account names must match QB exactly (capitalization + spacing).",
+      description: "Expense-category taxonomy. Each entry maps a category to (a) its Schedule C line for the CPA-facing CSV, (b) its QuickBooks chart-of-accounts name for the QB import CSV, and (c) its P&L section (COGS vs OPERATING_EXPENSE) for the in-app P&L Report. Editing here needs no code change. Account names must match QB exactly (capitalization + spacing).",
     },
     {
       // Equipment-rental income routing for the QB Income export. The
