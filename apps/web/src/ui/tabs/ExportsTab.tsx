@@ -89,6 +89,14 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Format a stored ExportRun range bound (ISO string in UTC) as its ET
+// calendar date. The backend stores rangeEnd as end-of-day ET, which in
+// UTC rolls into the next day — naive `.slice(0,10)` shows the wrong day
+// (e.g. user selects 6/5, history shows 6/6). en-CA gives YYYY-MM-DD.
+function etDateFromIso(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+}
+
 // Returns the Monday on/before the given date (local time).
 function mondayOnOrBefore(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -141,14 +149,15 @@ function ytdRange(): { from: string; to: string } {
 
 export default function ExportsTab() {
   const [cadence, setCadence] = useState<Cadence>("WEEKLY");
-  // Default to "last week total" = today minus 7 days through today, so a
-  // freshly-opened tab shows the most-recently-relevant operational window.
-  // Cadence presets ("Last week", "This week", etc.) still snap to calendar
-  // boundaries when clicked; only the initial state is rolling.
-  const initialEnd = new Date();
-  const initialStart = addDays(initialEnd, -7);
-  const [start, setStart] = useState(dateKey(initialStart));
-  const [end, setEnd] = useState(dateKey(initialEnd));
+  // Default to the most recently COMPLETED Monday–Sunday week. This matches
+  // the operator's standard weekly upload workflow — open the Exports tab,
+  // see the just-ended pay week pre-selected, hit download. Calendar-aligned
+  // on purpose; the preset buttons ("Last weekly", "This weekly", "Year to
+  // date") still snap when clicked.
+  const previousMondayDefault = addDays(mondayOnOrBefore(new Date()), -7);
+  const previousSundayDefault = addDays(previousMondayDefault, 6);
+  const [start, setStart] = useState(dateKey(previousMondayDefault));
+  const [end, setEnd] = useState(dateKey(previousSundayDefault));
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -1323,8 +1332,8 @@ export default function ExportsTab() {
             <VStack align="stretch" gap={1}>
               {history.map((row) => {
                 const created = new Date(row.createdAt);
-                const rs = row.rangeStart.slice(0, 10);
-                const re = row.rangeEnd.slice(0, 10);
+                const rs = etDateFromIso(row.rangeStart);
+                const re = etDateFromIso(row.rangeEnd);
                 return (
                   <HStack
                     key={row.id}
@@ -1511,7 +1520,7 @@ export default function ExportsTab() {
         <ConfirmDialog
           open={true}
           title="Delete export entry?"
-          message={`Remove the ${KIND_LABELS[deleteTarget.kind]} entry from ${deleteTarget.rangeStart.slice(0, 10)} → ${deleteTarget.rangeEnd.slice(0, 10)} (${deleteTarget.fileName})?`}
+          message={`Remove the ${KIND_LABELS[deleteTarget.kind]} entry from ${etDateFromIso(deleteTarget.rangeStart)} → ${etDateFromIso(deleteTarget.rangeEnd)} (${deleteTarget.fileName})?`}
           warning="This permanently removes the saved CSV/zip snapshot. The underlying tax and payroll data is not affected, but the previously-downloaded file bytes will be gone — if you need them again you'll have to re-export, and the numbers may differ if records have changed since."
           confirmLabel="Continue…"
           confirmColorPalette="red"

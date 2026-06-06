@@ -15,6 +15,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import { generateLedgerId } from "../lib/ledgerId";
 import { loadCategoryLabels } from "../services/expenseCategories";
+import { loadFixedAssetMinCost, isFixedAsset } from "../services/exports";
 import {
   resolveCutoff,
   cutoffWhere,
@@ -4625,10 +4626,17 @@ Respond ONLY with valid JSON in this exact format:
     // lib/businessStartCutoff.ts).
     const cutoff = await resolveCutoff(req);
 
-    const [payments, allEntries, rentals] = await Promise.all([
+    const [payments, allEntries, rentals, fixedAssetMinCost] = await Promise.all([
+      // Cash-flow view shows what ACTUALLY moved — confirmed, non-written-off
+      // payments only, anchored on `confirmedAt` (the moment the cash hit).
+      // This matches the QB Expenses + QB Income exports' filter exactly so
+      // the Accounting tab and the export totals always agree. Without these
+      // filters, the tab includes pending self-reported payments and
+      // written-off ones, which inflates platform fees / margin / processor
+      // fees beyond what actually got reported to QB.
       prisma.payment.findMany({
-        where: { ...cutoffWhere("Payment", cutoff) },
-        select: { createdAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
+        where: { confirmed: true, writtenOff: false, ...cutoffWhere("Payment", cutoff) },
+        select: { confirmedAt: true, platformFeeAmount: true, businessMarginAmount: true, processorFeeAmount: true },
       }),
       // One query covers all three EntryType buckets; split by `type`
       // below. Saves a round-trip vs. separate queries.
@@ -4640,12 +4648,18 @@ Respond ONLY with valid JSON in this exact format:
         where: { rentalCost: { not: null }, releasedAt: { not: null }, ...cutoffWhere("Checkout", cutoff) },
         select: { releasedAt: true, rentalCost: true },
       }),
+      // Same FA threshold the QB Expenses export uses. Loading here keeps
+      // the Accounting tab's "Business expenses" line aligned with the
+      // export — both exclude capitalized purchases, both surface them
+      // on a separate line. See services/exports.ts isFixedAsset.
+      loadFixedAssetMinCost(),
     ]);
 
     let platformFees = 0, businessMargin = 0, equipmentRentals = 0, expenseTotal = 0, processingFees = 0;
-    let capitalContributions = 0, ownerDraws = 0;
+    let capitalContributions = 0, ownerDraws = 0, fixedAssetPurchases = 0;
     for (const p of payments) {
-      if (!inRange(p.createdAt)) continue;
+      // confirmedAt is non-null because the WHERE clause requires confirmed=true.
+      if (!p.confirmedAt || !inRange(p.confirmedAt)) continue;
       platformFees += p.platformFeeAmount ?? 0;
       businessMargin += p.businessMarginAmount ?? 0;
       processingFees += p.processorFeeAmount ?? 0;
@@ -4656,17 +4670,26 @@ Respond ONLY with valid JSON in this exact format:
     }
     for (const e of allEntries) {
       if (!inRange(e.date)) continue;
-      if (e.type === "EXPENSE") expenseTotal += e.cost;
+      if (e.type === "EXPENSE") {
+        // Split: fixed-asset purchases (capitalized — balance sheet) vs
+        // regular operating expenses (P&L). Same threshold + start-date
+        // policy the QB Expenses CSV uses, so the totals reconcile.
+        if (isFixedAsset(e, fixedAssetMinCost)) {
+          fixedAssetPurchases += e.cost;
+        } else {
+          expenseTotal += e.cost;
+        }
+      }
       else if (e.type === "CAPITAL_CONTRIBUTION") capitalContributions += e.cost;
       else if (e.type === "OWNER_DRAW") ownerDraws += e.cost;
     }
 
     const round = (n: number) => Math.round(n * 100) / 100;
     const earnings = platformFees + businessMargin + equipmentRentals;
-    // Processing fees deducted from operating net alongside business
-    // expenses. They're NOT subtracted from Earnings because the earnings
-    // line is "what the business retained from the worker payout split" —
-    // processor fees come off the cash side, not the labor-cost side.
+    // Operating net excludes fixed-asset purchases — those are capital
+    // expenditures, not operating expenses (matches QB's P&L treatment).
+    // FA purchases still hit the bank account so they DO subtract from
+    // Net cash change below.
     const operatingNet = earnings - expenseTotal - processingFees;
     const equityNet = capitalContributions - ownerDraws;
     return {
@@ -4676,13 +4699,16 @@ Respond ONLY with valid JSON in this exact format:
       earnings: round(earnings),
       expenses: round(expenseTotal),
       processingFees: round(processingFees),
+      fixedAssetPurchases: round(fixedAssetPurchases),
       // Legacy field name preserved for older clients — equals operating net.
       net: round(operatingNet),
       operatingNet: round(operatingNet),
       capitalContributions: round(capitalContributions),
       ownerDraws: round(ownerDraws),
       equityNet: round(equityNet),
-      netCashChange: round(operatingNet + equityNet),
+      // Net cash change subtracts FA purchases too — they DO leave the
+      // bank account even though they don't hit the P&L.
+      netCashChange: round(operatingNet + equityNet - fixedAssetPurchases),
     };
   });
 
