@@ -149,15 +149,15 @@ function ytdRange(): { from: string; to: string } {
 
 export default function ExportsTab() {
   const [cadence, setCadence] = useState<Cadence>("WEEKLY");
-  // Default to the most recently COMPLETED Monday–Sunday week. This matches
-  // the operator's standard weekly upload workflow — open the Exports tab,
-  // see the just-ended pay week pre-selected, hit download. Calendar-aligned
-  // on purpose; the preset buttons ("Last weekly", "This weekly", "Year to
-  // date") still snap when clicked.
-  const previousMondayDefault = addDays(mondayOnOrBefore(new Date()), -7);
-  const previousSundayDefault = addDays(previousMondayDefault, 6);
-  const [start, setStart] = useState(dateKey(previousMondayDefault));
-  const [end, setEnd] = useState(dateKey(previousSundayDefault));
+  // Default to THIS week's Mon–Sun (the calendar week containing today).
+  // Monday-Saturday → shows the in-progress week, Sunday end day in the
+  // future. Sunday → shows this same week, ending today. Monday morning
+  // of a fresh week → shows the new week (operator clicks "Last weekly"
+  // preset for the just-ended week if that's what they need).
+  const thisMondayDefault = mondayOnOrBefore(new Date());
+  const thisSundayDefault = addDays(thisMondayDefault, 6);
+  const [start, setStart] = useState(dateKey(thisMondayDefault));
+  const [end, setEnd] = useState(dateKey(thisSundayDefault));
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
