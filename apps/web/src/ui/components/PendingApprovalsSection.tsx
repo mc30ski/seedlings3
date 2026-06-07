@@ -30,6 +30,7 @@ import {
 } from "@/src/ui/components/InlineMessage";
 import ConfirmDialog from "@/src/ui/dialogs/ConfirmDialog";
 import ApprovePaymentDialog from "@/src/ui/dialogs/ApprovePaymentDialog";
+import AdjustPaymentDialog from "@/src/ui/dialogs/AdjustPaymentDialog";
 import { bumpAdminPayments } from "@/src/lib/bus";
 
 type PendingRow = {
@@ -133,11 +134,22 @@ export default function PendingApprovalsSection() {
   // Adjust & Approve path). If the amount is fraudulent/totally wrong,
   // admin Rejects with a reason and the worker re-records via Accept
   // Payment. If the client refuses to pay, admin Writes off instead.
-  async function approve(row: PendingRow, overrideAmount?: number, feeOverride?: number) {
+  async function approve(
+    row: PendingRow,
+    overrideAmount?: number,
+    feeOverride?: number,
+    overrideMethod?: string,
+  ) {
     try {
-      const body: { amountPaid?: number; processorFeeAmount?: number } = {};
+      const body: { amountPaid?: number; processorFeeAmount?: number; method?: string } = {};
       if (overrideAmount !== undefined) body.amountPaid = overrideAmount;
       if (feeOverride !== undefined) body.processorFeeAmount = feeOverride;
+      // Only send method when it actually changed from the originally-
+      // reported value. The backend validates the method against the
+      // PAYMENT_METHODS taxonomy and recomputes the processor-fee
+      // snapshot on change — sending the unchanged method would still
+      // pass but trips needless validation.
+      if (overrideMethod && overrideMethod !== row.method) body.method = overrideMethod;
       const result = await apiPost<{ nextOccurrence?: { startAt?: string | null } | null; nextOccurrenceSkipReason?: string | null }>(
         `/api/admin/payments/${row.id}/approve`,
         body,
@@ -297,7 +309,7 @@ export default function PendingApprovalsSection() {
                       size="xs"
                       colorPalette="orange"
                       onClick={() => setAdjustingRow(r)}
-                      title="Adjust the amount, then approve (use when the client paid a different amount than reported)"
+                      title="Adjust the amount and/or method, then approve (use when the client paid a different amount or via a different method than reported)"
                     >
                       <Pencil size={12} /> Edit
                     </Button>
@@ -354,30 +366,13 @@ export default function PendingApprovalsSection() {
         onCancel={() => setRejectingRow(null)}
       />
 
-      <ConfirmDialog
-        open={!!adjustingRow}
-        title="Adjust amount, then approve"
-        message={
-          adjustingRow
-            ? `Reported: ${dollar(adjustingRow.amountPaid)} via ${adjustingRow.method}. Enter the amount that actually arrived in your account.`
-            : ""
-        }
-        warning="Use this when the amount that actually hit your account doesn't match the reported amount — e.g. the client self-reported $100 via Zelle but only $80 landed, or the worker mistyped the check amount, or the client added a tip on Venmo. Employees and trainees still receive their full promised payout. Contractors get a pro-rata share of what was actually collected (they take the hit on shortfalls). The business absorbs any remaining shortfall and keeps any overage."
-        confirmLabel="Approve"
-        confirmColorPalette="orange"
-        amountLabel="Actual amount collected"
-        amountDefaultValue={adjustingRow ? adjustingRow.amountPaid.toFixed(2) : ""}
-        amountPlaceholder="0.00"
-        onConfirm={async (_input, amountStr?: string) => {
+      <AdjustPaymentDialog
+        row={adjustingRow}
+        onConfirm={({ amountOverride, methodOverride, feeOverride }) => {
           const r = adjustingRow;
           setAdjustingRow(null);
           if (!r) return;
-          const parsed = Number.parseFloat((amountStr ?? "").trim());
-          if (!Number.isFinite(parsed) || parsed < 0) {
-            publishInlineMessage({ type: "ERROR", text: "Enter a valid amount." });
-            return;
-          }
-          await approve(r, parsed);
+          void approve(r, amountOverride, feeOverride, methodOverride);
         }}
         onCancel={() => setAdjustingRow(null)}
       />

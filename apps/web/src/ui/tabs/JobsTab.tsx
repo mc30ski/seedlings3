@@ -1359,7 +1359,14 @@ export default function JobsTab({ me, purpose = "WORKER", viewAsUserIds, viewAsW
       // Admin-only: pull Timeline activities + doc expirations and mix them
       // into the feed. Failures are non-fatal — the main jobs view still
       // renders if the timeline endpoint is unhappy.
-      if (forAdmin) {
+      //
+      // SUPPRESS this fetch when the admin is "viewing as" another user —
+      // the whole point of that mode is to mirror what the selected worker
+      // sees, and non-admin workers never see Timeline activities or doc
+      // expirations. Without this guard, an admin viewing as a worker
+      // would still see admin-only Timeline rows mixed into the feed,
+      // contradicting the view-as semantics.
+      if (forAdmin && !viewAsUserIds?.length) {
         try {
           type UpcomingApiRow =
             | {
